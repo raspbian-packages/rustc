@@ -12,6 +12,9 @@ all: others
 ifdef IS_MSVC
 # FIXME(#28026)
 others:
+else ifeq ($(filter arm,$(LLVM_COMPONENTS)),arm)
+# FIXME(#33809)
+others:
 else
 others:
 	$(RUSTC) -C relocation-model=static foo.rs
