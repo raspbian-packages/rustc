@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-aarch64
 // ignore-windows
 // ignore-android
 // min-lldb-version: 310
