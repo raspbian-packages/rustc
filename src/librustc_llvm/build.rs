@@ -123,63 +123,10 @@ fn main() {
        .cpp_link_stdlib(None) // we handle this below
        .compile("librustllvm.a");
 
-    // Link in all LLVM libraries, if we're uwring the "wrong" llvm-config then
-    // we don't pick up system libs because unfortunately they're for the host
-    // of llvm-config, not the target that we're attempting to link.
-    let mut cmd = Command::new(&llvm_config);
-    cmd.arg("--libs");
-
-    // Force static linking with "--link-static" if available.
-    let mut version_cmd = Command::new(&llvm_config);
-    version_cmd.arg("--version");
-    let version_output = output(&mut version_cmd);
-    let mut parts = version_output.split('.');
-    if let (Some(major), Some(minor)) = (parts.next().and_then(|s| s.parse::<u32>().ok()),
-                                         parts.next().and_then(|s| s.parse::<u32>().ok())) {
-        if major > 3 || (major == 3 && minor >= 8) {
-            cmd.arg("--link-static");
-        }
-    }
-
-    if !is_crossed {
-        cmd.arg("--system-libs");
-    }
-    cmd.args(&components[..]);
-
-    for lib in output(&mut cmd).split_whitespace() {
-        let name = if lib.starts_with("-l") {
-            &lib[2..]
-        } else if lib.starts_with("-") {
-            &lib[1..]
-        } else if Path::new(lib).exists() {
-            // On MSVC llvm-config will print the full name to libraries, but
-            // we're only interested in the name part
-            let name = Path::new(lib).file_name().unwrap().to_str().unwrap();
-            name.trim_right_matches(".lib")
-        } else if lib.ends_with(".lib") {
-            // Some MSVC libraries just come up with `.lib` tacked on, so chop
-            // that off
-            lib.trim_right_matches(".lib")
-        } else {
-            continue;
-        };
-
-        // Don't need or want this library, but LLVM's CMake build system
-        // doesn't provide a way to disable it, so filter it here even though we
-        // may or may not have built it. We don't reference anything from this
-        // library and it otherwise may just pull in extra dependencies on
-        // libedit which we don't want
-        if name == "LLVMLineEditor" {
-            continue;
-        }
-
-        let kind = if name.starts_with("LLVM") {
-            "static"
-        } else {
-            "dylib"
-        };
-        println!("cargo:rustc-link-lib={}={}", kind, name);
-    }
+     // Link in all LLVM libraries
+     // Link in Debian full LLVM shared library.
+     // TODO: not sure what to do in the cross-compiling case.
+     println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
 
     // LLVM ldflags
     //
