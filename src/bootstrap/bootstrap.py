@@ -63,7 +63,7 @@ def download(path, url, verbose):
              ".DownloadFile('{}', '{}')".format(url, path)],
             verbose=verbose)
     else:
-        run(["curl", "-o", path, url], verbose=verbose)
+        run(["curl", "-R", "-o", path, url], verbose=verbose)
 
 
 def verify(path, sha_path, verbose):
