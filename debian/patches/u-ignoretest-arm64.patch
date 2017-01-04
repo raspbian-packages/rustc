@@ -1,0 +1,24 @@
+Index: rust/src/test/run-pass-valgrind/down-with-thread-dtors.rs
+===================================================================
+--- rust.orig/src/test/run-pass-valgrind/down-with-thread-dtors.rs	2016-11-26 23:37:52.792391857 +0000
++++ rust/src/test/run-pass-valgrind/down-with-thread-dtors.rs	2016-11-26 23:37:52.792391857 +0000
+@@ -8,6 +8,7 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
++// ignore-aarch64
+ // no-prefer-dynamic
+ 
+ thread_local!(static FOO: Foo = Foo);
+Index: rust/src/test/debuginfo/macro-stepping.rs
+===================================================================
+--- rust.orig/src/test/debuginfo/macro-stepping.rs	2016-11-26 23:31:56.315657113 +0000
++++ rust/src/test/debuginfo/macro-stepping.rs	2016-11-26 23:39:44.602821432 +0000
+@@ -8,6 +8,7 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
++// ignore-aarch64
+ // ignore-windows
+ // ignore-android
+ // min-lldb-version: 310

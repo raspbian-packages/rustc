@@ -1,0 +1,142 @@
+Shared libraries
+================
+
+For now, the shared libraries of Rust are private.
+The rational is the following:
+ * Upstream prefers static linking for now
+   - https://github.com/rust-lang/rust/issues/10209
+ * rust is still under heavy development. As far as we know, there is
+   no commitement from upstream to provide a stable ABI for now.
+   Until we know more, we cannot take the chance to have Rust-built packages
+   failing at each release of the compiler.
+ * Static builds are working out of the box just fine
+ * However, LD_LIBRARY_PATH has to be updated when -C prefer-dynamic is used
+
+ -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
+
+Building from source
+====================
+
+By default, the Debian rustc package will use the system rustc to bootstrap
+itself from. The system rustc has to be either the previous or the same version
+as the rustc being built; the build will fail if this is not the case.
+
+  apt-get source --compile rustc
+
+Alternatively, you may give the "pkg.rustc.dlstage0" DEB_BUILD_PROFILE to
+instead use the process defined by Rust upstream. This downloads the "official"
+stage0 compiler for the version being built from rust-lang.org. At the time of
+writing "official" means "the previous stable version".
+
+  apt-get source --compile --build-profiles=pkg.rustc.dlstage0 rustc
+
+If neither of these options are acceptable to you, (e.g. because your build
+process cannot access the network), see the below sections on "Bootstrapping"
+for more options.
+
+Bootstrapping a new distro
+==========================
+
+If you want to bootstrap a new distro that does not already have rustc, you
+may run `debian/rules source_orig-dl` to create a .dsc that does not
+Build-Depend on rustc. Instead, it includes an extra orig-dl source tarball
+that contains the official stage0 compiler, pre-downloaded from rust-lang.org
+so that your build daemons don't need to access the network during the build.
+
+  debian/rules source_orig-dl
+  sbuild ../rustc_*.dsc
+
+To only bootstrap specific architectures, run this instead:
+
+  upstream_bootstrap_arch="arm64 armel armhf" debian/rules source_orig-dl
+
+This way, other architectures will be omitted from the orig-dl tarball. You
+might want to do this e.g. if these other architectures are already present in
+your distro, but the $upstream_bootstrap_arch ones are not yet present.
+
+Notes
+-----
+
+The approach here is based on doing a *source-only upload*, where the building
+of the binary packages are done by automatic build daemons. We achieve this, by
+bundling the upstream bootstrapping binaries inside the Debian source package.
+This is a nasty hack that stretches the definition of "source package", but is
+unavoidable if we want to securely bootstrap self-hosted compilers.
+
+This differs from the traditional Debian way of bootstrapping compilers, which
+involves locally building a "stage0" Debian package using upstream binaries
+(instead of Debian build dependencies that don't yet exist), then using this
+stage0 Debian package to do a "standard" build that then forms part of a binary
+upload. This allows the source package to remain binary-free. However, both the
+original stage0 package and upstream binaries are lost, and Debian currently
+does not have any policy nor infrastructure that can try to reproduce what the
+uploader supposedly did.
+
+The advantage of our (non-traditional) approach is that anyone can download
+this source package if they want to build the binaries themselves - they can
+just follow the same automatic build processes that apply to every other Debian
+package. If the build process is reproducible [1] then they can be sure that
+*you* (as the Debian Developer that prepared the source-only upload) didn't
+backdoor the binaries, nor did the automatic build daemons even if they were
+compromised during the build.
+
+(The upstream binaries contained in the orig-dl tarball may still have been
+backdoored. However, this is true in both scenarios - our arrangement is still
+a strict improvement in security, because it reduces the set of "things that
+may have been backdoored". Furthermore, more people use the upstream binaries,
+so presumably any backdoors would be noticed more quickly.)
+
+In the future, both approaches are unifiable into a single secure process, as
+long as:
+
+1. We can trace the binaries that were *actually used* in the original
+   bootstrapping event.
+2. We can optionally *choose* to use a different bootstrapping binary, such as
+   an independently-written rustc.
+3. We have a unified well-defined process for both (1) or (2), that applies to
+   all bootstrapped packages (not just rustc). "Well-defined" means that it can
+   be automated by a program, and it can verify that both options result in the
+   same binary outputs (after the stage2 compilation step).
+
+This is otherwise known as Diverse Double-Compilation.
+
+[1] https://github.com/rust-lang/rust/issues/34902
+[2] http://www.dwheeler.com/trusting-trust/
+
+Bootstrapping a new architecture
+================================
+
+Compiling from upstream releases
+--------------------------------
+
+See the previous section, "Bootstrapping a new distro", specifically the part
+about how to "only bootstrap specific architectures".
+
+For Debian, we should be able to support armhf soon:
+
+Complete: armhf https://github.com/rust-lang/rust/issues/35590
+In-progress: ppc64, ppc64el, s390x: https://github.com/rust-lang/rust/issues/36006
+In-progress: mips, mipsel, mips64el: https://github.com/rust-lang/rust/issues/36015
+
+Cross-compiling from Debian packages
+------------------------------------
+
+WARNING: This does not work yet
+
+0. Start with rust installed on an existing platform
+
+1. Build a rust cross-compiler targeting new architecture
+
+    sudo apt-get build-dep --build-profile=nodoc rustc
+    dpkg-buildpackage -t $new_arch
+
+2. Use cross-compiler to build a compiler that runs on new architecture
+
+    dpkg --add-architecture $new_arch
+    sudo apt-get build-dep --host-architecture=$new_arch rustc
+    dpkg-buildpackage -a $new_arch
+
+    # Perhaps this is sufficient ??
+    #apt-get source --compile --host-architecture=$new_arch rustc
+
+ -- Angus Lees <gus@debian.org>, Sun,  1 Feb 2015 16:16:44 +1100

@@ -1,0 +1,54 @@
+Description: Don't download SHA256 if it's already available locally
+ In Debian we provide the stage0 tarballs as a separate component so that the
+ buildds don't need to access the network during the build.
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: not-needed
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/bootstrap/bootstrap.py
+===================================================================
+--- rust.orig/src/bootstrap/bootstrap.py
++++ rust/src/bootstrap/bootstrap.py
+@@ -22,15 +22,17 @@ import tempfile
+ from time import time
+ 
+ 
+-def get(url, path, verbose=False):
++def get(url, path, verbose=False, use_local_hash_if_present=False):
+     sha_url = url + ".sha256"
+     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+         temp_path = temp_file.name
+-    with tempfile.NamedTemporaryFile(suffix=".sha256", delete=False) as sha_file:
+-        sha_path = sha_file.name
++    sha_path = path + ".sha256"
+ 
+     try:
+-        download(sha_path, sha_url, verbose)
++        if use_local_hash_if_present and os.path.exists(sha_path):
++            print("using already-download file " + sha_path)
++        else:
++            download(sha_path, sha_url, verbose)
+         if os.path.exists(path):
+             if verify(path, sha_path, False):
+                 print("using already-download file " + path)
+@@ -44,7 +46,6 @@ def get(url, path, verbose=False):
+         print("moving {} to {}".format(temp_path, path))
+         shutil.move(temp_path, path)
+     finally:
+-        delete_if_present(sha_path)
+         delete_if_present(temp_path)
+ 
+ 
+Index: rust/src/etc/get-stage0.py
+===================================================================
+--- rust.orig/src/etc/get-stage0.py
++++ rust/src/etc/get-stage0.py
+@@ -31,7 +31,7 @@ def main(triple):
+     filename = 'rustc-{}-{}.tar.gz'.format(channel, triple)
+     url = 'https://static.rust-lang.org/dist/{}/{}'.format(date, filename)
+     dst = dl_dir + '/' + filename
+-    bootstrap.get(url, dst)
++    bootstrap.get(url, dst, use_local_hash_if_present=True)
+ 
+     stage0_dst = triple + '/stage0'
+     if os.path.exists(stage0_dst):
