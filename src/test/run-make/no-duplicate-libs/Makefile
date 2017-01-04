@@ -5,8 +5,8 @@ ifdef IS_MSVC
 all:
 else
 all:
-	$(RUSTC) foo.rs
-	$(RUSTC) bar.rs
-	$(RUSTC) main.rs
-	$(call RUN,main)
+#	$(RUSTC) foo.rs
+#	$(RUSTC) bar.rs
+#	$(RUSTC) main.rs
+#	$(call RUN,main)
 endif

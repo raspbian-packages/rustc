@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-test
+
 #[link(name = "foo")]
 #[link(name = "bar")]
 #[link(name = "foo")]
