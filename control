@@ -1,0 +1,174 @@
+Source: rustc
+Section: devel
+Priority: extra
+Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
+Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
+ Luca Bruno <lucab@debian.org>,
+ Sylvestre Ledru <sylvestre@debian.org>,
+ Angus Lees <gus@debian.org>,
+ Ximin Luo <infinity0@debian.org>
+Build-Depends: debhelper (>= 10),
+               dpkg-dev (>= 1.17.14),
+               rustc (>= 1.13.0+dfsg) [!armhf !ppc64 !ppc64el !s390x !mips !mipsel !mips64el] <!pkg.rustc.dlstage0>,
+               rustc (<= 1.14.0++) [!armhf !ppc64 !ppc64el !s390x !mips !mipsel !mips64el] <!pkg.rustc.dlstage0>,
+               autotools-dev,
+               binutils-multiarch,
+               cmake,
+               curl,
+               gperf,
+               libedit-dev,
+               llvm-3.9-dev (>= 1:3.9-5),
+               llvm-3.9-tools (>= 1:3.9-5),
+               python,
+               zlib1g-dev,
+               nodejs <!nocheck>,
+               valgrind <!nocheck>,
+               git <!nocheck>,
+               procps <!nocheck>,
+# the tests require the docs to be built, which requires jquery
+               libjs-jquery <!nocheck>,
+# below are optional tools even for 'make check'
+               antlr4 <!nocheck>,
+               bison <!nocheck>,
+               flex <!nocheck>,
+# temporarily disabled because of https://github.com/rust-lang/rust/issues/36323
+# we should be able to re-enable it soon, it seems already fixed in rustc head + gdb trunk
+#               gdb <!nocheck>,
+               default-jdk-headless <!nocheck>,
+Build-Depends-Indep: libjs-jquery <!nodoc>,
+                     pandoc (>= 1.9),
+                     po4a,
+                     texlive-xetex,
+                     texlive-latex-base,
+                     texlive-generic-recommended,
+                     texlive-fonts-recommended,
+                     lmodern
+Standards-Version: 3.9.8
+Homepage: http://www.rust-lang.org/
+Vcs-Git: https://anonscm.debian.org/git/pkg-rust/rust.git
+Vcs-Browser: https://anonscm.debian.org/cgit/pkg-rust/rust.git
+
+Package: rustc
+Architecture: any
+Multi-Arch: foreign
+Pre-Depends: ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
+ gcc, libc-dev, libjs-jquery, binutils (>= 2.26)
+Recommends: rust-gdb | rust-lldb
+Suggests: rust-doc
+Description: Rust systems programming language
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+
+Package: libstd-rust-1.14
+Section: libs
+Architecture: any
+Multi-Arch: same
+Pre-Depends: multiarch-support, ${misc:Pre-Depends}
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: Rust standard libraries
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains the standard Rust libraries, built as dylibs.
+
+Package: libstd-rust-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Pre-Depends: multiarch-support
+Depends: ${misc:Depends}, libstd-rust-1.14 (= ${binary:Version})
+Description: Rust standard libraries - development files
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains development files necessary to use the standard
+ Rust libraries.
+
+Package: rust-gdb
+Architecture: all
+Depends: gdb, ${misc:Depends}
+Replaces: rustc (<< 1.1.0+dfsg1-1)
+Description: Rust debugger (gdb)
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains pretty printers and a wrapper script for
+ invoking gdb on rust binaries.
+
+Package: rust-lldb
+Architecture: all
+Depends: lldb-3.9, ${misc:Depends}, python-lldb-3.9
+Replaces: rustc (<< 1.1.0+dfsg1-1)
+Description: Rust debugger (lldb)
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains pretty printers and a wrapper script for
+ invoking lldb on rust binaries.
+
+Package: rust-doc
+Section: doc
+Architecture: all
+Build-Profiles: <!nodoc>
+Depends: ${misc:Depends}, libjs-jquery
+Description: Rust systems programming language - Documentation
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains the Rust tutorial, language reference and
+ standard library documentation.

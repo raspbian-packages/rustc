@@ -1,0 +1,2 @@
+rustc source: pre-depends-directly-on-multiarch-support libstd-rust-dev
+rustc source: pre-depends-directly-on-multiarch-support libstd-rust-1.14

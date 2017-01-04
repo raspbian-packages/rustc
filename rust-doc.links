@@ -1,0 +1,5 @@
+# This should eventually become part of a dh_rustdoc program.
+# Something that does e.g.
+# find $(DESTDIR) -name jquery.js -execdir ln -sf -T \
+#	  /usr/share/doc/rust-doc/html/jquery.js '{}' \;
+usr/share/javascript/jquery/jquery.js usr/share/doc/rust-doc/html/jquery.js

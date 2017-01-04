@@ -1,0 +1,21 @@
+# Patches for upstream
+# Ideally we would order these as follows:
+# [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
+u-reproducible-dl-stage0.patch
+u-ignoretest-armhf_02.patch
+u-ignoretest-armhf_03.patch
+u-ignoretest-arm64-stdcall.patch
+u-ignoretest-i386.patch
+u-ignoretest-arm64.patch
+u-ignoretest-jemalloc.patch
+u-detect-mips-cpu.patch
+
+# Debian-specific patches, not suitable for upstream
+d-rust-gdb-paths
+d-rust-lldb-paths
+d-add-soname.patch
+d-dont-download-stage0.patch
+d-fix-configure-for-deb-arches.patch
+d-dynamic-link-llvm.patch
+d-use-system-jquery.patch
+d-fill-in-mips-mk-rules.patch

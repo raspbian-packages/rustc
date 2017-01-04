@@ -1,0 +1,25 @@
+Description: Disable reference.md "Items_and_attributes_14" doctest, hanging on armhf
+ This passes on i386 amd64 arm64
+ .
+ See https://gist.github.com/infinity0/2f5452d4ee9deb2f1bacb8b39c987c9c
+ for thread stacktrace during the hang; eddyb from #rustc suggests this might
+ be an LLVM issue. This might be updated with our newer Debian LLVM versions;
+ we should try to re-enable this test again when we switch on armhf again.
+ still occurs then file a bug upstream.
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: TODO pending enabling armhf in Debian
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/doc/reference.md
+===================================================================
+--- rust.orig/src/doc/reference.md
++++ rust/src/doc/reference.md
+@@ -1106,7 +1106,7 @@ bodies defined in Rust code _can be call
+ in the same way as any other Rust function, except that they have the `extern`
+ modifier.
+ 
+-```
++```{.ignore}
+ // Declares an extern fn, the ABI defaults to "C"
+ extern fn new_i32() -> i32 { 0 }
+ 
