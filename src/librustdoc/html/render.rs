@@ -653,8 +653,16 @@ fn write_shared(cx: &Context,
     // Add all the static files. These may already exist, but we just
     // overwrite them anyway to make sure that they're fresh and up-to-date.
 
-    write(cx.dst.join("jquery.js"),
-          include_bytes!("static/jquery-2.1.4.min.js"))?;
+    {
+        // In Debian, just copy the system jquery instead.
+        // If the file gets installed, we can eventually create something like
+        // dh_rustdoc, similar to dh_sphinxdoc to detect these copies and
+        // convert them into symlinks.
+        let jquery_system_path = "/usr/share/javascript/jquery/jquery.min.js";
+        let jquery = cx.dst.join("jquery.js");
+        let jquery = jquery.as_path();
+        try_err!(fs::copy(jquery_system_path, jquery), &jquery);
+    }
     write(cx.dst.join("main.js"),
           include_bytes!("static/main.js"))?;
     write(cx.dst.join("rustdoc.css"),
