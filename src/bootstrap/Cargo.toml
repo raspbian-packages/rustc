@@ -1,0 +1,31 @@
+[package]
+authors = ["The Rust Project Developers"]
+name = "bootstrap"
+version = "0.0.0"
+
+[lib]
+name = "bootstrap"
+path = "lib.rs"
+
+[[bin]]
+name = "bootstrap"
+path = "bin/main.rs"
+
+[[bin]]
+name = "rustc"
+path = "bin/rustc.rs"
+
+[[bin]]
+name = "rustdoc"
+path = "bin/rustdoc.rs"
+
+[dependencies]
+build_helper = { path = "../build_helper" }
+cmake = "0.1.17"
+filetime = "0.1"
+num_cpus = "0.2"
+toml = "0.1"
+getopts = "0.2"
+rustc-serialize = "0.3"
+gcc = "0.3.38"
+libc = "0.2"
