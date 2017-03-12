@@ -1,0 +1,19 @@
+Description: Set the timestamp of downloaded stage0 files
+ This allows make_orig-dl_tarball.sh to be reproducible
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: TODO
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rustc.git/src/bootstrap/bootstrap.py
+===================================================================
+--- rustc.git.orig/src/bootstrap/bootstrap.py
++++ rustc.git/src/bootstrap/bootstrap.py
+@@ -72,7 +72,7 @@ def download(path, url, probably_big, ve
+             option = "-#"
+         else:
+             option = "-s"
+-        run(["curl", option, "-Sf", "-o", path, url], verbose=verbose)
++        run(["curl", "-R", option, "-Sf", "-o", path, url], verbose=verbose)
+ 
+ 
+ def verify(path, sha_path, verbose):

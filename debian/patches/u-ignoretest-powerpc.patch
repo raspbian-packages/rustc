@@ -1,0 +1,70 @@
+Description: Ignore ASM tests on powerpc
+Author: Erwan Prioul <erwan@linux.vnet.ibm.com>
+Applied-Upstream: commit:1572bf104dbf65d58bd6b889fa46229c9b92d6f9
+
+diff -Naur a/src/test/compile-fail/asm-bad-clobber.rs b/src/test/compile-fail/asm-bad-clobber.rs
+--- a/src/test/compile-fail/asm-bad-clobber.rs	2017-02-17 10:21:15.192001150 +0000
++++ b/src/test/compile-fail/asm-bad-clobber.rs	2017-02-20 10:53:33.355996252 +0000
+@@ -12,6 +12,7 @@
+ // ignore-arm
+ // ignore-aarch64
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm, rustc_attrs)]
+ 
+diff -Naur a/src/test/compile-fail/asm-in-bad-modifier.rs b/src/test/compile-fail/asm-in-bad-modifier.rs
+--- a/src/test/compile-fail/asm-in-bad-modifier.rs	2017-02-17 10:21:15.040001150 +0000
++++ b/src/test/compile-fail/asm-in-bad-modifier.rs	2017-02-20 10:53:55.139999754 +0000
+@@ -9,6 +9,7 @@
+ // except according to those terms.
+ 
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm)]
+ 
+diff -Naur a/src/test/compile-fail/asm-misplaced-option.rs b/src/test/compile-fail/asm-misplaced-option.rs
+--- a/src/test/compile-fail/asm-misplaced-option.rs	2017-02-17 10:21:16.120001149 +0000
++++ b/src/test/compile-fail/asm-misplaced-option.rs	2017-02-20 10:54:33.619839143 +0000
+@@ -12,6 +12,7 @@
+ // ignore-arm
+ // ignore-aarch64
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm, rustc_attrs)]
+ 
+diff -Naur a/src/test/compile-fail/asm-out-assign-imm.rs b/src/test/compile-fail/asm-out-assign-imm.rs
+--- a/src/test/compile-fail/asm-out-assign-imm.rs	2017-02-17 10:21:14.804001149 +0000
++++ b/src/test/compile-fail/asm-out-assign-imm.rs	2017-02-20 10:55:26.796023677 +0000
+@@ -9,6 +9,7 @@
+ // except according to those terms.
+ 
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm)]
+ 
+diff -Naur a/src/test/compile-fail/asm-out-no-modifier.rs b/src/test/compile-fail/asm-out-no-modifier.rs
+--- a/src/test/compile-fail/asm-out-no-modifier.rs	2017-02-17 10:21:12.548001149 +0000
++++ b/src/test/compile-fail/asm-out-no-modifier.rs	2017-02-20 10:55:37.908025746 +0000
+@@ -9,6 +9,7 @@
+ // except according to those terms.
+ 
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm)]
+ 
+diff -Naur a/src/test/compile-fail/asm-out-read-uninit.rs b/src/test/compile-fail/asm-out-read-uninit.rs
+--- a/src/test/compile-fail/asm-out-read-uninit.rs	2017-02-17 10:21:12.968001149 +0000
++++ b/src/test/compile-fail/asm-out-read-uninit.rs	2017-02-20 10:55:49.260001428 +0000
+@@ -9,6 +9,7 @@
+ // except according to those terms.
+ 
+ // ignore-s390x
++// ignore-powerpc
+ 
+ #![feature(asm)]
+ 
