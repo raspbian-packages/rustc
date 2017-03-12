@@ -1,0 +1,16 @@
+# "libstd" just seemed too generic
+libstd-rust-1.15 binary: package-name-doesnt-match-sonames
+
+# Rust doesn't use dev shlib symlinks nor any of the other shlib support stuff
+libstd-rust-1.15 binary: dev-pkg-without-shlib-symlink
+libstd-rust-1.15 binary: shlib-without-versioned-soname
+libstd-rust-1.15 binary: pkg-has-shlibs-control-file-but-no-actual-shared-libs
+libstd-rust-1.15 binary: package-must-activate-ldconfig-trigger
+
+# Libraries that use libc symbols (libterm, libstd, etc) *are* linked
+# to libc.  Lintian gets upset that some Rust libraries don't need
+# libc, boo hoo.
+libstd-rust-1.15 binary: library-not-linked-against-libc
+
+# We need it for now
+binary-or-shlib-defines-rpath usr/lib/*/lib*so /usr/lib/rustlib/*lib
