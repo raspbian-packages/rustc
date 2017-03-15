@@ -1,0 +1,3 @@
+# We need it for now
+binary-or-shlib-defines-rpath usr/bin/rustc /usr/lib/rustlib/*/lib
+binary-or-shlib-defines-rpath usr/bin/rustdoc /usr/lib/rustlib/*/lib
