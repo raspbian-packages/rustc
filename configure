@@ -514,8 +514,19 @@ case $CFG_CPUTYPE in
         ;;
 
     armv7l | armv8l)
-        CFG_CPUTYPE=armv7
-        CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+        case $DEB_HOST_ARCH in
+        armhf)
+            CFG_CPUTYPE=armv7
+            CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+           ;;
+        armel)
+            CFG_CPUTYPE=arm
+            CFG_OSTYPE="${CFG_OSTYPE}eabi"
+           ;;
+        *)
+            err "unknown DEB_HOST_ARCH $DEB_HOST_ARCH for armv7l/armv8l cpu"
+            ;;
+        esac
         ;;
 
     aarch64)
