@@ -1,0 +1,8 @@
+error: `Self` type is used before it's determined
+  --> $DIR/issue-23305.rs:15:12
+   |
+15 | impl ToNbt<Self> {}
+   |            ^^^^
+
+error: aborting due to previous error
+
