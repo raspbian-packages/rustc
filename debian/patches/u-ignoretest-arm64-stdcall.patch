@@ -1,0 +1,21 @@
+Description: Ignore failing stdcall test on arm64
+ Disable test that fails on Debian; "stdcall" is a win32 calling convention and
+ not supposed to work here anyway.
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/issues/36348
+Bug-Debian: http://bugs.debian.org/cgi-bin/bugreport.cgi?bug=837533
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/test/debuginfo/type-names.rs
+===================================================================
+--- rust.orig/src/test/debuginfo/type-names.rs
++++ rust/src/test/debuginfo/type-names.rs
+@@ -363,7 +363,7 @@ fn main() {
+     let rust_fn_with_return_value = (rust_fn_with_return_value, 0_usize);
+     let extern_c_fn_with_return_value = (extern_c_fn_with_return_value, 0_usize);
+     let unsafe_fn_with_return_value = (unsafe_fn_with_return_value, 0_usize);
+-    let extern_stdcall_fn_with_return_value = (extern_stdcall_fn_with_return_value, 0_usize);
++//    let extern_stdcall_fn_with_return_value = (extern_stdcall_fn_with_return_value, 0_usize);
+ 
+     let generic_function_int = (generic_function::<isize>, 0_usize);
+     let generic_function_struct3 = (generic_function::<mod1::mod2::Struct3>, 0_usize);

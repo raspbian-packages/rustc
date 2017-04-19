@@ -1,0 +1,12 @@
+Index: rust/src/test/run-pass-valgrind/down-with-thread-dtors.rs
+===================================================================
+--- rust.orig/src/test/run-pass-valgrind/down-with-thread-dtors.rs
++++ rust/src/test/run-pass-valgrind/down-with-thread-dtors.rs
+@@ -8,6 +8,7 @@
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+ 
++// ignore-aarch64
+ // no-prefer-dynamic
+ // ignore-emscripten
+ 

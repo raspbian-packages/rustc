@@ -1,0 +1,194 @@
+diff --git a/src/bootstrap/compile.rs b/src/bootstrap/compile.rs
+index 04d01759a..90f3ae956 100644
+--- a/src/bootstrap/compile.rs
++++ b/src/bootstrap/compile.rs
+@@ -187,7 +187,7 @@ pub fn rustc<'a>(build: &'a Build, target: &str, compiler: &Compiler<'a>) {
+     cargo.env("CFG_RELEASE", &build.release)
+          .env("CFG_RELEASE_CHANNEL", &build.config.channel)
+          .env("CFG_VERSION", &build.version)
+-         .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or(String::new()))
++         .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or(PathBuf::new()))
+          .env("CFG_LIBDIR_RELATIVE", "lib");
+ 
+     // If we're not building a compiler with debugging information then remove
+diff --git a/src/bootstrap/config.rs b/src/bootstrap/config.rs
+index 1f67b52db..e90d7ed24 100644
+--- a/src/bootstrap/config.rs
++++ b/src/bootstrap/config.rs
+@@ -85,10 +85,10 @@ pub struct Config {
+     pub quiet_tests: bool,
+     // Fallback musl-root for all targets
+     pub musl_root: Option<PathBuf>,
+-    pub prefix: Option<String>,
+-    pub docdir: Option<String>,
+-    pub libdir: Option<String>,
+-    pub mandir: Option<String>,
++    pub prefix: Option<PathBuf>,
++    pub docdir: Option<PathBuf>,
++    pub libdir: Option<PathBuf>,
++    pub mandir: Option<PathBuf>,
+     pub codegen_tests: bool,
+     pub nodejs: Option<PathBuf>,
+     pub gdb: Option<PathBuf>,
+@@ -114,6 +114,7 @@ pub struct Target {
+ #[derive(RustcDecodable, Default)]
+ struct TomlConfig {
+     build: Option<Build>,
++    install: Option<Install>,
+     llvm: Option<Llvm>,
+     rust: Option<Rust>,
+     target: Option<HashMap<String, TomlTarget>>,
+@@ -136,6 +137,15 @@ struct Build {
+     python: Option<String>,
+ }
+ 
++/// TOML representation of various global install decisions.
++#[derive(RustcDecodable, Default, Clone)]
++struct Install {
++    prefix: Option<String>,
++    mandir: Option<String>,
++    docdir: Option<String>,
++    libdir: Option<String>,
++}
++
+ /// TOML representation of how the LLVM build is configured.
+ #[derive(RustcDecodable, Default)]
+ struct Llvm {
+@@ -260,6 +270,13 @@ impl Config {
+         set(&mut config.submodules, build.submodules);
+         set(&mut config.vendor, build.vendor);
+ 
++        if let Some(ref install) = toml.install {
++            config.prefix = install.prefix.clone().map(PathBuf::from);
++            config.mandir = install.mandir.clone().map(PathBuf::from);
++            config.docdir = install.docdir.clone().map(PathBuf::from);
++            config.libdir = install.libdir.clone().map(PathBuf::from);
++        }
++
+         if let Some(ref llvm) = toml.llvm {
+             match llvm.ccache {
+                 Some(StringOrBool::String(ref s)) => {
+@@ -277,6 +294,7 @@ impl Config {
+             set(&mut config.llvm_version_check, llvm.version_check);
+             set(&mut config.llvm_static_stdcpp, llvm.static_libstdcpp);
+         }
++
+         if let Some(ref rust) = toml.rust {
+             set(&mut config.rust_debug_assertions, rust.debug_assertions);
+             set(&mut config.rust_debuginfo, rust.debuginfo);
+@@ -443,16 +461,16 @@ impl Config {
+                     self.channel = value.to_string();
+                 }
+                 "CFG_PREFIX" => {
+-                    self.prefix = Some(value.to_string());
++                    self.prefix = Some(PathBuf::from(value));
+                 }
+                 "CFG_DOCDIR" => {
+-                    self.docdir = Some(value.to_string());
++                    self.docdir = Some(PathBuf::from(value));
+                 }
+                 "CFG_LIBDIR" => {
+-                    self.libdir = Some(value.to_string());
++                    self.libdir = Some(PathBuf::from(value));
+                 }
+                 "CFG_MANDIR" => {
+-                    self.mandir = Some(value.to_string());
++                    self.mandir = Some(PathBuf::from(value));
+                 }
+                 "CFG_LLVM_ROOT" if value.len() > 0 => {
+                     let target = self.target_config.entry(self.build.clone())
+diff --git a/src/bootstrap/config.toml.example b/src/bootstrap/config.toml.example
+index 22542f873..b22d68ea2 100644
+--- a/src/bootstrap/config.toml.example
++++ b/src/bootstrap/config.toml.example
+@@ -72,6 +72,9 @@
+ # specified, use this rustc binary instead as the stage0 snapshot compiler.
+ #rustc = "/path/to/bin/rustc"
+ 
++# Instead of installing installing to /usr/local, install to this path instead.
++#prefix = "/path/to/install"
++
+ # Flag to specify whether any documentation is built. If false, rustdoc and
+ # friends will still be compiled but they will not be used to generate any
+ # documentation.
+diff --git a/src/bootstrap/install.rs b/src/bootstrap/install.rs
+index 9bc5a7c00..efc460f35 100644
+--- a/src/bootstrap/install.rs
++++ b/src/bootstrap/install.rs
+@@ -13,9 +13,9 @@
+ //! This module is responsible for installing the standard library,
+ //! compiler, and documentation.
+ 
++use std::env;
+ use std::fs;
+-use std::borrow::Cow;
+-use std::path::Path;
++use std::path::{Path, PathBuf, Component};
+ use std::process::Command;
+ 
+ use Build;
+@@ -23,23 +23,35 @@ use dist::{package_vers, sanitize_sh, tmpdir};
+ 
+ /// Installs everything.
+ pub fn install(build: &Build, stage: u32, host: &str) {
+-    let prefix = build.config.prefix.as_ref().clone().map(|x| Path::new(x))
+-        .unwrap_or(Path::new("/usr/local"));
+-    let docdir = build.config.docdir.as_ref().clone().map(|x| Cow::Borrowed(Path::new(x)))
+-        .unwrap_or(Cow::Owned(prefix.join("share/doc/rust")));
+-    let libdir = build.config.libdir.as_ref().clone().map(|x| Cow::Borrowed(Path::new(x)))
+-        .unwrap_or(Cow::Owned(prefix.join("lib")));
+-    let mandir = build.config.mandir.as_ref().clone().map(|x| Cow::Borrowed(Path::new(x)))
+-        .unwrap_or(Cow::Owned(prefix.join("share/man")));
++    let prefix_default = PathBuf::from("/usr/local");
++    let docdir_default = PathBuf::from("share/doc/rust");
++    let mandir_default = PathBuf::from("share/man");
++    let libdir_default = PathBuf::from("lib");
++    let prefix = build.config.prefix.as_ref().unwrap_or(&prefix_default);
++    let docdir = build.config.docdir.as_ref().unwrap_or(&docdir_default);
++    let libdir = build.config.libdir.as_ref().unwrap_or(&libdir_default);
++    let mandir = build.config.mandir.as_ref().unwrap_or(&mandir_default);
++
++    let docdir = prefix.join(docdir);
++    let libdir = prefix.join(libdir);
++    let mandir = prefix.join(mandir);
++
++    let destdir = env::var_os("DESTDIR").map(PathBuf::from);
++
++    let prefix = add_destdir(&prefix, &destdir);
++    let docdir = add_destdir(&docdir, &destdir);
++    let libdir = add_destdir(&libdir, &destdir);
++    let mandir = add_destdir(&mandir, &destdir);
++
+     let empty_dir = build.out.join("tmp/empty_dir");
+     t!(fs::create_dir_all(&empty_dir));
+     if build.config.docs {
+-        install_sh(&build, "docs", "rust-docs", stage, host, prefix,
++        install_sh(&build, "docs", "rust-docs", stage, host, &prefix,
+                    &docdir, &libdir, &mandir, &empty_dir);
+     }
+-    install_sh(&build, "std", "rust-std", stage, host, prefix,
++    install_sh(&build, "std", "rust-std", stage, host, &prefix,
+                &docdir, &libdir, &mandir, &empty_dir);
+-    install_sh(&build, "rustc", "rustc", stage, host, prefix,
++    install_sh(&build, "rustc", "rustc", stage, host, &prefix,
+                &docdir, &libdir, &mandir, &empty_dir);
+     t!(fs::remove_dir_all(&empty_dir));
+ }
+@@ -59,3 +71,17 @@ fn install_sh(build: &Build, package: &str, name: &str, stage: u32, host: &str,
+        .arg("--disable-ldconfig");
+     build.run(&mut cmd);
+ }
++
++fn add_destdir(path: &Path, destdir: &Option<PathBuf>) -> PathBuf {
++    let mut ret = match *destdir {
++        Some(ref dest) => dest.clone(),
++        None => return path.to_path_buf(),
++    };
++    for part in path.components() {
++        match part {
++            Component::Normal(s) => ret.push(s),
++            _ => {}
++        }
++    }
++    return ret
++}
