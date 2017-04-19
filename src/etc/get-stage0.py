@@ -31,7 +31,7 @@ def main(triple):
     filename = 'rustc-{}-{}.tar.gz'.format(channel, triple)
     url = 'https://static.rust-lang.org/dist/{}/{}'.format(date, filename)
     dst = dl_dir + '/' + filename
-    bootstrap.get(url, dst)
+    bootstrap.get(url, dst, use_local_hash_if_present=True)
 
     stage0_dst = triple + '/stage0'
     if os.path.exists(stage0_dst):
