@@ -363,7 +363,7 @@ fn main() {
     let rust_fn_with_return_value = (rust_fn_with_return_value, 0_usize);
     let extern_c_fn_with_return_value = (extern_c_fn_with_return_value, 0_usize);
     let unsafe_fn_with_return_value = (unsafe_fn_with_return_value, 0_usize);
-    let extern_stdcall_fn_with_return_value = (extern_stdcall_fn_with_return_value, 0_usize);
+//    let extern_stdcall_fn_with_return_value = (extern_stdcall_fn_with_return_value, 0_usize);
 
     let generic_function_int = (generic_function::<isize>, 0_usize);
     let generic_function_struct3 = (generic_function::<mod1::mod2::Struct3>, 0_usize);
