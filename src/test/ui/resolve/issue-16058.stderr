@@ -1,0 +1,13 @@
+error[E0574]: expected struct, variant or union type, found enum `Result`
+  --> $DIR/issue-16058.rs:19:9
+   |
+19 |         Result {
+   |         ^^^^^^ not a struct, variant or union type
+   |
+   = help: possible better candidates are found in other modules, you can import them into scope:
+             `use std::fmt::Result;`
+             `use std::io::Result;`
+             `use std::thread::Result;`
+
+error: aborting due to previous error
+
