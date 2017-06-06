@@ -58,6 +58,29 @@ impl fmt::Display for TestKind {
     }
 }
 
+fn try_run(build: &Build, cmd: &mut Command) {
+    if build.flags.cmd.no_fail_fast() {
+        if !build.try_run(cmd) {
+            let failures = build.delayed_failures.get();
+            build.delayed_failures.set(failures + 1);
+        }
+    } else {
+        build.run(cmd);
+    }
+}
+
+#[allow(unused)]
+fn try_run_quiet(build: &Build, cmd: &mut Command) {
+    if build.flags.cmd.no_fail_fast() {
+        if !build.try_run_quiet(cmd) {
+            let failures = build.delayed_failures.get();
+            build.delayed_failures.set(failures + 1);
+        }
+    } else {
+        build.run_quiet(cmd);
+    }
+}
+
 /// Runs the `linkchecker` tool as compiled in `stage` by the `host` compiler.
 ///
 /// This tool in `src/tools` will verify the validity of all our links in the
@@ -67,8 +90,8 @@ pub fn linkcheck(build: &Build, host: &str) {
     let compiler = Compiler::new(0, host);
 
     let _time = util::timeit();
-    build.run(build.tool_cmd(&compiler, "linkchecker")
-                   .arg(build.out.join(host).join("doc")));
+    try_run(build, build.tool_cmd(&compiler, "linkchecker")
+                        .arg(build.out.join(host).join("doc")));
 }
 
 /// Runs the `cargotest` tool as compiled in `stage` by the `host` compiler.
@@ -95,9 +118,9 @@ pub fn cargotest(build: &Build, stage: u32, host: &str) {
     let _time = util::timeit();
     let mut cmd = Command::new(build.tool(&Compiler::new(0, host), "cargotest"));
     build.prepare_tool_cmd(compiler, &mut cmd);
-    build.run(cmd.env("PATH", newpath)
-                 .arg(&build.cargo)
-                 .arg(&out_dir));
+    try_run(build, cmd.env("PATH", newpath)
+                      .arg(&build.cargo)
+                      .arg(&out_dir));
 }
 
 /// Runs the `tidy` tool as compiled in `stage` by the `host` compiler.
@@ -113,7 +136,7 @@ pub fn tidy(build: &Build, host: &str) {
     if !build.config.vendor {
         cmd.arg("--no-vendor");
     }
-    build.run(&mut cmd);
+    try_run(build, &mut cmd);
 }
 
 fn testdir(build: &Build, host: &str) -> PathBuf {
@@ -261,7 +284,7 @@ pub fn compiletest(build: &Build,
     }
 
     let _time = util::timeit();
-    build.run(&mut cmd);
+    try_run(build, &mut cmd);
 }
 
 /// Run `rustdoc --test` for all documentation in `src/doc`.
@@ -337,7 +360,7 @@ fn markdown_test(build: &Build, compiler: &Compiler, markdown: &Path) {
     }
     cmd.arg("--test-args").arg(test_args);
 
-    build.run(&mut cmd);
+    try_run(build, &mut cmd);
 }
 
 /// Run all unit tests plus documentation tests for an entire crate DAG defined
@@ -388,6 +411,9 @@ pub fn krate(build: &Build,
     cargo.arg("--manifest-path")
          .arg(build.src.join(path).join("Cargo.toml"))
          .arg("--features").arg(features);
+    if test_kind.subcommand() == "test" && build.flags.cmd.no_fail_fast() {
+        cargo.arg("--no-fail-fast");
+    }
 
     match krate {
         Some(krate) => {
@@ -452,7 +478,7 @@ pub fn krate(build: &Build,
         krate_qemu(build, &compiler, target, mode);
     } else {
         cargo.args(&build.flags.cmd.test_args());
-        build.run(&mut cargo);
+        try_run(build, &mut cargo);
     }
 }
 
@@ -521,7 +547,7 @@ fn krate_emscripten(build: &Build,
         if build.config.quiet_tests {
             cmd.arg("--quiet");
         }
-        build.run(&mut cmd);
+        try_run(build, &mut cmd);
     }
 }
 
@@ -544,7 +570,7 @@ fn krate_qemu(build: &Build,
             cmd.arg("--quiet");
         }
         cmd.args(&build.flags.cmd.test_args());
-        build.run(&mut cmd);
+        try_run(build, &mut cmd);
     }
 }
 
@@ -671,6 +697,9 @@ pub fn bootstrap(build: &Build) {
        .current_dir(build.src.join("src/bootstrap"))
        .env("CARGO_TARGET_DIR", build.out.join("bootstrap"))
        .env("RUSTC", &build.rustc);
+    if build.flags.cmd.no_fail_fast() {
+        cmd.arg("--no-fail-fast");
+    }
     cmd.arg("--").args(&build.flags.cmd.test_args());
-    build.run(&mut cmd);
+    try_run(build, &mut cmd);
 }

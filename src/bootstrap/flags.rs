@@ -61,6 +61,7 @@ pub enum Subcommand {
     Test {
         paths: Vec<PathBuf>,
         test_args: Vec<String>,
+        no_fail_fast: bool,
     },
     Bench {
         paths: Vec<PathBuf>,
@@ -137,7 +138,10 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`");
 
         // Some subcommands get extra options
         match subcommand.as_str() {
-            "test"  => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
+            "test"  => {
+                opts.optflag("", "no-fail-fast", "Run all tests regardless of failure");
+                opts.optmulti("", "test-args", "extra arguments", "ARGS");
+            },
             "bench" => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
             "dist"  => { opts.optflag("", "install", "run installer as well"); },
             _ => { },
@@ -260,6 +264,7 @@ Arguments:
                 Subcommand::Test {
                     paths: paths,
                     test_args: matches.opt_strs("test-args"),
+                    no_fail_fast: matches.opt_present("no-fail-fast"),
                 }
             }
             "bench" => {
@@ -333,6 +338,13 @@ impl Subcommand {
                 test_args.iter().flat_map(|s| s.split_whitespace()).collect()
             }
             _ => Vec::new(),
+        }
+    }
+
+    pub fn no_fail_fast(&self) -> bool {
+        match *self {
+            Subcommand::Test { no_fail_fast, .. } => no_fail_fast,
+            _ => false,
         }
     }
 }
