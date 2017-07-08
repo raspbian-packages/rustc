@@ -1,0 +1,25 @@
+Later:
+
+ * Try to investigate the 1 hour vs 7 hour build time difference we saw between
+   git diff debian/1.13.0+dfsg1-2..debian/1.14.0+dfsg1-1 -- debian
+
+<eddyb> infinity0: LLVM [in Rust]?
+<eddyb> infinity0: ./configure --enable-debug has this annoying detail that nobody has fixed yet, that it disabled optimizations
+<eddyb> so you always have to add --enable-optimize or something like that to counteract the negative effect
+<eddyb> unoptimized rustc is *very* slow, in fact it's my sole guess for 7 hours, assuming you didn't just simply lose 8x parallelism or something
+
+<eddyb> infinity0: -Z time-passes between two different compilers, on the same test, would also be pretty revealing
+<eddyb> infinity0: also try timing the entire compile-fail test run between stage1/bin/rustc and stage2/bin/rustc (the latter is what running tests uses by default)
+<eddyb> infinity0: in the old thing [pre-rustbuild makefiles] it's... make check-stage1-cfail, I think
+
+Older backlog:
+
+ * Use Compiler-rt package
+ * Improve the bootstrap (do the local build first on our systems, upload
+   to Debian and use the packages)
+ * Port on other archs
+ * Create a runtime package (rust-runtime)
+ * Move the runtime library into a public directory
+ * Package the various editors plugins (emacs, kate & vim)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 20 Jan 2015 08:50:28 +0100

@@ -1,0 +1,31 @@
+Description: Support armhf running on a 64-bit kernel
+Author: Matthias Klose <doko@debian.org>
+Applied-Upstream: commit:0a55c8e659f0fc540b740101f7a02ab28e300aa4
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/configure
+===================================================================
+--- rust.orig/configure
++++ rust/configure
+@@ -513,7 +513,7 @@ case $CFG_CPUTYPE in
+         CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+         ;;
+ 
+-    armv7l)
++    armv7l | armv8l)
+         CFG_CPUTYPE=armv7
+         CFG_OSTYPE="${CFG_OSTYPE}eabihf"
+         ;;
+Index: rust/src/bootstrap/bootstrap.py
+===================================================================
+--- rust.orig/src/bootstrap/bootstrap.py
++++ rust/src/bootstrap/bootstrap.py
+@@ -374,7 +374,7 @@ class RustBuild(object):
+             cputype = 'i686'
+         elif cputype in {'xscale', 'arm'}:
+             cputype = 'arm'
+-        elif cputype == 'armv7l':
++        elif cputype in {'armv7l', 'armv8l'}:
+             cputype = 'arm'
+             ostype += 'eabihf'
+         elif cputype == 'aarch64':
