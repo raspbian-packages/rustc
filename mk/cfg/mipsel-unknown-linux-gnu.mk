@@ -1,7 +1,7 @@
 # mipsel-unknown-linux-gnu configuration
 CC_mipsel-unknown-linux-gnu=mipsel-linux-gnu-gcc
 CXX_mipsel-unknown-linux-gnu=mipsel-linux-gnu-g++
-CPP_mipsel-unknown-linux-gnu=mipsel-linux-gnu-gcc
+CPP_mipsel-unknown-linux-gnu=mipsel-linux-gnu-gcc -E
 AR_mipsel-unknown-linux-gnu=mipsel-linux-gnu-ar
 CFG_LIB_NAME_mipsel-unknown-linux-gnu=lib$(1).so
 CFG_STATIC_LIB_NAME_mipsel-unknown-linux-gnu=lib$(1).a
@@ -18,7 +18,7 @@ CFG_EXE_SUFFIX_mipsel-unknown-linux-gnu :=
 CFG_WINDOWSY_mipsel-unknown-linux-gnu :=
 CFG_UNIXY_mipsel-unknown-linux-gnu := 1
 CFG_LDPATH_mipsel-unknown-linux-gnu :=
-CFG_RUN_mipsel-unknown-linux-gnu=
-CFG_RUN_TARG_mipsel-unknown-linux-gnu=
+CFG_RUN_mipsel-unknown-linux-gnu=$(2)
+CFG_RUN_TARG_mipsel-unknown-linux-gnu=$(call CFG_RUN_mipsel-unknown-linux-gnu,,$(2))
 RUSTC_FLAGS_mipsel-unknown-linux-gnu :=
 CFG_GNU_TRIPLE_mipsel-unknown-linux-gnu := mipsel-unknown-linux-gnu
