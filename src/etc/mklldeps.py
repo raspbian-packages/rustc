@@ -56,38 +56,13 @@ def runErr(args):
 
 f.write("\n")
 
-args = [llvm_config, '--shared-mode']
-args.extend(components)
-llvm_shared, out = runErr(args)
-if llvm_shared:
-    llvm_shared = 'shared' in out
+llvm_shared = True
 
 # LLVM libs
-args = [llvm_config, '--libs', '--system-libs']
-args.extend(components)
-out = run(args)
-for lib in out.strip().replace("\n", ' ').split(' '):
-    if len(lib) == 0:
-        continue
-    # in some cases we get extra spaces in between libs so ignore those
-    if len(lib) == 1 and lib == ' ':
-        continue
-    # not all libs strictly follow -lfoo, on Bitrig, there is -pthread
-    if lib[0:2] == '-l':
-        lib = lib.strip()[2:]
-    elif lib[0] == '-':
-        lib = lib.strip()[1:]
-    # If this actually points at a literal file then we're on MSVC which now
-    # prints full paths, so get just the name of the library and strip off the
-    # trailing ".lib"
-    elif os.path.exists(lib):
-        lib = os.path.basename(lib)[:-4]
-    elif lib[-4:] == '.lib':
-        lib = lib[:-4]
-    f.write("#[link(name = \"" + lib + "\"")
-    if not llvm_shared and 'LLVM' in lib:
-        f.write(", kind = \"static\"")
-    f.write(")]\n")
+# Link in Debian full LLVM shared library.
+# FIXME: not sure what to do in the cross-compiling case.
+f.write("#[link(name = \"LLVM-3.9\")]\n")
+
 
 # LLVM ldflags
 out = run([llvm_config, '--ldflags'])
