@@ -17,6 +17,7 @@
 #![feature(libc)]
 
 #![deny(warnings)]
+#![allow(stable_features)] // needed to compile the tests with both 1.16 and 1.17
 
 extern crate libc;
 extern crate test;
