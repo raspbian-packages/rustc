@@ -1,0 +1,48 @@
+Description: FIN: disable backtrace printing for panic-runtime/abort* on ARM
+ On Debian we run tests with RUST_BACKTRACE=1, triggering the underlying bug.
+Author: Tim Neumann <mail@timnn.me>
+Date:   Sun Apr 2 11:24:22 2017 +0200
+Bug: https://github.com/rust-lang/rust/issues/41004
+Applied-Upstream: commit:a146431e4c8095a3d809517c8abc6b886d5c5b07
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/test/run-pass/panic-runtime/abort-link-to-unwinding-crates.rs
++++ b/src/test/run-pass/panic-runtime/abort-link-to-unwinding-crates.rs
+@@ -27,7 +27,17 @@
+             exit_success_if_unwind::bar(do_panic);
+         }
+     }
+-    let s = Command::new(env::args_os().next().unwrap()).arg("foo").status();
++
++    let mut cmd = Command::new(env::args_os().next().unwrap());
++    cmd.arg("foo");
++
++
++    // ARMv6 hanges while printing the backtrace, see #41004
++    if cfg!(target_arch = "arm") && cfg!(target_env = "gnu") {
++        cmd.env("RUST_BACKTRACE", "0");
++    }
++
++    let s = cmd.status();
+     assert!(s.unwrap().code() != Some(0));
+ }
+ 
+--- a/src/test/run-pass/panic-runtime/abort.rs
++++ b/src/test/run-pass/panic-runtime/abort.rs
+@@ -35,6 +35,15 @@
+             panic!("try to catch me");
+         }
+     }
+-    let s = Command::new(env::args_os().next().unwrap()).arg("foo").status();
++
++    let mut cmd = Command::new(env::args_os().next().unwrap());
++    cmd.arg("foo");
++
++    // ARMv6 hanges while printing the backtrace, see #41004
++    if cfg!(target_arch = "arm") && cfg!(target_env = "gnu") {
++        cmd.env("RUST_BACKTRACE", "0");
++    }
++
++    let s = cmd.status();
+     assert!(s.unwrap().code() != Some(0));
+ }

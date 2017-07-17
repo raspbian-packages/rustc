@@ -1,0 +1,113 @@
+Description: Dynamically link with Debian's LLVM
+ Hard-code -lLLVM, instead of using llvm-config to figure out which components
+ to link in. The latter doesn't work properly anyway for dynamic linking - see
+ LLVM bug #3201. If/when this is fixed, then Rust upstream will probably fix
+ their code to allow for this, and after that happens we can rm this patch.
+ .
+ TODO: not sure if we need extra tweaks for cross-compiling
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: not-needed
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/librustc_llvm/build.rs
+===================================================================
+--- rust.orig/src/librustc_llvm/build.rs
++++ rust/src/librustc_llvm/build.rs
+@@ -17,35 +17,6 @@ use std::path::{PathBuf, Path};
+ 
+ use build_helper::output;
+ 
+-fn detect_llvm_link(llvm_config: &Path) -> (&'static str, Option<&'static str>) {
+-    let mut version_cmd = Command::new(llvm_config);
+-    version_cmd.arg("--version");
+-    let version_output = output(&mut version_cmd);
+-    let mut parts = version_output.split('.').take(2)
+-        .filter_map(|s| s.parse::<u32>().ok());
+-    if let (Some(major), Some(minor)) = (parts.next(), parts.next()) {
+-        if major > 3 || (major == 3 && minor >= 9) {
+-            // Force the link mode we want, preferring static by default, but
+-            // possibly overridden by `configure --enable-llvm-link-shared`.
+-            if env::var_os("LLVM_LINK_SHARED").is_some() {
+-                return ("dylib", Some("--link-shared"));
+-            } else {
+-                return ("static", Some("--link-static"));
+-            }
+-        } else if major == 3 && minor == 8 {
+-            // Find out LLVM's default linking mode.
+-            let mut mode_cmd = Command::new(llvm_config);
+-            mode_cmd.arg("--shared-mode");
+-            if output(&mut mode_cmd).trim() == "shared" {
+-                return ("dylib", None);
+-            } else {
+-                return ("static", None);
+-            }
+-        }
+-    }
+-    ("static", None)
+-}
+-
+ fn main() {
+     let target = env::var("TARGET").expect("TARGET was not set");
+     let llvm_config = env::var_os("LLVM_CONFIG")
+@@ -152,57 +123,10 @@ fn main() {
+        .cpp_link_stdlib(None) // we handle this below
+        .compile("librustllvm.a");
+ 
+-    let (llvm_kind, llvm_link_arg) = detect_llvm_link(&llvm_config);
+-
+-    // Link in all LLVM libraries, if we're uwring the "wrong" llvm-config then
+-    // we don't pick up system libs because unfortunately they're for the host
+-    // of llvm-config, not the target that we're attempting to link.
+-    let mut cmd = Command::new(&llvm_config);
+-    cmd.arg("--libs");
+-
+-    if let Some(link_arg) = llvm_link_arg {
+-        cmd.arg(link_arg);
+-    }
+-
+-    if !is_crossed {
+-        cmd.arg("--system-libs");
+-    }
+-    cmd.args(&components[..]);
+-
+-    for lib in output(&mut cmd).split_whitespace() {
+-        let name = if lib.starts_with("-l") {
+-            &lib[2..]
+-        } else if lib.starts_with("-") {
+-            &lib[1..]
+-        } else if Path::new(lib).exists() {
+-            // On MSVC llvm-config will print the full name to libraries, but
+-            // we're only interested in the name part
+-            let name = Path::new(lib).file_name().unwrap().to_str().unwrap();
+-            name.trim_right_matches(".lib")
+-        } else if lib.ends_with(".lib") {
+-            // Some MSVC libraries just come up with `.lib` tacked on, so chop
+-            // that off
+-            lib.trim_right_matches(".lib")
+-        } else {
+-            continue;
+-        };
+-
+-        // Don't need or want this library, but LLVM's CMake build system
+-        // doesn't provide a way to disable it, so filter it here even though we
+-        // may or may not have built it. We don't reference anything from this
+-        // library and it otherwise may just pull in extra dependencies on
+-        // libedit which we don't want
+-        if name == "LLVMLineEditor" {
+-            continue;
+-        }
+-
+-        let kind = if name.starts_with("LLVM") {
+-            llvm_kind
+-        } else {
+-            "dylib"
+-        };
+-        println!("cargo:rustc-link-lib={}={}", kind, name);
+-    }
++    // Link in all LLVM libraries
++    // Link in Debian full LLVM shared library.
++    // FIXME: not sure what to do in the cross-compiling case.
++    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
+ 
+     // LLVM ldflags
+     //

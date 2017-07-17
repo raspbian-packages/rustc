@@ -1,0 +1,11 @@
+# from src/bootstrap/dist.rs:370 onwards
+COPYRIGHT       usr/src/rust
+LICENSE-APACHE  usr/src/rust
+LICENSE-MIT     usr/src/rust
+CONTRIBUTING.md usr/src/rust
+README.md       usr/src/rust
+RELEASES.md     usr/src/rust
+configure       usr/src/rust
+x.py            usr/src/rust
+man             usr/src/rust
+src             usr/src/rust
