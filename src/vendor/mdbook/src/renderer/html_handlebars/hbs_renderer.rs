@@ -161,17 +161,7 @@ impl Renderer for HtmlHandlebars {
         try!(book.write_file("book.js", &theme.js));
         try!(book.write_file("book.css", &theme.css));
         try!(book.write_file("favicon.png", &theme.favicon));
-        try!(book.write_file("jquery.js", &theme.jquery));
-        try!(book.write_file("highlight.css", &theme.highlight_css));
         try!(book.write_file("tomorrow-night.css", &theme.tomorrow_night_css));
-        try!(book.write_file("highlight.js", &theme.highlight_js));
-        try!(book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME));
-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT));
-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG));
-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF));
-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF));
-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2));
-        try!(book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF));
 
         // Copy all remaining files
         try!(utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"]));
