@@ -611,7 +611,6 @@ if [ -n "$CFG_ENABLE_DEBUG_JEMALLOC" ]; then putvar CFG_ENABLE_DEBUG_JEMALLOC; f
 
 step_msg "looking for build programs"
 
-probe_need CFG_CURL curl
 if [ -z "$CFG_PYTHON_PROVIDED" ]; then
     probe_need CFG_PYTHON      python2.7 python2 python
 fi
