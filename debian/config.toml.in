@@ -1,0 +1,39 @@
+[build]
+submodules = false
+vendor = true
+locked-deps = false
+
+build = "DEB_BUILD_RUST_TYPE"
+host = ["DEB_HOST_RUST_TYPE"]
+target = ["DEB_TARGET_RUST_TYPE"]
+
+docs = false
+
+[install]
+prefix = "/usr"
+
+[target.DEB_BUILD_RUST_TYPE]
+llvm-config = "/usr/lib/llvm-3.9/bin/llvm-config"
+
+ifelse(DEB_BUILD_RUST_TYPE,DEB_HOST_RUST_TYPE,,
+[target.DEB_HOST_RUST_TYPE]
+llvm-config = "/usr/lib/llvm-3.9/bin/llvm-config"
+
+)dnl
+ifelse(DEB_BUILD_RUST_TYPE,DEB_TARGET_RUST_TYPE,,DEB_HOST_RUST_TYPE,DEB_TARGET_RUST_TYPE,,
+[target.DEB_TARGET_RUST_TYPE]
+llvm-config = "/usr/lib/llvm-3.9/bin/llvm-config"
+
+)dnl
+[llvm]
+link-shared = true
+
+[rust]
+dist-src = false
+
+channel = "RELEASE_CHANNEL"
+
+codegen-units = 0
+debuginfo = true
+debuginfo-lines = true
+rpath = false

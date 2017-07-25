@@ -1,0 +1,27 @@
+Description: configure: allow distros to disable debuginfo-only-std
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/43297
+--- a/configure
++++ b/configure
+@@ -558,8 +558,8 @@
+           *-pc-windows-gnu)
+             ;;
+           *)
+-            CFG_ENABLE_DEBUGINFO_LINES=1
+-            CFG_ENABLE_DEBUGINFO_ONLY_STD=1
++            enable_if_not_disabled debuginfo-lines
++            enable_if_not_disabled debuginfo-only-std
+             ;;
+         esac
+ 
+@@ -570,8 +570,8 @@
+           *-pc-windows-gnu)
+             ;;
+           *)
+-            CFG_ENABLE_DEBUGINFO_LINES=1
+-            CFG_ENABLE_DEBUGINFO_ONLY_STD=1
++            enable_if_not_disabled debuginfo-lines
++            enable_if_not_disabled debuginfo-only-std
+             ;;
+         esac
+ 	;;

@@ -1,0 +1,368 @@
+From 9d8fc50c4a989c934f9473e28022b86a07556dca Mon Sep 17 00:00:00 2001
+From: Josh Stone <jistone@redhat.com>
+Date: Tue, 6 Jun 2017 12:59:04 -0700
+Subject: [PATCH] rustbuild: Add `./x.py test --no-fail-fast`
+
+This option forwards to each `cargo test` invocation, and applies the
+same logic across all test steps to keep going after failures.  At the
+end, a brief summary line reports how many commands failed, if any.
+
+Note that if a test program fails to even start at all, or if an
+auxiliary build command related to testing fails, these are still left
+to stop everything right away.
+
+Fixes #40219.
+---
+ src/bootstrap/check.rs  | 53 ++++++++++++++++++++++++++++++++++++++-----------
+ src/bootstrap/flags.rs  | 14 ++++++++++++-
+ src/bootstrap/lib.rs    | 22 +++++++++++++++++++-
+ src/bootstrap/step.rs   | 12 +++++++++--
+ src/build_helper/lib.rs | 38 ++++++++++++++++++++++++-----------
+ 5 files changed, 111 insertions(+), 28 deletions(-)
+
+diff --git a/src/bootstrap/check.rs b/src/bootstrap/check.rs
+index f8f641060c44..f39a7ba61213 100644
+--- a/src/bootstrap/check.rs
++++ b/src/bootstrap/check.rs
+@@ -58,6 +58,29 @@ impl fmt::Display for TestKind {
+     }
+ }
+ 
++fn try_run(build: &Build, cmd: &mut Command) {
++    if build.flags.cmd.no_fail_fast() {
++        if !build.try_run(cmd) {
++            let failures = build.delayed_failures.get();
++            build.delayed_failures.set(failures + 1);
++        }
++    } else {
++        build.run(cmd);
++    }
++}
++
++#[allow(unused)]
++fn try_run_quiet(build: &Build, cmd: &mut Command) {
++    if build.flags.cmd.no_fail_fast() {
++        if !build.try_run_quiet(cmd) {
++            let failures = build.delayed_failures.get();
++            build.delayed_failures.set(failures + 1);
++        }
++    } else {
++        build.run_quiet(cmd);
++    }
++}
++
+ /// Runs the `linkchecker` tool as compiled in `stage` by the `host` compiler.
+ ///
+ /// This tool in `src/tools` will verify the validity of all our links in the
+@@ -67,8 +90,8 @@ pub fn linkcheck(build: &Build, host: &str) {
+     let compiler = Compiler::new(0, host);
+ 
+     let _time = util::timeit();
+-    build.run(build.tool_cmd(&compiler, "linkchecker")
+-                   .arg(build.out.join(host).join("doc")));
++    try_run(build, build.tool_cmd(&compiler, "linkchecker")
++                        .arg(build.out.join(host).join("doc")));
+ }
+ 
+ /// Runs the `cargotest` tool as compiled in `stage` by the `host` compiler.
+@@ -95,9 +118,9 @@ pub fn cargotest(build: &Build, stage: u32, host: &str) {
+     let _time = util::timeit();
+     let mut cmd = Command::new(build.tool(&Compiler::new(0, host), "cargotest"));
+     build.prepare_tool_cmd(compiler, &mut cmd);
+-    build.run(cmd.env("PATH", newpath)
+-                 .arg(&build.cargo)
+-                 .arg(&out_dir));
++    try_run(build, cmd.env("PATH", newpath)
++                      .arg(&build.cargo)
++                      .arg(&out_dir));
+ }
+ 
+ /// Runs the `tidy` tool as compiled in `stage` by the `host` compiler.
+@@ -113,7 +136,7 @@ pub fn tidy(build: &Build, host: &str) {
+     if !build.config.vendor {
+         cmd.arg("--no-vendor");
+     }
+-    build.run(&mut cmd);
++    try_run(build, &mut cmd);
+ }
+ 
+ fn testdir(build: &Build, host: &str) -> PathBuf {
+@@ -261,7 +284,7 @@ pub fn compiletest(build: &Build,
+     }
+ 
+     let _time = util::timeit();
+-    build.run(&mut cmd);
++    try_run(build, &mut cmd);
+ }
+ 
+ /// Run `rustdoc --test` for all documentation in `src/doc`.
+@@ -337,7 +360,7 @@ fn markdown_test(build: &Build, compiler: &Compiler, markdown: &Path) {
+     }
+     cmd.arg("--test-args").arg(test_args);
+ 
+-    build.run(&mut cmd);
++    try_run(build, &mut cmd);
+ }
+ 
+ /// Run all unit tests plus documentation tests for an entire crate DAG defined
+@@ -388,6 +411,9 @@ pub fn krate(build: &Build,
+     cargo.arg("--manifest-path")
+          .arg(build.src.join(path).join("Cargo.toml"))
+          .arg("--features").arg(features);
++    if test_kind.subcommand() == "test" && build.flags.cmd.no_fail_fast() {
++        cargo.arg("--no-fail-fast");
++    }
+ 
+     match krate {
+         Some(krate) => {
+@@ -452,7 +478,7 @@ pub fn krate(build: &Build,
+         krate_qemu(build, &compiler, target, mode);
+     } else {
+         cargo.args(&build.flags.cmd.test_args());
+-        build.run(&mut cargo);
++        try_run(build, &mut cargo);
+     }
+ }
+ 
+@@ -521,7 +547,7 @@ fn krate_emscripten(build: &Build,
+         if build.config.quiet_tests {
+             cmd.arg("--quiet");
+         }
+-        build.run(&mut cmd);
++        try_run(build, &mut cmd);
+     }
+ }
+ 
+@@ -544,7 +570,7 @@ fn krate_qemu(build: &Build,
+             cmd.arg("--quiet");
+         }
+         cmd.args(&build.flags.cmd.test_args());
+-        build.run(&mut cmd);
++        try_run(build, &mut cmd);
+     }
+ }
+ 
+@@ -671,6 +697,9 @@ pub fn bootstrap(build: &Build) {
+        .current_dir(build.src.join("src/bootstrap"))
+        .env("CARGO_TARGET_DIR", build.out.join("bootstrap"))
+        .env("RUSTC", &build.rustc);
++    if build.flags.cmd.no_fail_fast() {
++        cmd.arg("--no-fail-fast");
++    }
+     cmd.arg("--").args(&build.flags.cmd.test_args());
+-    build.run(&mut cmd);
++    try_run(build, &mut cmd);
+ }
+diff --git a/src/bootstrap/flags.rs b/src/bootstrap/flags.rs
+index a1466d68a135..1ed759d24c54 100644
+--- a/src/bootstrap/flags.rs
++++ b/src/bootstrap/flags.rs
+@@ -61,6 +61,7 @@ pub enum Subcommand {
+     Test {
+         paths: Vec<PathBuf>,
+         test_args: Vec<String>,
++        no_fail_fast: bool,
+     },
+     Bench {
+         paths: Vec<PathBuf>,
+@@ -137,7 +138,10 @@ To learn more about a subcommand, run `./x.py <subcommand> -h`");
+ 
+         // Some subcommands get extra options
+         match subcommand.as_str() {
+-            "test"  => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
++            "test"  => {
++                opts.optflag("", "no-fail-fast", "Run all tests regardless of failure");
++                opts.optmulti("", "test-args", "extra arguments", "ARGS");
++            },
+             "bench" => { opts.optmulti("", "test-args", "extra arguments", "ARGS"); },
+             "dist"  => { opts.optflag("", "install", "run installer as well"); },
+             _ => { },
+@@ -260,6 +264,7 @@ Arguments:
+                 Subcommand::Test {
+                     paths: paths,
+                     test_args: matches.opt_strs("test-args"),
++                    no_fail_fast: matches.opt_present("no-fail-fast"),
+                 }
+             }
+             "bench" => {
+@@ -335,6 +340,13 @@ impl Subcommand {
+             _ => Vec::new(),
+         }
+     }
++
++    pub fn no_fail_fast(&self) -> bool {
++        match *self {
++            Subcommand::Test { no_fail_fast, .. } => no_fail_fast,
++            _ => false,
++        }
++    }
+ }
+ 
+ fn split(s: Vec<String>) -> Vec<String> {
+diff --git a/src/bootstrap/lib.rs b/src/bootstrap/lib.rs
+index 5e046f41673e..d2303c96d201 100644
+--- a/src/bootstrap/lib.rs
++++ b/src/bootstrap/lib.rs
+@@ -76,6 +76,7 @@ extern crate num_cpus;
+ extern crate rustc_serialize;
+ extern crate toml;
+ 
++use std::cell::Cell;
+ use std::cmp;
+ use std::collections::HashMap;
+ use std::env;
+@@ -85,7 +86,7 @@ use std::io::Read;
+ use std::path::{Component, PathBuf, Path};
+ use std::process::Command;
+ 
+-use build_helper::{run_silent, run_suppressed, output, mtime};
++use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime};
+ 
+ use util::{exe, libdir, add_lib_path};
+ 
+@@ -164,6 +165,7 @@ pub struct Build {
+     crates: HashMap<String, Crate>,
+     is_sudo: bool,
+     src_is_git: bool,
++    delayed_failures: Cell<usize>,
+ }
+ 
+ #[derive(Debug)]
+@@ -257,6 +259,7 @@ impl Build {
+             lldb_python_dir: None,
+             is_sudo: is_sudo,
+             src_is_git: src_is_git,
++            delayed_failures: Cell::new(0),
+         }
+     }
+ 
+@@ -847,6 +850,23 @@ impl Build {
+         run_suppressed(cmd)
+     }
+ 
++    /// Runs a command, printing out nice contextual information if it fails.
++    /// Exits if the command failed to execute at all, otherwise returns its
++    /// `status.success()`.
++    fn try_run(&self, cmd: &mut Command) -> bool {
++        self.verbose(&format!("running: {:?}", cmd));
++        try_run_silent(cmd)
++    }
++
++    /// Runs a command, printing out nice contextual information if it fails.
++    /// Exits if the command failed to execute at all, otherwise returns its
++    /// `status.success()`.
++    #[allow(unused)]
++    fn try_run_quiet(&self, cmd: &mut Command) -> bool {
++        self.verbose(&format!("running: {:?}", cmd));
++        try_run_suppressed(cmd)
++    }
++
+     /// Prints a message if this build is configured in verbose mode.
+     fn verbose(&self, msg: &str) {
+         if self.flags.verbose() || self.config.verbose() {
+diff --git a/src/bootstrap/step.rs b/src/bootstrap/step.rs
+index 17902a39df1e..f0522035127c 100644
+--- a/src/bootstrap/step.rs
++++ b/src/bootstrap/step.rs
+@@ -28,6 +28,7 @@
+ 
+ use std::collections::{BTreeMap, HashSet, HashMap};
+ use std::mem;
++use std::process;
+ 
+ use check::{self, TestKind};
+ use compile;
+@@ -1092,8 +1093,8 @@ invalid rule dependency graph detected, was a rule added and maybe typo'd?
+         let (kind, paths) = match self.build.flags.cmd {
+             Subcommand::Build { ref paths } => (Kind::Build, &paths[..]),
+             Subcommand::Doc { ref paths } => (Kind::Doc, &paths[..]),
+-            Subcommand::Test { ref paths, test_args: _ } => (Kind::Test, &paths[..]),
+-            Subcommand::Bench { ref paths, test_args: _ } => (Kind::Bench, &paths[..]),
++            Subcommand::Test { ref paths, .. } => (Kind::Test, &paths[..]),
++            Subcommand::Bench { ref paths, .. } => (Kind::Bench, &paths[..]),
+             Subcommand::Dist { ref paths, install } => {
+                 if install {
+                     return vec![self.sbuild.name("install")]
+@@ -1191,6 +1192,13 @@ invalid rule dependency graph detected, was a rule added and maybe typo'd?
+             self.build.verbose(&format!("executing step {:?}", step));
+             (self.rules[step.name].run)(step);
+         }
++
++        // Check for postponed failures from `test --no-fail-fast`.
++        let failures = self.build.delayed_failures.get();
++        if failures > 0 {
++            println!("\n{} command(s) did not execute successfully.\n", failures);
++            process::exit(1);
++        }
+     }
+ 
+     /// From the top level targets `steps` generate a topological ordering of
+diff --git a/src/build_helper/lib.rs b/src/build_helper/lib.rs
+index cb58a916fb79..10b0f19d6274 100644
+--- a/src/build_helper/lib.rs
++++ b/src/build_helper/lib.rs
+@@ -42,35 +42,49 @@ pub fn run(cmd: &mut Command) {
+ }
+ 
+ pub fn run_silent(cmd: &mut Command) {
++    if !try_run_silent(cmd) {
++        std::process::exit(1);
++    }
++}
++
++pub fn try_run_silent(cmd: &mut Command) -> bool {
+     let status = match cmd.status() {
+         Ok(status) => status,
+         Err(e) => fail(&format!("failed to execute command: {:?}\nerror: {}",
+                                 cmd, e)),
+     };
+     if !status.success() {
+-        fail(&format!("command did not execute successfully: {:?}\n\
+-                       expected success, got: {}",
+-                      cmd,
+-                      status));
++        println!("\n\ncommand did not execute successfully: {:?}\n\
++                  expected success, got: {}\n\n",
++                 cmd,
++                 status);
+     }
++    status.success()
+ }
+ 
+ pub fn run_suppressed(cmd: &mut Command) {
++    if !try_run_suppressed(cmd) {
++        std::process::exit(1);
++    }
++}
++
++pub fn try_run_suppressed(cmd: &mut Command) -> bool {
+     let output = match cmd.output() {
+         Ok(status) => status,
+         Err(e) => fail(&format!("failed to execute command: {:?}\nerror: {}",
+                                 cmd, e)),
+     };
+     if !output.status.success() {
+-        fail(&format!("command did not execute successfully: {:?}\n\
+-                       expected success, got: {}\n\n\
+-                       stdout ----\n{}\n\
+-                       stderr ----\n{}\n",
+-                      cmd,
+-                      output.status,
+-                      String::from_utf8_lossy(&output.stdout),
+-                      String::from_utf8_lossy(&output.stderr)));
++        println!("\n\ncommand did not execute successfully: {:?}\n\
++                  expected success, got: {}\n\n\
++                  stdout ----\n{}\n\
++                  stderr ----\n{}\n\n",
++                 cmd,
++                 output.status,
++                 String::from_utf8_lossy(&output.stdout),
++                 String::from_utf8_lossy(&output.stderr));
+     }
++    output.status.success()
+ }
+ 
+ pub fn gnu_target(target: &str) -> String {
+-- 
+2.13.0
+

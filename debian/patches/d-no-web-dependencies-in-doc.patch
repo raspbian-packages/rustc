@@ -1,0 +1,227 @@
+Description: Use local web resources instead of remote ones
+Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Bug: https://github.com/azerupi/mdBook/issues/271
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/vendor/mdbook/src/theme/index.hbs
++++ b/src/vendor/mdbook/src/theme/index.hbs
+@@ -10,27 +10,19 @@
+         <base href="{{ path_to_root }}">
+ 
+         <link rel="stylesheet" href="book.css">
+-        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+-        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+ 
+         <link rel="shortcut icon" href="{{ favicon }}">
+ 
+         <!-- Font Awesome -->
+-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
++        <link rel="stylesheet" href="../font-awesome.min.css">
+ 
+-        <link rel="stylesheet" href="highlight.css">
++        <link rel="stylesheet" href="../highlight.css">
+         <link rel="stylesheet" href="tomorrow-night.css">
+ 
+         <!-- MathJax -->
+-        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+ 
+-        <!-- Fetch JQuery from CDN but have a local fallback -->
+-        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+-        <script>
+-            if (typeof jQuery == 'undefined') {
+-                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+-            }
+-        </script>
++        <script src="../jquery.min.js"></script>
+     </head>
+     <body class="light">
+         <!-- Set the theme before any content is loaded, prevents flash -->
+@@ -101,17 +93,10 @@
+         </div>
+ 
+ 
+-        <!-- Local fallback for Font Awesome -->
+-        <script>
+-            if ($(".fa").css("font-family") !== "FontAwesome") {
+-                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+-            }
+-        </script>
+-
+         <!-- Livereload script (if served using the cli tool) -->
+         {{{livereload}}}
+ 
+-        <script src="highlight.js"></script>
++        <script src="../highlight.js"></script>
+         <script src="book.js"></script>
+     </body>
+ </html>
+--- a/src/vendor/mdbook/.cargo-checksum.json
++++ b/src/vendor/mdbook/.cargo-checksum.json
+@@ -1 +1 @@
+-{"files":{".cargo-ok":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",".gitignore":"7612c630f7ceaf8827018e5b963438fde7229dbc1d3ab93ae3a523e8897dea58",".travis.yml":"f7395c0908345b0789deb17928eec3f6a0fe8a47357017d744996cd84ffee733","Cargo.toml":"449a70244ad490b2711c14db6ecbe0d41a21ec1d74bdf981e6d2d6851f6f1d33","LICENSE":"daccd6f5b8e0fd07c0992116280fcddc77c2a612c4ebeb64d8b114ed9da1a10b","README.md":"83aecab607b1ee604474919ff6cb5656cbdfe5fb19434ba9e376e8c0ea31a4ef","appveyor.yml":"e3709a665d17a8d34956e228a5399cdafb75a64be270a16b8ec36b1f7680d254","build.rs":"7e5ab4e28bc535181b74290dcc518a9166fc61ccf2c5a5d4c4f0b4384639b0f7","ci/before_deploy.sh":"234420ac249ed2bdc7a74d470fe2f1b898ac1e165a931a659cb23792ac399d84","ci/install.sh":"0edce34ea7a51a664b43d8397173cf484119145b7a89d913805b8635d45c92ca","ci/script.sh":"9bad90afed9fb44c2e0b0078b5d2b03f29669e3432e92e731b329420f9ceb7a3","deploy.sh":"8333f8b912eb9dc5bda56973896769a2af642ab27a477f7a4957967bec820818","rustfmt.toml":"a83bbacf9b2554d73c50739b272d5e64fb9f3d0249e72c4813071db3a96243ce","src/bin/mdbook.rs":"cf629a1cbfb786ba479337c81c723ca27e740447072436fc76de0c71b36b4f52","src/book/bookconfig.rs":"93c6bf4d41dc0a93bdf6ffda9f69f745c9093a37c40a807ba7b4dc70ab86206b","src/book/bookconfig_test.rs":"baa9d2dd36376e5d481b5fda15a0c01c847b2a8e52fce60832309277bbd19934","src/book/bookitem.rs":"4b6d39c5779bec278e5d6139a017fb306c275245d4dfd8cc5bd6325ba58903db","src/book/mod.rs":"a54e011a8b45ec5fc9c4750794c83a5b734b1b162f2f421cda43f88f83dceaa2","src/lib.rs":"1d6d728909373153ede38ccfe0425113a8a05b1d53477cedbc1535327b3b7938","src/parse/mod.rs":"8d17800a04d1b77a0fbf6b27c52a4adb0755a6d004819ebacdf5adf94f231fc4","src/parse/summary.rs":"8b8aeaeceb16c74b1ac45ab3b05e32932b9f2624a5d5b7768f02f45cef4a3178","src/renderer/html_handlebars/hbs_renderer.rs":"d2f9c345f32042840e6cb38903434fed160ae30977289c89c06e8499b429b2f5","src/renderer/html_handlebars/helpers/mod.rs":"243447b1957ece344721546933bb6643c2b084270bf0133f8b8233842936c612","src/renderer/html_handlebars/helpers/navigation.rs":"4d1cafdbf07eade70701974f70db2cf52a8f5ed8460e51aa7b26a3e2b258028e","src/renderer/html_handlebars/helpers/playpen.rs":"096b3821703235c5ce7abfee0541f87790842cd98624a13788720ec4b51fb780","src/renderer/html_handlebars/helpers/toc.rs":"da6d2554d5dea053a692d73f3946dceb372815383336ab767c0b4bbee5c59c8b","src/renderer/html_handlebars/mod.rs":"fd11f3b70867696c710a077af4030c3ff21f0b36a412d62b5628528376f1f3c2","src/renderer/mod.rs":"c530f762a3eb8c65e70372769f857b92d2eb6b355a717a3d09d1203ac87316b4","src/theme/_FontAwesome/css/font-awesome.min.css":"936ffccdc35bc55221e669d0e76034af76ba8c080c1b1149144dbbd3b5311829","src/theme/_FontAwesome/fonts/FontAwesome.otf":"7961070f76a33c1307de19ce2a93dc2b26d6747fa759aee5045118644c758acc","src/theme/_FontAwesome/fonts/fontawesome-webfont.eot":"d4f5a99224154f2a808e42a441ddc9248ffe78b7a4083684ce159270b30b912a","src/theme/_FontAwesome/fonts/fontawesome-webfont.svg":"7414288c272f6cc10304aa18e89bf24fb30f40afd644623f425c2c3d71fbe06a","src/theme/_FontAwesome/fonts/fontawesome-webfont.ttf":"1b7f3de49d68b01f415574ebb82e6110a1d09cda2071ad8451bdb5124131a292","src/theme/_FontAwesome/fonts/fontawesome-webfont.woff":"a7c7e4930090e038a280fd61d88f0dc03dad4aeaedbd8c9be3dd9aa4c3b6f8d1","src/theme/_FontAwesome/fonts/fontawesome-webfont.woff2":"3c4a1bb7ce3234407184f0d80cc4dec075e4ad616b44dcc5778e1cfb1bc24019","src/theme/book.css":"faa68e7fb58e00934baedf9bb60a4187f2568cf1b10736d9c9592adfd5c249f0","src/theme/book.js":"461df0f6998eb8c585362e4bfc84c2b29f46948025ba7f6221f88104c94ce527","src/theme/favicon.png":"8114d1fc74f4b5621ad9afde7746ed9cf7e420be317a6e29023d2298d58aa15b","src/theme/highlight.css":"a8e0cdb65ed7959c997b047be0cc3809bdabb64c093c870ddff001a45fd34831","src/theme/highlight.js":"350fc176452dcb8b6ad142004119e0df3679684f54691efbf57ed9803781d058","src/theme/index.hbs":"5e83292c4522aca17ff47c28648709314dcd9912fa391e44a11e9e2e817d042f","src/theme/jquery-2.1.4.min.js":"de4b3c3d1dc2506b6693f0f98884e1dc074cda9d66cab39b7b48a115fdfc4c0f","src/theme/mod.rs":"4f8d40c66f1dadf94a714ed9b7e5821c2078837c6b4d20ee22e9945125466c3c","src/theme/stylus/book.styl":"7424e30554a62ddde341d055a2c576ff8b36b5ad2de30af9799bf79e76748b74","src/theme/stylus/general.styl":"50c86eaeee69f3b15aca150aeb39fd370dd66831db2935344ec88d6e783c29d7","src/theme/stylus/menu.styl":"5699bc3eee208af30c7ca1a4518c347b2f043a58d0e1307cb08ab15995557fd5","src/theme/stylus/nav-icons.styl":"ce371f2eeaf0d50a6d94ce1407578908753fb4010bba30d9b0dcabfc7b3b779e","src/theme/stylus/page.styl":"a8a1718e2e4fb3d48e4d527e5400e954ab7b6a1ae87f1b6b40b28a11b6926e73","src/theme/stylus/print.styl":"54efe6860611698dc520f82b05e9e17f4cdbc913822b17f1c44e0808ecf163eb","src/theme/stylus/sidebar.styl":"648c3c3b2fa0541321a646f7742a5222f655db39e4f20ef43a9ba3dcdbdb293f","src/theme/stylus/theme-popup.styl":"8c801836bc8d91c68e933dbc3b94eaac132a3fc04fd87b85550dc1f628765447","src/theme/stylus/themes/base.styl":"cf4ba427c9fea01ca17db9af457e60ee9936d2cff1439278d549d8b200979687","src/theme/stylus/themes/coal.styl":"151ccd7de802ac319787b2a7f0e13286dcfb203f730e7324b156760167b486e9","src/theme/stylus/themes/index.styl":"4afadc7eb2fdd29408cd8ec0f2d37948a98040994a7142b3d114ae61214e6d21","src/theme/stylus/themes/light.styl":"7cf535638cdca25c94b87613facbd52036d10222144f838e8410a4e9ffd3f8e1","src/theme/stylus/themes/navy.styl":"065dad59ccee44d075805e60a07987d6d80d72051f496ec89341b1d3096c429c","src/theme/stylus/themes/rust.styl":"6aeb5a69df72824edbcf8ae963dc48b5766311eb0d03b4ecc6e9f0f32a8b0783","src/theme/stylus/variables.styl":"15f1215c0336336966a2db1a741860f2cb400d9816eaad9a1b24aba494c78f29","src/theme/tomorrow-night.css":"c50d01aea634fb78b058fa95bfa93e8338a5595a6e1cf9c34822f82a0176e418","src/utils/fs.rs":"5e25134e524b4244806b65fbec5a9088612c41731622bd5b172d015feaaf981c","src/utils/mod.rs":"3a8e2c6084faa7423511e473619119d71515d6410bd78be59cef9e5584ac7cfe"},"package":"2598843aeda0c5bb2e8e4d714564f1c3fc40f7844157e34563bf96ae3866b56e"}
+\ No newline at end of file
++{"files":{},"package":"2598843aeda0c5bb2e8e4d714564f1c3fc40f7844157e34563bf96ae3866b56e"}
+--- a/src/vendor/mdbook/src/theme/mod.rs
++++ b/src/vendor/mdbook/src/theme/mod.rs
+@@ -7,17 +7,7 @@
+ pub static CSS: &'static [u8] = include_bytes!("book.css");
+ pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
+ pub static JS: &'static [u8] = include_bytes!("book.js");
+-pub static HIGHLIGHT_JS: &'static [u8] = include_bytes!("highlight.js");
+ pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
+-pub static HIGHLIGHT_CSS: &'static [u8] = include_bytes!("highlight.css");
+-pub static JQUERY: &'static [u8] = include_bytes!("jquery-2.1.4.min.js");
+-pub static FONT_AWESOME: &'static [u8] = include_bytes!("_FontAwesome/css/font-awesome.min.css");
+-pub static FONT_AWESOME_EOT: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.eot");
+-pub static FONT_AWESOME_SVG: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.svg");
+-pub static FONT_AWESOME_TTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.ttf");
+-pub static FONT_AWESOME_WOFF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff");
+-pub static FONT_AWESOME_WOFF2: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff2");
+-pub static FONT_AWESOME_OTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/FontAwesome.otf");
+ 
+ /// The `Theme` struct should be used instead of the static variables because the `new()` method
+ /// will look if the user has a theme directory in his source folder and use the users theme instead
+@@ -30,10 +20,7 @@
+     pub css: Vec<u8>,
+     pub favicon: Vec<u8>,
+     pub js: Vec<u8>,
+-    pub highlight_css: Vec<u8>,
+     pub tomorrow_night_css: Vec<u8>,
+-    pub highlight_js: Vec<u8>,
+-    pub jquery: Vec<u8>,
+ }
+ 
+ impl Theme {
+@@ -45,10 +32,7 @@
+             css: CSS.to_owned(),
+             favicon: FAVICON.to_owned(),
+             js: JS.to_owned(),
+-            highlight_css: HIGHLIGHT_CSS.to_owned(),
+             tomorrow_night_css: TOMORROW_NIGHT_CSS.to_owned(),
+-            highlight_js: HIGHLIGHT_JS.to_owned(),
+-            jquery: JQUERY.to_owned(),
+         };
+ 
+         // Check if the given path exists
+@@ -82,18 +66,6 @@
+             let _ = f.read_to_end(&mut theme.favicon);
+         }
+ 
+-        // highlight.js
+-        if let Ok(mut f) = File::open(&src.join("highlight.js")) {
+-            theme.highlight_js.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_js);
+-        }
+-
+-        // highlight.css
+-        if let Ok(mut f) = File::open(&src.join("highlight.css")) {
+-            theme.highlight_css.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_css);
+-        }
+-
+         // tomorrow-night.css
+         if let Ok(mut f) = File::open(&src.join("tomorrow-night.css")) {
+             theme.tomorrow_night_css.clear();
+--- a/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
++++ b/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+@@ -162,17 +162,7 @@
+         try!(book.write_file("book.js", &theme.js));
+         try!(book.write_file("book.css", &theme.css));
+         try!(book.write_file("favicon.png", &theme.favicon));
+-        try!(book.write_file("jquery.js", &theme.jquery));
+-        try!(book.write_file("highlight.css", &theme.highlight_css));
+         try!(book.write_file("tomorrow-night.css", &theme.tomorrow_night_css));
+-        try!(book.write_file("highlight.js", &theme.highlight_js));
+-        try!(book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2));
+-        try!(book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF));
+ 
+         // Copy all remaining files
+         try!(utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"]));
+--- a/src/tools/linkchecker/main.rs
++++ b/src/tools/linkchecker/main.rs
+@@ -175,6 +175,11 @@
+            url.starts_with("irc:") || url.starts_with("data:") {
+             return;
+         }
++        // Ignore parent URLs, so that the package installation process can
++        // provide a symbolic link later
++        if url.starts_with("../") {
++            return;
++        }
+         let mut parts = url.splitn(2, "#");
+         let url = parts.next().unwrap();
+         let fragment = parts.next();
+--- a/src/vendor/mdbook/src/book/mod.rs
++++ b/src/vendor/mdbook/src/book/mod.rs
+@@ -276,14 +276,6 @@
+         let mut js = try!(File::create(&theme_dir.join("book.js")));
+         try!(js.write_all(theme::JS));
+ 
+-        // highlight.css
+-        let mut highlight_css = try!(File::create(&theme_dir.join("highlight.css")));
+-        try!(highlight_css.write_all(theme::HIGHLIGHT_CSS));
+-
+-        // highlight.js
+-        let mut highlight_js = try!(File::create(&theme_dir.join("highlight.js")));
+-        try!(highlight_js.write_all(theme::HIGHLIGHT_JS));
+-
+         Ok(())
+     }
+ 
+--- a/src/doc/book/second-edition/theme/index.hbs
++++ b/src/doc/book/second-edition/theme/index.hbs
+@@ -10,14 +10,13 @@
+         <base href="{{ path_to_root }}">
+ 
+         <link rel="stylesheet" href="book.css">
+-        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+ 
+         <link rel="shortcut icon" href="{{ favicon }}">
+ 
+         <!-- Font Awesome -->
+-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
++        <link rel="stylesheet" href="../font-awesome.min.css">
+ 
+-        <link rel="stylesheet" href="highlight.css">
++        <link rel="stylesheet" href="../highlight.css">
+         <link rel="stylesheet" href="tomorrow-night.css">
+         <style>
+             p.warning {	
+@@ -62,15 +61,9 @@
+         </style>
+ 
+         <!-- MathJax -->
+-        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+ 
+-        <!-- Fetch JQuery from CDN but have a local fallback -->
+-        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+-        <script>
+-            if (typeof jQuery == 'undefined') {
+-                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+-            }
+-        </script>
++        <script src="../jquery.min.js"></script>
+     </head>
+     <body class="light">
+         <!-- Set the theme before any content is loaded, prevents flash -->
+@@ -143,13 +136,6 @@
+         </div>
+ 
+ 
+-        <!-- Local fallback for Font Awesome -->
+-        <script>
+-            if ($(".fa").css("font-family") !== "FontAwesome") {
+-                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+-            }
+-        </script>
+-
+         <!-- Livereload script (if served using the cli tool) -->
+         {{{livereload}}}
+ 
