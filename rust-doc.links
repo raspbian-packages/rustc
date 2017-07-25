@@ -1,0 +1,9 @@
+# This should eventually become part of a dh_rustdoc program.
+# Something that does e.g.
+# find $(DESTDIR) -name jquery.js -execdir ln -sf -T \
+#	  /usr/share/doc/rust-doc/html/jquery.js '{}' \;
+usr/share/javascript/jquery/jquery.min.js                             usr/share/doc/rust-doc/html/jquery.js
+usr/share/fonts-font-awesome/css/font-awesome.min.css                 usr/share/doc/rust-doc/html/fonts-font-awesome.min.css
+usr/share/javascript/mathjax                                          usr/share/doc/rust-doc/html/mathjax
+usr/share/javascript/highlight.js/styles/atelier-dune.light.css       usr/share/doc/rust-doc/html/highlight.css
+usr/share/javascript/highlight.js/highlight.js                        usr/share/doc/rust-doc/html/highlight.js

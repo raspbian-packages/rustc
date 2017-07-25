@@ -1,0 +1,42 @@
+# Patches for upstream
+
+# applied already
+u-fix-debuginfo.patch
+u-rust-1.18.0-no-fail-fast.patch
+u-only-run-linkchecker-if-docs.patch
+u-fix-build_01.patch
+u-fix-build_02.patch
+u-skip-main-thread-stack-guard.patch
+
+# pending, forwarded
+u-ignoretest-armhf_01.patch
+u-ignoretest-armhf_02.patch
+u-ignoretest-armhf_03.patch
+u-ignoretest-armhf_05.patch
+u-ignoretest-armhf_06.patch
+u-ignoretest-arm64.patch
+u-ignoretest-ppc64el.patch
+u-workaround-testfailure-armhf_01.patch
+u-allow-disable-debuginfo-only-std.patch
+u-gperf-3.1.patch
+
+# not forwarded, or forwarded but unlikely to be merged
+u-exception-traceback.patch
+u-reproducible-dl-stage0.patch
+u-allow-stable-features.patch
+
+gcc-4.8-aarch64-ice.diff
+
+# Debian-specific patches, not suitable for upstream
+d-raise-min-llvm-version.patch
+d-disable-cargo-vendor.patch
+d-rust-gdb-paths
+d-rust-lldb-paths
+d-add-soname.patch
+d-dont-download-stage0.patch
+d-use-system-jquery.patch
+d-cross-compile-install.patch
+d-no-web-dependencies-in-doc.patch
+
+# Work around for some porterboxes, keep this commented
+#d-host-duplicates.patch
