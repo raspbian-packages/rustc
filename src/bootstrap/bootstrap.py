@@ -23,15 +23,17 @@ import tempfile
 from time import time
 
 
-def get(url, path, verbose=False):
+def get(url, path, verbose=False, use_local_hash_if_present=True):
     sha_url = url + ".sha256"
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = temp_file.name
-    with tempfile.NamedTemporaryFile(suffix=".sha256", delete=False) as sha_file:
-        sha_path = sha_file.name
+    sha_path = path + ".sha256"
 
     try:
-        download(sha_path, sha_url, False, verbose)
+        if use_local_hash_if_present and os.path.exists(sha_path):
+            print("using already-download file " + sha_path)
+        else:
+            download(sha_path, sha_url, False, verbose)
         if os.path.exists(path):
             if verify(path, sha_path, False):
                 if verbose:
@@ -48,7 +50,6 @@ def get(url, path, verbose=False):
             print("moving {} to {}".format(temp_path, path))
         shutil.move(temp_path, path)
     finally:
-        delete_if_present(sha_path, verbose)
         delete_if_present(temp_path, verbose)
 
 
@@ -173,8 +174,7 @@ class RustBuild(object):
             filename = "rust-std-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
                    match="rust-std-" + self.build,
                    verbose=self.verbose)
@@ -182,8 +182,7 @@ class RustBuild(object):
             filename = "rustc-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
             self.fix_executable(self.bin_root() + "/bin/rustc")
             self.fix_executable(self.bin_root() + "/bin/rustdoc")
@@ -204,8 +203,7 @@ class RustBuild(object):
             filename = "cargo-{}-{}.tar.gz".format('0.18.0', self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
             self.fix_executable(self.bin_root() + "/bin/cargo")
             with open(self.cargo_stamp(), 'w') as f:
