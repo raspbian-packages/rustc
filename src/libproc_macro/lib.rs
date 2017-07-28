@@ -21,7 +21,7 @@
 //! This functionality is intended to be expanded over time as more surface
 //! area for macro authors is stabilized.
 //!
-//! See [the book](../../book/procedural-macros.html) for more.
+//! See [the book](../book/procedural-macros.html) for more.
 
 #![crate_name = "proc_macro"]
 #![stable(feature = "proc_macro_lib", since = "1.15.0")]
@@ -29,6 +29,13 @@
 #![crate_type = "dylib"]
 #![deny(warnings)]
 #![deny(missing_docs)]
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/nightly/",
+       html_playground_url = "https://play.rust-lang.org/",
+       issue_tracker_base_url = "https://github.com/rust-lang/rust/issues/",
+       test(no_crate_inject, attr(deny(warnings))),
+       test(attr(allow(dead_code, deprecated, unused_variables, unused_mut))))]
 
 #![feature(rustc_private)]
 #![feature(staged_api)]
@@ -101,7 +108,7 @@ pub mod __internal {
 
     pub fn token_stream_parse_items(stream: TokenStream) -> Result<Vec<P<ast::Item>>, LexError> {
         with_parse_sess(move |sess| {
-            let mut parser = parse::new_parser_from_ts(sess, stream.inner);
+            let mut parser = parse::stream_to_parser(sess, stream.inner);
             let mut items = Vec::new();
 
             while let Some(item) = try!(parser.parse_item().map_err(super::parse_to_lex_err)) {
@@ -125,6 +132,10 @@ pub mod __internal {
         fn register_attr_proc_macro(&mut self,
                                     name: &str,
                                     expand: fn(TokenStream, TokenStream) -> TokenStream);
+
+        fn register_bang_proc_macro(&mut self,
+                                    name: &str,
+                                    expand: fn(TokenStream) -> TokenStream);
     }
 
     // Emulate scoped_thread_local!() here essentially
@@ -173,10 +184,8 @@ impl FromStr for TokenStream {
         __internal::with_parse_sess(|sess| {
             let src = src.to_string();
             let name = "<proc-macro source code>".to_string();
-            let tts = try!(parse::parse_tts_from_source_str(name, src, sess)
-                .map_err(parse_to_lex_err));
-
-            Ok(__internal::token_stream_wrap(tts.into_iter().collect()))
+            let stream = parse::parse_stream_from_source_str(name, src, sess);
+            Ok(__internal::token_stream_wrap(stream))
         })
     }
 }

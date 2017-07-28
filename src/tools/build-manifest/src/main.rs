@@ -45,6 +45,7 @@ static HOSTS: &'static [&'static str] = &[
 
 static TARGETS: &'static [&'static str] = &[
     "aarch64-apple-ios",
+    "aarch64-unknown-fuchsia",
     "aarch64-linux-android",
     "aarch64-unknown-linux-gnu",
     "arm-linux-androideabi",
@@ -78,6 +79,7 @@ static TARGETS: &'static [&'static str] = &[
     "powerpc64-unknown-linux-gnu",
     "powerpc64le-unknown-linux-gnu",
     "s390x-unknown-linux-gnu",
+    "sparc64-unknown-linux-gnu",
     "wasm32-unknown-emscripten",
     "x86_64-apple-darwin",
     "x86_64-apple-ios",
@@ -85,6 +87,7 @@ static TARGETS: &'static [&'static str] = &[
     "x86_64-pc-windows-msvc",
     "x86_64-rumprun-netbsd",
     "x86_64-unknown-freebsd",
+    "x86_64-unknown-fuchsia",
     "x86_64-unknown-linux-gnu",
     "x86_64-unknown-linux-musl",
     "x86_64-unknown-netbsd",
@@ -130,7 +133,8 @@ macro_rules! t {
 }
 
 struct Builder {
-    channel: String,
+    rust_release: String,
+    cargo_release: String,
     input: PathBuf,
     output: PathBuf,
     gpg_passphrase: String,
@@ -146,13 +150,15 @@ fn main() {
     let input = PathBuf::from(args.next().unwrap());
     let output = PathBuf::from(args.next().unwrap());
     let date = args.next().unwrap();
-    let channel = args.next().unwrap();
+    let rust_release = args.next().unwrap();
+    let cargo_release = args.next().unwrap();
     let s3_address = args.next().unwrap();
     let mut passphrase = String::new();
     t!(io::stdin().read_to_string(&mut passphrase));
 
     Builder {
-        channel: channel,
+        rust_release: rust_release,
+        cargo_release: cargo_release,
         input: input,
         output: output,
         gpg_passphrase: passphrase,
@@ -179,15 +185,19 @@ impl Builder {
         let mut manifest = BTreeMap::new();
         manifest.insert("manifest-version".to_string(),
                         toml::Value::String(manifest_version));
-        manifest.insert("date".to_string(), toml::Value::String(date));
+        manifest.insert("date".to_string(), toml::Value::String(date.clone()));
         manifest.insert("pkg".to_string(), toml::encode(&pkg));
         let manifest = toml::Value::Table(manifest).to_string();
 
-        let filename = format!("channel-rust-{}.toml", self.channel);
+        let filename = format!("channel-rust-{}.toml", self.rust_release);
         self.write_manifest(&manifest, &filename);
 
-        if self.channel != "beta" && self.channel != "nightly" {
+        let filename = format!("channel-rust-{}-date.txt", self.rust_release);
+        self.write_date_stamp(&date, &filename);
+
+        if self.rust_release != "beta" && self.rust_release != "nightly" {
             self.write_manifest(&manifest, "channel-rust-stable.toml");
+            self.write_date_stamp(&date, "channel-rust-stable-date.txt");
         }
     }
 
@@ -214,6 +224,10 @@ impl Builder {
         self.package("rust-docs", &mut manifest.pkg, TARGETS);
         self.package("rust-src", &mut manifest.pkg, &["*"]);
 
+        if self.rust_release == "nightly" {
+            self.package("rust-analysis", &mut manifest.pkg, TARGETS);
+        }
+
         let mut pkg = Package {
             version: self.cached_version("rust").to_string(),
             target: HashMap::new(),
@@ -236,12 +250,13 @@ impl Builder {
             let mut components = Vec::new();
             let mut extensions = Vec::new();
 
-            // rustc/rust-std/cargo are all required, and so is rust-mingw if it's
-            // available for the target.
+            // rustc/rust-std/cargo/docs are all required, and so is rust-mingw
+            // if it's available for the target.
             components.extend(vec![
                 Component { pkg: "rustc".to_string(), target: host.to_string() },
                 Component { pkg: "rust-std".to_string(), target: host.to_string() },
                 Component { pkg: "cargo".to_string(), target: host.to_string() },
+                Component { pkg: "rust-docs".to_string(), target: host.to_string() },
             ]);
             if host.contains("pc-windows-gnu") {
                 components.push(Component {
@@ -250,16 +265,16 @@ impl Builder {
                 });
             }
 
-            // Docs, other standard libraries, and the source package are all
-            // optional.
-            extensions.push(Component {
-                pkg: "rust-docs".to_string(),
-                target: host.to_string(),
-            });
             for target in TARGETS {
                 if target != host {
                     extensions.push(Component {
                         pkg: "rust-std".to_string(),
+                        target: target.to_string(),
+                    });
+                }
+                if self.rust_release == "nightly" {
+                    extensions.push(Component {
+                        pkg: "rust-analysis".to_string(),
                         target: target.to_string(),
                     });
                 }
@@ -272,7 +287,7 @@ impl Builder {
             pkg.target.insert(host.to_string(), Target {
                 available: true,
                 url: Some(self.url("rust", host)),
-                hash: Some(to_hex(digest.as_ref())),
+                hash: Some(digest),
                 components: Some(components),
                 extensions: Some(extensions),
             });
@@ -325,11 +340,11 @@ impl Builder {
 
     fn filename(&self, component: &str, target: &str) -> String {
         if component == "rust-src" {
-            format!("rust-src-{}.tar.gz", self.channel)
+            format!("rust-src-{}.tar.gz", self.rust_release)
         } else if component == "cargo" {
-            format!("cargo-nightly-{}.tar.gz", target)
+            format!("cargo-{}-{}.tar.gz", self.cargo_release, target)
         } else {
-            format!("{}-{}-{}.tar.gz", component, self.channel, target)
+            format!("{}-{}-{}.tar.gz", component, self.rust_release, target)
         }
     }
 
@@ -397,20 +412,11 @@ impl Builder {
         self.hash(&dst);
         self.sign(&dst);
     }
-}
 
-fn to_hex(digest: &[u8]) -> String {
-    let mut ret = String::new();
-    for byte in digest {
-        ret.push(hex((byte & 0xf0) >> 4));
-        ret.push(hex(byte & 0xf));
-    }
-    return ret;
-
-    fn hex(b: u8) -> char {
-        match b {
-            0...9 => (b'0' + b) as char,
-            _ => (b'a' + b - 10) as char,
-        }
+    fn write_date_stamp(&self, date: &str, name: &str) {
+        let dst = self.output.join(name);
+        t!(t!(File::create(&dst)).write_all(date.as_bytes()));
+        self.hash(&dst);
+        self.sign(&dst);
     }
 }

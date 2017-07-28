@@ -53,6 +53,19 @@
 # Rust team and file an issue if you need assistance in porting!
 #targets = "X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430;Sparc;NVPTX"
 
+# Cap the number of parallel linker invocations when compiling LLVM.
+# This can be useful when building LLVM with debug info, which significantly
+# increases the size of binaries and consequently the memory required by
+# each linker process.
+# If absent or 0, linker invocations are treated like any other job and
+# controlled by rustbuild's -j parameter.
+#link-jobs = 0
+
+# Delete LLVM build directory on LLVM rebuild.
+# This option defaults to `false` for local development, but CI may want to
+# always perform clean full builds (possibly accelerated by (s)ccache).
+#clean-rebuild = false
+
 # =============================================================================
 # General build configuration options
 # =============================================================================
@@ -108,6 +121,10 @@
 # Note that Python 2 is currently required.
 #python = "python2.7"
 
+# Force Cargo to check that Cargo.lock describes the precise dependency
+# set that all the Cargo.toml files create, instead of updating it.
+#locked-deps = false
+
 # Indicate whether the vendored sources are used for Rust dependencies or not
 #vendor = false
 
@@ -123,6 +140,17 @@
 # installers" which are used to install Rust and Cargo together. This is
 # disabled by default.
 #extended = false
+
+# Verbosity level: 0 == not verbose, 1 == verbose, 2 == very verbose
+#verbose = 0
+
+# Build the sanitizer runtimes
+#sanitizers = false
+
+# Indicates whether the OpenSSL linked into Cargo will be statically linked or
+# not. If static linkage is specified then the build system will download a
+# known-good version of OpenSSL, compile it, and link it to Cargo.
+#openssl-static = false
 
 # =============================================================================
 # General install configuration options

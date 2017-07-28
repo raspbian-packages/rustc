@@ -41,13 +41,13 @@ use rustc::mir::tcx::LvalueTy;
 use rustc::traits;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::adjustment::CustomCoerceUnsized;
-use rustc::dep_graph::{DepNode, WorkProduct};
+use rustc::dep_graph::{AssertDepGraphSafe, DepNode, WorkProduct};
 use rustc::hir::map as hir_map;
 use rustc::util::common::time;
 use session::config::{self, NoDebugInfo};
 use rustc_incremental::IncrementalHashesMap;
 use session::{self, DataTypeKind, Session};
-use abi::{self, Abi, FnType};
+use abi::{self, FnType};
 use mir::lvalue::LvalueRef;
 use adt;
 use attributes;
@@ -472,8 +472,15 @@ pub fn load_fat_ptr<'a, 'tcx>(
         b.load(ptr, alignment.to_align())
     };
 
-    // FIXME: emit metadata on `meta`.
-    let meta = b.load(get_meta(b, src), alignment.to_align());
+    let meta = get_meta(b, src);
+    let meta_ty = val_ty(meta);
+    // If the 'meta' field is a pointer, it's a vtable, so use load_nonnull
+    // instead
+    let meta = if meta_ty.element_type().kind() == llvm::TypeKind::Pointer {
+        b.load_nonnull(meta, None)
+    } else {
+        b.load(meta, None)
+    };
 
     (ptr, meta)
 }
@@ -536,7 +543,7 @@ pub fn call_memcpy<'a, 'tcx>(b: &Builder<'a, 'tcx>,
     let memcpy = ccx.get_intrinsic(&key);
     let src_ptr = b.pointercast(src, Type::i8p(ccx));
     let dst_ptr = b.pointercast(dst, Type::i8p(ccx));
-    let size = b.intcast(n_bytes, ccx.int_type());
+    let size = b.intcast(n_bytes, ccx.int_type(), false);
     let align = C_i32(ccx, align as i32);
     let volatile = C_bool(ccx, false);
     b.call(memcpy, &[dst_ptr, src_ptr, size, align, volatile], None);
@@ -589,12 +596,9 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
     // release builds.
     info!("trans_instance({})", instance);
 
-    let fn_ty = ccx.tcx().item_type(instance.def);
-    let fn_ty = ccx.tcx().erase_regions(&fn_ty);
-    let fn_ty = monomorphize::apply_param_substs(ccx.shared(), instance.substs, &fn_ty);
-
-    let ty::BareFnTy { abi, ref sig, .. } = *common::ty_fn_ty(ccx, fn_ty);
-    let sig = ccx.tcx().erase_late_bound_regions_and_normalize(sig);
+    let fn_ty = common::def_ty(ccx.shared(), instance.def, instance.substs);
+    let sig = common::ty_fn_sig(ccx, fn_ty);
+    let sig = ccx.tcx().erase_late_bound_regions_and_normalize(&sig);
 
     let lldecl = match ccx.instances().borrow().get(&instance) {
         Some(&val) => val,
@@ -607,10 +611,8 @@ pub fn trans_instance<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, instance: Instance
         attributes::emit_uwtable(lldecl, true);
     }
 
-    let fn_ty = FnType::new(ccx, abi, &sig, &[]);
-
     let mir = ccx.tcx().item_mir(instance.def);
-    mir::trans_mir(ccx, lldecl, fn_ty, &mir, instance, &sig, abi);
+    mir::trans_mir(ccx, lldecl, &mir, instance, sig);
 }
 
 pub fn trans_ctor_shim<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
@@ -621,11 +623,9 @@ pub fn trans_ctor_shim<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
     attributes::inline(llfn, attributes::InlineAttr::Hint);
     attributes::set_frame_pointer_elimination(ccx, llfn);
 
-    let ctor_ty = ccx.tcx().item_type(def_id);
-    let ctor_ty = monomorphize::apply_param_substs(ccx.shared(), substs, &ctor_ty);
-
+    let ctor_ty = common::def_ty(ccx.shared(), def_id, substs);
     let sig = ccx.tcx().erase_late_bound_regions_and_normalize(&ctor_ty.fn_sig());
-    let fn_ty = FnType::new(ccx, Abi::Rust, &sig, &[]);
+    let fn_ty = FnType::new(ccx, sig, &[]);
 
     let bcx = Builder::new_block(ccx, llfn, "entry-block");
     if !fn_ty.ret.is_ignore() {
@@ -1132,11 +1132,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let ty::CrateAnalysis { export_map, reachable, name, .. } = analysis;
     let exported_symbols = find_exported_symbols(tcx, reachable);
 
-    let check_overflow = if let Some(v) = tcx.sess.opts.debugging_opts.force_overflow_checks {
-        v
-    } else {
-        tcx.sess.opts.debug_assertions
-    };
+    let check_overflow = tcx.sess.overflow_checks();
 
     let link_meta = link::build_link_meta(incremental_hashes_map, &name);
 
@@ -1151,7 +1147,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     });
 
     let metadata_module = ModuleTranslation {
-        name: "metadata".to_string(),
+        name: link::METADATA_MODULE_NAME.to_string(),
         symbol_name_hash: 0, // we always rebuild metadata, at least for now
         source: ModuleSource::Translated(ModuleLlvm {
             llcx: shared_ccx.metadata_llcx(),
@@ -1215,21 +1211,40 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Instantiate translation items without filling out definitions yet...
     for ccx in crate_context_list.iter_need_trans() {
-        let cgu = ccx.codegen_unit();
-        let trans_items = cgu.items_in_deterministic_order(tcx, &symbol_map);
+        let dep_node = ccx.codegen_unit().work_product_dep_node();
+        tcx.dep_graph.with_task(dep_node,
+                                ccx,
+                                AssertDepGraphSafe(symbol_map.clone()),
+                                trans_decl_task);
 
-        tcx.dep_graph.with_task(cgu.work_product_dep_node(), || {
+        fn trans_decl_task<'a, 'tcx>(ccx: CrateContext<'a, 'tcx>,
+                                     symbol_map: AssertDepGraphSafe<Rc<SymbolMap<'tcx>>>) {
+            // FIXME(#40304): Instead of this, the symbol-map should be an
+            // on-demand thing that we compute.
+            let AssertDepGraphSafe(symbol_map) = symbol_map;
+            let cgu = ccx.codegen_unit();
+            let trans_items = cgu.items_in_deterministic_order(ccx.tcx(), &symbol_map);
             for (trans_item, linkage) in trans_items {
                 trans_item.predefine(&ccx, linkage);
             }
-        });
+        }
     }
 
     // ... and now that we have everything pre-defined, fill out those definitions.
     for ccx in crate_context_list.iter_need_trans() {
-        let cgu = ccx.codegen_unit();
-        let trans_items = cgu.items_in_deterministic_order(tcx, &symbol_map);
-        tcx.dep_graph.with_task(cgu.work_product_dep_node(), || {
+        let dep_node = ccx.codegen_unit().work_product_dep_node();
+        tcx.dep_graph.with_task(dep_node,
+                                ccx,
+                                AssertDepGraphSafe(symbol_map.clone()),
+                                trans_def_task);
+
+        fn trans_def_task<'a, 'tcx>(ccx: CrateContext<'a, 'tcx>,
+                                    symbol_map: AssertDepGraphSafe<Rc<SymbolMap<'tcx>>>) {
+            // FIXME(#40304): Instead of this, the symbol-map should be an
+            // on-demand thing that we compute.
+            let AssertDepGraphSafe(symbol_map) = symbol_map;
+            let cgu = ccx.codegen_unit();
+            let trans_items = cgu.items_in_deterministic_order(ccx.tcx(), &symbol_map);
             for (trans_item, _) in trans_items {
                 trans_item.define(&ccx);
             }
@@ -1251,7 +1266,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             if ccx.sess().opts.debuginfo != NoDebugInfo {
                 debuginfo::finalize(&ccx);
             }
-        });
+        }
     }
 
     symbol_names_test::report_symbol_names(&shared_ccx);

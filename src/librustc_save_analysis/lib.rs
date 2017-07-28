@@ -85,7 +85,7 @@ pub mod recorder {
 pub struct SaveContext<'l, 'tcx: 'l> {
     tcx: TyCtxt<'l, 'tcx, 'tcx>,
     tables: &'l ty::TypeckTables<'tcx>,
-    analysis: &'l ty::CrateAnalysis<'tcx>,
+    analysis: &'l ty::CrateAnalysis,
     span_utils: SpanUtils<'tcx>,
 }
 
@@ -136,6 +136,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     parent: None,
                     docs: docs_for_attrs(&item.attrs),
                     sig: self.sig_base(item),
+                    attributes: item.attrs.clone(),
                 }))
             }
             ast::ItemKind::Static(ref typ, mt, ref expr) => {
@@ -164,6 +165,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
                     sig: Some(self.sig_base(item)),
+                    attributes: item.attrs.clone(),
                 }))
             }
             ast::ItemKind::Const(ref typ, ref expr) => {
@@ -183,6 +185,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
                     sig: Some(self.sig_base(item)),
+                    attributes: item.attrs.clone(),
                 }))
             }
             ast::ItemKind::Mod(ref m) => {
@@ -205,6 +208,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
                     sig: self.sig_base(item),
+                    attributes: item.attrs.clone(),
                 }))
             }
             ast::ItemKind::Enum(ref def, _) => {
@@ -228,6 +232,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     visibility: From::from(&item.vis),
                     docs: docs_for_attrs(&item.attrs),
                     sig: self.sig_base(item),
+                    attributes: item.attrs.clone(),
                 }))
             }
             ast::ItemKind::Impl(.., ref trait_ref, ref typ, _) => {
@@ -239,7 +244,9 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 match typ.node {
                     // Common case impl for a struct or something basic.
                     ast::TyKind::Path(None, ref path) => {
-                        filter!(self.span_utils, None, path.span, None);
+                        if generated_code(path.span) {
+                            return None;
+                        }
                         sub_span = self.span_utils.sub_span_for_type_name(path.span);
                         type_data = self.lookup_ref_id(typ.id).map(|id| {
                             TypeRefData {
@@ -313,6 +320,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 visibility: From::from(&field.vis),
                 docs: docs_for_attrs(&field.attrs),
                 sig: Some(sig),
+                attributes: field.attrs.clone(),
             })
         } else {
             None
@@ -325,7 +333,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                            name: ast::Name, span: Span) -> Option<FunctionData> {
         // The qualname for a method is the trait name or name of the struct in an impl in
         // which the method is declared in, followed by the method's name.
-        let (qualname, parent_scope, decl_id, vis, docs) =
+        let (qualname, parent_scope, decl_id, vis, docs, attributes) =
           match self.tcx.impl_of_method(self.tcx.hir.local_def_id(id)) {
             Some(impl_id) => match self.tcx.hir.get_if_local(impl_id) {
                 Some(Node::NodeItem(item)) => {
@@ -347,7 +355,8 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
 
                             (result, trait_id, decl_id,
                              From::from(&item.vis),
-                             docs_for_attrs(&item.attrs))
+                             docs_for_attrs(&item.attrs),
+                             item.attrs.to_vec())
                         }
                         _ => {
                             span_bug!(span,
@@ -372,7 +381,8 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                             (format!("::{}", self.tcx.item_path_str(def_id)),
                              Some(def_id), None,
                              From::from(&item.vis),
-                             docs_for_attrs(&item.attrs))
+                             docs_for_attrs(&item.attrs),
+                             item.attrs.to_vec())
                         }
                         r => {
                             span_bug!(span,
@@ -385,7 +395,10 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                     }
                 }
                 None => {
-                    span_bug!(span, "Could not find container for method {}", id);
+                    debug!("Could not find container for method {} at {:?}", id, span);
+                    // This is not necessarily a bug, if there was a compilation error, the tables
+                    // we need might not exist.
+                    return None;
                 }
             },
         };
@@ -421,6 +434,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
             parent: parent_scope,
             docs: docs,
             sig: sig,
+            attributes: attributes,
         })
     }
 
@@ -430,6 +444,9 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                               -> Option<TypeRefData> {
         self.lookup_ref_id(trait_ref.ref_id).and_then(|def_id| {
             let span = trait_ref.path.span;
+            if generated_code(span) {
+                return None;
+            }
             let sub_span = self.span_utils.sub_span_for_type_name(span).or(Some(span));
             filter!(self.span_utils, sub_span, span, None);
             Some(TypeRefData {
@@ -545,7 +562,7 @@ impl<'l, 'tcx: 'l> SaveContext<'l, 'tcx> {
                 match *qpath {
                     hir::QPath::Resolved(_, ref path) => path.def,
                     hir::QPath::TypeRelative(..) => {
-                        if let Some(ty) = self.analysis.hir_ty_to_ty.get(&id) {
+                        if let Some(ty) = self.tcx.ast_ty_to_ty_cache.borrow().get(&id) {
                             if let ty::TyProjection(proj) = ty.sty {
                                 for item in self.tcx.associated_items(proj.trait_ref.def_id) {
                                     if item.kind == ty::AssociatedKind::Type {
@@ -849,7 +866,7 @@ impl Format {
 
 pub fn process_crate<'l, 'tcx>(tcx: TyCtxt<'l, 'tcx, 'tcx>,
                                krate: &ast::Crate,
-                               analysis: &'l ty::CrateAnalysis<'tcx>,
+                               analysis: &'l ty::CrateAnalysis,
                                cratename: &str,
                                odir: Option<&Path>,
                                format: Format) {

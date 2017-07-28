@@ -10,7 +10,8 @@
 
 use llvm;
 use llvm::{ContextRef, ModuleRef, ValueRef};
-use rustc::dep_graph::{DepGraph, DepNode, DepTrackingMap, DepTrackingMapConfig, WorkProduct};
+use rustc::dep_graph::{DepGraph, DepGraphSafe, DepNode, DepTrackingMap,
+                       DepTrackingMapConfig, WorkProduct};
 use middle::cstore::LinkMeta;
 use rustc::hir;
 use rustc::hir::def::ExportMap;
@@ -208,7 +209,8 @@ impl<'gcx> DepTrackingMapConfig for ProjectionCache<'gcx> {
                    _ => None,
                })
                .collect();
-        DepNode::TraitSelect(def_ids)
+
+        DepNode::ProjectionCache { def_ids: def_ids }
     }
 }
 
@@ -271,6 +273,9 @@ pub struct CrateContext<'a, 'tcx: 'a> {
     /// The index of `local` in `local_ccxs`.  This is used in
     /// `maybe_iter(true)` to identify the original `LocalCrateContext`.
     index: usize,
+}
+
+impl<'a, 'tcx> DepGraphSafe for CrateContext<'a, 'tcx> {
 }
 
 pub struct CrateContextIterator<'a, 'tcx: 'a> {
@@ -958,15 +963,13 @@ impl<'b, 'tcx> CrateContext<'b, 'tcx> {
             return llfn;
         }
 
-        let ty = tcx.mk_fn_ptr(tcx.mk_bare_fn(ty::BareFnTy {
-            unsafety: hir::Unsafety::Unsafe,
-            abi: Abi::C,
-            sig: ty::Binder(tcx.mk_fn_sig(
-                iter::once(tcx.mk_mut_ptr(tcx.types.u8)),
-                tcx.types.never,
-                false
-            )),
-        }));
+        let ty = tcx.mk_fn_ptr(ty::Binder(tcx.mk_fn_sig(
+            iter::once(tcx.mk_mut_ptr(tcx.types.u8)),
+            tcx.types.never,
+            false,
+            hir::Unsafety::Unsafe,
+            Abi::C
+        )));
 
         let llfn = declare::declare_fn(self, "rust_eh_unwind_resume", ty);
         attributes::unwind(llfn, true);

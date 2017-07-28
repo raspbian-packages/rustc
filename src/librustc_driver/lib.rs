@@ -24,6 +24,7 @@
 #![deny(warnings)]
 
 #![feature(box_syntax)]
+#![feature(loop_break_value)]
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
@@ -737,7 +738,7 @@ Available lint options:
               Allow <foo>
     -D <foo>           Deny <foo>
     -F <foo>           Forbid <foo> \
-              (deny, and deny all overrides)
+              (deny <foo> and all attempts to override)
 
 ");
 

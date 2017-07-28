@@ -65,6 +65,15 @@ pub struct Iter<'a, T: 'a> {
     marker: PhantomData<&'a Node<T>>,
 }
 
+#[stable(feature = "collection_debug", since = "1.17.0")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for Iter<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Iter")
+         .field(&self.clone())
+         .finish()
+    }
+}
+
 // FIXME #19839: deriving is too aggressive on the bounds (T doesn't need to be Clone).
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Iter<'a, T> {
@@ -82,11 +91,29 @@ pub struct IterMut<'a, T: 'a> {
     len: usize,
 }
 
+#[stable(feature = "collection_debug", since = "1.17.0")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for IterMut<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IterMut")
+         .field(self.clone())
+         .finish()
+    }
+}
+
 /// An iterator over the elements of a `LinkedList`.
 #[derive(Clone)]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IntoIter<T> {
     list: LinkedList<T>,
+}
+
+#[stable(feature = "collection_debug", since = "1.17.0")]
+impl<T: fmt::Debug> fmt::Debug for IntoIter<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("IntoIter")
+         .field(self.clone())
+         .finish()
+    }
 }
 
 impl<T> Node<T> {
@@ -115,7 +142,7 @@ impl<T> LinkedList<T> {
 
             match self.head {
                 None => self.tail = node,
-                Some(head) => (**head).prev = node,
+                Some(head) => (*head.as_mut_ptr()).prev = node,
             }
 
             self.head = node;
@@ -127,12 +154,12 @@ impl<T> LinkedList<T> {
     #[inline]
     fn pop_front_node(&mut self) -> Option<Box<Node<T>>> {
         self.head.map(|node| unsafe {
-            let node = Box::from_raw(*node);
+            let node = Box::from_raw(node.as_mut_ptr());
             self.head = node.next;
 
             match self.head {
                 None => self.tail = None,
-                Some(head) => (**head).prev = None,
+                Some(head) => (*head.as_mut_ptr()).prev = None,
             }
 
             self.len -= 1;
@@ -150,7 +177,7 @@ impl<T> LinkedList<T> {
 
             match self.tail {
                 None => self.head = node,
-                Some(tail) => (**tail).next = node,
+                Some(tail) => (*tail.as_mut_ptr()).next = node,
             }
 
             self.tail = node;
@@ -162,12 +189,12 @@ impl<T> LinkedList<T> {
     #[inline]
     fn pop_back_node(&mut self) -> Option<Box<Node<T>>> {
         self.tail.map(|node| unsafe {
-            let node = Box::from_raw(*node);
+            let node = Box::from_raw(node.as_mut_ptr());
             self.tail = node.prev;
 
             match self.tail {
                 None => self.head = None,
-                Some(tail) => (**tail).next = None,
+                Some(tail) => (*tail.as_mut_ptr()).next = None,
             }
 
             self.len -= 1;
@@ -242,8 +269,8 @@ impl<T> LinkedList<T> {
             Some(tail) => {
                 if let Some(other_head) = other.head.take() {
                     unsafe {
-                        (**tail).next = Some(other_head);
-                        (**other_head).prev = Some(tail);
+                        (*tail.as_mut_ptr()).next = Some(other_head);
+                        (*other_head.as_mut_ptr()).prev = Some(tail);
                     }
 
                     self.tail = other.tail.take();
@@ -457,7 +484,7 @@ impl<T> LinkedList<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn front_mut(&mut self) -> Option<&mut T> {
-        self.head.map(|node| unsafe { &mut (**node).element })
+        self.head.map(|node| unsafe { &mut (*node.as_mut_ptr()).element })
     }
 
     /// Provides a reference to the back element, or `None` if the list is
@@ -503,7 +530,7 @@ impl<T> LinkedList<T> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn back_mut(&mut self) -> Option<&mut T> {
-        self.tail.map(|node| unsafe { &mut (**node).element })
+        self.tail.map(|node| unsafe { &mut (*node.as_mut_ptr()).element })
     }
 
     /// Adds an element first in the list.
@@ -648,9 +675,9 @@ impl<T> LinkedList<T> {
         let second_part_head;
 
         unsafe {
-            second_part_head = (**split_node.unwrap()).next.take();
+            second_part_head = (*split_node.unwrap().as_mut_ptr()).next.take();
             if let Some(head) = second_part_head {
-                (**head).prev = None;
+                (*head.as_mut_ptr()).prev = None;
             }
         }
 
@@ -789,7 +816,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
             None
         } else {
             self.head.map(|node| unsafe {
-                let node = &mut **node;
+                let node = &mut *node.as_mut_ptr();
                 self.len -= 1;
                 self.head = node.next;
                 &mut node.element
@@ -811,7 +838,7 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
             None
         } else {
             self.tail.map(|node| unsafe {
-                let node = &mut **node;
+                let node = &mut *node.as_mut_ptr();
                 self.len -= 1;
                 self.tail = node.prev;
                 &mut node.element
@@ -869,8 +896,8 @@ impl<'a, T> IterMut<'a, T> {
                     element: element,
                 })));
 
-                (**prev).next = node;
-                (**head).prev = node;
+                (*prev.as_mut_ptr()).next = node;
+                (*head.as_mut_ptr()).prev = node;
 
                 self.list.len += 1;
             },
@@ -902,7 +929,7 @@ impl<'a, T> IterMut<'a, T> {
         if self.len == 0 {
             None
         } else {
-            self.head.map(|node| unsafe { &mut (**node).element })
+            self.head.map(|node| unsafe { &mut (*node.as_mut_ptr()).element })
         }
     }
 }
@@ -1078,6 +1105,17 @@ pub struct FrontPlace<'a, T: 'a> {
 }
 
 #[unstable(feature = "collection_placement",
+           reason = "struct name and placement protocol are subject to change",
+           issue = "30172")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for FrontPlace<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("FrontPlace")
+         .field(self.clone())
+         .finish()
+    }
+}
+
+#[unstable(feature = "collection_placement",
            reason = "placement protocol is subject to change",
            issue = "30172")]
 impl<'a, T> Placer<T> for FrontPlace<'a, T> {
@@ -1119,6 +1157,17 @@ impl<'a, T> InPlace<T> for FrontPlace<'a, T> {
 pub struct BackPlace<'a, T: 'a> {
     list: &'a mut LinkedList<T>,
     node: IntermediateBox<Node<T>>,
+}
+
+#[unstable(feature = "collection_placement",
+           reason = "struct name and placement protocol are subject to change",
+           issue = "30172")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for BackPlace<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("BackPlace")
+         .field(self.clone())
+         .finish()
+    }
 }
 
 #[unstable(feature = "collection_placement",

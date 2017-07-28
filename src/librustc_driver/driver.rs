@@ -21,13 +21,14 @@ use rustc::middle::{self, dependency_format, stability, reachable};
 use rustc::middle::privacy::AccessLevels;
 use rustc::ty::{self, TyCtxt, Resolutions, GlobalArenas};
 use rustc::util::common::time;
-use rustc::util::nodemap::{NodeSet, NodeMap};
+use rustc::util::nodemap::NodeSet;
+use rustc::util::fs::rename_or_copy_remove;
 use rustc_borrowck as borrowck;
 use rustc_incremental::{self, IncrementalHashesMap};
 use rustc_incremental::ich::Fingerprint;
 use rustc_resolve::{MakeGlobMap, Resolver};
 use rustc_metadata::creader::CrateLoader;
-use rustc_metadata::cstore::CStore;
+use rustc_metadata::cstore::{self, CStore};
 use rustc_trans::back::{link, write};
 use rustc_trans as trans;
 use rustc_typeck as typeck;
@@ -42,7 +43,6 @@ use super::Compilation;
 use serialize::json;
 
 use std::env;
-use std::mem;
 use std::ffi::{OsString, OsStr};
 use std::fs;
 use std::io::{self, Write};
@@ -124,6 +124,10 @@ pub fn compile_input(sess: &Session,
         };
 
         write_out_deps(sess, &outputs, &crate_name);
+        if sess.opts.output_types.contains_key(&OutputType::DepInfo) &&
+            sess.opts.output_types.keys().count() == 1 {
+            return Ok(())
+        }
 
         let arena = DroplessArena::new();
         let arenas = GlobalArenas::new();
@@ -342,7 +346,7 @@ pub struct CompileState<'a, 'tcx: 'a> {
     pub hir_crate: Option<&'a hir::Crate>,
     pub hir_map: Option<&'a hir_map::Map<'tcx>>,
     pub resolutions: Option<&'a Resolutions>,
-    pub analysis: Option<&'a ty::CrateAnalysis<'tcx>>,
+    pub analysis: Option<&'a ty::CrateAnalysis>,
     pub tcx: Option<TyCtxt<'a, 'tcx, 'tcx>>,
     pub trans: Option<&'a trans::CrateTranslation>,
 }
@@ -416,7 +420,7 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
                                 arenas: &'tcx GlobalArenas<'tcx>,
                                 cstore: &'a CStore,
                                 hir_map: &'a hir_map::Map<'tcx>,
-                                analysis: &'a ty::CrateAnalysis<'static>,
+                                analysis: &'a ty::CrateAnalysis,
                                 resolutions: &'a Resolutions,
                                 krate: &'a ast::Crate,
                                 hir_crate: &'a hir::Crate,
@@ -443,7 +447,7 @@ impl<'a, 'tcx> CompileState<'a, 'tcx> {
                             out_file: &'a Option<PathBuf>,
                             krate: Option<&'a ast::Crate>,
                             hir_crate: &'a hir::Crate,
-                            analysis: &'a ty::CrateAnalysis<'tcx>,
+                            analysis: &'a ty::CrateAnalysis,
                             tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             crate_name: &'a str)
                             -> Self {
@@ -533,7 +537,7 @@ fn count_nodes(krate: &ast::Crate) -> usize {
 pub struct ExpansionResult {
     pub expanded_crate: ast::Crate,
     pub defs: hir_map::Definitions,
-    pub analysis: ty::CrateAnalysis<'static>,
+    pub analysis: ty::CrateAnalysis,
     pub resolutions: Resolutions,
     pub hir_forest: hir_map::Forest,
 }
@@ -603,7 +607,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
 
     let whitelisted_legacy_custom_derives = registry.take_whitelisted_custom_derives();
     let Registry { syntax_exts, early_lint_passes, late_lint_passes, lint_groups,
-                   llvm_passes, attributes, mir_passes, .. } = registry;
+                   llvm_passes, attributes, .. } = registry;
 
     sess.track_errors(|| {
         let mut ls = sess.lint_store.borrow_mut();
@@ -619,7 +623,6 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
         }
 
         *sess.plugin_llvm_passes.borrow_mut() = llvm_passes;
-        sess.mir_passes.borrow_mut().extend(mir_passes);
         *sess.plugin_attributes.borrow_mut() = attributes.clone();
     })?;
 
@@ -687,6 +690,14 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
 
         let krate = ecx.monotonic_expander().expand_crate(krate);
 
+        let mut missing_fragment_specifiers: Vec<_> =
+            ecx.parse_sess.missing_fragment_specifiers.borrow().iter().cloned().collect();
+        missing_fragment_specifiers.sort();
+        for span in missing_fragment_specifiers {
+            let lint = lint::builtin::MISSING_FRAGMENT_SPECIFIER;
+            let msg = "missing fragment specifier".to_string();
+            sess.add_lint(lint, ast::CRATE_NODE_ID, span, msg);
+        }
         if ecx.parse_sess.span_diagnostic.err_count() - ecx.resolve_err_count > err_count {
             ecx.parse_sess.span_diagnostic.abort_if_errors();
         }
@@ -695,8 +706,6 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
         }
         krate
     });
-
-    krate.exported_macros = mem::replace(&mut resolver.exported_macros, Vec::new());
 
     krate = time(time_passes, "maybe building test harness", || {
         syntax::test::modify_for_testing(&sess.parse_sess,
@@ -725,6 +734,8 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
         });
     }
 
+    after_expand(&krate)?;
+
     if sess.opts.debugging_opts.input_stats {
         println!("Post-expansion node count: {}", count_nodes(&krate));
     }
@@ -741,22 +752,22 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
          "checking for inline asm in case the target doesn't support it",
          || no_asm::check_crate(sess, &krate));
 
-    time(sess.time_passes(),
+    time(time_passes,
          "early lint checks",
          || lint::check_ast_crate(sess, &krate));
 
-    time(sess.time_passes(),
+    time(time_passes,
          "AST validation",
          || ast_validation::check_crate(sess, &krate));
 
-    time(sess.time_passes(), "name resolution", || -> CompileResult {
-        // Since import resolution will eventually happen in expansion,
-        // don't perform `after_expand` until after import resolution.
-        after_expand(&krate)?;
-
+    time(time_passes, "name resolution", || -> CompileResult {
         resolver.resolve_crate(&krate);
         Ok(())
     })?;
+
+    if resolver.found_unresolved_macro {
+        sess.parse_sess.span_diagnostic.abort_if_errors();
+    }
 
     // Needs to go *after* expansion to be able to check the results of macro expansion.
     time(time_passes, "complete gated feature checking", || {
@@ -770,7 +781,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
     })?;
 
     // Lower ast -> hir.
-    let hir_forest = time(sess.time_passes(), "lowering ast -> hir", || {
+    let hir_forest = time(time_passes, "lowering ast -> hir", || {
         let hir_crate = lower_crate(sess, &krate, &mut resolver);
 
         if sess.opts.debugging_opts.hir_stats {
@@ -780,7 +791,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
         hir_map::Forest::new(hir_crate, &sess.dep_graph)
     });
 
-    // Discard hygiene data, which isn't required past lowering to HIR.
+    // Discard hygiene data, which isn't required after lowering to HIR.
     if !keep_hygiene_data(sess) {
         syntax::ext::hygiene::reset_hygiene_data();
     }
@@ -794,7 +805,6 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
             reachable: NodeSet(),
             name: crate_name.to_string(),
             glob_map: if resolver.make_glob_map { Some(resolver.glob_map) } else { None },
-            hir_ty_to_ty: NodeMap(),
         },
         resolutions: Resolutions {
             freevars: resolver.freevars,
@@ -810,7 +820,7 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
 /// structures carrying the results of the analysis.
 pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                                                hir_map: hir_map::Map<'tcx>,
-                                               mut analysis: ty::CrateAnalysis<'tcx>,
+                                               mut analysis: ty::CrateAnalysis,
                                                resolutions: Resolutions,
                                                arena: &'tcx DroplessArena,
                                                arenas: &'tcx GlobalArenas<'tcx>,
@@ -818,7 +828,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                                                f: F)
                                                -> Result<R, usize>
     where F: for<'a> FnOnce(TyCtxt<'a, 'tcx, 'tcx>,
-                            ty::CrateAnalysis<'tcx>,
+                            ty::CrateAnalysis,
                             IncrementalHashesMap,
                             CompileResult) -> R
 {
@@ -869,7 +879,16 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
     let index = stability::Index::new(&hir_map);
 
+    let mut local_providers = ty::maps::Providers::default();
+    mir::provide(&mut local_providers);
+    typeck::provide(&mut local_providers);
+
+    let mut extern_providers = ty::maps::Providers::default();
+    cstore::provide(&mut extern_providers);
+
     TyCtxt::create_and_enter(sess,
+                             local_providers,
+                             extern_providers,
                              arenas,
                              arena,
                              resolutions,
@@ -897,8 +916,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
              || stability::check_unstable_api_usage(tcx));
 
         // passes are timed inside typeck
-        analysis.hir_ty_to_ty =
-            try_with_f!(typeck::check_crate(tcx), (tcx, analysis, incremental_hashes_map));
+        try_with_f!(typeck::check_crate(tcx), (tcx, analysis, incremental_hashes_map));
 
         time(time_passes,
              "const checking",
@@ -948,8 +966,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
             // in stage 4 below.
             passes.push_hook(box mir::transform::dump_mir::DumpMir);
             passes.push_pass(box mir::transform::simplify::SimplifyCfg::new("initial"));
-            passes.push_pass(
-                box mir::transform::qualify_consts::QualifyAndPromoteConstants::default());
+            passes.push_pass(box mir::transform::qualify_consts::QualifyAndPromoteConstants);
             passes.push_pass(box mir::transform::type_check::TypeckMir);
             passes.push_pass(
                 box mir::transform::simplify_branches::SimplifyBranches::new("initial"));
@@ -999,6 +1016,7 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 }
 
 /// Run the translation phase to LLVM, after which the AST and analysis can
+/// be discarded.
 pub fn phase_4_translate_to_llvm<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                            analysis: ty::CrateAnalysis,
                                            incremental_hashes_map: &IncrementalHashesMap)
@@ -1030,6 +1048,7 @@ pub fn phase_4_translate_to_llvm<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         passes.push_pass(box mir::transform::simplify::SimplifyCfg::new("elaborate-drops"));
 
         // No lifetime analysis based on borrowing can be done from here on out.
+        passes.push_pass(box mir::transform::inline::Inline);
         passes.push_pass(box mir::transform::instcombine::InstCombine::new());
         passes.push_pass(box mir::transform::deaggregator::Deaggregator);
         passes.push_pass(box mir::transform::copy_prop::CopyPropagation);
@@ -1084,10 +1103,9 @@ pub fn phase_5_run_llvm_passes(sess: &Session,
         // are going to build an executable
         if sess.opts.output_types.contains_key(&OutputType::Exe) {
             let f = outputs.path(OutputType::Object);
-            fs::copy(&f,
+            rename_or_copy_remove(&f,
                      f.with_file_name(format!("{}.0.o",
                                               f.file_stem().unwrap().to_string_lossy()))).unwrap();
-            fs::remove_file(f).unwrap();
         }
 
         // Remove assembly source, unless --save-temps was specified
@@ -1339,10 +1357,9 @@ pub fn build_output_filenames(input: &Input,
                                            .values()
                                            .filter(|a| a.is_none())
                                            .count();
-            let ofile = if unnamed_output_types > 1 &&
-                            sess.opts.output_types.contains_key(&OutputType::Exe) {
-                sess.warn("ignoring specified output filename for 'link' output because multiple \
-                           outputs were requested");
+            let ofile = if unnamed_output_types > 1 {
+                sess.warn("due to multiple output types requested, the explicitly specified \
+                           output file name will be adapted for each output type");
                 None
             } else {
                 Some(out_file.clone())

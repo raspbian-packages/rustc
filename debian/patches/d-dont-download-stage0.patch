@@ -7,12 +7,12 @@ Forwarded: not-needed
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -22,15 +22,17 @@
+@@ -23,15 +23,17 @@
  from time import time
  
  
 -def get(url, path, verbose=False):
-+def get(url, path, verbose=False, use_local_hash_if_present=False):
++def get(url, path, verbose=False, use_local_hash_if_present=True):
      sha_url = url + ".sha256"
      with tempfile.NamedTemporaryFile(delete=False) as temp_file:
          temp_path = temp_file.name
@@ -29,7 +29,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          if os.path.exists(path):
              if verify(path, sha_path, False):
                  if verbose:
-@@ -47,7 +49,6 @@
+@@ -48,7 +50,6 @@
              print("moving {} to {}".format(temp_path, path))
          shutil.move(temp_path, path)
      finally:
@@ -37,14 +37,43 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          delete_if_present(temp_path, verbose)
  
  
---- a/src/etc/get-stage0.py
-+++ b/src/etc/get-stage0.py
-@@ -31,7 +31,7 @@
-     filename = 'rustc-{}-{}.tar.gz'.format(channel, triple)
-     url = 'https://static.rust-lang.org/dist/{}/{}'.format(date, filename)
-     dst = dl_dir + '/' + filename
--    bootstrap.get(url, dst)
-+    bootstrap.get(url, dst, use_local_hash_if_present=True)
+@@ -175,8 +176,7 @@
+             filename = "rust-std-{}-{}.tar.gz".format(channel, self.build)
+             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
+             tarball = os.path.join(rustc_cache, filename)
+-            if not os.path.exists(tarball):
+-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+             unpack(tarball, self.bin_root(),
+                    match="rust-std-" + self.build,
+                    verbose=self.verbose)
+@@ -184,8 +184,7 @@
+             filename = "rustc-{}-{}.tar.gz".format(channel, self.build)
+             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
+             tarball = os.path.join(rustc_cache, filename)
+-            if not os.path.exists(tarball):
+-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+             unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
+             self.fix_executable(self.bin_root() + "/bin/rustc")
+             self.fix_executable(self.bin_root() + "/bin/rustdoc")
+@@ -198,8 +197,7 @@
+             filename = "cargo-nightly-{}.tar.gz".format(self.build)
+             url = "https://s3.amazonaws.com/rust-lang-ci/cargo-builds/" + self.stage0_cargo_rev()
+             tarball = os.path.join(cargo_cache, filename)
+-            if not os.path.exists(tarball):
+-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
++            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+             unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
+             self.fix_executable(self.bin_root() + "/bin/cargo")
+             with open(self.cargo_stamp(), 'w') as f:
+--- a/configure
++++ b/configure
+@@ -611,7 +611,6 @@
  
-     stage0_dst = triple + '/stage0'
-     if os.path.exists(stage0_dst):
+ step_msg "looking for build programs"
+ 
+-probe_need CFG_CURL curl
+ if [ -z "$CFG_PYTHON_PROVIDED" ]; then
+     probe_need CFG_PYTHON      python2.7 python2 python
+ fi

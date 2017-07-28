@@ -780,10 +780,10 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    pub fn intcast(&self, val: ValueRef, dest_ty: Type) -> ValueRef {
+    pub fn intcast(&self, val: ValueRef, dest_ty: Type, is_signed: bool) -> ValueRef {
         self.count_insn("intcast");
         unsafe {
-            llvm::LLVMBuildIntCast(self.llbuilder, val, dest_ty.to_ref(), noname())
+            llvm::LLVMRustBuildIntCast(self.llbuilder, val, dest_ty.to_ref(), is_signed)
         }
     }
 
@@ -1106,7 +1106,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
 
     pub fn set_personality_fn(&self, personality: ValueRef) {
         unsafe {
-            llvm::LLVMRustSetPersonalityFn(self.llbuilder, personality);
+            llvm::LLVMSetPersonalityFn(self.llfn(), personality);
         }
     }
 
@@ -1149,6 +1149,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
+    pub fn set_invariant_load(&self, load: ValueRef) {
+        unsafe {
+            llvm::LLVMSetMetadata(load, llvm::MD_invariant_load as c_uint,
+                                  llvm::LLVMMDNodeInContext(self.ccx.llcx(), ptr::null(), 0));
+        }
+    }
+
     /// Returns the ptr value that should be used for storing `val`.
     fn check_store<'b>(&self,
                        val: ValueRef,
@@ -1181,7 +1188,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
 
         assert!(fn_ty.kind() == llvm::TypeKind::Function,
-                "builder::{} not passed a function", typ);
+                "builder::{} not passed a function, but {:?}", typ, fn_ty);
 
         let param_tys = fn_ty.func_params();
 

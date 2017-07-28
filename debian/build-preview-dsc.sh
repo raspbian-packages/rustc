@@ -1,4 +1,7 @@
 #!/bin/sh
+# NOTE: this script very likely does not work any more, don't try to use it
+# unless you're very familiar with the rest of the packaging.
+#
 # Build a Debian source package out of an existing unpacked rustc deb source,
 # and the official rust preview releases.
 #

@@ -4,8 +4,22 @@ pub type dev_t = u64;
 pub type blksize_t = ::int32_t;
 pub type fsblkcnt_t = ::uint64_t;
 pub type fsfilcnt_t = ::uint64_t;
+pub type idtype_t = ::c_int;
 
 s! {
+    pub struct aiocb {
+        pub aio_offset: ::off_t,
+        pub aio_buf: *mut ::c_void,
+        pub aio_nbytes: ::size_t,
+        pub aio_fildes: ::c_int,
+        pub aio_lio_opcode: ::c_int,
+        pub aio_reqprio: ::c_int,
+        pub aio_sigevent: ::sigevent,
+        _state: ::c_int,
+        _errno: ::c_int,
+        _retval: ::ssize_t
+    }
+
     pub struct dirent {
         pub d_fileno: ::ino_t,
         pub d_reclen: u16,
@@ -28,6 +42,14 @@ s! {
         __unused6: *mut ::c_void,
         __unused7: *mut ::c_void,
         __unused8: *mut ::c_void,
+    }
+
+    pub struct sigevent {
+        pub sigev_notify: ::c_int,
+        pub sigev_signo: ::c_int,
+        pub sigev_value: ::sigval,
+        __unused1: *mut ::c_void,       //actually a function pointer
+        pub sigev_notify_attributes: *mut ::c_void
     }
 
     pub struct sigset_t {
@@ -269,8 +291,50 @@ pub const F_MAXFD: ::c_int = 11;
 pub const IPV6_JOIN_GROUP: ::c_int = 12;
 pub const IPV6_LEAVE_GROUP: ::c_int = 13;
 
+pub const SOCK_CONN_DGRAM: ::c_int = 6;
+pub const SOCK_DCCP: ::c_int = SOCK_CONN_DGRAM;
+pub const SOCK_NOSIGPIPE: ::c_int = 0x40000000;
+pub const SOCK_FLAGS_MASK: ::c_int = 0xf0000000;
+
 pub const SO_SNDTIMEO: ::c_int = 0x100b;
 pub const SO_RCVTIMEO: ::c_int = 0x100c;
+pub const SO_ACCEPTFILTER: ::c_int = 0x1000;
+pub const SO_TIMESTAMP: ::c_int = 0x2000;
+pub const SO_OVERFLOWED: ::c_int = 0x1009;
+pub const SO_NOHEADER: ::c_int = 0x100a;
+
+pub const AF_OROUTE: ::c_int = 17;
+pub const AF_ARP: ::c_int = 28;
+pub const pseudo_AF_KEY: ::c_int = 29;
+pub const pseudo_AF_HDRCMPLT: ::c_int = 30;
+pub const AF_BLUETOOTH: ::c_int = 31;
+pub const AF_IEEE80211: ::c_int = 32;
+pub const AF_MPLS: ::c_int = 33;
+pub const AF_ROUTE: ::c_int = 34;
+pub const AF_MAX: ::c_int = 35;
+
+pub const NET_MAXID: ::c_int = AF_MAX;
+pub const NET_RT_DUMP: ::c_int = 1;
+pub const NET_RT_FLAGS: ::c_int = 2;
+pub const NET_RT_OOIFLIST: ::c_int = 3;
+pub const NET_RT_OIFLIST: ::c_int = 4;
+pub const NET_RT_IFLIST: ::c_int = 5;
+pub const NET_RT_MAXID: ::c_int = 6;
+
+pub const PF_OROUTE: ::c_int = AF_OROUTE;
+pub const PF_ARP: ::c_int = AF_ARP;
+pub const PF_KEY: ::c_int = pseudo_AF_KEY;
+pub const PF_BLUETOOTH: ::c_int = AF_BLUETOOTH;
+pub const PF_MPLS: ::c_int = AF_MPLS;
+pub const PF_ROUTE: ::c_int = AF_ROUTE;
+pub const PF_MAX: ::c_int = AF_MAX;
+
+pub const MSG_NBIO: ::c_int = 0x1000;
+pub const MSG_WAITFORONE: ::c_int = 0x2000;
+pub const MSG_NOTIFICATION: ::c_int = 0x4000;
+
+pub const SCM_TIMESTAMP: ::c_int = 0x08;
+pub const SCM_CREDS: ::c_int = 0x10;
 
 pub const O_DSYNC : ::c_int = 0x10000;
 
@@ -549,7 +613,41 @@ pub const KERN_PROC_RGID: ::c_int = 8;
 
 pub const EAI_SYSTEM: ::c_int = 11;
 
+pub const AIO_CANCELED: ::c_int = 1;
+pub const AIO_NOTCANCELED: ::c_int = 2;
+pub const AIO_ALLDONE: ::c_int = 3;
+pub const LIO_NOP: ::c_int = 0;
+pub const LIO_WRITE: ::c_int = 1;
+pub const LIO_READ: ::c_int = 2;
+pub const LIO_WAIT: ::c_int = 1;
+pub const LIO_NOWAIT: ::c_int = 0;
+
+pub const SIGEV_NONE: ::c_int = 0;
+pub const SIGEV_SIGNAL: ::c_int = 1;
+pub const SIGEV_THREAD: ::c_int = 2;
+
+pub const WSTOPPED: ::c_int = 0x00000002; // same as WUNTRACED
+pub const WCONTINUED: ::c_int = 0x00000010;
+pub const WEXITED: ::c_int = 0x000000020;
+pub const WNOWAIT: ::c_int = 0x00010000;
+
+pub const P_ALL: idtype_t = 0;
+pub const P_PID: idtype_t = 1;
+pub const P_PGID: idtype_t = 4;
+
 extern {
+    pub fn aio_read(aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_write(aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_fsync(op: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_error(aiocbp: *const aiocb) -> ::c_int;
+    pub fn aio_return(aiocbp: *mut aiocb) -> ::ssize_t;
+    #[link_name = "__aio_suspend50"]
+    pub fn aio_suspend(aiocb_list: *const *const aiocb, nitems: ::c_int,
+                       timeout: *const ::timespec) -> ::c_int;
+    pub fn aio_cancel(fd: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
+    pub fn lio_listio(mode: ::c_int, aiocb_list: *const *mut aiocb,
+                      nitems: ::c_int, sevp: *mut sigevent) -> ::c_int;
+
     pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
     pub fn getnameinfo(sa: *const ::sockaddr,
                        salen: ::socklen_t,

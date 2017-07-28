@@ -11,25 +11,23 @@
 use llvm::{self, ValueRef, BasicBlockRef};
 use rustc_const_eval::{ErrKind, ConstEvalErr, note_const_eval_err};
 use rustc::middle::lang_items;
+use rustc::middle::const_val::ConstInt;
 use rustc::ty::{self, layout, TypeFoldable};
 use rustc::mir;
 use abi::{Abi, FnType, ArgType};
-use adt;
 use base::{self, Lifetime};
 use callee::{Callee, CalleeData, Fn, Intrinsic, NamedTupleConstructor, Virtual};
 use builder::Builder;
 use common::{self, Funclet};
 use common::{C_bool, C_str_slice, C_struct, C_u32, C_undef};
 use consts;
-use Disr;
-use machine::{llalign_of_min, llbitsize_of_real};
+use machine::llalign_of_min;
 use meth;
 use type_of::{self, align_of};
 use glue;
 use type_::Type;
 
 use rustc_data_structures::indexed_vec::IndexVec;
-use rustc_data_structures::fx::FxHashMap;
 use syntax::symbol::Symbol;
 
 use std::cmp;
@@ -136,59 +134,25 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 funclet_br(self, bcx, target);
             }
 
-            mir::TerminatorKind::If { ref cond, targets: (true_bb, false_bb) } => {
-                let cond = self.trans_operand(&bcx, cond);
-
-                let lltrue = llblock(self, true_bb);
-                let llfalse = llblock(self, false_bb);
-                bcx.cond_br(cond.immediate(), lltrue, llfalse);
-            }
-
-            mir::TerminatorKind::Switch { ref discr, ref adt_def, ref targets } => {
-                let discr_lvalue = self.trans_lvalue(&bcx, discr);
-                let ty = discr_lvalue.ty.to_ty(bcx.tcx());
-                let discr = adt::trans_get_discr(
-                    &bcx, ty, discr_lvalue.llval, discr_lvalue.alignment,
-                    None, true);
-
-                let mut bb_hist = FxHashMap();
-                for target in targets {
-                    *bb_hist.entry(target).or_insert(0) += 1;
-                }
-                let (default_bb, default_blk) = match bb_hist.iter().max_by_key(|&(_, c)| c) {
-                    // If a single target basic blocks is predominant, promote that to be the
-                    // default case for the switch instruction to reduce the size of the generated
-                    // code. This is especially helpful in cases like an if-let on a huge enum.
-                    // Note: This optimization is only valid for exhaustive matches.
-                    Some((&&bb, &c)) if c > targets.len() / 2 => {
-                        (Some(bb), llblock(self, bb))
-                    }
-                    // We're generating an exhaustive switch, so the else branch
-                    // can't be hit.  Branching to an unreachable instruction
-                    // lets LLVM know this
-                    _ => (None, self.unreachable_block())
-                };
-                let switch = bcx.switch(discr, default_blk, targets.len());
-                assert_eq!(adt_def.variants.len(), targets.len());
-                for (adt_variant, &target) in adt_def.variants.iter().zip(targets) {
-                    if default_bb != Some(target) {
-                        let llbb = llblock(self, target);
-                        let llval = adt::trans_case(&bcx, ty, Disr::from(adt_variant.disr_val));
-                        bcx.add_case(switch, llval, llbb)
-                    }
-                }
-            }
-
             mir::TerminatorKind::SwitchInt { ref discr, switch_ty, ref values, ref targets } => {
-                let (otherwise, targets) = targets.split_last().unwrap();
-                let lv = self.trans_lvalue(&bcx, discr);
-                let discr = bcx.load(lv.llval, lv.alignment.to_align());
-                let discr = base::to_immediate(&bcx, discr, switch_ty);
-                let switch = bcx.switch(discr, llblock(self, *otherwise), values.len());
-                for (value, target) in values.iter().zip(targets) {
-                    let val = Const::from_constval(bcx.ccx, value.clone(), switch_ty);
-                    let llbb = llblock(self, *target);
-                    bcx.add_case(switch, val.llval, llbb)
+                let discr = self.trans_operand(&bcx, discr);
+                if switch_ty == bcx.tcx().types.bool {
+                    let lltrue = llblock(self, targets[0]);
+                    let llfalse = llblock(self, targets[1]);
+                    if let [ConstInt::U8(0)] = values[..] {
+                        bcx.cond_br(discr.immediate(), llfalse, lltrue);
+                    } else {
+                        bcx.cond_br(discr.immediate(), lltrue, llfalse);
+                    }
+                } else {
+                    let (otherwise, targets) = targets.split_last().unwrap();
+                    let switch = bcx.switch(discr.immediate(),
+                                            llblock(self, *otherwise), values.len());
+                    for (value, target) in values.iter().zip(targets) {
+                        let val = Const::from_constint(bcx.ccx, value);
+                        let llbb = llblock(self, *target);
+                        bcx.add_case(switch, val.llval, llbb)
+                    }
                 }
             }
 
@@ -401,20 +365,21 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 // Create the callee. This is a fn ptr or zero-sized and hence a kind of scalar.
                 let callee = self.trans_operand(&bcx, func);
 
-                let (mut callee, abi, sig) = match callee.ty.sty {
-                    ty::TyFnDef(def_id, substs, f) => {
-                        (Callee::def(bcx.ccx, def_id, substs), f.abi, &f.sig)
+                let (mut callee, sig) = match callee.ty.sty {
+                    ty::TyFnDef(def_id, substs, sig) => {
+                        (Callee::def(bcx.ccx, def_id, substs), sig)
                     }
-                    ty::TyFnPtr(f) => {
+                    ty::TyFnPtr(sig) => {
                         (Callee {
                             data: Fn(callee.immediate()),
                             ty: callee.ty
-                        }, f.abi, &f.sig)
+                        }, sig)
                     }
                     _ => bug!("{} is not callable", callee.ty)
                 };
 
-                let sig = bcx.tcx().erase_late_bound_regions_and_normalize(sig);
+                let sig = bcx.tcx().erase_late_bound_regions_and_normalize(&sig);
+                let abi = sig.abi;
 
                 // Handle intrinsics old trans wants Expr's for, ourselves.
                 let intrinsic = match (&callee.ty.sty, &callee.data) {
@@ -703,7 +668,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
         let tuple = self.trans_operand(bcx, operand);
 
         let arg_types = match tuple.ty.sty {
-            ty::TyTuple(ref tys) => tys,
+            ty::TyTuple(ref tys, _) => tys,
             _ => span_bug!(self.mir.span,
                            "bad final argument to \"rust-call\" fn {:?}", tuple.ty)
         };
@@ -868,8 +833,21 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             self.trans_lvalue(bcx, dest)
         };
         if fn_ret_ty.is_indirect() {
-            llargs.push(dest.llval);
-            ReturnDest::Nothing
+            match dest.alignment {
+                Alignment::AbiAligned => {
+                    llargs.push(dest.llval);
+                    ReturnDest::Nothing
+                },
+                Alignment::Packed => {
+                    // Currently, MIR code generation does not create calls
+                    // that store directly to fields of packed structs (in
+                    // fact, the calls it creates write only to temps),
+                    //
+                    // If someone changes that, please update this code path
+                    // to create a temporary.
+                    span_bug!(self.mir.span, "can't directly store to unaligned value");
+                }
+            }
         } else {
             ReturnDest::Store(dest.llval)
         }
@@ -904,24 +882,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
     fn trans_transmute_into(&mut self, bcx: &Builder<'a, 'tcx>,
                             src: &mir::Operand<'tcx>,
                             dst: &LvalueRef<'tcx>) {
-        let mut val = self.trans_operand(bcx, src);
-        if let ty::TyFnDef(def_id, substs, _) = val.ty.sty {
-            let llouttype = type_of::type_of(bcx.ccx, dst.ty.to_ty(bcx.tcx()));
-            let out_type_size = llbitsize_of_real(bcx.ccx, llouttype);
-            if out_type_size != 0 {
-                // FIXME #19925 Remove this hack after a release cycle.
-                let f = Callee::def(bcx.ccx, def_id, substs);
-                let ty = match f.ty.sty {
-                    ty::TyFnDef(.., f) => bcx.tcx().mk_fn_ptr(f),
-                    _ => f.ty
-                };
-                val = OperandRef {
-                    val: Immediate(f.reify(bcx.ccx)),
-                    ty: ty
-                };
-            }
-        }
-
+        let val = self.trans_operand(bcx, src);
         let llty = type_of::type_of(bcx.ccx, val.ty);
         let cast_ptr = bcx.pointercast(dst.llval, llty.ptr_to());
         let in_type = val.ty;

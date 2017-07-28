@@ -1,13 +1,11 @@
-Index: rust/src/bootstrap/bootstrap.py
-===================================================================
---- rust.orig/src/bootstrap/bootstrap.py
-+++ rust/src/bootstrap/bootstrap.py
-@@ -72,7 +72,7 @@ def download(path, url, probably_big, ve
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -84,7 +84,7 @@
              option = "-#"
          else:
              option = "-s"
--        run(["curl", option, "--retry", "3", "-Sf", "-o", path, url], verbose=verbose)
-+        run(["curl", option, "-R", "--retry", "3", "-Sf", "-o", path, url], verbose=verbose)
+-        run(["curl", option, "--retry", "3", "-Sf", "-o", path, url],
++        run(["curl", option, "-R", "--retry", "3", "-Sf", "-o", path, url],
+             verbose=verbose,
+             exception=exception)
  
- 
- def verify(path, sha_path, verbose):

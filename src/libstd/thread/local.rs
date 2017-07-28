@@ -28,8 +28,8 @@ use mem;
 /// # Initialization and Destruction
 ///
 /// Initialization is dynamically performed on the first call to `with()`
-/// within a thread, and values support destructors which will be run when a
-/// thread exits.
+/// within a thread, and values that implement `Drop` get destructed when a
+/// thread exits. Some caveats apply, which are explained below.
 ///
 /// # Examples
 ///
@@ -99,7 +99,7 @@ pub struct LocalKey<T: 'static> {
     init: fn() -> T,
 }
 
-#[stable(feature = "std_debug", since = "1.15.0")]
+#[stable(feature = "std_debug", since = "1.16.0")]
 impl<T: 'static> fmt::Debug for LocalKey<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad("LocalKey { .. }")
@@ -332,7 +332,6 @@ pub mod os {
         marker: marker::PhantomData<Cell<T>>,
     }
 
-    #[stable(feature = "std_debug", since = "1.15.0")]
     impl<T> fmt::Debug for Key<T> {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
             f.pad("Key { .. }")
@@ -396,7 +395,7 @@ pub mod os {
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {
     use sync::mpsc::{channel, Sender};
-    use cell::{Cell, UnsafeCell};
+    use cell::UnsafeCell;
     use super::LocalKeyState;
     use thread;
 
@@ -409,9 +408,9 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test] #[cfg(not(target_arch = "powerpc64"))]
     fn smoke_no_dtor() {
-        thread_local!(static FOO: Cell<i32> = Cell::new(1));
+        thread_local!(static FOO: ::cell::Cell<i32> = ::cell::Cell::new(1));
 
         FOO.with(|f| {
             assert_eq!(f.get(), 1);

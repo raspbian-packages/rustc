@@ -10,9 +10,7 @@
 
 use std::collections::VecDeque;
 use std::fmt::Debug;
-use std::collections::vec_deque::Drain;
-
-use test;
+use std::collections::vec_deque::{Drain};
 
 use self::Taggy::*;
 use self::Taggypar::*;
@@ -122,51 +120,6 @@ fn test_index_out_of_bounds() {
         deq.push_front(i);
     }
     deq[3];
-}
-
-#[bench]
-fn bench_new(b: &mut test::Bencher) {
-    b.iter(|| {
-        let ring: VecDeque<i32> = VecDeque::new();
-        test::black_box(ring);
-    })
-}
-
-#[bench]
-fn bench_grow_1025(b: &mut test::Bencher) {
-    b.iter(|| {
-        let mut deq = VecDeque::new();
-        for i in 0..1025 {
-            deq.push_front(i);
-        }
-        test::black_box(deq);
-    })
-}
-
-#[bench]
-fn bench_iter_1000(b: &mut test::Bencher) {
-    let ring: VecDeque<_> = (0..1000).collect();
-
-    b.iter(|| {
-        let mut sum = 0;
-        for &i in &ring {
-            sum += i;
-        }
-        test::black_box(sum);
-    })
-}
-
-#[bench]
-fn bench_mut_iter_1000(b: &mut test::Bencher) {
-    let mut ring: VecDeque<_> = (0..1000).collect();
-
-    b.iter(|| {
-        let mut sum = 0;
-        for i in &mut ring {
-            sum += *i;
-        }
-        test::black_box(sum);
-    })
 }
 
 #[derive(Clone, PartialEq, Debug)]
@@ -604,6 +557,25 @@ fn test_eq() {
 }
 
 #[test]
+fn test_partial_eq_array() {
+    let d = VecDeque::<char>::new();
+    assert!(d == []);
+
+    let mut d = VecDeque::new();
+    d.push_front('a');
+    assert!(d == ['a']);
+
+    let mut d = VecDeque::new();
+    d.push_back('a');
+    assert!(d == ['a']);
+
+    let mut d = VecDeque::new();
+    d.push_back('a');
+    d.push_back('b');
+    assert!(d == ['a', 'b']);
+}
+
+#[test]
 fn test_hash() {
     let mut x = VecDeque::new();
     let mut y = VecDeque::new();
@@ -1027,4 +999,26 @@ fn test_is_empty() {
     assert!(v.iter().is_empty());
     assert!(v.iter_mut().is_empty());
     assert!(v.into_iter().is_empty());
+}
+
+#[test]
+fn test_placement_in() {
+    let mut buf: VecDeque<isize> = VecDeque::new();
+    buf.place_back() <- 1;
+    buf.place_back() <- 2;
+    assert_eq!(buf, [1,2]);
+
+    buf.place_front() <- 3;
+    buf.place_front() <- 4;
+    assert_eq!(buf, [4,3,1,2]);
+
+    {
+        let ptr_head = buf.place_front() <- 5;
+        assert_eq!(*ptr_head, 5);
+    }
+    {
+        let ptr_tail = buf.place_back() <- 6;
+        assert_eq!(*ptr_tail, 6);
+    }
+    assert_eq!(buf, [5,4,3,1,2,6]);
 }

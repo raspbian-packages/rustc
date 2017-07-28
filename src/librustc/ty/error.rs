@@ -10,7 +10,7 @@
 
 use hir::def_id::DefId;
 use infer::type_variable;
-use ty::{self, BoundRegion, Region, Ty, TyCtxt};
+use ty::{self, BoundRegion, DefIdTree, Region, Ty, TyCtxt};
 
 use std::fmt;
 use syntax::abi;
@@ -39,8 +39,8 @@ pub enum TypeError<'tcx> {
     RegionsDoesNotOutlive(&'tcx Region, &'tcx Region),
     RegionsNotSame(&'tcx Region, &'tcx Region),
     RegionsNoOverlap(&'tcx Region, &'tcx Region),
-    RegionsInsufficientlyPolymorphic(BoundRegion, &'tcx Region),
-    RegionsOverlyPolymorphic(BoundRegion, &'tcx Region),
+    RegionsInsufficientlyPolymorphic(BoundRegion, &'tcx Region, Option<Box<ty::Issue32330>>),
+    RegionsOverlyPolymorphic(BoundRegion, &'tcx Region, Option<Box<ty::Issue32330>>),
     Sorts(ExpectedFound<Ty<'tcx>>),
     IntMismatch(ExpectedFound<ty::IntVarValue>),
     FloatMismatch(ExpectedFound<ast::FloatTy>),
@@ -116,11 +116,11 @@ impl<'tcx> fmt::Display for TypeError<'tcx> {
             RegionsNoOverlap(..) => {
                 write!(f, "lifetimes do not intersect")
             }
-            RegionsInsufficientlyPolymorphic(br, _) => {
+            RegionsInsufficientlyPolymorphic(br, _, _) => {
                 write!(f, "expected bound lifetime parameter {}, \
                            found concrete lifetime", br)
             }
-            RegionsOverlyPolymorphic(br, _) => {
+            RegionsOverlyPolymorphic(br, _, _) => {
                 write!(f, "expected concrete lifetime, \
                            found bound lifetime parameter {}", br)
             }
@@ -178,7 +178,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
         match self.sty {
             ty::TyBool | ty::TyChar | ty::TyInt(_) |
             ty::TyUint(_) | ty::TyFloat(_) | ty::TyStr | ty::TyNever => self.to_string(),
-            ty::TyTuple(ref tys) if tys.is_empty() => self.to_string(),
+            ty::TyTuple(ref tys, _) if tys.is_empty() => self.to_string(),
 
             ty::TyAdt(def, _) => format!("{} `{}`", def.descr(), tcx.item_path_str(def.did)),
             ty::TyArray(_, n) => format!("array of {} elements", n),
@@ -209,7 +209,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
                     |p| format!("trait {}", tcx.item_path_str(p.def_id())))
             }
             ty::TyClosure(..) => "closure".to_string(),
-            ty::TyTuple(_) => "tuple".to_string(),
+            ty::TyTuple(..) => "tuple".to_string(),
             ty::TyInfer(ty::TyVar(_)) => "inferred type".to_string(),
             ty::TyInfer(ty::IntVar(_)) => "integral variable".to_string(),
             ty::TyInfer(ty::FloatVar(_)) => "floating-point variable".to_string(),
@@ -253,15 +253,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 self.note_and_explain_region(db, "...does not overlap ",
                                            region2, "");
             }
-            RegionsInsufficientlyPolymorphic(_, conc_region) => {
+            RegionsInsufficientlyPolymorphic(_, conc_region, _) => {
                 self.note_and_explain_region(db, "concrete lifetime that was found is ",
                                            conc_region, "");
             }
-            RegionsOverlyPolymorphic(_, &ty::ReVar(_)) => {
+            RegionsOverlyPolymorphic(_, &ty::ReVar(_), _) => {
                 // don't bother to print out the message below for
                 // inference variables, it's not very illuminating.
             }
-            RegionsOverlyPolymorphic(_, conc_region) => {
+            RegionsOverlyPolymorphic(_, conc_region, _) => {
                 self.note_and_explain_region(db, "expected concrete lifetime is ",
                                            conc_region, "");
             }
@@ -287,8 +287,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                         db.span_note(span, "a default was defined here...");
                     }
                     None => {
+                        let item_def_id = self.parent(expected.def_id).unwrap();
                         db.note(&format!("a default is defined on `{}`",
-                                         self.item_path_str(expected.def_id)));
+                                         self.item_path_str(item_def_id)));
                     }
                 }
 
@@ -301,8 +302,9 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                         db.span_note(span, "a second default was defined here...");
                     }
                     None => {
+                        let item_def_id = self.parent(found.def_id).unwrap();
                         db.note(&format!("a second default is defined on `{}`",
-                                         self.item_path_str(found.def_id)));
+                                         self.item_path_str(item_def_id)));
                     }
                 }
 

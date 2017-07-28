@@ -1,4 +1,4 @@
-# Used for testing architecture.mk, and for make_orig-dl_tarball.sh.
+# Used for testing architecture.mk, and for make_orig-stage0_tarball.sh.
 # Not for end users.
 #
 # Usage:

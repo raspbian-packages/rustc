@@ -8,11 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-macro_rules! id { ($($t:tt)*) => { $($t)* } }
-
 fn main() {
-    println!("{}", { macro_rules! x { ($()*) => {} } 33 });
-    id!(macro_rules! m { ($($i:ident),*) => { ($($i),*) } });
-    let (foo, bar) = (0, 0);
-    assert_eq!(m!(foo, bar), (0, 0));
+    println!("{}", { macro_rules! x { ($(t:tt)*) => {} } 33 });
 }
+

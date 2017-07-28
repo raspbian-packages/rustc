@@ -23,7 +23,7 @@ use {resolve_error, resolve_struct_error, ResolutionError};
 
 use rustc::middle::cstore::LoadedMacro;
 use rustc::hir::def::*;
-use rustc::hir::def_id::{CrateNum, CRATE_DEF_INDEX, DefId};
+use rustc::hir::def_id::{CrateNum, BUILTIN_MACROS_CRATE, CRATE_DEF_INDEX, DefId};
 use rustc::ty;
 
 use std::cell::Cell;
@@ -37,7 +37,6 @@ use syntax::ast::{Mutability, StmtKind, TraitItem, TraitItemKind};
 use syntax::ast::{Variant, ViewPathGlob, ViewPathList, ViewPathSimple};
 use syntax::ext::base::SyntaxExtension;
 use syntax::ext::base::Determinacy::Undetermined;
-use syntax::ext::expand::mark_tts;
 use syntax::ext::hygiene::Mark;
 use syntax::ext::tt::macro_rules;
 use syntax::parse::token;
@@ -327,21 +326,26 @@ impl<'a> Resolver<'a> {
                 let def = Def::Struct(self.definitions.local_def_id(item.id));
                 self.define(parent, ident, TypeNS, (def, vis, sp, expansion));
 
+                // Record field names for error reporting.
+                let mut ctor_vis = vis;
+                let field_names = struct_def.fields().iter().filter_map(|field| {
+                    let field_vis = self.resolve_visibility(&field.vis);
+                    if ctor_vis.is_at_least(field_vis, &*self) {
+                        ctor_vis = field_vis;
+                    }
+                    field.ident.map(|ident| ident.name)
+                }).collect();
+                let item_def_id = self.definitions.local_def_id(item.id);
+                self.insert_field_names(item_def_id, field_names);
+
                 // If this is a tuple or unit struct, define a name
                 // in the value namespace as well.
                 if !struct_def.is_struct() {
                     let ctor_def = Def::StructCtor(self.definitions.local_def_id(struct_def.id()),
                                                    CtorKind::from_ast(struct_def));
-                    self.define(parent, ident, ValueNS, (ctor_def, vis, sp, expansion));
+                    self.define(parent, ident, ValueNS, (ctor_def, ctor_vis, sp, expansion));
+                    self.struct_constructors.insert(def.def_id(), (ctor_def, ctor_vis));
                 }
-
-                // Record field names for error reporting.
-                let field_names = struct_def.fields().iter().filter_map(|field| {
-                    self.resolve_visibility(&field.vis);
-                    field.ident.map(|ident| ident.name)
-                }).collect();
-                let item_def_id = self.definitions.local_def_id(item.id);
-                self.insert_field_names(item_def_id, field_names);
             }
 
             ItemKind::Union(ref vdata, _) => {
@@ -368,7 +372,7 @@ impl<'a> Resolver<'a> {
                 self.define(parent, ident, TypeNS, (module, vis, sp, expansion));
                 self.current_module = module;
             }
-            ItemKind::Mac(_) => panic!("unexpanded macro in resolve!"),
+            ItemKind::MacroDef(..) | ItemKind::Mac(_) => unreachable!(),
         }
     }
 
@@ -434,9 +438,17 @@ impl<'a> Resolver<'a> {
             Def::Variant(..) | Def::TyAlias(..) => {
                 self.define(parent, ident, TypeNS, (def, vis, DUMMY_SP, Mark::root()));
             }
-            Def::Fn(..) | Def::Static(..) | Def::Const(..) |
-            Def::VariantCtor(..) | Def::StructCtor(..) => {
+            Def::Fn(..) | Def::Static(..) | Def::Const(..) | Def::VariantCtor(..) => {
                 self.define(parent, ident, ValueNS, (def, vis, DUMMY_SP, Mark::root()));
+            }
+            Def::StructCtor(..) => {
+                self.define(parent, ident, ValueNS, (def, vis, DUMMY_SP, Mark::root()));
+
+                if let Some(struct_def_id) =
+                        self.session.cstore.def_key(def_id).parent
+                            .map(|index| DefId { krate: def_id.krate, index: index }) {
+                    self.struct_constructors.insert(struct_def_id, (def, vis));
+                }
             }
             Def::Trait(..) => {
                 let module_kind = ModuleKind::Def(def, ident.name);
@@ -449,8 +461,8 @@ impl<'a> Resolver<'a> {
                     self.define(module, ident, ns, (child.def, ty::Visibility::Public,
                                                     DUMMY_SP, Mark::root()));
 
-                    let has_self = self.session.cstore.associated_item(child.def.def_id())
-                                       .map_or(false, |item| item.method_has_self_argument);
+                    let has_self = self.session.cstore.associated_item_cloned(child.def.def_id())
+                                       .method_has_self_argument;
                     self.trait_item_map.insert((def_id, child.name, ns), (child.def, has_self));
                 }
                 module.populated.set(true);
@@ -480,31 +492,34 @@ impl<'a> Resolver<'a> {
         })
     }
 
+    pub fn macro_def_scope(&mut self, expansion: Mark) -> Module<'a> {
+        let def_id = self.macro_defs[&expansion];
+        if let Some(id) = self.definitions.as_local_node_id(def_id) {
+            self.local_macro_def_scopes[&id]
+        } else if def_id.krate == BUILTIN_MACROS_CRATE {
+            // FIXME(jseyfried): This happens when `include!()`ing a `$crate::` path, c.f, #40469.
+            self.graph_root
+        } else {
+            let module_def_id = ty::DefIdTree::parent(&*self, def_id).unwrap();
+            self.get_extern_crate_root(module_def_id.krate)
+        }
+    }
+
     pub fn get_macro(&mut self, def: Def) -> Rc<SyntaxExtension> {
         let def_id = match def {
-            Def::Macro(def_id) => def_id,
+            Def::Macro(def_id, ..) => def_id,
             _ => panic!("Expected Def::Macro(..)"),
         };
         if let Some(ext) = self.macro_map.get(&def_id) {
             return ext.clone();
         }
 
-        let mut macro_rules = match self.session.cstore.load_macro(def_id, &self.session) {
-            LoadedMacro::MacroRules(macro_rules) => macro_rules,
+        let macro_def = match self.session.cstore.load_macro(def_id, &self.session) {
+            LoadedMacro::MacroDef(macro_def) => macro_def,
             LoadedMacro::ProcMacro(ext) => return ext,
         };
 
-        let mark = Mark::fresh();
-        let invocation = self.arenas.alloc_invocation_data(InvocationData {
-            module: Cell::new(self.get_extern_crate_root(def_id.krate)),
-            def_index: CRATE_DEF_INDEX,
-            const_expr: false,
-            legacy_scope: Cell::new(LegacyScope::Empty),
-            expansion: Cell::new(LegacyScope::Empty),
-        });
-        self.invocations.insert(mark, invocation);
-        macro_rules.body = mark_tts(&macro_rules.body, mark);
-        let ext = Rc::new(macro_rules::compile(&self.session.parse_sess, &macro_rules));
+        let ext = Rc::new(macro_rules::compile(&self.session.parse_sess, &macro_def));
         self.macro_map.insert(def_id, ext.clone());
         ext
     }
@@ -524,7 +539,6 @@ impl<'a> Resolver<'a> {
                            binding: &'a NameBinding<'a>,
                            span: Span,
                            allow_shadowing: bool) {
-        self.macro_names.insert(name);
         if self.builtin_macros.insert(name, binding).is_some() && !allow_shadowing {
             let msg = format!("`{}` is already in scope", name);
             let note =
@@ -546,7 +560,7 @@ impl<'a> Resolver<'a> {
                       "an `extern crate` loading macros must be at the crate root");
         } else if !self.use_extern_macros && !used &&
                   self.session.cstore.dep_kind(module.def_id().unwrap().krate).macros_only() {
-            let msg = "custom derive crates and `#[no_link]` crates have no effect without \
+            let msg = "proc macro crates and `#[no_link]` crates have no effect without \
                        `#[macro_use]`";
             self.session.span_warn(item.span, msg);
             used = true; // Avoid the normal unused extern crate warning
@@ -695,12 +709,12 @@ impl<'a, 'b> Visitor<'a> for BuildReducedGraphVisitor<'a, 'b> {
 
     fn visit_item(&mut self, item: &'a Item) {
         let macro_use = match item.node {
-            ItemKind::Mac(ref mac) => {
-                if mac.node.path.segments.is_empty() {
-                    self.legacy_scope = LegacyScope::Expansion(self.visit_invoc(item.id));
-                } else {
-                    self.resolver.define_macro(item, &mut self.legacy_scope);
-                }
+            ItemKind::MacroDef(..) => {
+                self.resolver.define_macro(item, &mut self.legacy_scope);
+                return
+            }
+            ItemKind::Mac(..) => {
+                self.legacy_scope = LegacyScope::Expansion(self.visit_invoc(item.id));
                 return
             }
             ItemKind::Mod(..) => self.resolver.contains_macro_use(&item.attrs),

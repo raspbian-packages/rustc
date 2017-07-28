@@ -14,129 +14,137 @@ The rational is the following:
 
  -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
 
-Building from source
-====================
 
-By default, the Debian rustc package will use the system rustc to bootstrap
-itself from. The system rustc has to be either the previous or the same version
-as the rustc being built; the build will fail if this is not the case.
+Cross-compiling
+===============
 
-  apt-get source --compile rustc
+Rust uses LLVM, so cross-compiling works a bit differently from the GNU
+toolchain. The most important difference is that there are no "cross"
+compilers, every compiler is already a cross compiler. All you need to do is
+install the standard libraries for each target architecture you want to compile
+to. For rustc, this is libstd-rust-dev, so your debian/control would look
+something like this:
 
-Alternatively, you may give the "pkg.rustc.dlstage0" DEB_BUILD_PROFILE to
-instead use the process defined by Rust upstream. This downloads the "official"
-stage0 compiler for the version being built from rust-lang.org. At the time of
-writing "official" means "the previous stable version".
+    Build-Depends:
+     [..]
+     rustc           (>= $version),
+     libstd-rust-dev (>= $version),
+     [..]
 
-  apt-get source --compile --build-profiles=pkg.rustc.dlstage0 rustc
+You need both, this is important. When Debian build toolchains satisfy the
+build-depends of a cross-build, (1) a "rustc" Build-Depends implies rustc for
+the native architecture, because it's marked as "Multi-Arch: foreign", and this
+will implicitly pull in libstd-rust-dev also for the native architecture; and
+(2) a "libstd-rust-dev" Build-Depends implies libstd-rust-dev for the foreign
+architecture, because it's marked as "Multi-Arch: same".
 
-If neither of these options are acceptable to you, (e.g. because your build
-process cannot access the network), see the below sections on "Bootstrapping"
-for more options.
+You'll probably also want to add
 
-Bootstrapping a new distro
-==========================
+    include /usr/share/rustc/architecture.mk
 
-If you want to bootstrap a new distro that does not already have rustc, you
-may run `debian/rules source_orig-dl` to create a .dsc that does not
-Build-Depend on rustc. Instead, it includes an extra orig-dl source tarball
-that contains the official stage0 compiler, pre-downloaded from rust-lang.org
-so that your build daemons don't need to access the network during the build.
+to your debian/rules. This sets some useful variables like DEB_HOST_RUST_TYPE.
 
-  debian/rules source_orig-dl
-  sbuild ../rustc_*.dsc
+See the cargo package for an example.
 
-To only bootstrap specific architectures, run this instead:
+Terminology
+-----------
 
-  upstream_bootstrap_arch="arm64 armel armhf" debian/rules source_orig-dl
+The rust ecosystem generally uses the term "host" for the native architecture
+running the compiler, equivalent to DEB_BUILD_RUST_TYPE or "build" in GNU
+terminology, and "target" for the foreign architecture that the build products
+run on, equivalent to DEB_HOST_RUST_TYPE or "host" in GNU terminology. For
+example, rustc --version --verbose will output something like:
 
-This way, other architectures will be omitted from the orig-dl tarball. You
-might want to do this e.g. if these other architectures are already present in
-your distro, but the $upstream_bootstrap_arch ones are not yet present.
+    rustc 1.16.0
+    [..]
+    host: x86_64-unknown-linux-gnu
 
-Notes
------
+And both rustc and cargo have --target flags:
 
-The approach here is based on doing a *source-only upload*, where the building
-of the binary packages are done by automatic build daemons. We achieve this, by
-bundling the upstream bootstrapping binaries inside the Debian source package.
-This is a nasty hack that stretches the definition of "source package", but is
-unavoidable if we want to securely bootstrap self-hosted compilers.
+    $ rustc --help | grep '\-\-target'
+        --target TARGET     Target triple for which the code is compiled
+    $ cargo build --help | grep '\-\-target'
+        --target TRIPLE              Build for the target triple
 
-This differs from the traditional Debian way of bootstrapping compilers, which
-involves locally building a "stage0" Debian package using upstream binaries
-(instead of Debian build dependencies that don't yet exist), then using this
-stage0 Debian package to do a "standard" build that then forms part of a binary
-upload. This allows the source package to remain binary-free. However, both the
-original stage0 package and upstream binaries are lost, and Debian currently
-does not have any policy nor infrastructure that can try to reproduce what the
-uploader supposedly did.
+One major exception to this naming scheme is in CERTAIN PARTS OF the build
+scripts of cargo and rustc themselves, such as the `./configure` scripts and
+SOME PARTS of the `config.toml` files. Here, "build", "host" and "target" mean
+the same things they do in GNU toolchain terminology. However, IN OTHER PARTS
+OF the build scripts of cargo and rustc, as well as cargo and rustc's own
+output and logging messages, the term "host" and "target" mean as they do in
+the previous paragraph. Yes, it's a total mind fuck. :( Table for clarity:
 
-The advantage of our (non-traditional) approach is that anyone can download
-this source package if they want to build the binaries themselves - they can
-just follow the same automatic build processes that apply to every other Debian
-package. If the build process is reproducible [1] then they can be sure that
-*you* (as the Debian Developer that prepared the source-only upload) didn't
-backdoor the binaries, nor did the automatic build daemons even if they were
-compromised during the build.
+======================================= =============== ========================
+GNU term / Debian envvar                Rust ecosystem, Some parts of the rustc
+                                        rustc and cargo and cargo build scripts
+======================================= =============== ========================
+build   DEB_BUILD_{ARCH,RUST_TYPE}      host            build
+  the machine running the build
+--------------------------------------- --------------- ------------------------
+host    DEB_HOST_{ARCH,RUST_TYPE}       target          host(s)
+  the machine the build products run on
+--------------------------------------- --------------- ------------------------
+only relevant when building a compiler
+target  DEB_TARGET_{ARCH,RUST_TYPE}     N/A             target(s)
+  the one architecture that the built                     extra architectures
+  cross-compiler itself builds for                        to build "std" for
+--------------------------------------- --------------- ------------------------
 
-(The upstream binaries contained in the orig-dl tarball may still have been
-backdoored. However, this is true in both scenarios - our arrangement is still
-a strict improvement in security, because it reduces the set of "things that
-may have been backdoored". Furthermore, more people use the upstream binaries,
-so presumably any backdoors would be noticed more quickly.)
 
-In the future, both approaches are unifiable into a single secure process, as
-long as:
+Porting to new architectures (on the same distro)
+=================================================
 
-1. We can trace the binaries that were *actually used* in the original
-   bootstrapping event.
-2. We can optionally *choose* to use a different bootstrapping binary, such as
-   an independently-written rustc.
-3. We have a unified well-defined process for both (1) or (2), that applies to
-   all bootstrapped packages (not just rustc). "Well-defined" means that it can
-   be automated by a program, and it can verify that both options result in the
-   same binary outputs (after the stage2 compilation step).
+As mentioned above, to cross-compile rust packages you need to install the rust
+standard library for each relevant foreign architecture. However, this is not
+needed when cross-compiling rustc itself; its build system will build any
+relevant foreign-architecture standard libraries automatically.
 
-This is otherwise known as Diverse Double-Compilation.
+Cross-build, in a schroot using sbuild
+--------------------------------------
 
-[1] https://github.com/rust-lang/rust/issues/34902
-[2] http://www.dwheeler.com/trusting-trust/
+0. Set up an schroot for your native architecture, for sbuild:
 
-Bootstrapping a new architecture
-================================
+    sudo apt-get install sbuild
+    sudo sbuild-adduser $LOGNAME
+    newgrp sbuild # or log out and log back in
+    sudo sbuild-createchroot --include=eatmydata,ccache,gnupg unstable \
+      /srv/chroot/unstable-$(dpkg-architecture -qDEB_BUILD_ARCH)-sbuild \
+      http://deb.debian.org/debian
 
-Compiling from upstream releases
---------------------------------
+   See https://wiki.debian.org/sbuild for more details.
 
-See the previous section, "Bootstrapping a new distro", specifically the part
-about how to "only bootstrap specific architectures".
+1. Build it:
 
-For Debian, we should be able to support armhf soon:
+    sudo apt-get source --download-only rustc
+    sbuild --host=$new_arch rustc_*.dsc
 
-Complete: armhf https://github.com/rust-lang/rust/issues/35590
-In-progress: ppc64, ppc64el, s390x: https://github.com/rust-lang/rust/issues/36006
-In-progress: mips, mipsel, mips64el: https://github.com/rust-lang/rust/issues/36015
+Cross-build, directly on your own system
+----------------------------------------
 
-Cross-compiling from Debian packages
-------------------------------------
+0. Install the build-dependencies of rustc (including cargo and itself):
 
-WARNING: This does not work yet
+    sudo dpkg --add-architecture $new_arch
+    sudo apt-get --no-install-recommends build-dep --host-architecture=$new_arch rustc
 
-0. Start with rust installed on an existing platform
+1. Build it:
 
-1. Build a rust cross-compiler targeting new architecture
+    apt-get source --compile --host-architecture=$new_arch rustc
 
-    sudo apt-get build-dep --build-profile=nodoc rustc
-    dpkg-buildpackage -t $new_arch
+Native-build using bundled upstream binary blobs
+------------------------------------------------
 
-2. Use cross-compiler to build a compiler that runs on new architecture
+Use the same instructions as given in "Bootstrapping" in debian/README.source
+in the source package, making sure to set the relevant architectures.
 
-    dpkg --add-architecture $new_arch
-    sudo apt-get build-dep --host-architecture=$new_arch rustc
-    dpkg-buildpackage -a $new_arch
+Responsible distribution of cross-built binaries
+------------------------------------------------
 
-    # Perhaps this is sufficient ??
-    #apt-get source --compile --host-architecture=$new_arch rustc
+By nature, cross-builds do not run tests. These are important for rustc and
+many tests often fail on newly-supported architectures even if builds and
+cross-builds work fine. You should find some appropriate way to test your
+cross-built packages rather than blindly shipping them to users.
 
- -- Angus Lees <gus@debian.org>, Sun,  1 Feb 2015 16:16:44 +1100
+For example, Debian experimental is an appropriate place to upload them, so
+that they can be installed and tested on Debian porter boxes, before being
+uploaded to unstable and distributed to users.
+

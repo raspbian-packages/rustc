@@ -87,6 +87,7 @@ impl<'b, W: Write + 'b> Dump for JsonDumper<'b, W> {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         };
         if def.span.file_name != def.value {
             // If the module is an out-of-line defintion, then we'll make the
@@ -112,9 +113,14 @@ impl<'b, W: Write + 'b> Dump for JsonDumper<'b, W> {
         self.result.defs.push(def);
     }
 
-    // FIXME store this instead of throwing it away.
-    fn impl_data(&mut self, _data: ImplData) {}
-    fn inheritance(&mut self, _data: InheritanceData) {}
+    fn impl_data(&mut self, data: ImplData) {
+        if data.self_ref.is_some() {
+            self.result.relations.push(From::from(data));
+        }
+    }
+    fn inheritance(&mut self, data: InheritanceData) {
+        self.result.relations.push(From::from(data));
+    }
 }
 
 // FIXME do we want to change ExternalData to this mode? It will break DXR.
@@ -131,6 +137,7 @@ struct Analysis {
     defs: Vec<Def>,
     refs: Vec<Ref>,
     macro_refs: Vec<MacroRef>,
+    relations: Vec<Relation>,
 }
 
 impl Analysis {
@@ -142,6 +149,7 @@ impl Analysis {
             defs: vec![],
             refs: vec![],
             macro_refs: vec![],
+            relations: vec![],
         }
     }
 }
@@ -225,6 +233,7 @@ struct Def {
     decl_id: Option<Id>,
     docs: String,
     sig: Option<JsonSignature>,
+    attributes: Vec<Attribute>,
 }
 
 #[derive(Debug, RustcEncodable)]
@@ -267,6 +276,7 @@ impl From<EnumData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -284,6 +294,7 @@ impl From<TupleVariantData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -300,6 +311,7 @@ impl From<StructVariantData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -316,6 +328,7 @@ impl From<StructData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -332,6 +345,7 @@ impl From<TraitData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -348,6 +362,7 @@ impl From<FunctionData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -364,6 +379,7 @@ impl From<MethodData> for Def {
             decl_id: data.decl_id.map(|id| From::from(id)),
             docs: data.docs,
             sig: Some(From::from(data.sig)),
+            attributes: data.attributes,
         }
     }
 }
@@ -380,6 +396,7 @@ impl From<MacroData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: None,
+            attributes: vec![],
         }
     }
 }
@@ -396,6 +413,7 @@ impl From<TypeDefData> for Def {
             decl_id: None,
             docs: String::new(),
             sig: data.sig.map(|s| From::from(s)),
+            attributes: data.attributes,
         }
     }
 }
@@ -417,6 +435,7 @@ impl From<VariableData> for Def {
             decl_id: None,
             docs: data.docs,
             sig: None,
+            attributes: data.attributes,
         }
     }
 }
@@ -504,6 +523,42 @@ impl From<MacroUseData> for MacroRef {
             span: data.span,
             qualname: data.qualname,
             callee_span: data.callee_span,
+        }
+    }
+}
+
+#[derive(Debug, RustcEncodable)]
+struct Relation {
+    span: SpanData,
+    kind: RelationKind,
+    from: Id,
+    to: Id,
+}
+
+#[derive(Debug, RustcEncodable)]
+enum RelationKind {
+    Impl,
+    SuperTrait,
+}
+
+impl From<ImplData> for Relation {
+    fn from(data: ImplData) -> Relation {
+        Relation {
+            span: data.span,
+            kind: RelationKind::Impl,
+            from: From::from(data.self_ref.unwrap_or(null_def_id())),
+            to: From::from(data.trait_ref.unwrap_or(null_def_id())),
+        }
+    }
+}
+
+impl From<InheritanceData> for Relation {
+    fn from(data: InheritanceData) -> Relation {
+        Relation {
+            span: data.span,
+            kind: RelationKind::SuperTrait,
+            from: From::from(data.base_id),
+            to: From::from(data.deriv_id),
         }
     }
 }

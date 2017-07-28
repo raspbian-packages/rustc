@@ -7,20 +7,21 @@ Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
  Sylvestre Ledru <sylvestre@debian.org>,
  Angus Lees <gus@debian.org>,
  Ximin Luo <infinity0@debian.org>
+# Need :native on some of the below for cross-building, because we need to
+# execute them but they're not Multi-Arch: foreign
 Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
-               rustc (>= 1.15.0+dfsg) <!pkg.rustc.dlstage0>,
-               rustc (<= 1.16.0++) <!pkg.rustc.dlstage0>,
+               python:native,
+               cargo (>= 0.17.0)      <!pkg.rustc.dlstage0>,
+               rustc (>= 1.16.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc (<= 1.17.0++)    <!pkg.rustc.dlstage0>,
+               llvm-3.9-dev:native   (>= 1:3.9.1-10~),
+               llvm-3.9-tools:native (>= 1:3.9.1-10~),
+               libllvm3.9            (>= 1:3.9.1-10~),
                autotools-dev,
-               binutils (>= 2.26) | binutils-2.26,
                cmake | cmake3,
-               curl,
                gperf,
-               libedit-dev,
-               llvm-3.9-dev (>= 1:3.9-5),
-               llvm-3.9-tools (>= 1:3.9-5),
-               python,
-               zlib1g-dev,
+               binutils (>= 2.26) <!nocheck> | binutils-2.26 <!nocheck>,
                nodejs <!nocheck>,
                valgrind <!nocheck>,
                git <!nocheck>,
@@ -31,17 +32,13 @@ Build-Depends: debhelper (>= 9),
                antlr4 <!nocheck> | antlr <!nocheck>,
                bison <!nocheck>,
                flex <!nocheck>,
-# TODO: broken; see https://github.com/rust-lang/rust/issues/39838; re-enable when that is fixed
-#               gdb <!nocheck>,
+               gdb (>= 7.12) <!nocheck>,
                default-jdk-headless <!nocheck> | default-jdk <!nocheck>,
-Build-Depends-Indep: libjs-jquery <!nodoc>,
-                     pandoc (>= 1.9),
-                     po4a,
-                     texlive-xetex,
-                     texlive-latex-base,
-                     texlive-generic-recommended,
-                     texlive-fonts-recommended,
-                     lmodern
+Build-Depends-Indep: libjs-jquery <!nodoc>
+# Work around #864741. The version constraint for gdb above should already do
+# that, but this will keep things covered even in the case that they change
+# gdb-minimal to do a versioned Provides: gdb.
+Build-Conflicts: gdb-minimal <!nocheck>
 Standards-Version: 3.9.8
 Homepage: http://www.rust-lang.org/
 Vcs-Git: https://anonscm.debian.org/git/pkg-rust/rust.git
@@ -54,7 +51,7 @@ Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, libjs-jquery, binutils (>= 2.26)
 Recommends: rust-gdb | rust-lldb
-Suggests: rust-doc
+Suggests: rust-doc, rust-src
 Description: Rust systems programming language
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -68,7 +65,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.16
+Package: libstd-rust-1.17
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -93,7 +90,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${misc:Depends}, libstd-rust-1.16 (= ${binary:Version})
+Depends: ${misc:Depends}, libstd-rust-1.17 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -156,7 +153,9 @@ Package: rust-doc
 Section: doc
 Architecture: all
 Build-Profiles: <!nodoc>
-Depends: ${misc:Depends}, libjs-jquery
+Depends: ${misc:Depends},
+ libjs-jquery, libjs-highlight.js, libjs-mathjax,
+ fonts-open-sans, fonts-font-awesome
 Description: Rust systems programming language - Documentation
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly
@@ -172,3 +171,23 @@ Description: Rust systems programming language - Documentation
  .
  This package contains the Rust tutorial, language reference and
  standard library documentation.
+
+Package: rust-src
+Section: devel
+Architecture: all
+Depends: ${misc:Depends}
+Description: Rust systems programming language - source code
+ Rust is a curly-brace, block-structured expression language.  It
+ visually resembles the C language family, but differs significantly
+ in syntactic and semantic details.  Its design is oriented toward
+ concerns of "programming in the large", that is, of creating and
+ maintaining boundaries - both abstract and operational - that
+ preserve large-system integrity, availability and concurrency.
+ .
+ It supports a mixture of imperative procedural, concurrent actor,
+ object-oriented and pure functional styles.  Rust also supports
+ generic programming and meta-programming, in both static and dynamic
+ styles.
+ .
+ This package contains sources of the Rust compiler and standard
+ libraries, useful for IDEs and code analysis tools such as Racer.

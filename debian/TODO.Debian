@@ -1,4 +1,7 @@
-Later:
+Long build time
+===============
+
+ * Seems to be fixed with 1.17.0 and rustbuild.
 
  * Try to investigate the 1 hour vs 7 hour build time difference we saw between
    git diff debian/1.13.0+dfsg1-2..debian/1.14.0+dfsg1-1 -- debian
@@ -12,7 +15,8 @@ Later:
 <eddyb> infinity0: also try timing the entire compile-fail test run between stage1/bin/rustc and stage2/bin/rustc (the latter is what running tests uses by default)
 <eddyb> infinity0: in the old thing [pre-rustbuild makefiles] it's... make check-stage1-cfail, I think
 
-Older backlog:
+Older backlog
+=============
 
  * Use Compiler-rt package
  * Improve the bootstrap (do the local build first on our systems, upload

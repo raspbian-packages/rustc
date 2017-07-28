@@ -34,6 +34,42 @@ type HashUint = usize;
 
 const EMPTY_BUCKET: HashUint = 0;
 
+/// Special `Unique<HashUint>` that uses the lower bit of the pointer
+/// to expose a boolean tag.
+/// Note: when the pointer is initialized to EMPTY `.ptr()` will return
+/// null and the tag functions shouldn't be used.
+struct TaggedHashUintPtr(Unique<HashUint>);
+
+impl TaggedHashUintPtr {
+    #[inline]
+    unsafe fn new(ptr: *mut HashUint) -> Self {
+        debug_assert!(ptr as usize & 1 == 0 || ptr as usize == EMPTY as usize);
+        TaggedHashUintPtr(Unique::new(ptr))
+    }
+
+    #[inline]
+    fn set_tag(&mut self, value: bool) {
+        let usize_ptr = &*self.0 as *const *mut HashUint as *mut usize;
+        unsafe {
+            if value {
+                *usize_ptr |= 1;
+            } else {
+                *usize_ptr &= !1;
+            }
+        }
+    }
+
+    #[inline]
+    fn tag(&self) -> bool {
+        (*self.0 as usize) & 1 == 1
+    }
+
+    #[inline]
+    fn ptr(&self) -> *mut HashUint {
+        (*self.0 as usize & !1) as *mut HashUint
+    }
+}
+
 /// The raw hashtable, providing safe-ish access to the unzipped and highly
 /// optimized arrays of hashes, and key-value pairs.
 ///
@@ -72,10 +108,14 @@ const EMPTY_BUCKET: HashUint = 0;
 /// around just the "table" part of the hashtable. It enforces some
 /// invariants at the type level and employs some performance trickery,
 /// but in general is just a tricked out `Vec<Option<(u64, K, V)>>`.
+///
+/// The hashtable also exposes a special boolean tag. The tag defaults to false
+/// when the RawTable is created and is accessible with the `tag` and `set_tag`
+/// functions.
 pub struct RawTable<K, V> {
     capacity: usize,
     size: usize,
-    hashes: Unique<HashUint>,
+    hashes: TaggedHashUintPtr,
 
     // Because K/V do not appear directly in any of the types in the struct,
     // inform rustc that in fact instances of K and V are reachable from here.
@@ -85,7 +125,7 @@ pub struct RawTable<K, V> {
 unsafe impl<K: Send, V: Send> Send for RawTable<K, V> {}
 unsafe impl<K: Sync, V: Sync> Sync for RawTable<K, V> {}
 
-struct RawBucket<K, V> {
+pub struct RawBucket<K, V> {
     hash: *mut HashUint,
     // We use *const to ensure covariance with respect to K and V
     pair: *const (K, V),
@@ -208,6 +248,10 @@ impl<K, V, M> FullBucket<K, V, M> {
     pub fn table(&self) -> &M {
         &self.table
     }
+    /// Borrow a mutable reference to the table.
+    pub fn table_mut(&mut self) -> &mut M {
+        &mut self.table
+    }
     /// Move out the reference to the table.
     pub fn into_table(self) -> M {
         self.table
@@ -216,6 +260,10 @@ impl<K, V, M> FullBucket<K, V, M> {
     pub fn index(&self) -> usize {
         self.idx
     }
+    /// Get the raw bucket.
+    pub fn raw(&self) -> RawBucket<K, V> {
+        self.raw
+    }
 }
 
 impl<K, V, M> EmptyBucket<K, V, M> {
@@ -223,12 +271,20 @@ impl<K, V, M> EmptyBucket<K, V, M> {
     pub fn table(&self) -> &M {
         &self.table
     }
+    /// Borrow a mutable reference to the table.
+    pub fn table_mut(&mut self) -> &mut M {
+        &mut self.table
+    }
 }
 
 impl<K, V, M> Bucket<K, V, M> {
     /// Get the raw index.
     pub fn index(&self) -> usize {
         self.idx
+    }
+    /// get the table.
+    pub fn into_table(self) -> M {
+        self.table
     }
 }
 
@@ -275,6 +331,16 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> Bucket<K, V, M> {
         Bucket::at_index(table, hash.inspect() as usize)
     }
 
+    pub fn new_from(r: RawBucket<K, V>, i: usize, t: M)
+        -> Bucket<K, V, M>
+    {
+        Bucket {
+            raw: r,
+            idx: i,
+            table: t,
+        }
+    }
+
     pub fn at_index(table: M, ib_index: usize) -> Bucket<K, V, M> {
         // if capacity is 0, then the RawBucket will be populated with bogus pointers.
         // This is an uncommon case though, so avoid it in release builds.
@@ -294,6 +360,40 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> Bucket<K, V, M> {
             idx: 0,
             table: table,
         }
+    }
+
+    // "So a few of the first shall be last: for many be called,
+    // but few chosen."
+    //
+    // We'll most likely encounter a few buckets at the beginning that
+    // have their initial buckets near the end of the table. They were
+    // placed at the beginning as the probe wrapped around the table
+    // during insertion. We must skip forward to a bucket that won't
+    // get reinserted too early and won't unfairly steal others spot.
+    // This eliminates the need for robin hood.
+    pub fn head_bucket(table: M) -> Bucket<K, V, M> {
+        let mut bucket = Bucket::first(table);
+
+        loop {
+            bucket = match bucket.peek() {
+                Full(full) => {
+                    if full.displacement() == 0 {
+                        // This bucket occupies its ideal spot.
+                        // It indicates the start of another "cluster".
+                        bucket = full.into_bucket();
+                        break;
+                    }
+                    // Leaving this bucket in the last cluster for later.
+                    full.into_bucket()
+                }
+                Empty(b) => {
+                    // Encountered a hole between clusters.
+                    b.into_bucket()
+                }
+            };
+            bucket.next();
+        }
+        bucket
     }
 
     /// Reads a bucket at a given index, returning an enum indicating whether
@@ -333,6 +433,17 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> Bucket<K, V, M> {
             self.raw = self.raw.offset(dist);
         }
     }
+
+    /// Modifies the bucket pointer in place to make it point to the previous slot.
+    pub fn prev(&mut self) {
+        let range = self.table.capacity();
+        let new_idx = self.idx.wrapping_sub(1) & (range - 1);
+        let dist = (new_idx as isize).wrapping_sub(self.idx as isize);
+        self.idx = new_idx;
+        unsafe {
+            self.raw = self.raw.offset(dist);
+        }
+    }
 }
 
 impl<K, V, M: Deref<Target = RawTable<K, V>>> EmptyBucket<K, V, M> {
@@ -352,7 +463,7 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> EmptyBucket<K, V, M> {
         }
     }
 
-    pub fn gap_peek(self) -> Option<GapThenFull<K, V, M>> {
+    pub fn gap_peek(self) -> Result<GapThenFull<K, V, M>, Bucket<K, V, M>> {
         let gap = EmptyBucket {
             raw: self.raw,
             idx: self.idx,
@@ -361,12 +472,12 @@ impl<K, V, M: Deref<Target = RawTable<K, V>>> EmptyBucket<K, V, M> {
 
         match self.next().peek() {
             Full(bucket) => {
-                Some(GapThenFull {
+                Ok(GapThenFull {
                     gap: gap,
                     full: bucket,
                 })
             }
-            Empty(..) => None,
+            Empty(e) => Err(e.into_bucket()),
         }
     }
 }
@@ -388,6 +499,22 @@ impl<K, V, M> EmptyBucket<K, V, M>
 
             self.table.borrow_table_mut().size += 1;
         }
+
+        FullBucket {
+            raw: self.raw,
+            idx: self.idx,
+            table: self.table,
+        }
+    }
+
+    /// Puts given key, remain value uninitialized.
+    /// It is only used for inplacement insertion.
+    pub unsafe fn put_key(mut self, hash: SafeHash, key: K) -> FullBucket<K, V, M> {
+        *self.raw.hash = hash.inspect();
+        let pair_mut = self.raw.pair as *mut (K, V);
+        ptr::write(&mut (*pair_mut).0, key);
+
+        self.table.borrow_table_mut().size += 1;
 
         FullBucket {
             raw: self.raw,
@@ -470,6 +597,17 @@ impl<'t, K, V> FullBucket<K, V, &'t mut RawTable<K, V>> {
             v)
         }
     }
+
+    /// Remove this bucket's `key` from the hashtable.
+    /// Only used for inplacement insertion.
+    /// NOTE: `Value` is uninitialized when this function is called, don't try to drop the `Value`.
+    pub unsafe fn remove_key(&mut self) {
+        self.table.size -= 1;
+
+        *self.raw.hash = EMPTY_BUCKET;
+        let pair_mut = self.raw.pair as *mut (K, V);
+        ptr::drop_in_place(&mut (*pair_mut).0); // only drop key
+    }
 }
 
 // This use of `Put` is misleading and restrictive, but safe and sufficient for our use cases
@@ -529,7 +667,11 @@ impl<K, V, M> GapThenFull<K, V, M>
         &self.full
     }
 
-    pub fn shift(mut self) -> Option<GapThenFull<K, V, M>> {
+    pub fn into_bucket(self) -> Bucket<K, V, M> {
+        self.full.into_bucket()
+    }
+
+    pub fn shift(mut self) -> Result<GapThenFull<K, V, M>, Bucket<K, V, M>> {
         unsafe {
             *self.gap.raw.hash = mem::replace(&mut *self.full.raw.hash, EMPTY_BUCKET);
             ptr::copy_nonoverlapping(self.full.raw.pair, self.gap.raw.pair as *mut (K, V), 1);
@@ -544,9 +686,9 @@ impl<K, V, M> GapThenFull<K, V, M>
 
                 self.full = bucket;
 
-                Some(self)
+                Ok(self)
             }
-            Empty(..) => None,
+            Empty(b) => Err(b.into_bucket()),
         }
     }
 }
@@ -620,7 +762,7 @@ impl<K, V> RawTable<K, V> {
             return RawTable {
                 size: 0,
                 capacity: 0,
-                hashes: Unique::new(EMPTY as *mut HashUint),
+                hashes: TaggedHashUintPtr::new(EMPTY as *mut HashUint),
                 marker: marker::PhantomData,
             };
         }
@@ -661,7 +803,7 @@ impl<K, V> RawTable<K, V> {
         RawTable {
             capacity: capacity,
             size: 0,
-            hashes: Unique::new(hashes),
+            hashes: TaggedHashUintPtr::new(hashes),
             marker: marker::PhantomData,
         }
     }
@@ -670,13 +812,13 @@ impl<K, V> RawTable<K, V> {
         let hashes_size = self.capacity * size_of::<HashUint>();
         let pairs_size = self.capacity * size_of::<(K, V)>();
 
-        let buffer = *self.hashes as *mut u8;
+        let buffer = self.hashes.ptr() as *mut u8;
         let (pairs_offset, _, oflo) =
             calculate_offsets(hashes_size, pairs_size, align_of::<(K, V)>());
         debug_assert!(!oflo, "capacity overflow");
         unsafe {
             RawBucket {
-                hash: *self.hashes,
+                hash: self.hashes.ptr(),
                 pair: buffer.offset(pairs_offset as isize) as *const _,
                 _marker: marker::PhantomData,
             }
@@ -688,7 +830,7 @@ impl<K, V> RawTable<K, V> {
     pub fn new(capacity: usize) -> RawTable<K, V> {
         unsafe {
             let ret = RawTable::new_uninitialized(capacity);
-            ptr::write_bytes(*ret.hashes, 0, capacity);
+            ptr::write_bytes(ret.hashes.ptr(), 0, capacity);
             ret
         }
     }
@@ -707,7 +849,7 @@ impl<K, V> RawTable<K, V> {
     fn raw_buckets(&self) -> RawBuckets<K, V> {
         RawBuckets {
             raw: self.first_bucket_raw(),
-            hashes_end: unsafe { self.hashes.offset(self.capacity as isize) },
+            hashes_end: unsafe { self.hashes.ptr().offset(self.capacity as isize) },
             marker: marker::PhantomData,
         }
     }
@@ -764,6 +906,16 @@ impl<K, V> RawTable<K, V> {
             elems_left: self.size,
             marker: marker::PhantomData,
         }
+    }
+
+    /// Set the table tag
+    pub fn set_tag(&mut self, value: bool) {
+        self.hashes.set_tag(value)
+    }
+
+    /// Get the table tag
+    pub fn tag(&self) -> bool {
+        self.hashes.tag()
     }
 }
 
@@ -1002,7 +1154,7 @@ impl<'a, K, V> Iterator for Drain<'a, K, V> {
     fn next(&mut self) -> Option<(SafeHash, K, V)> {
         self.iter.next().map(|bucket| {
             unsafe {
-                (**self.table).size -= 1;
+                (*self.table.as_mut_ptr()).size -= 1;
                 let (k, v) = ptr::read(bucket.pair);
                 (SafeHash { hash: ptr::replace(bucket.hash, EMPTY_BUCKET) }, k, v)
             }
@@ -1089,7 +1241,7 @@ unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
         debug_assert!(!oflo, "should be impossible");
 
         unsafe {
-            deallocate(*self.hashes as *mut u8, size, align);
+            deallocate(self.hashes.ptr() as *mut u8, size, align);
             // Remember how everything was allocated out of one buffer
             // during initialization? We only need one call to free here.
         }

@@ -237,7 +237,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
             bcx.call(dtor, &[ptr.llval], None);
             bcx
         }
-        ty::TyAdt(def, ..) if def.has_dtor() && !skip_dtor => {
+        ty::TyAdt(def, ..) if def.has_dtor(bcx.tcx()) && !skip_dtor => {
             let shallow_drop = def.is_union();
             let tcx = bcx.tcx();
 
@@ -265,7 +265,7 @@ pub fn implement_drop_glue<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, g: DropGlueKi
                 traits::VtableImpl(data) => data,
                 _ => bug!("dtor for {:?} is not an impl???", t)
             };
-            let dtor_did = def.destructor().unwrap();
+            let dtor_did = def.destructor(tcx).unwrap().did;
             let callee = Callee::def(bcx.ccx, dtor_did, vtbl.substs);
             let fn_ty = callee.direct_fn_type(bcx.ccx, &[]);
             let llret;
@@ -386,7 +386,15 @@ pub fn size_and_align_of_dst<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, t: Ty<'tcx>, inf
             let info = bcx.pointercast(info, Type::int(bcx.ccx).ptr_to());
             let size_ptr = bcx.gepi(info, &[1]);
             let align_ptr = bcx.gepi(info, &[2]);
-            (bcx.load(size_ptr, None), bcx.load(align_ptr, None))
+
+            let size = bcx.load(size_ptr, None);
+            let align = bcx.load(align_ptr, None);
+
+            // Vtable loads are invariant
+            bcx.set_invariant_load(size);
+            bcx.set_invariant_load(align);
+
+            (size, align)
         }
         ty::TySlice(_) | ty::TyStr => {
             let unit_ty = t.sequence_element_type(bcx.tcx());
@@ -444,7 +452,7 @@ fn drop_structural_ty<'a, 'tcx>(
             cx = tvec::slice_for_each(&cx, ptr.llval, unit_ty, ptr.llextra,
                 |bb, vv| drop_ty(bb, LvalueRef::new_sized_ty(vv, unit_ty, ptr.alignment)));
         }
-        ty::TyTuple(ref args) => {
+        ty::TyTuple(ref args, _) => {
             for (i, arg) in args.iter().enumerate() {
                 let (llfld_a, align) = ptr.trans_field_ptr(&cx, i);
                 drop_ty(&cx, LvalueRef::new_sized_ty(llfld_a, *arg, align));
@@ -513,11 +521,10 @@ fn drop_structural_ty<'a, 'tcx>(
                         let llswitch = cx.switch(lldiscrim_a, ret_void_cx.llbb(), n_variants);
                         let next_cx = cx.build_sibling_block("enum-iter-next");
 
-                        for (i, variant) in adt.variants.iter().enumerate() {
-                            let variant_cx_name = format!("enum-iter-variant-{}",
-                                &variant.disr_val.to_string());
+                        for (i, discr) in adt.discriminants(cx.tcx()).enumerate() {
+                            let variant_cx_name = format!("enum-iter-variant-{}", i);
                             let variant_cx = cx.build_sibling_block(&variant_cx_name);
-                            let case_val = adt::trans_case(&cx, t, Disr::from(variant.disr_val));
+                            let case_val = adt::trans_case(&cx, t, Disr::from(discr));
                             variant_cx.add_case(llswitch, case_val, variant_cx.llbb());
                             ptr.ty = LvalueTy::Downcast {
                                 adt_def: adt,

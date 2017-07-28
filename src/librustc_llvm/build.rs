@@ -17,38 +17,7 @@ use std::path::{PathBuf, Path};
 
 use build_helper::output;
 
-fn detect_llvm_link(llvm_config: &Path) -> (&'static str, Option<&'static str>) {
-    let mut version_cmd = Command::new(llvm_config);
-    version_cmd.arg("--version");
-    let version_output = output(&mut version_cmd);
-    let mut parts = version_output.split('.').take(2)
-        .filter_map(|s| s.parse::<u32>().ok());
-    if let (Some(major), Some(minor)) = (parts.next(), parts.next()) {
-        if major > 3 || (major == 3 && minor >= 9) {
-            // Force the link mode we want, preferring static by default, but
-            // possibly overridden by `configure --enable-llvm-link-shared`.
-            if env::var_os("LLVM_LINK_SHARED").is_some() {
-                return ("dylib", Some("--link-shared"));
-            } else {
-                return ("static", Some("--link-static"));
-            }
-        } else if major == 3 && minor == 8 {
-            // Find out LLVM's default linking mode.
-            let mut mode_cmd = Command::new(llvm_config);
-            mode_cmd.arg("--shared-mode");
-            if output(&mut mode_cmd).trim() == "shared" {
-                return ("dylib", None);
-            } else {
-                return ("static", None);
-            }
-        }
-    }
-    ("static", None)
-}
-
 fn main() {
-    println!("cargo:rustc-cfg=cargobuild");
-
     let target = env::var("TARGET").expect("TARGET was not set");
     let llvm_config = env::var_os("LLVM_CONFIG")
         .map(PathBuf::from)
@@ -146,9 +115,7 @@ fn main() {
         cfg.flag("-DLLVM_RUSTLLVM");
     }
 
-    println!("cargo:rerun-if-changed=../rustllvm/PassWrapper.cpp");
-    println!("cargo:rerun-if-changed=../rustllvm/RustWrapper.cpp");
-    println!("cargo:rerun-if-changed=../rustllvm/ArchiveWrapper.cpp");
+    build_helper::rerun_if_changed_anything_in_dir(Path::new("../rustllvm"));
     cfg.file("../rustllvm/PassWrapper.cpp")
        .file("../rustllvm/RustWrapper.cpp")
        .file("../rustllvm/ArchiveWrapper.cpp")
@@ -156,12 +123,10 @@ fn main() {
        .cpp_link_stdlib(None) // we handle this below
        .compile("librustllvm.a");
 
-    let (llvm_kind, llvm_link_arg) = detect_llvm_link(&llvm_config);
-
-     // Link in all LLVM libraries
-     // Link in Debian full LLVM shared library.
-     // FIXME: not sure what to do in the cross-compiling case.
-     println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
+    // Link in all LLVM libraries
+    // Link in Debian full LLVM shared library.
+    // FIXME: not sure what to do in the cross-compiling case.
+    println!("cargo:rustc-link-lib={}={}", "dylib", "LLVM-3.9");
 
     // LLVM ldflags
     //

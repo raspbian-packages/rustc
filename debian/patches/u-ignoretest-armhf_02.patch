@@ -1,4 +1,5 @@
 Description: Disable some relocation-model tests for armhf
+ Last checked this still affects 1.17
 Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/rust-lang/rust/issues/40145
 ---

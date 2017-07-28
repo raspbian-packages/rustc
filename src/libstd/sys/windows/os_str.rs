@@ -88,6 +88,15 @@ impl Buf {
     pub fn reserve_exact(&mut self, additional: usize) {
         self.inner.reserve_exact(additional)
     }
+
+    pub fn shrink_to_fit(&mut self) {
+        self.inner.shrink_to_fit()
+    }
+
+    #[inline]
+    pub fn into_box(self) -> Box<Slice> {
+        unsafe { mem::transmute(self.inner.into_box()) }
+    }
 }
 
 impl Slice {
@@ -107,5 +116,14 @@ impl Slice {
         let mut buf = Wtf8Buf::with_capacity(self.inner.len());
         buf.push_wtf8(&self.inner);
         Buf { inner: buf }
+    }
+
+    #[inline]
+    pub fn into_box(&self) -> Box<Slice> {
+        unsafe { mem::transmute(self.inner.into_box()) }
+    }
+
+    pub fn empty_box() -> Box<Slice> {
+        unsafe { mem::transmute(Wtf8::empty_box()) }
     }
 }

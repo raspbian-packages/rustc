@@ -90,6 +90,16 @@ impl<'a, T: fmt::Display> fmt::Display for CommaSep<'a, T> {
     }
 }
 
+impl<'a, T: fmt::Debug> fmt::Debug for CommaSep<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        for (i, item) in self.0.iter().enumerate() {
+            if i != 0 { write!(f, ", ")?; }
+            fmt::Debug::fmt(item, f)?;
+        }
+        Ok(())
+    }
+}
+
 impl<'a> fmt::Display for TyParamBounds<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let &TyParamBounds(bounds) = self;
@@ -165,7 +175,7 @@ impl<'a> fmt::Display for WhereClause<'a> {
         if f.alternate() {
             clause.push_str(" where ");
         } else {
-            clause.push_str(" <span class='where fmt-newline'>where ");
+            clause.push_str(" <span class=\"where fmt-newline\">where ");
         }
         for (i, pred) in gens.where_predicates.iter().enumerate() {
             if i > 0 {
@@ -432,7 +442,7 @@ pub fn href(did: DefId) -> Option<(String, ItemType, Vec<String>)> {
 /// Used when rendering a `ResolvedPath` structure. This invokes the `path`
 /// rendering function with the necessary arguments for linking to a local path.
 fn resolved_path(w: &mut fmt::Formatter, did: DefId, path: &clean::Path,
-                 print_all: bool, use_absolute: bool) -> fmt::Result {
+                 print_all: bool, use_absolute: bool, is_not_debug: bool) -> fmt::Result {
     let last = path.segments.last().unwrap();
     let rel_root = match &*path.segments[0].name {
         "self" => Some("./".to_string()),
@@ -449,10 +459,14 @@ fn resolved_path(w: &mut fmt::Formatter, did: DefId, path: &clean::Path,
                     } else {
                         root.push_str(&seg.name);
                         root.push_str("/");
-                        write!(w, "<a class='mod'
-                                       href='{}index.html'>{}</a>::",
-                                 root,
-                                 seg.name)?;
+                        if is_not_debug {
+                            write!(w, "<a class=\"mod\"
+                                           href=\"{}index.html\">{}</a>::",
+                                     root,
+                                     seg.name)?;
+                        } else {
+                            write!(w, "{}::", seg.name)?;
+                        }
                     }
                 }
             }
@@ -464,19 +478,37 @@ fn resolved_path(w: &mut fmt::Formatter, did: DefId, path: &clean::Path,
         }
     }
     if w.alternate() {
-        write!(w, "{:#}{:#}", HRef::new(did, &last.name), last.params)?;
-    } else {
-        let path = if use_absolute {
-            match href(did) {
-                Some((_, _, fqp)) => format!("{}::{}",
-                                             fqp[..fqp.len()-1].join("::"),
-                                             HRef::new(did, fqp.last().unwrap())),
-                None => format!("{}", HRef::new(did, &last.name)),
-            }
+        if is_not_debug {
+            write!(w, "{:#}{:#}", HRef::new(did, &last.name), last.params)?;
         } else {
-            format!("{}", HRef::new(did, &last.name))
-        };
-        write!(w, "{}{}", path, last.params)?;
+            write!(w, "{:?}{:?}", HRef::new(did, &last.name), last.params)?;
+        }
+    } else {
+        if is_not_debug {
+            let path = if use_absolute {
+                match href(did) {
+                    Some((_, _, fqp)) => format!("{}::{}",
+                                                 fqp[..fqp.len()-1].join("::"),
+                                                 HRef::new(did, fqp.last().unwrap())),
+                    None => format!("{}", HRef::new(did, &last.name)),
+                }
+            } else {
+                format!("{}", HRef::new(did, &last.name))
+            };
+            write!(w, "{}{}", path, last.params)?;
+        } else {
+            let path = if use_absolute {
+                match href(did) {
+                    Some((_, _, fqp)) => format!("{:?}::{:?}",
+                                                 fqp[..fqp.len()-1].join("::"),
+                                                 HRef::new(did, fqp.last().unwrap())),
+                    None => format!("{:?}", HRef::new(did, &last.name)),
+                }
+            } else {
+                format!("{:?}", HRef::new(did, &last.name))
+            };
+            write!(w, "{}{:?}", path, last.params)?;
+        }
     }
     Ok(())
 }
@@ -491,7 +523,7 @@ fn primitive_link(f: &mut fmt::Formatter,
             Some(&def_id) if def_id.is_local() => {
                 let len = CURRENT_LOCATION_KEY.with(|s| s.borrow().len());
                 let len = if len == 0 {0} else {len - 1};
-                write!(f, "<a class='primitive' href='{}primitive.{}.html'>",
+                write!(f, "<a class=\"primitive\" href=\"{}primitive.{}.html\">",
                        repeat("../").take(len).collect::<String>(),
                        prim.to_url_str())?;
                 needs_termination = true;
@@ -508,7 +540,7 @@ fn primitive_link(f: &mut fmt::Formatter,
                     (.., render::Unknown) => None,
                 };
                 if let Some((cname, root)) = loc {
-                    write!(f, "<a class='primitive' href='{}{}/primitive.{}.html'>",
+                    write!(f, "<a class=\"primitive\" href=\"{}{}/primitive.{}.html\">",
                            root,
                            cname,
                            prim.to_url_str())?;
@@ -550,8 +582,8 @@ impl<'a> fmt::Display for HRef<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match href(self.did) {
             Some((url, shortty, fqp)) => if !f.alternate() {
-                write!(f, "<a class='{}' href='{}' title='{}'>{}</a>",
-                       shortty, url, fqp.join("::"), self.text)
+                write!(f, "<a class=\"{}\" href=\"{}\" title=\"{} {}\">{}</a>",
+                       shortty, url, shortty, fqp.join("::"), self.text)
             } else {
                 write!(f, "{}", self.text)
             },
@@ -560,18 +592,26 @@ impl<'a> fmt::Display for HRef<'a> {
     }
 }
 
-fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt::Result {
+impl<'a> fmt::Debug for HRef<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.text)
+    }
+}
+
+fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool,
+            is_not_debug: bool) -> fmt::Result {
     match *t {
         clean::Generic(ref name) => {
             f.write_str(name)
         }
         clean::ResolvedPath{ did, ref typarams, ref path, is_generic } => {
             // Paths like T::Output and Self::Output should be rendered with all segments
-            resolved_path(f, did, path, is_generic, use_absolute)?;
+            resolved_path(f, did, path, is_generic, use_absolute, is_not_debug)?;
             tybounds(f, typarams)
         }
         clean::Infer => write!(f, "_"),
-        clean::Primitive(prim) => primitive_link(f, prim, prim.as_str()),
+        clean::Primitive(prim) if is_not_debug => primitive_link(f, prim, prim.as_str()),
+        clean::Primitive(prim) => write!(f, "{}", prim.as_str()),
         clean::BareFunction(ref decl) => {
             if f.alternate() {
                 write!(f, "{}{}fn{:#}{:#}",
@@ -589,26 +629,30 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
         }
         clean::Tuple(ref typs) => {
             match &typs[..] {
-                &[] => primitive_link(f, PrimitiveType::Tuple, "()"),
-                &[ref one] => {
+                &[] if is_not_debug => primitive_link(f, PrimitiveType::Tuple, "()"),
+                &[] => write!(f, "()"),
+                &[ref one] if is_not_debug => {
                     primitive_link(f, PrimitiveType::Tuple, "(")?;
                     //carry f.alternate() into this display w/o branching manually
                     fmt::Display::fmt(one, f)?;
                     primitive_link(f, PrimitiveType::Tuple, ",)")
                 }
-                many => {
+                &[ref one] => write!(f, "({:?},)", one),
+                many if is_not_debug => {
                     primitive_link(f, PrimitiveType::Tuple, "(")?;
                     fmt::Display::fmt(&CommaSep(&many), f)?;
                     primitive_link(f, PrimitiveType::Tuple, ")")
                 }
+                many => write!(f, "({:?})", &CommaSep(&many)),
             }
         }
-        clean::Vector(ref t) => {
+        clean::Vector(ref t) if is_not_debug => {
             primitive_link(f, PrimitiveType::Slice, &format!("["))?;
             fmt::Display::fmt(t, f)?;
             primitive_link(f, PrimitiveType::Slice, &format!("]"))
         }
-        clean::FixedVector(ref t, ref s) => {
+        clean::Vector(ref t) => write!(f, "[{:?}]", t),
+        clean::FixedVector(ref t, ref s) if is_not_debug => {
             primitive_link(f, PrimitiveType::Array, "[")?;
             fmt::Display::fmt(t, f)?;
             if f.alternate() {
@@ -619,10 +663,17 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
                                &format!("; {}]", Escape(s)))
             }
         }
+        clean::FixedVector(ref t, ref s) => {
+            if f.alternate() {
+                write!(f, "[{:?}; {}]", t, s)
+            } else {
+                write!(f, "[{:?}; {}]", t, Escape(s))
+            }
+        }
         clean::Never => f.write_str("!"),
         clean::RawPointer(m, ref t) => {
             match **t {
-                clean::Generic(_) | clean::ResolvedPath {is_generic: true, ..} => {
+                clean::Generic(_) | clean::ResolvedPath {is_generic: true, ..} if is_not_debug => {
                     if f.alternate() {
                         primitive_link(f, clean::PrimitiveType::RawPointer,
                                        &format!("*{}{:#}", RawMutableSpace(m), t))
@@ -631,10 +682,20 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
                                        &format!("*{}{}", RawMutableSpace(m), t))
                     }
                 }
-                _ => {
+                clean::Generic(_) | clean::ResolvedPath {is_generic: true, ..} => {
+                    if f.alternate() {
+                        write!(f, "*{}{:#?}", RawMutableSpace(m), t)
+                    } else {
+                        write!(f, "*{}{:?}", RawMutableSpace(m), t)
+                    }
+                }
+                _ if is_not_debug => {
                     primitive_link(f, clean::PrimitiveType::RawPointer,
                                    &format!("*{}", RawMutableSpace(m)))?;
                     fmt::Display::fmt(t, f)
+                }
+                _ => {
+                    write!(f, "*{}{:?}", RawMutableSpace(m), t)
                 }
             }
         }
@@ -647,15 +708,23 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
             match **ty {
                 clean::Vector(ref bt) => { // BorrowedRef{ ... Vector(T) } is &[T]
                     match **bt {
-                        clean::Generic(_) =>
+                        clean::Generic(_) if is_not_debug => {
                             if f.alternate() {
                                 primitive_link(f, PrimitiveType::Slice,
                                     &format!("&{}{}[{:#}]", lt, m, **bt))
                             } else {
                                 primitive_link(f, PrimitiveType::Slice,
                                     &format!("&amp;{}{}[{}]", lt, m, **bt))
-                            },
-                        _ => {
+                            }
+                        }
+                        clean::Generic(_) => {
+                            if f.alternate() {
+                                write!(f, "&{}{}[{:#?}]", lt, m, **bt)
+                            } else {
+                                write!(f, "&{}{}[{:?}]", lt, m, **bt)
+                            }
+                        }
+                        _ if is_not_debug => {
                             if f.alternate() {
                                 primitive_link(f, PrimitiveType::Slice,
                                                &format!("&{}{}[", lt, m))?;
@@ -667,13 +736,26 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
                             }
                             primitive_link(f, PrimitiveType::Slice, "]")
                         }
+                        _ => {
+                            if f.alternate() {
+                                write!(f, "&{}{}[{:#?}]", lt, m, **bt)
+                            } else {
+                                write!(f, "&{}{}[{:?}]", lt, m, **bt)
+                            }
+                        }
                     }
                 }
                 _ => {
                     if f.alternate() {
-                        write!(f, "&{}{}{:#}", lt, m, **ty)
+                        write!(f, "&{}{}", lt, m)?;
+                        fmt_type(&ty, f, use_absolute, is_not_debug)
                     } else {
-                        write!(f, "&amp;{}{}{}", lt, m, **ty)
+                        if is_not_debug {
+                            write!(f, "&amp;{}{}", lt, m)?;
+                        } else {
+                            write!(f, "&{}{}", lt, m)?;
+                        }
+                        fmt_type(&ty, f, use_absolute, is_not_debug)
                     }
                 }
             }
@@ -713,7 +795,7 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
                 write!(f, "{}::", self_type)?;
             }
             let path = clean::Path::singleton(name.clone());
-            resolved_path(f, did, &path, true, use_absolute)?;
+            resolved_path(f, did, &path, true, use_absolute, is_not_debug)?;
 
             // FIXME: `typarams` are not rendered, and this seems bad?
             drop(typarams);
@@ -721,9 +803,17 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
         }
         clean::QPath { ref name, ref self_type, ref trait_ } => {
             if f.alternate() {
-                write!(f, "<{:#} as {:#}>::{}", self_type, trait_, name)
+                if is_not_debug {
+                    write!(f, "<{:#} as {:#}>::{}", self_type, trait_, name)
+                } else {
+                    write!(f, "<{:#?} as {:#?}>::{}", self_type, trait_, name)
+                }
             } else {
-                write!(f, "&lt;{} as {}&gt;::{}", self_type, trait_, name)
+                if is_not_debug {
+                    write!(f, "&lt;{} as {}&gt;::{}", self_type, trait_, name)
+                } else {
+                    write!(f, "<{:?} as {:?}>::{}", self_type, trait_, name)
+                }
             }
         }
         clean::Unique(..) => {
@@ -734,7 +824,13 @@ fn fmt_type(t: &clean::Type, f: &mut fmt::Formatter, use_absolute: bool) -> fmt:
 
 impl fmt::Display for clean::Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt_type(self, f, false)
+        fmt_type(self, f, false, true)
+    }
+}
+
+impl fmt::Debug for clean::Type {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt_type(self, f, false, false)
     }
 }
 
@@ -775,7 +871,7 @@ fn fmt_impl(i: &clean::Impl,
         plain.push_str(" for ");
     }
 
-    fmt_type(&i.for_, f, use_absolute)?;
+    fmt_type(&i.for_, f, use_absolute, true)?;
     plain.push_str(&format!("{:#}", i.for_));
 
     fmt::Display::fmt(&WhereClause(&i.generics, plain.len() + 1), f)?;
@@ -983,7 +1079,7 @@ impl fmt::Display for clean::Import {
 impl fmt::Display for clean::ImportSource {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self.did {
-            Some(did) => resolved_path(f, did, &self.path, true, false),
+            Some(did) => resolved_path(f, did, &self.path, true, false, true),
             _ => {
                 for (i, seg) in self.path.segments.iter().enumerate() {
                     if i > 0 {

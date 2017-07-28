@@ -1,0 +1,22 @@
+Description: Fix weird logic around ARM CPU detection
+Author: Josh Stone <jistone@redhat.com>
+Applied-Upstream: commit:5c0c3e803d6070cc4d1ce0362e0ae3bae4962720
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/bootstrap/bootstrap.py
+===================================================================
+--- rust.orig/src/bootstrap/bootstrap.py
++++ rust/src/bootstrap/bootstrap.py
+@@ -469,10 +469,10 @@ class RustBuild(object):
+             cputype = 'i686'
+         elif cputype in {'xscale', 'arm'}:
+             cputype = 'arm'
+-        elif cputype in {'armv6l', 'armv7l', 'armv8l'}:
++        elif cputype == 'armv6l':
+             cputype = 'arm'
+             ostype += 'eabihf'
+-        elif cputype == 'armv7l':
++        elif cputype in {'armv7l', 'armv8l'}:
+             cputype = 'armv7'
+             ostype += 'eabihf'
+         elif cputype == 'aarch64':

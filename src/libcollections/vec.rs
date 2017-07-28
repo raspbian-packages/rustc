@@ -437,7 +437,9 @@ impl<T> Vec<T> {
 
     /// Reserves capacity for at least `additional` more elements to be inserted
     /// in the given `Vec<T>`. The collection may reserve more space to avoid
-    /// frequent reallocations.
+    /// frequent reallocations. After calling `reserve`, capacity will be
+    /// greater than or equal to `self.len() + additional`. Does nothing if
+    /// capacity is already sufficient.
     ///
     /// # Panics
     ///
@@ -456,8 +458,9 @@ impl<T> Vec<T> {
     }
 
     /// Reserves the minimum capacity for exactly `additional` more elements to
-    /// be inserted in the given `Vec<T>`. Does nothing if the capacity is already
-    /// sufficient.
+    /// be inserted in the given `Vec<T>`. After calling `reserve_exact`,
+    /// capacity will be greater than or equal to `self.len() + additional`.
+    /// Does nothing if the capacity is already sufficient.
     ///
     /// Note that the allocator may give the collection more space than it
     /// requests. Therefore capacity can not be relied upon to be precisely
@@ -544,6 +547,9 @@ impl<T> Vec<T> {
     ///
     /// The [`drain`] method can emulate `truncate`, but causes the excess
     /// elements to be returned instead of dropped.
+    ///
+    /// Note that this method has no effect on the allocated capacity
+    /// of the vector.
     ///
     /// # Examples
     ///
@@ -1089,6 +1095,9 @@ impl<T> Vec<T> {
 
     /// Clears the vector, removing all values.
     ///
+    /// Note that this method has no effect on the allocated capacity
+    /// of the vector.
+    ///
     /// # Examples
     ///
     /// ```
@@ -1210,7 +1219,7 @@ impl<T: Clone> Vec<T> {
         unsafe {
             let mut ptr = self.as_mut_ptr().offset(self.len() as isize);
             // Use SetLenOnDrop to work around bug where compiler
-            // may not realize the store through `ptr` trough self.set_len()
+            // may not realize the store through `ptr` through self.set_len()
             // don't alias.
             let mut local_len = SetLenOnDrop::new(&mut self.len);
 
@@ -1325,6 +1334,27 @@ impl<T: PartialEq> Vec<T> {
     #[inline]
     pub fn dedup(&mut self) {
         self.dedup_by(|a, b| a == b)
+    }
+
+    /// Removes the first instance of `item` from the vector if the item exists.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    ///# #![feature(vec_remove_item)]
+    /// let mut vec = vec![1, 2, 3, 1];
+    ///
+    /// vec.remove_item(&1);
+    ///
+    /// assert_eq!(vec, vec![2, 3, 1]);
+    /// ```
+    #[unstable(feature = "vec_remove_item", reason = "recently added", issue = "40062")]
+    pub fn remove_item(&mut self, item: &T) -> Option<T> {
+        let pos = match self.iter().position(|x| *x == *item) {
+            Some(x) => x,
+            None => return None,
+        };
+        Some(self.remove(pos))
     }
 }
 
@@ -1773,6 +1803,7 @@ array_impls! {
     30 31 32
 }
 
+/// Implements comparison of vectors, lexicographically.
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: PartialOrd> PartialOrd for Vec<T> {
     #[inline]
@@ -1784,6 +1815,7 @@ impl<T: PartialOrd> PartialOrd for Vec<T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Eq> Eq for Vec<T> {}
 
+/// Implements ordering of vectors, lexicographically.
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T: Ord> Ord for Vec<T> {
     #[inline]
@@ -2068,7 +2100,7 @@ unsafe impl<#[may_dangle] T> Drop for IntoIter<T> {
         for _x in self.by_ref() {}
 
         // RawVec handles deallocation
-        let _ = unsafe { RawVec::from_raw_parts(*self.buf, self.cap) };
+        let _ = unsafe { RawVec::from_raw_parts(self.buf.as_mut_ptr(), self.cap) };
     }
 }
 
@@ -2087,6 +2119,15 @@ pub struct Drain<'a, T: 'a> {
     /// Current remaining range to remove
     iter: slice::Iter<'a, T>,
     vec: Shared<Vec<T>>,
+}
+
+#[stable(feature = "collection_debug", since = "1.17.0")]
+impl<'a, T: 'a + fmt::Debug> fmt::Debug for Drain<'a, T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_tuple("Drain")
+         .field(&self.iter.as_slice())
+         .finish()
+    }
 }
 
 #[stable(feature = "drain", since = "1.6.0")]
@@ -2124,7 +2165,7 @@ impl<'a, T> Drop for Drain<'a, T> {
 
         if self.tail_len > 0 {
             unsafe {
-                let source_vec = &mut **self.vec;
+                let source_vec = &mut *self.vec.as_mut_ptr();
                 // memmove back untouched tail, update to new length
                 let start = source_vec.len();
                 let tail = self.tail_start;
@@ -2155,6 +2196,7 @@ impl<'a, T> FusedIterator for Drain<'a, T> {}
 #[unstable(feature = "collection_placement",
            reason = "struct name and placement protocol are subject to change",
            issue = "30172")]
+#[derive(Debug)]
 pub struct PlaceBack<'a, T: 'a> {
     vec: &'a mut Vec<T>,
 }

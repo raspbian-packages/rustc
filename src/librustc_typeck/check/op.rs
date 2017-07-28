@@ -13,7 +13,9 @@
 use super::FnCtxt;
 use hir::def_id::DefId;
 use rustc::ty::{Ty, TypeFoldable, PreferMutLvalue, TypeVariants};
+use rustc::ty::TypeVariants::{TyStr, TyRef};
 use rustc::infer::type_variable::TypeVariableOrigin;
+use errors;
 use syntax::ast;
 use syntax::symbol::Symbol;
 use rustc::hir;
@@ -182,9 +184,14 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // particularly for things like `String + &String`.
         let rhs_ty_var = self.next_ty_var(TypeVariableOrigin::MiscVariable(rhs_expr.span));
 
-        let return_ty = match self.lookup_op_method(expr, lhs_ty, vec![rhs_ty_var],
-                                                    Symbol::intern(name), trait_def_id,
-                                                    lhs_expr) {
+        let return_ty = self.lookup_op_method(expr, lhs_ty, vec![rhs_ty_var],
+                                              Symbol::intern(name), trait_def_id,
+                                              lhs_expr);
+
+        // see `NB` above
+        let rhs_ty = self.check_expr_coercable_to_type(rhs_expr, rhs_ty_var);
+
+        let return_ty = match return_ty {
             Ok(return_ty) => return_ty,
             Err(()) => {
                 // error types are considered "builtin"
@@ -207,14 +214,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
                         if let TypeVariants::TyRef(_, ref ty_mut) = lhs_ty.sty {
                             if !self.infcx.type_moves_by_default(ty_mut.ty, lhs_expr.span) &&
-                                self.lookup_op_method(expr, ty_mut.ty, vec![rhs_ty_var],
+                                self.lookup_op_method(expr, ty_mut.ty, vec![rhs_ty],
                                     Symbol::intern(name), trait_def_id,
                                     lhs_expr).is_ok() {
-                                err.span_note(
-                                    lhs_expr.span,
+                                err.note(
                                     &format!(
-                                        "this is a reference of type that `{}` can be applied to, \
-                                        you need to dereference this variable once for this \
+                                        "this is a reference to a type that `{}` can be applied \
+                                        to; you need to dereference this variable once for this \
                                         operation to work",
                                     op.node.as_str()));
                             }
@@ -237,9 +243,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         };
 
                         if let Some(missing_trait) = missing_trait {
-                            span_note!(&mut err, lhs_expr.span,
-                                       "an implementation of `{}` might be missing for `{}`",
-                                        missing_trait, lhs_ty);
+                            if missing_trait == "std::ops::Add" &&
+                                self.check_str_addition(expr, lhs_expr, lhs_ty,
+                                                         rhs_expr, rhs_ty, &mut err) {
+                                // This has nothing here because it means we did string
+                                // concatenation (e.g. "Hello " + "World!"). This means
+                                // we don't want the note in the else clause to be emitted
+                            } else {
+                                err.note(
+                                    &format!("an implementation of `{}` might be missing for `{}`",
+                                             missing_trait, lhs_ty));
+                            }
                         }
                         err.emit();
                     }
@@ -248,10 +262,45 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
         };
 
-        // see `NB` above
-        self.check_expr_coercable_to_type(rhs_expr, rhs_ty_var);
-
         (rhs_ty_var, return_ty)
+    }
+
+    fn check_str_addition(&self,
+                          expr: &'gcx hir::Expr,
+                          lhs_expr: &'gcx hir::Expr,
+                          lhs_ty: Ty<'tcx>,
+                          rhs_expr: &'gcx hir::Expr,
+                          rhs_ty: Ty<'tcx>,
+                          mut err: &mut errors::DiagnosticBuilder) -> bool {
+        // If this function returns true it means a note was printed, so we don't need
+        // to print the normal "implementation of `std::ops::Add` might be missing" note
+        let mut is_string_addition = false;
+        if let TyRef(_, l_ty) = lhs_ty.sty {
+            if let TyRef(_, r_ty) = rhs_ty.sty {
+                if l_ty.ty.sty == TyStr && r_ty.ty.sty == TyStr {
+                    err.note("`+` can't be used to concatenate two `&str` strings");
+                    let codemap = self.tcx.sess.codemap();
+                    let suggestion =
+                        match (codemap.span_to_snippet(lhs_expr.span),
+                                codemap.span_to_snippet(rhs_expr.span)) {
+                            (Ok(lstring), Ok(rstring)) =>
+                                format!("{}.to_owned() + {}", lstring, rstring),
+                            _ => format!("<expression>")
+                        };
+                    err.span_suggestion(expr.span,
+                        &format!("to_owned() can be used to create an owned `String` \
+                                  from a string reference. String concatenation \
+                                  appends the string on the right to the string \
+                                  on the left and may require reallocation. This \
+                                  requires ownership of the string on the left."), suggestion);
+                    is_string_addition = true;
+                }
+
+            }
+
+        }
+
+        is_string_addition
     }
 
     pub fn check_user_unop(&self,

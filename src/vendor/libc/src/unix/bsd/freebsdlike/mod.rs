@@ -12,22 +12,10 @@ pub type tcflag_t = ::c_uint;
 pub type speed_t = ::c_uint;
 pub type nl_item = ::c_int;
 pub type id_t = i64;
-pub type sem_t = _sem;
 
 pub enum timezone {}
 
 s! {
-    pub struct utmpx {
-        pub ut_type: ::c_short,
-        pub ut_tv: ::timeval,
-        pub ut_id: [::c_char; 8],
-        pub ut_pid: ::pid_t,
-        pub ut_user: [::c_char; 32],
-        pub ut_line: [::c_char; 16],
-        pub ut_host: [::c_char; 128],
-        pub __ut_spare: [::c_char; 64],
-    }
-
     pub struct glob_t {
         pub gl_pathc:  ::size_t,
         pub gl_matchc: ::size_t,
@@ -92,6 +80,7 @@ s! {
     }
 
     pub struct stack_t {
+        // In FreeBSD 11 and later, ss_sp is actually a void*
         pub ss_sp: *mut ::c_char,
         pub ss_size: ::size_t,
         pub ss_flags: ::c_int,
@@ -169,35 +158,22 @@ s! {
         pub int_p_sign_posn: ::c_char,
         pub int_n_sign_posn: ::c_char,
     }
-
-    // internal structure has changed over time
-    pub struct _sem {
-        data: [u32; 4],
-    }
 }
 
-pub const EMPTY: ::c_short = 0;
-pub const BOOT_TIME: ::c_short = 1;
-pub const OLD_TIME: ::c_short = 2;
-pub const NEW_TIME: ::c_short = 3;
-pub const USER_PROCESS: ::c_short = 4;
-pub const INIT_PROCESS: ::c_short = 5;
-pub const LOGIN_PROCESS: ::c_short = 6;
-pub const DEAD_PROCESS: ::c_short = 7;
-pub const SHUTDOWN_TIME: ::c_short = 8;
+pub const AIO_LISTIO_MAX: ::c_int = 16;
+pub const AIO_CANCELED: ::c_int = 1;
+pub const AIO_NOTCANCELED: ::c_int = 2;
+pub const AIO_ALLDONE: ::c_int = 3;
+pub const LIO_NOP: ::c_int = 0;
+pub const LIO_WRITE: ::c_int = 1;
+pub const LIO_READ: ::c_int = 2;
+pub const LIO_WAIT: ::c_int = 1;
+pub const LIO_NOWAIT: ::c_int = 0;
 
-pub const LC_COLLATE_MASK: ::c_int = (1 << 0);
-pub const LC_CTYPE_MASK: ::c_int = (1 << 1);
-pub const LC_MESSAGES_MASK: ::c_int = (1 << 2);
-pub const LC_MONETARY_MASK: ::c_int = (1 << 3);
-pub const LC_NUMERIC_MASK: ::c_int = (1 << 4);
-pub const LC_TIME_MASK: ::c_int = (1 << 5);
-pub const LC_ALL_MASK: ::c_int = LC_COLLATE_MASK
-                               | LC_CTYPE_MASK
-                               | LC_MESSAGES_MASK
-                               | LC_MONETARY_MASK
-                               | LC_NUMERIC_MASK
-                               | LC_TIME_MASK;
+pub const SIGEV_NONE: ::c_int = 0;
+pub const SIGEV_SIGNAL: ::c_int = 1;
+pub const SIGEV_THREAD: ::c_int = 2;
+pub const SIGEV_KEVENT: ::c_int = 3;
 
 pub const CODESET: ::nl_item = 0;
 pub const D_T_FMT: ::nl_item = 1;
@@ -419,6 +395,7 @@ pub const ENOPROTOOPT: ::c_int = 42;
 pub const EPROTONOSUPPORT: ::c_int = 43;
 pub const ESOCKTNOSUPPORT: ::c_int = 44;
 pub const EOPNOTSUPP: ::c_int = 45;
+pub const ENOTSUP: ::c_int = EOPNOTSUPP;
 pub const EPFNOSUPPORT: ::c_int = 46;
 pub const EAFNOSUPPORT: ::c_int = 47;
 pub const EADDRINUSE: ::c_int = 48;
@@ -563,13 +540,100 @@ pub const MINCORE_REFERENCED_OTHER: ::c_int = 0x8;
 pub const MINCORE_MODIFIED_OTHER: ::c_int = 0x10;
 pub const MINCORE_SUPER: ::c_int = 0x20;
 
+pub const AF_UNSPEC: ::c_int = 0;
+pub const AF_LOCAL: ::c_int = 1;
+pub const AF_UNIX: ::c_int = AF_LOCAL;
 pub const AF_INET: ::c_int = 2;
+pub const AF_IMPLINK: ::c_int = 3;
+pub const AF_PUP: ::c_int = 4;
+pub const AF_CHAOS: ::c_int = 5;
+pub const AF_NETBIOS: ::c_int = 6;
+pub const AF_ISO: ::c_int = 7;
+pub const AF_OSI: ::c_int = AF_ISO;
+pub const AF_ECMA: ::c_int = 8;
+pub const AF_DATAKIT: ::c_int = 9;
+pub const AF_CCITT: ::c_int = 10;
+pub const AF_SNA: ::c_int = 11;
+pub const AF_DECnet: ::c_int = 12;
+pub const AF_DLI: ::c_int = 13;
+pub const AF_LAT: ::c_int = 14;
+pub const AF_HYLINK: ::c_int = 15;
+pub const AF_APPLETALK: ::c_int = 16;
+pub const AF_ROUTE: ::c_int = 17;
+pub const AF_LINK: ::c_int = 18;
+pub const pseudo_AF_XTP: ::c_int = 19;
+pub const AF_COIP: ::c_int = 20;
+pub const AF_CNT: ::c_int = 21;
+pub const pseudo_AF_RTIP: ::c_int = 22;
+pub const AF_IPX: ::c_int = 23;
+pub const AF_SIP: ::c_int = 24;
+pub const pseudo_AF_PIP: ::c_int = 25;
+pub const AF_ISDN: ::c_int = 26;
+pub const AF_E164: ::c_int = AF_ISDN;
+pub const pseudo_AF_KEY: ::c_int = 27;
 pub const AF_INET6: ::c_int = 28;
-pub const AF_UNIX: ::c_int = 1;
+pub const AF_NATM: ::c_int = 29;
+pub const AF_ATM: ::c_int = 30;
+pub const pseudo_AF_HDRCMPLT: ::c_int = 31;
+pub const AF_NETGRAPH: ::c_int = 32;
+
+pub const PF_UNSPEC: ::c_int = AF_UNSPEC;
+pub const PF_LOCAL: ::c_int = AF_LOCAL;
+pub const PF_UNIX: ::c_int = PF_LOCAL;
+pub const PF_INET: ::c_int = AF_INET;
+pub const PF_IMPLINK: ::c_int = AF_IMPLINK;
+pub const PF_PUP: ::c_int = AF_PUP;
+pub const PF_CHAOS: ::c_int = AF_CHAOS;
+pub const PF_NETBIOS: ::c_int = AF_NETBIOS;
+pub const PF_ISO: ::c_int = AF_ISO;
+pub const PF_OSI: ::c_int = AF_ISO;
+pub const PF_ECMA: ::c_int = AF_ECMA;
+pub const PF_DATAKIT: ::c_int = AF_DATAKIT;
+pub const PF_CCITT: ::c_int = AF_CCITT;
+pub const PF_SNA: ::c_int = AF_SNA;
+pub const PF_DECnet: ::c_int = AF_DECnet;
+pub const PF_DLI: ::c_int = AF_DLI;
+pub const PF_LAT: ::c_int = AF_LAT;
+pub const PF_HYLINK: ::c_int = AF_HYLINK;
+pub const PF_APPLETALK: ::c_int = AF_APPLETALK;
+pub const PF_ROUTE: ::c_int = AF_ROUTE;
+pub const PF_LINK: ::c_int = AF_LINK;
+pub const PF_XTP: ::c_int = pseudo_AF_XTP;
+pub const PF_COIP: ::c_int = AF_COIP;
+pub const PF_CNT: ::c_int = AF_CNT;
+pub const PF_SIP: ::c_int = AF_SIP;
+pub const PF_IPX: ::c_int = AF_IPX;
+pub const PF_RTIP: ::c_int = pseudo_AF_RTIP;
+pub const PF_PIP: ::c_int = pseudo_AF_PIP;
+pub const PF_ISDN: ::c_int = AF_ISDN;
+pub const PF_KEY: ::c_int = pseudo_AF_KEY;
+pub const PF_INET6: ::c_int = AF_INET6;
+pub const PF_NATM: ::c_int = AF_NATM;
+pub const PF_ATM: ::c_int = AF_ATM;
+pub const PF_NETGRAPH: ::c_int = AF_NETGRAPH;
+
+pub const SOMAXCONN: ::c_int = 128;
+
+pub const MSG_OOB: ::c_int = 0x00000001;
+pub const MSG_PEEK: ::c_int = 0x00000002;
+pub const MSG_DONTROUTE: ::c_int = 0x00000004;
+pub const MSG_EOR: ::c_int =  0x00000008;
+pub const MSG_TRUNC: ::c_int = 0x00000010;
+pub const MSG_CTRUNC: ::c_int = 0x00000020;
+pub const MSG_WAITALL: ::c_int = 0x00000040;
+pub const MSG_DONTWAIT: ::c_int = 0x00000080;
+pub const MSG_EOF: ::c_int = 0x00000100;
+
 pub const SOCK_STREAM: ::c_int = 1;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_RAW: ::c_int = 3;
+pub const SOCK_RDM: ::c_int = 4;
 pub const SOCK_SEQPACKET: ::c_int = 5;
+pub const SOCK_CLOEXEC: ::c_int = 0x10000000;
+pub const SOCK_NONBLOCK: ::c_int = 0x20000000;
+pub const SOCK_MAXADDRLEN: ::c_int = 255;
+pub const IPPROTO_ICMP: ::c_int = 1;
+pub const IPPROTO_ICMPV6: ::c_int = 58;
 pub const IPPROTO_TCP: ::c_int = 6;
 pub const IPPROTO_IP: ::c_int = 0;
 pub const IPPROTO_IPV6: ::c_int = 41;
@@ -595,6 +659,9 @@ pub const SO_USELOOPBACK: ::c_int = 0x0040;
 pub const SO_LINGER: ::c_int = 0x0080;
 pub const SO_OOBINLINE: ::c_int = 0x0100;
 pub const SO_REUSEPORT: ::c_int = 0x0200;
+pub const SO_TIMESTAMP: ::c_int = 0x0400;
+pub const SO_NOSIGPIPE: ::c_int = 0x0800;
+pub const SO_ACCEPTFILTER: ::c_int = 0x1000;
 pub const SO_SNDBUF: ::c_int = 0x1001;
 pub const SO_RCVBUF: ::c_int = 0x1002;
 pub const SO_SNDLOWAT: ::c_int = 0x1003;
@@ -689,7 +756,6 @@ pub const PTHREAD_RWLOCK_INITIALIZER: pthread_rwlock_t = 0 as *mut _;
 pub const PTHREAD_MUTEX_ERRORCHECK: ::c_int = 1;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
 pub const PTHREAD_MUTEX_NORMAL: ::c_int = 3;
-pub const PTHREAD_MUTEX_ADAPTIVE_NP: ::c_int = 4;
 pub const PTHREAD_MUTEX_DEFAULT: ::c_int = PTHREAD_MUTEX_ERRORCHECK;
 
 pub const SCHED_FIFO: ::c_int = 1;
@@ -712,12 +778,104 @@ pub const LOG_SECURITY: ::c_int = 13 << 3;
 pub const LOG_CONSOLE: ::c_int = 14 << 3;
 pub const LOG_NFACILITIES: ::c_int = 24;
 
-pub const TIOCGWINSZ: ::c_ulong = 0x40087468;
+pub const TIOCEXCL: ::c_uint = 0x2000740d;
+pub const TIOCNXCL: ::c_uint = 0x2000740e;
+pub const TIOCFLUSH: ::c_ulong = 0x80047410;
+pub const TIOCGETA: ::c_uint = 0x402c7413;
+pub const TIOCSETA: ::c_ulong = 0x802c7414;
+pub const TIOCSETAW: ::c_ulong = 0x802c7415;
+pub const TIOCSETAF: ::c_ulong = 0x802c7416;
+pub const TIOCGETD: ::c_uint = 0x4004741a;
+pub const TIOCSETD: ::c_ulong = 0x8004741b;
+pub const TIOCGDRAINWAIT: ::c_uint = 0x40047456;
+pub const TIOCSDRAINWAIT: ::c_ulong = 0x80047457;
+pub const TIOCTIMESTAMP: ::c_uint = 0x40107459;
+pub const TIOCMGDTRWAIT: ::c_uint = 0x4004745a;
+pub const TIOCMSDTRWAIT: ::c_ulong = 0x8004745b;
+pub const TIOCDRAIN: ::c_uint = 0x2000745e;
+pub const TIOCEXT: ::c_ulong = 0x80047460;
+pub const TIOCSCTTY: ::c_uint = 0x20007461;
+pub const TIOCCONS: ::c_ulong = 0x80047462;
+pub const TIOCGSID: ::c_uint = 0x40047463;
+pub const TIOCSTAT: ::c_uint = 0x20007465;
+pub const TIOCUCNTL: ::c_ulong = 0x80047466;
 pub const TIOCSWINSZ: ::c_ulong = 0x80087467;
+pub const TIOCGWINSZ: ::c_uint = 0x40087468;
+pub const TIOCMGET: ::c_uint = 0x4004746a;
+pub const TIOCM_LE: ::c_int = 0x1;
+pub const TIOCM_DTR: ::c_int = 0x2;
+pub const TIOCM_RTS: ::c_int = 0x4;
+pub const TIOCM_ST: ::c_int = 0x8;
+pub const TIOCM_SR: ::c_int = 0x10;
+pub const TIOCM_CTS: ::c_int = 0x20;
+pub const TIOCM_RI: ::c_int = 0x80;
+pub const TIOCM_DSR: ::c_int = 0x100;
+pub const TIOCM_CD: ::c_int = 0x40;
+pub const TIOCM_CAR: ::c_int = 0x40;
+pub const TIOCM_RNG: ::c_int = 0x80;
+pub const TIOCMBIC: ::c_ulong = 0x8004746b;
+pub const TIOCMBIS: ::c_ulong = 0x8004746c;
+pub const TIOCMSET: ::c_ulong = 0x8004746d;
+pub const TIOCSTART: ::c_uint = 0x2000746e;
+pub const TIOCSTOP: ::c_uint = 0x2000746f;
+pub const TIOCPKT: ::c_ulong = 0x80047470;
+pub const TIOCPKT_DATA: ::c_int = 0x0;
+pub const TIOCPKT_FLUSHREAD: ::c_int = 0x1;
+pub const TIOCPKT_FLUSHWRITE: ::c_int = 0x2;
+pub const TIOCPKT_STOP: ::c_int = 0x4;
+pub const TIOCPKT_START: ::c_int = 0x8;
+pub const TIOCPKT_NOSTOP: ::c_int = 0x10;
+pub const TIOCPKT_DOSTOP: ::c_int = 0x20;
+pub const TIOCPKT_IOCTL: ::c_int = 0x40;
+pub const TIOCNOTTY: ::c_uint = 0x20007471;
+pub const TIOCSTI: ::c_ulong = 0x80017472;
+pub const TIOCOUTQ: ::c_uint = 0x40047473;
+pub const TIOCSPGRP: ::c_ulong = 0x80047476;
+pub const TIOCGPGRP: ::c_uint = 0x40047477;
+pub const TIOCCDTR: ::c_uint = 0x20007478;
+pub const TIOCSDTR: ::c_uint = 0x20007479;
+pub const TIOCCBRK: ::c_uint = 0x2000747a;
+pub const TIOCSBRK: ::c_uint = 0x2000747b;
+pub const TTYDISC: ::c_int = 0x0;
+pub const SLIPDISC: ::c_int = 0x4;
+pub const PPPDISC: ::c_int = 0x5;
+pub const NETGRAPHDISC: ::c_int = 0x6;
+
+pub const B0: speed_t = 0;
+pub const B50: speed_t = 50;
+pub const B75: speed_t = 75;
+pub const B110: speed_t = 110;
+pub const B134: speed_t = 134;
+pub const B150: speed_t = 150;
+pub const B200: speed_t = 200;
+pub const B300: speed_t = 300;
+pub const B600: speed_t = 600;
+pub const B1200: speed_t = 1200;
+pub const B1800: speed_t = 1800;
+pub const B2400: speed_t = 2400;
+pub const B4800: speed_t = 4800;
+pub const B9600: speed_t = 9600;
+pub const B19200: speed_t = 19200;
+pub const B38400: speed_t = 38400;
+pub const B7200: speed_t = 7200;
+pub const B14400: speed_t = 14400;
+pub const B28800: speed_t = 28800;
+pub const B57600: speed_t = 57600;
+pub const B76800: speed_t = 76800;
+pub const B115200: speed_t = 115200;
+pub const B230400: speed_t = 230400;
+pub const B460800: speed_t = 460800;
+pub const B921600: speed_t = 921600;
+pub const EXTA: speed_t = 19200;
+pub const EXTB: speed_t = 38400;
 
 pub const SEM_FAILED: *mut sem_t = 0 as *mut sem_t;
 
 f! {
+    pub fn WIFCONTINUED(status: ::c_int) -> bool {
+        status == 0x13
+    }
+
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
     }
@@ -739,12 +897,20 @@ extern {
     pub fn getutxline(ut: *const utmpx) -> *mut utmpx;
     pub fn pututxline(ut: *const utmpx) -> *mut utmpx;
     pub fn setutxent();
-    pub fn getutxuser(user: *const ::c_char) -> *mut utmpx;
-    pub fn setutxdb(_type: ::c_int, file: *const ::c_char) -> ::c_int;
 }
 
 #[link(name = "util")]
 extern {
+    pub fn aio_read(aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_write(aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_fsync(op: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
+    pub fn aio_error(aiocbp: *const aiocb) -> ::c_int;
+    pub fn aio_return(aiocbp: *mut aiocb) -> ::ssize_t;
+    pub fn aio_suspend(aiocb_list: *const *const aiocb, nitems: ::c_int,
+                       timeout: *const ::timespec) -> ::c_int;
+    pub fn aio_cancel(fd: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
+    pub fn lio_listio(mode: ::c_int, aiocb_list: *const *mut aiocb,
+                      nitems: ::c_int, sevp: *mut sigevent) -> ::c_int;
     pub fn getnameinfo(sa: *const ::sockaddr,
                        salen: ::socklen_t,
                        host: *mut ::c_char,
@@ -809,7 +975,6 @@ extern {
                    winp: *mut ::winsize) -> ::pid_t;
     pub fn nl_langinfo_l(item: ::nl_item, locale: ::locale_t) -> *mut ::c_char;
     pub fn duplocale(base: ::locale_t) -> ::locale_t;
-    pub fn freelocale(loc: ::locale_t) -> ::c_int;
     pub fn newlocale(mask: ::c_int,
                      locale: *const ::c_char,
                      base: ::locale_t) -> ::locale_t;
@@ -823,6 +988,14 @@ extern {
     pub fn pthread_attr_getstack(attr: *const ::pthread_attr_t,
                                  stackaddr: *mut *mut ::c_void,
                                  stacksize: *mut ::size_t) -> ::c_int;
+    pub fn pthread_condattr_setpshared(attr: *mut pthread_condattr_t,
+                                       pshared: ::c_int) -> ::c_int;
+    pub fn pthread_condattr_getpshared(attr: *const pthread_condattr_t,
+                                       pshared: *mut ::c_int) -> ::c_int;
+    pub fn pthread_mutexattr_setpshared(attr: *mut pthread_mutexattr_t,
+                                        pshared: ::c_int) -> ::c_int;
+    pub fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t,
+                                        pshared: *mut ::c_int) -> ::c_int;
     pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
 
@@ -864,6 +1037,11 @@ extern {
                          abstime: *const ::timespec) -> ::c_int;
     pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
                                    abstime: *const ::timespec) -> ::c_int;
+    pub fn pipe2(fds: *mut ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn ppoll(fds: *mut ::pollfd,
+                 nfds: ::nfds_t,
+                 timeout: *const ::timespec,
+                 sigmask: *const sigset_t) -> ::c_int;
 }
 
 cfg_if! {

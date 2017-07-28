@@ -2,29 +2,19 @@
 # -*- makefile -*-
 
 include /usr/share/dpkg/pkg-info.mk
+include /usr/share/dpkg/vendor.mk
 include /usr/share/dpkg/architecture.mk
 include /usr/share/dpkg/buildflags.mk
-#RUSTFLAGS = -C link-args="$(LDFLAGS)"
-# temporary workaround for https://github.com/rust-lang/rust/issues/31529
-# this will FAIL if LDFLAGS itself contains shell-interpreted chars beyond
-# unquoted spaces (that addprefix works around the failure of)
+# TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 
-# see https://github.com/rust-lang/rust/issues/37320
-# it should be possible to remove this in the next Debian release
-export MALLOC_CONF = lg_dirty_mult:-1
-
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
+export DEB_HOST_RUST_TYPE
 
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
-
-# When using sudo pbuilder, this will cause mk/install.mk to run sudo,
-# but we don't need sudo as a build-dep for the package if we unexport
-# the SUDO_USER variable.
-unexport SUDO_USER
 
 # src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
 # gcc-6.  See bug #811573.
@@ -39,29 +29,33 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-RUST_VERSION := $(shell dpkg-parsechangelog --show-field Version | sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/')
+SED_VERSION_SHORT := sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/'
+RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
+RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
+# Sed expression that matches the "rustc" we have in our Build-Depends field
+SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc .*,/p}" debian/control
 
-# These are the normal build flags
-DEB_CONFIGURE_FLAGS = \
-               --host=$(DEB_HOST_RUST_TYPE) \
-               --target=$(DEB_TARGET_RUST_TYPE) \
-               --disable-manage-submodules \
-               --disable-rustbuild \
-               --release-channel=$(RELEASE_CHANNEL) \
-               --prefix=/usr
+# These are the normal build flags. Upstream is moving to debian/config.toml
+# but at the current version not all of these flags are available in that file.
+DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr
 
 # Use system LLVM (comment out to use vendored LLVM)
 OLD_LLVM_VERSION = 3.8
 DEB_CONFIGURE_FLAGS += --llvm-root=/usr/lib/llvm-3.9
+RUSTBUILD = ./x.py
+RUSTBUILD_FLAGS = --config debian/config.toml -v
+
+update-version:
+	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
+	newver=$(RUST_VERSION); \
+	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver; fi
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
 #
-# Sed expression that matches the "rustc" we have in our Build-Depends field
-SED_RUSTC_BUILDDEP := /^Build-Depends:/,/^[^[:space:]\#]/{/\s*rustc.*,/$$action}
 PRECONFIGURE_CHECK = :
-HAVE_BINARY_TARBALL := $(shell ls -1 dl/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
+HAVE_BINARY_TARBALL := $(shell ls -1 stage0/*/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
 # allow not using the binary tarball although it exists
 #ifneq (,$(filter $(DEB_HOST_ARCH), amd64 arm64 armhf i386 powerpc ppc64el s390x))
 #  HAVE_BINARY_TARBALL := 0
@@ -79,19 +73,19 @@ ifeq (0,$(HAVE_BINARY_TARBALL))
     endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.
-    # In this case, the rust build scripts will download a stage0 into dl/ and use that.
+    # In this case, the rust build scripts will download a stage0 into stage0/ and use that.
     # We don't need to do anything specific in this build file, so this case is empty.
 else
     # Case B (Bootstrapping a new distro): the extracted source tree does
     # include a bootstrapping tarball for the current architecture; see the
-    # `source_orig-dl` target below on how to build this.
+    # `source_orig-stage0` target below on how to build this.
     #
     # In this case, we'll bootstrap from the stage0 given in that tarball.
     # To ensure the uploader of the .dsc didn't make a mistake, we first check
     # that rustc isn't a Build-Depends for the current architecture.
-    ifneq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control))
-    ifeq (,$(shell action=p; sed -ne "$(SED_RUSTC_BUILDDEP)" debian/control | grep '!$(DEB_HOST_ARCH)'))
-        PRECONFIGURE_CHECK = $(error found matches for dl/*$(DEB_HOST_RUST_TYPE)*, \
+    ifneq (,$(shell $(SED_RUSTC_BUILDDEP)))
+    ifeq (,$(shell $(SED_RUSTC_BUILDDEP) | grep '!$(DEB_HOST_ARCH)'))
+        PRECONFIGURE_CHECK = $(error found matches for stage0/*/*$(DEB_HOST_RUST_TYPE)*, \
           but rustc might be a Build-Depends for $(DEB_HOST_ARCH))
     endif
     endif
@@ -107,56 +101,93 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
   DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
 endif
 
-# Workaround for powerpc64le: no optimization
-# TODO: can remove when https://github.com/rust-lang/rust/issues/39015 is fixed
-ifneq (,$(findstring powerpc64le,$(DEB_TARGET_RUST_TYPE)))
-  DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
+# Build products or non-source files in src/, that shouldn't go in rust-src
+SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
+	src/bootstrap/bootstrap.pyc \
+	src/etc/__pycache__/
+
+# Workaround for linux #865549
+ifeq (0,$(shell test $$(uname -s) = "Linux" -a $$(getconf PAGESIZE) -gt 4096; echo $$?))
+  SYSTEM_WORKAROUNDS += ulimit -s $$(expr $$(getconf PAGESIZE) / 1024 '*' 256 + 8192);
 endif
 
-
 %:
-	dh $@ --parallel
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
 
-# Note: SHELL is not set by dash, but the configure script wants to use it
-override_dh_auto_configure:
+.PHONY: build
+build:
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
+
+debian/config.toml: debian/config.toml.in
+	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
+		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
+		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
+		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		"$<" > "$@"
+
+override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
-	! grep --color=always -i 'll...$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
+	! grep --color=always -i 'll...?$(OLD_LLVM_VERSION)' --exclude=changelog -R debian
 	$(PRECONFIGURE_CHECK)
-	SHELL=/bin/sh PATH="$$PWD/debian/bin:$$PATH" DEB_HOST_ARCH="$(DEB_HOST_ARCH)" \
+	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
+	# work around #842634
+	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
+	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
+	PATH="$$PWD/debian/bin:$$PATH" \
 	    ./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
-	set -e; \
-	if [ -f Makefile ]; then \
-	  $(MAKE) clean-all; \
-	  $(RM) Makefile config.stamp config.mk; \
-	fi
-	$(RM) src/rt/hoedown/src/html_blocks.c # clean up after building this ourselves
-	$(RM) src/bootstrap/bootstrap.pyc
-	rm -rf src/etc/__pycache__ *-linux-gnu* config.tmp
-	rm -f dl/rustc-1.14.0-arm-unknown-linux-gnueabihf.tar.gz
+	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
+	$(RM) -rf $(SRC_CLEAN) debian/config.toml
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
 	$(MAKE) -C src/rt/hoedown src/html_blocks.c
 
 override_dh_auto_build-arch: generate-sources
-	dh_auto_build -- all VERBOSE=1
+	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
 
 # note: this is only for buildds that want to do a separate arch:all build;
 # there is no point running this yourself "to save time" since it implicitly
 # depends on build-arch anyways.
 override_dh_auto_build-indep: generate-sources
 ifneq (,$(BUILD_DOCS))
-	dh_auto_build -- docs VERBOSE=1
+# Rust has a weird way of configuring whether to build docs or not
+	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
+	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
+endif
+
+RUN_TESTS = \
+	if $(1); then \
+	  : ; \
+	elif [ $(DEB_VENDOR) = "Debian" -a $(DEB_DISTRIBUTION) != "experimental" ]; then \
+	  false; \
+	elif [ $(DEB_VENDOR) = "Ubuntu" -a $(DEB_HOST_ARCH) != "s390x" ]; then \
+	  false ; \
+	else \
+	  echo "====================================================="; \
+	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
+	  echo "====================================================="; \
+	fi
+
+override_dh_auto_test-arch:
+ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test $(RUSTBUILD_FLAGS))
+endif
+
+override_dh_auto_test-indep:
+ifneq (,$(BUILD_DOCS))
+ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
+	$(call RUN_TESTS,RUST_BACKTRACE=1 $(RUSTBUILD) test src/tools/linkchecker $(RUSTBUILD_FLAGS))
+endif
 endif
 
 override_dh_auto_install:
-	#rm -rf armv7-unknown-linux-gnueabihf
-	dh_auto_install --destdir=$(DEB_DESTDIR)
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) dist $(RUSTBUILD_FLAGS) --install
 
 	#upstream build produces both armv6 and armv7 stuff and installs a 
-        #mixture of both. Fix things up so that only the armv6 stuff ends up
+	#mixture of both. Fix things up so that only the armv6 stuff ends up
 	#in the packages.
 	cp arm-unknown-linux-gnueabihf/stage2/bin/rustc debian/tmp/usr/bin/
 	cp arm-unknown-linux-gnueabihf/stage2/bin/rustdoc debian/tmp/usr/bin/
@@ -187,7 +218,7 @@ ifneq (,$(BUILD_DOCS))
 	  sed -i -e "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," \
               -e "s,https://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
 	done
-	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete
+	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete;
 endif
 
 override_dh_install-arch:
@@ -199,6 +230,19 @@ override_dh_install-indep:
 	chmod -x \
 	  debian/rust-gdb/usr/share/rust-gdb/*.py \
 	  debian/rust-lldb/usr/share/rust-lldb/*.py
+	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rust/%)
+	# Get rid of lintian warnings
+	find debian/rust-src/usr/src/rust \
+		\( -name .gitignore \
+		-o -name 'LICENSE*' \
+		-o -name 'LICENCE' \
+		-o -name 'license' \
+		-o -name 'COPYING*' \
+		\) -delete
+	cd debian/rust-src/usr/src/rust && chmod -x \
+		src/etc/gdb_rust_pretty_printing.py \
+		src/etc/adb_run_wrapper.sh \
+		src/compiler-rt/test/builtins/Unit/ppc/test
 
 override_dh_installchangelogs:
 	dh_installchangelogs RELEASES.md
@@ -208,28 +252,6 @@ override_dh_installdocs:
 
 override_dh_compress:
 	dh_compress -X.woff
-
-override_dh_auto_test-arch:
-ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-# Use non-parallel $(MAKE) here instead of dh_auto_test, otherwise the upstream
-# Makefile will try to run N instances of the testrunner each of which will run
-# N instances of rustc (there is also parallel logic in libtest.rs already).
-	if RUST_BACKTRACE=1 $(MAKE) VERBOSE=1 check; then \
-	  : ; \
-	elif [ $(DEB_DISTRIBUTION) = "unstable" ]; then \
-	  false; \
-	else \
-	  echo "====================================================="; \
-	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
-	  echo "====================================================="; \
-	fi
-endif
-
-# No tests are applicable when only building arch:all packages.
-# More specifically: when we do an arch-all build, some crates are not built.
-# This makes some arch-dependent tests fail, so don't run them here.
-override_dh_auto_test-indep:
-	true
 
 override_dh_makeshlibs:
 	dh_makeshlibs -V
@@ -249,9 +271,9 @@ override_dh_shlibdeps:
 	dh_shlibdeps -- -x$(LIBSTD_PKG)
 
 QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE = x=$$?; if [ $$x = 2 ]; then exit 0; else exit $$x; fi
-source_orig-dl:
+source_orig-stage0:
 	QUILT_PATCHES=debian/patches quilt push -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	$(MAKE) -f debian/rules clean
-	debian/make_orig-dl_tarball.sh
+	debian/make_orig-stage0_tarball.sh
 	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	rm -rf .pc

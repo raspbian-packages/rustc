@@ -8,6 +8,7 @@
 # option. This file may not be copied, modified, or distributed
 # except according to those terms.
 
+from __future__ import print_function
 import argparse
 import contextlib
 import datetime
@@ -22,7 +23,7 @@ import tempfile
 from time import time
 
 
-def get(url, path, verbose=False, use_local_hash_if_present=False):
+def get(url, path, verbose=False, use_local_hash_if_present=True):
     sha_url = url + ".sha256"
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = temp_file.name
@@ -60,6 +61,16 @@ def delete_if_present(path, verbose):
 
 
 def download(path, url, probably_big, verbose):
+    for x in range(0, 4):
+        try:
+            _download(path, url, probably_big, verbose, True)
+            return
+        except RuntimeError:
+            print("\nspurious failure, trying again")
+    _download(path, url, probably_big, verbose, False)
+
+
+def _download(path, url, probably_big, verbose, exception):
     if probably_big or verbose:
         print("downloading {}".format(url))
     # see http://serverfault.com/questions/301128/how-to-download
@@ -67,13 +78,16 @@ def download(path, url, probably_big, verbose):
         run(["PowerShell.exe", "/nologo", "-Command",
              "(New-Object System.Net.WebClient)"
              ".DownloadFile('{}', '{}')".format(url, path)],
-            verbose=verbose)
+            verbose=verbose,
+            exception=exception)
     else:
         if probably_big or verbose:
             option = "-#"
         else:
             option = "-s"
-        run(["curl", option, "-R", "--retry", "3", "-Sf", "-o", path, url], verbose=verbose)
+        run(["curl", option, "-R", "--retry", "3", "-Sf", "-o", path, url],
+            verbose=verbose,
+            exception=exception)
 
 
 def verify(path, sha_path, verbose):
@@ -113,7 +127,7 @@ def unpack(tarball, dst, verbose=False, match=None):
             shutil.move(tp, fp)
     shutil.rmtree(os.path.join(dst, fname))
 
-def run(args, verbose=False):
+def run(args, verbose=False, exception=False):
     if verbose:
         print("running: " + ' '.join(args))
     sys.stdout.flush()
@@ -123,7 +137,7 @@ def run(args, verbose=False):
     code = ret.wait()
     if code != 0:
         err = "failed to run: " + ' '.join(args)
-        if verbose:
+        if verbose or exception:
             raise RuntimeError(err)
         sys.exit(err)
 
@@ -162,8 +176,7 @@ class RustBuild(object):
             filename = "rust-std-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
                    match="rust-std-" + self.build,
                    verbose=self.verbose)
@@ -171,9 +184,10 @@ class RustBuild(object):
             filename = "rustc-{}-{}.tar.gz".format(channel, self.build)
             url = "https://static.rust-lang.org/dist/" + self.stage0_rustc_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="rustc", verbose=self.verbose)
+            self.fix_executable(self.bin_root() + "/bin/rustc")
+            self.fix_executable(self.bin_root() + "/bin/rustdoc")
             with open(self.rustc_stamp(), 'w') as f:
                 f.write(self.stage0_rustc_date())
 
@@ -183,11 +197,64 @@ class RustBuild(object):
             filename = "cargo-nightly-{}.tar.gz".format(self.build)
             url = "https://s3.amazonaws.com/rust-lang-ci/cargo-builds/" + self.stage0_cargo_rev()
             tarball = os.path.join(cargo_cache, filename)
-            if not os.path.exists(tarball):
-                get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+            get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(), match="cargo", verbose=self.verbose)
+            self.fix_executable(self.bin_root() + "/bin/cargo")
             with open(self.cargo_stamp(), 'w') as f:
                 f.write(self.stage0_cargo_rev())
+
+    def fix_executable(self, fname):
+        # If we're on NixOS we need to change the path to the dynamic loader
+
+        default_encoding = sys.getdefaultencoding()
+        try:
+            ostype = subprocess.check_output(['uname', '-s']).strip().decode(default_encoding)
+        except (subprocess.CalledProcessError, WindowsError):
+            return
+
+        if ostype != "Linux":
+            return
+
+        if not os.path.exists("/etc/NIXOS"):
+            return
+        if os.path.exists("/lib"):
+            return
+
+        # At this point we're pretty sure the user is running NixOS
+        print("info: you seem to be running NixOS. Attempting to patch " + fname)
+
+        try:
+            interpreter = subprocess.check_output(["patchelf", "--print-interpreter", fname])
+            interpreter = interpreter.strip().decode(default_encoding)
+        except subprocess.CalledProcessError as e:
+            print("warning: failed to call patchelf: %s" % e)
+            return
+
+        loader = interpreter.split("/")[-1]
+
+        try:
+            ldd_output = subprocess.check_output(['ldd', '/run/current-system/sw/bin/sh'])
+            ldd_output = ldd_output.strip().decode(default_encoding)
+        except subprocess.CalledProcessError as e:
+            print("warning: unable to call ldd: %s" % e)
+            return
+
+        for line in ldd_output.splitlines():
+            libname = line.split()[0]
+            if libname.endswith(loader):
+                loader_path = libname[:len(libname) - len(loader)]
+                break
+        else:
+            print("warning: unable to find the path to the dynamic linker")
+            return
+
+        correct_interpreter = loader_path + loader
+
+        try:
+            subprocess.check_output(["patchelf", "--set-interpreter", correct_interpreter, fname])
+        except subprocess.CalledProcessError as e:
+            print("warning: failed to call patchelf: %s" % e)
+            return
 
     def stage0_cargo_rev(self):
         return self._cargo_rev
@@ -227,8 +294,10 @@ class RustBuild(object):
 
     def get_mk(self, key):
         for line in iter(self.config_mk.splitlines()):
-            if line.startswith(key):
-                return line[line.find(':=') + 2:].strip()
+            if line.startswith(key + ' '):
+                var = line[line.find(':=') + 2:].strip()
+                if var != '':
+                    return var
         return None
 
     def cargo(self):
@@ -287,14 +356,20 @@ class RustBuild(object):
         env = os.environ.copy()
         env["CARGO_TARGET_DIR"] = build_dir
         env["RUSTC"] = self.rustc()
-        env["LD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib")
-        env["DYLD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib")
+        env["LD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib") + \
+                                 (os.pathsep + env["LD_LIBRARY_PATH"]) \
+                                 if "LD_LIBRARY_PATH" in env else ""
+        env["DYLD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib") + \
+                                   (os.pathsep + env["DYLD_LIBRARY_PATH"]) \
+                                   if "DYLD_LIBRARY_PATH" in env else ""
         env["PATH"] = os.path.join(self.bin_root(), "bin") + \
                       os.pathsep + env["PATH"]
         if not os.path.isfile(self.cargo()):
             raise Exception("no cargo executable found at `%s`" % self.cargo())
         args = [self.cargo(), "build", "--manifest-path",
                 os.path.join(self.rust_root, "src/bootstrap/Cargo.toml")]
+        if self.use_locked_deps:
+            args.append("--locked")
         if self.use_vendored_sources:
             args.append("--frozen")
         self.run(args, env)
@@ -316,7 +391,7 @@ class RustBuild(object):
         try:
             ostype = subprocess.check_output(['uname', '-s']).strip().decode(default_encoding)
             cputype = subprocess.check_output(['uname', '-m']).strip().decode(default_encoding)
-        except (subprocess.CalledProcessError, WindowsError):
+        except (subprocess.CalledProcessError, OSError):
             if sys.platform == 'win32':
                 return 'x86_64-pc-windows-msvc'
             err = "uname not found"
@@ -346,8 +421,25 @@ class RustBuild(object):
             ostype = 'unknown-openbsd'
         elif ostype == 'NetBSD':
             ostype = 'unknown-netbsd'
+        elif ostype == 'SunOS':
+            ostype = 'sun-solaris'
+            # On Solaris, uname -m will return a machine classification instead
+            # of a cpu type, so uname -p is recommended instead.  However, the
+            # output from that option is too generic for our purposes (it will
+            # always emit 'i386' on x86/amd64 systems).  As such, isainfo -k
+            # must be used instead.
+            try:
+                cputype = subprocess.check_output(['isainfo',
+                  '-k']).strip().decode(default_encoding)
+            except (subprocess.CalledProcessError, OSError):
+                err = "isainfo not found"
+                if self.verbose:
+                    raise Exception(err)
+                sys.exit(err)
         elif ostype == 'Darwin':
             ostype = 'apple-darwin'
+        elif ostype == 'Haiku':
+            ostype = 'unknown-haiku'
         elif ostype.startswith('MINGW'):
             # msys' `uname` does not print gcc configuration, but prints msys
             # configuration. so we cannot believe `uname -m`:
@@ -375,10 +467,15 @@ class RustBuild(object):
             cputype = 'i686'
         elif cputype in {'xscale', 'arm'}:
             cputype = 'arm'
-        elif cputype in {'armv7l', 'armv8l'}:
+        elif cputype == 'armv6l':
             cputype = 'arm'
             ostype += 'eabihf'
+        elif cputype in {'armv7l', 'armv8l'}:
+            cputype = 'armv7'
+            ostype += 'eabihf'
         elif cputype == 'aarch64':
+            cputype = 'aarch64'
+        elif cputype == 'arm64':
             cputype = 'aarch64'
         elif cputype == 'mips':
             if sys.byteorder == 'big':
@@ -396,10 +493,20 @@ class RustBuild(object):
                 raise ValueError('unknown byteorder: ' + sys.byteorder)
             # only the n64 ABI is supported, indicate it
             ostype += 'abi64'
-        elif cputype in {'powerpc', 'ppc', 'ppc64'}:
+        elif cputype in {'powerpc', 'ppc'}:
             cputype = 'powerpc'
+        elif cputype in {'powerpc64', 'ppc64'}:
+            cputype = 'powerpc64'
+        elif cputype in {'powerpc64le', 'ppc64le'}:
+            cputype = 'powerpc64le'
+        elif cputype == 'sparcv9':
+            pass
         elif cputype in {'amd64', 'x86_64', 'x86-64', 'x64'}:
             cputype = 'x86_64'
+        elif cputype == 's390x':
+            cputype = 's390x'
+        elif cputype == 'BePC':
+            cputype = 'i686'
         else:
             err = "unknown cpu type: " + cputype
             if self.verbose:
@@ -408,7 +515,7 @@ class RustBuild(object):
 
         return "{}-{}".format(cputype, ostype)
 
-def main():
+def bootstrap():
     parser = argparse.ArgumentParser(description='Build rust')
     parser.add_argument('--config')
     parser.add_argument('--clean', action='store_true')
@@ -439,6 +546,9 @@ def main():
     rb.use_vendored_sources = '\nvendor = true' in rb.config_toml or \
                               'CFG_ENABLE_VENDOR' in rb.config_mk
 
+    rb.use_locked_deps = '\nlocked-deps = true' in rb.config_toml or \
+                         'CFG_ENABLE_LOCKED_DEPS' in rb.config_mk
+
     if 'SUDO_USER' in os.environ and not rb.use_vendored_sources:
         if os.environ.get('USER') != os.environ['SUDO_USER']:
             rb.use_vendored_sources = True
@@ -468,8 +578,6 @@ def main():
     rb._rustc_channel, rb._rustc_date = data['rustc'].split('-', 1)
     rb._cargo_rev = data['cargo']
 
-    start_time = time()
-
     # Fetch/build the bootstrap
     rb.build = rb.build_triple()
     rb.download_stage0()
@@ -486,9 +594,20 @@ def main():
     env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
     rb.run(args, env)
 
-    end_time = time()
-
-    print("Build completed in %s" % format_build_time(end_time - start_time))
+def main():
+    start_time = time()
+    try:
+        bootstrap()
+        print("Build completed successfully in %s" % format_build_time(time() - start_time))
+    except (SystemExit, KeyboardInterrupt) as e:
+        if hasattr(e, 'code') and isinstance(e.code, int):
+            exit_code = e.code
+        else:
+            exit_code = 1
+        import traceback
+        traceback.print_exc()
+        print("Build completed unsuccessfully in %s" % format_build_time(time() - start_time))
+        sys.exit(exit_code)
 
 if __name__ == '__main__':
     main()

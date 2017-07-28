@@ -255,8 +255,6 @@ impl Ordering {
     /// # Examples
     ///
     /// ```
-    /// #![feature(ordering_chaining)]
-    ///
     /// use std::cmp::Ordering;
     ///
     /// let result = Ordering::Equal.then(Ordering::Less);
@@ -277,7 +275,7 @@ impl Ordering {
     ///
     /// assert_eq!(result, Ordering::Less);
     /// ```
-    #[unstable(feature = "ordering_chaining", issue = "37053")]
+    #[stable(feature = "ordering_chaining", since = "1.17.0")]
     pub fn then(self, other: Ordering) -> Ordering {
         match self {
             Equal => other,
@@ -293,8 +291,6 @@ impl Ordering {
     /// # Examples
     ///
     /// ```
-    /// #![feature(ordering_chaining)]
-    ///
     /// use std::cmp::Ordering;
     ///
     /// let result = Ordering::Equal.then_with(|| Ordering::Less);
@@ -315,7 +311,7 @@ impl Ordering {
     ///
     /// assert_eq!(result, Ordering::Less);
     /// ```
-    #[unstable(feature = "ordering_chaining", issue = "37053")]
+    #[stable(feature = "ordering_chaining", since = "1.17.0")]
     pub fn then_with<F: FnOnce() -> Ordering>(self, f: F) -> Ordering {
         match self {
             Equal => f(),
@@ -679,10 +675,8 @@ mod impls {
     }
 
     partial_eq_impl! {
-        bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 f32 f64
+        bool char usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 f32 f64
     }
-    #[cfg(not(stage0))]
-    partial_eq_impl! { u128 i128 }
 
     macro_rules! eq_impl {
         ($($t:ty)*) => ($(
@@ -691,9 +685,7 @@ mod impls {
         )*)
     }
 
-    eq_impl! { () bool char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
-    #[cfg(not(stage0))]
-    eq_impl! { u128 i128 }
+    eq_impl! { () bool char usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 }
 
     macro_rules! partial_ord_impl {
         ($($t:ty)*) => ($(
@@ -782,9 +774,7 @@ mod impls {
         }
     }
 
-    ord_impl! { char usize u8 u16 u32 u64 isize i8 i16 i32 i64 }
-    #[cfg(not(stage0))]
-    ord_impl! { u128 i128 }
+    ord_impl! { char usize u8 u16 u32 u64 u128 isize i8 i16 i32 i64 i128 }
 
     #[unstable(feature = "never_type_impls", issue = "35121")]
     impl PartialEq for ! {

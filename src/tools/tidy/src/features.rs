@@ -116,7 +116,8 @@ pub fn check(path: &Path, bad: &mut bool) {
     });
 
     super::walk_many(&[&path.join("test/compile-fail"),
-                       &path.join("test/compile-fail-fulldeps")],
+                       &path.join("test/compile-fail-fulldeps"),
+                       &path.join("test/parse-fail"),],
                      &mut |path| super::filter_dirs(path),
                      &mut |file| {
         let filename = file.file_name().unwrap().to_string_lossy();
@@ -164,21 +165,11 @@ pub fn check(path: &Path, bad: &mut bool) {
         }
     });
 
-    // FIXME get this whitelist empty.
-    let whitelist = vec![
-        "abi_ptx", "simd", "static_recursion",
-        "cfg_target_has_atomic", "staged_api", "const_indexing",
-        "unboxed_closures", "stmt_expr_attributes",
-        "cfg_target_thread_local", "unwind_attributes",
-        "inclusive_range_syntax"
-    ];
-
     // Only check the number of lang features.
     // Obligatory testing for library features is dumb.
     let gate_untested = features.iter()
                                 .filter(|&(_, f)| f.level == Status::Unstable)
                                 .filter(|&(_, f)| !f.has_gate_test)
-                                .filter(|&(n, _)| !whitelist.contains(&n.as_str()))
                                 .collect::<Vec<_>>();
 
     for &(name, _) in gate_untested.iter() {

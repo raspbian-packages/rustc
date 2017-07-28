@@ -2,6 +2,12 @@ FROM centos:5
 
 WORKDIR /build
 
+# Centos 5 is EOL and is no longer available from the usual mirrors, so switch
+# to http://vault.centos.org/
+RUN sed -i 's/enabled=1/enabled=0/' /etc/yum/pluginconf.d/fastestmirror.conf
+RUN sed -i 's/mirrorlist/#mirrorlist/' /etc/yum.repos.d/*.repo
+RUN sed -i 's|#\(baseurl.*\)mirror.centos.org/centos/$releasever|\1vault.centos.org/5.11|' /etc/yum.repos.d/*.repo
+
 RUN yum upgrade -y && yum install -y \
       curl \
       bzip2 \
@@ -13,25 +19,16 @@ RUN yum upgrade -y && yum install -y \
       file \
       xz \
       which \
-      pkg-config \
+      pkgconfig \
       wget \
       autoconf \
       gettext
 
 ENV PATH=/rustroot/bin:$PATH
 ENV LD_LIBRARY_PATH=/rustroot/lib64:/rustroot/lib
+ENV PKG_CONFIG_PATH=/rustroot/lib/pkgconfig
 WORKDIR /tmp
-
-# binutils < 2.22 has a bug where the 32-bit executables it generates
-# immediately segfault in Rust, so we need to install our own binutils.
-#
-# See https://github.com/rust-lang/rust/issues/20440 for more info
 COPY shared.sh build-binutils.sh /tmp/
-RUN ./build-binutils.sh
-
-# Need a newer version of gcc than centos has to compile LLVM nowadays
-COPY build-gcc.sh /tmp/
-RUN ./build-gcc.sh
 
 # We need a build of openssl which supports SNI to download artifacts from
 # static.rust-lang.org. This'll be used to link into libcurl below (and used
@@ -49,6 +46,16 @@ RUN ./build-openssl.sh
 COPY build-curl.sh /tmp/
 RUN ./build-curl.sh
 
+# binutils < 2.22 has a bug where the 32-bit executables it generates
+# immediately segfault in Rust, so we need to install our own binutils.
+#
+# See https://github.com/rust-lang/rust/issues/20440 for more info
+RUN ./build-binutils.sh
+
+# Need a newer version of gcc than centos has to compile LLVM nowadays
+COPY build-gcc.sh /tmp/
+RUN ./build-gcc.sh
+
 # CentOS 5.5 has Python 2.4 by default, but LLVM needs 2.7+
 COPY build-python.sh /tmp/
 RUN ./build-python.sh
@@ -63,18 +70,32 @@ RUN ./build-git.sh
 COPY build-cmake.sh /tmp/
 RUN ./build-cmake.sh
 
+# for sanitizers, we need kernel headers files newer than the ones CentOS ships
+# with so we install newer ones here
+COPY build-headers.sh /tmp/
+RUN ./build-headers.sh
+
 RUN curl -Lo /rustroot/dumb-init \
       https://github.com/Yelp/dumb-init/releases/download/v1.2.0/dumb-init_1.2.0_amd64 && \
       chmod +x /rustroot/dumb-init
 ENTRYPOINT ["/rustroot/dumb-init", "--"]
 
-ENV SCCACHE_DIGEST=7237e38e029342fa27b7ac25412cb9d52554008b12389727320bd533fd7f05b6a96d55485f305caf95e5c8f5f97c3313e10012ccad3e752aba2518f3522ba783
-RUN curl -L https://api.pub.build.mozilla.org/tooltool/sha512/$SCCACHE_DIGEST | \
-      xz --decompress | \
-      tar xf - -C /usr/local/bin --strip-components=1
+RUN curl -o /usr/local/bin/sccache \
+      https://s3.amazonaws.com/rust-lang-ci/rust-ci-mirror/2017-04-04-sccache-x86_64-unknown-linux-musl && \
+      chmod +x /usr/local/bin/sccache
 
 ENV HOSTS=i686-unknown-linux-gnu
 ENV HOSTS=$HOSTS,x86_64-unknown-linux-gnu
 
-ENV RUST_CONFIGURE_ARGS --host=$HOSTS --enable-extended
+ENV RUST_CONFIGURE_ARGS \
+      --host=$HOSTS \
+      --enable-extended \
+      --enable-sanitizers
 ENV SCRIPT python2.7 ../x.py dist --host $HOSTS --target $HOSTS
+
+# This is the only builder which will create source tarballs
+ENV DIST_SRC 1
+
+# When we build cargo in this container, we don't want it to use the system
+# libcurl, instead it should compile its own.
+ENV LIBCURL_NO_PKG_CONFIG 1

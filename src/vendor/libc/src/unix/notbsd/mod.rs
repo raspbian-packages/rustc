@@ -53,7 +53,9 @@ s! {
         pub ai_protocol: ::c_int,
         pub ai_addrlen: socklen_t,
 
-        #[cfg(any(target_os = "linux", target_os = "emscripten"))]
+        #[cfg(any(target_os = "linux",
+                  target_os = "emscripten",
+                  target_os = "fuchsia"))]
         pub ai_addr: *mut ::sockaddr,
 
         pub ai_canonname: *mut c_char,
@@ -118,7 +120,9 @@ s! {
         pub dli_saddr: *mut ::c_void,
     }
 
-    #[cfg_attr(any(all(target_arch = "x86", not(target_env = "musl")),
+    #[cfg_attr(any(all(target_arch = "x86",
+                       not(target_env = "musl"),
+                       not(target_os = "android")),
                    target_arch = "x86_64"),
                repr(packed))]
     pub struct epoll_event {
@@ -160,6 +164,19 @@ s! {
         pub int_n_sep_by_space: ::c_char,
         pub int_p_sign_posn: ::c_char,
         pub int_n_sign_posn: ::c_char,
+    }
+
+    pub struct sigevent {
+        pub sigev_value: ::sigval,
+        pub sigev_signo: ::c_int,
+        pub sigev_notify: ::c_int,
+        // Actually a union.  We only expose sigev_notify_thread_id because it's
+        // the most useful member
+        pub sigev_notify_thread_id: ::c_int,
+        #[cfg(target_pointer_width = "64")]
+        __unused1: [::c_int; 11],
+        #[cfg(target_pointer_width = "32")]
+        __unused1: [::c_int; 12]
     }
 }
 
@@ -238,8 +255,7 @@ pub const RUSAGE_SELF: ::c_int = 0;
 pub const O_RDONLY: ::c_int = 0;
 pub const O_WRONLY: ::c_int = 1;
 pub const O_RDWR: ::c_int = 2;
-pub const O_TRUNC: ::c_int = 512;
-pub const O_CLOEXEC: ::c_int = 0x80000;
+pub const O_TMPFILE: ::c_int = 0o20000000 | O_DIRECTORY;
 
 pub const SOCK_CLOEXEC: ::c_int = O_CLOEXEC;
 
@@ -380,22 +396,9 @@ pub const EDOM: ::c_int = 33;
 pub const ERANGE: ::c_int = 34;
 pub const EWOULDBLOCK: ::c_int = EAGAIN;
 
-pub const EBFONT: ::c_int = 59;
-pub const ENOSTR: ::c_int = 60;
-pub const ENODATA: ::c_int = 61;
-pub const ETIME: ::c_int = 62;
-pub const ENOSR: ::c_int = 63;
-pub const ENONET: ::c_int = 64;
-pub const ENOPKG: ::c_int = 65;
-pub const EREMOTE: ::c_int = 66;
-pub const ENOLINK: ::c_int = 67;
-pub const EADV: ::c_int = 68;
-pub const ESRMNT: ::c_int = 69;
-pub const ECOMM: ::c_int = 70;
-pub const EPROTO: ::c_int = 71;
-pub const EDOTDOT: ::c_int = 73;
+pub const SCM_RIGHTS: ::c_int = 0x01;
+pub const SCM_CREDENTIALS: ::c_int = 0x02;
 
-pub const AF_PACKET: ::c_int = 17;
 pub const IPPROTO_RAW: ::c_int = 255;
 
 pub const PROT_GROWSDOWN: ::c_int = 0x1000000;
@@ -432,11 +435,127 @@ pub const IFF_PORTSEL: ::c_int = 0x2000;
 pub const IFF_AUTOMEDIA: ::c_int = 0x4000;
 pub const IFF_DYNAMIC: ::c_int = 0x8000;
 
+pub const SOL_IP: ::c_int = 0;
+pub const SOL_TCP: ::c_int = 6;
+pub const SOL_IPV6: ::c_int = 41;
+pub const SOL_ICMPV6: ::c_int = 58;
+pub const SOL_RAW: ::c_int = 255;
+pub const SOL_DECNET: ::c_int = 261;
+pub const SOL_X25: ::c_int = 262;
+pub const SOL_PACKET: ::c_int = 263;
+pub const SOL_ATM: ::c_int = 264;
+pub const SOL_AAL: ::c_int = 265;
+pub const SOL_IRDA: ::c_int = 266;
+pub const SOL_NETBEUI: ::c_int = 267;
+pub const SOL_LLC: ::c_int = 268;
+pub const SOL_DCCP: ::c_int = 269;
+pub const SOL_NETLINK: ::c_int = 270;
+pub const SOL_TIPC: ::c_int = 271;
+
+pub const AF_UNSPEC: ::c_int = 0;
 pub const AF_UNIX: ::c_int = 1;
+pub const AF_LOCAL: ::c_int = 1;
 pub const AF_INET: ::c_int = 2;
+pub const AF_AX25: ::c_int = 3;
+pub const AF_IPX: ::c_int = 4;
+pub const AF_APPLETALK: ::c_int = 5;
+pub const AF_NETROM: ::c_int = 6;
+pub const AF_BRIDGE: ::c_int = 7;
+pub const AF_ATMPVC: ::c_int = 8;
+pub const AF_X25: ::c_int = 9;
 pub const AF_INET6: ::c_int = 10;
+pub const AF_ROSE: ::c_int = 11;
+pub const AF_DECnet: ::c_int = 12;
+pub const AF_NETBEUI: ::c_int = 13;
+pub const AF_SECURITY: ::c_int = 14;
+pub const AF_KEY: ::c_int = 15;
 pub const AF_NETLINK: ::c_int = 16;
+pub const AF_ROUTE: ::c_int = AF_NETLINK;
+pub const AF_PACKET: ::c_int = 17;
+pub const AF_ASH: ::c_int = 18;
+pub const AF_ECONET: ::c_int = 19;
+pub const AF_ATMSVC: ::c_int = 20;
+pub const AF_RDS: ::c_int = 21;
+pub const AF_SNA: ::c_int = 22;
+pub const AF_IRDA: ::c_int = 23;
+pub const AF_PPPOX: ::c_int = 24;
+pub const AF_WANPIPE: ::c_int = 25;
+pub const AF_LLC: ::c_int = 26;
+pub const AF_CAN: ::c_int = 29;
+pub const AF_TIPC: ::c_int = 30;
+pub const AF_BLUETOOTH: ::c_int = 31;
+pub const AF_IUCV: ::c_int = 32;
+pub const AF_RXRPC: ::c_int = 33;
+pub const AF_ISDN: ::c_int = 34;
+pub const AF_PHONET: ::c_int = 35;
+pub const AF_IEEE802154: ::c_int = 36;
+pub const AF_CAIF: ::c_int = 37;
+pub const AF_ALG: ::c_int = 38;
+
+pub const PF_UNSPEC: ::c_int = AF_UNSPEC;
+pub const PF_UNIX: ::c_int = AF_UNIX;
+pub const PF_LOCAL: ::c_int = AF_LOCAL;
+pub const PF_INET: ::c_int = AF_INET;
+pub const PF_AX25: ::c_int = AF_AX25;
+pub const PF_IPX: ::c_int = AF_IPX;
+pub const PF_APPLETALK: ::c_int = AF_APPLETALK;
+pub const PF_NETROM: ::c_int = AF_NETROM;
+pub const PF_BRIDGE: ::c_int = AF_BRIDGE;
+pub const PF_ATMPVC: ::c_int = AF_ATMPVC;
+pub const PF_X25: ::c_int = AF_X25;
+pub const PF_INET6: ::c_int = AF_INET6;
+pub const PF_ROSE: ::c_int = AF_ROSE;
+pub const PF_DECnet: ::c_int = AF_DECnet;
+pub const PF_NETBEUI: ::c_int = AF_NETBEUI;
+pub const PF_SECURITY: ::c_int = AF_SECURITY;
+pub const PF_KEY: ::c_int = AF_KEY;
+pub const PF_NETLINK: ::c_int = AF_NETLINK;
+pub const PF_ROUTE: ::c_int = AF_ROUTE;
+pub const PF_PACKET: ::c_int = AF_PACKET;
+pub const PF_ASH: ::c_int = AF_ASH;
+pub const PF_ECONET: ::c_int = AF_ECONET;
+pub const PF_ATMSVC: ::c_int = AF_ATMSVC;
+pub const PF_RDS: ::c_int = AF_RDS;
+pub const PF_SNA: ::c_int = AF_SNA;
+pub const PF_IRDA: ::c_int = AF_IRDA;
+pub const PF_PPPOX: ::c_int = AF_PPPOX;
+pub const PF_WANPIPE: ::c_int = AF_WANPIPE;
+pub const PF_LLC: ::c_int = AF_LLC;
+pub const PF_CAN: ::c_int = AF_CAN;
+pub const PF_TIPC: ::c_int = AF_TIPC;
+pub const PF_BLUETOOTH: ::c_int = AF_BLUETOOTH;
+pub const PF_IUCV: ::c_int = AF_IUCV;
+pub const PF_RXRPC: ::c_int = AF_RXRPC;
+pub const PF_ISDN: ::c_int = AF_ISDN;
+pub const PF_PHONET: ::c_int = AF_PHONET;
+pub const PF_IEEE802154: ::c_int = AF_IEEE802154;
+pub const PF_CAIF: ::c_int = AF_CAIF;
+pub const PF_ALG: ::c_int = AF_ALG;
+
+pub const SOMAXCONN: ::c_int = 128;
+
+pub const MSG_OOB: ::c_int = 1;
+pub const MSG_PEEK: ::c_int = 2;
+pub const MSG_DONTROUTE: ::c_int = 4;
+pub const MSG_CTRUNC: ::c_int = 8;
+pub const MSG_TRUNC: ::c_int = 0x20;
+pub const MSG_DONTWAIT: ::c_int = 0x40;
+pub const MSG_EOR: ::c_int = 0x80;
+pub const MSG_WAITALL: ::c_int = 0x100;
+pub const MSG_FIN: ::c_int = 0x200;
+pub const MSG_SYN: ::c_int = 0x400;
+pub const MSG_CONFIRM: ::c_int = 0x800;
+pub const MSG_RST: ::c_int = 0x1000;
+pub const MSG_ERRQUEUE: ::c_int = 0x2000;
+pub const MSG_NOSIGNAL: ::c_int = 0x4000;
+pub const MSG_MORE: ::c_int = 0x8000;
+pub const MSG_WAITFORONE: ::c_int = 0x10000;
+pub const MSG_FASTOPEN: ::c_int = 0x20000000;
+pub const MSG_CMSG_CLOEXEC: ::c_int = 0x40000000;
+
 pub const SOCK_RAW: ::c_int = 3;
+pub const IPPROTO_ICMP: ::c_int = 1;
+pub const IPPROTO_ICMPV6: ::c_int = 58;
 pub const IPPROTO_TCP: ::c_int = 6;
 pub const IPPROTO_IP: ::c_int = 0;
 pub const IPPROTO_IPV6: ::c_int = 41;
@@ -469,8 +588,6 @@ pub const IPV6_V6ONLY: ::c_int = 26;
 
 pub const SO_DEBUG: ::c_int = 1;
 
-pub const MSG_NOSIGNAL: ::c_int = 0x4000;
-
 pub const SHUT_RD: ::c_int = 0;
 pub const SHUT_WR: ::c_int = 1;
 pub const SHUT_RDWR: ::c_int = 2;
@@ -479,11 +596,6 @@ pub const LOCK_SH: ::c_int = 1;
 pub const LOCK_EX: ::c_int = 2;
 pub const LOCK_NB: ::c_int = 4;
 pub const LOCK_UN: ::c_int = 8;
-
-pub const SA_NODEFER: ::c_int = 0x40000000;
-pub const SA_RESETHAND: ::c_int = 0x80000000;
-pub const SA_RESTART: ::c_int = 0x10000000;
-pub const SA_NOCLDSTOP: ::c_int = 0x00000001;
 
 pub const SS_ONSTACK: ::c_int = 1;
 pub const SS_DISABLE: ::c_int = 2;
@@ -508,8 +620,6 @@ pub const EPOLL_CTL_ADD: ::c_int = 1;
 pub const EPOLL_CTL_MOD: ::c_int = 3;
 pub const EPOLL_CTL_DEL: ::c_int = 2;
 
-pub const EPOLL_CLOEXEC: ::c_int = 0x80000;
-
 pub const MNT_DETACH: ::c_int = 0x2;
 pub const MNT_EXPIRE: ::c_int = 0x4;
 
@@ -526,8 +636,6 @@ pub const QIF_LIMITS: ::uint32_t = 5;
 pub const QIF_USAGE: ::uint32_t = 10;
 pub const QIF_TIMES: ::uint32_t = 48;
 pub const QIF_ALL: ::uint32_t = 63;
-
-pub const EFD_CLOEXEC: ::c_int = 0x80000;
 
 pub const MNT_FORCE: ::c_int = 0x1;
 
@@ -630,6 +738,14 @@ pub const PIPE_BUF: usize = 4096;
 
 pub const SI_LOAD_SHIFT: ::c_uint = 16;
 
+pub const SIGEV_SIGNAL: ::c_int = 0;
+pub const SIGEV_NONE: ::c_int = 1;
+pub const SIGEV_THREAD: ::c_int = 2;
+
+pub const P_ALL: idtype_t = 0;
+pub const P_PID: idtype_t = 1;
+pub const P_PGID: idtype_t = 2;
+
 f! {
     pub fn FD_CLR(fd: ::c_int, set: *mut fd_set) -> () {
         let fd = fd as usize;
@@ -665,8 +781,12 @@ f! {
         (status >> 8) & 0xff
     }
 
+    pub fn WIFCONTINUED(status: ::c_int) -> bool {
+        status == 0xffff
+    }
+
     pub fn WIFSIGNALED(status: ::c_int) -> bool {
-        (status & 0x7f) + 1 >= 2
+        ((status & 0x7f) + 1) as i8 >= 2
     }
 
     pub fn WTERMSIG(status: ::c_int) -> ::c_int {
@@ -706,6 +826,7 @@ extern {
                            flags: ::c_int,
                            rqtp: *const ::timespec,
                            rmtp:  *mut ::timespec) -> ::c_int;
+    pub fn clock_settime(clk_id: clockid_t, tp: *const ::timespec) -> ::c_int;
     pub fn prctl(option: ::c_int, ...) -> ::c_int;
     pub fn pthread_getattr_np(native: ::pthread_t,
                               attr: *mut ::pthread_attr_t) -> ::c_int;
@@ -717,6 +838,7 @@ extern {
     pub fn memalign(align: ::size_t, size: ::size_t) -> *mut ::c_void;
     pub fn setgroups(ngroups: ::size_t,
                      ptr: *const ::gid_t) -> ::c_int;
+    pub fn initgroups(user: *const ::c_char, group: ::gid_t) -> ::c_int;
     pub fn sched_setscheduler(pid: ::pid_t,
                               policy: ::c_int,
                               param: *const sched_param) -> ::c_int;
@@ -833,10 +955,18 @@ extern {
                      linkpath: *const ::c_char) -> ::c_int;
     pub fn unlinkat(dirfd: ::c_int, pathname: *const ::c_char,
                     flags: ::c_int) -> ::c_int;
+    pub fn ppoll(fds: *mut ::pollfd,
+                 nfds: nfds_t,
+                 timeout: *const ::timespec,
+                 sigmask: *const sigset_t) -> ::c_int;
     pub fn pthread_condattr_getclock(attr: *const pthread_condattr_t,
                                      clock_id: *mut clockid_t) -> ::c_int;
     pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
                                      clock_id: clockid_t) -> ::c_int;
+    pub fn pthread_condattr_setpshared(attr: *mut pthread_condattr_t,
+                                       pshared: ::c_int) -> ::c_int;
+    pub fn pthread_condattr_getpshared(attr: *const pthread_condattr_t,
+                                       pshared: *mut ::c_int) -> ::c_int;
     pub fn sched_getaffinity(pid: ::pid_t,
                              cpusetsize: ::size_t,
                              cpuset: *mut cpu_set_t) -> ::c_int;
@@ -851,11 +981,22 @@ extern {
                    flg: ::c_int) -> ::c_int;
     pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
                                    abstime: *const ::timespec) -> ::c_int;
+    pub fn pthread_mutexattr_setpshared(attr: *mut pthread_mutexattr_t,
+                                        pshared: ::c_int) -> ::c_int;
+    pub fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t,
+                                        pshared: *mut ::c_int) -> ::c_int;
+    pub fn ptsname_r(fd: ::c_int,
+                     buf: *mut ::c_char,
+                     buflen: ::size_t) -> ::c_int;
+    pub fn clearenv() -> ::c_int;
+    pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,
+                  options: ::c_int) -> ::c_int;
 }
 
 cfg_if! {
     if #[cfg(any(target_os = "linux",
-                 target_os = "emscripten"))] {
+                 target_os = "emscripten",
+                 target_os = "fuchsia"))] {
         mod linux;
         pub use self::linux::*;
     } else if #[cfg(target_os = "android")] {

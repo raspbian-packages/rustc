@@ -28,7 +28,6 @@ use type_of;
 
 use syntax_pos::{DUMMY_SP, NO_EXPANSION, COMMAND_LINE_EXPN, BytePos, Span};
 use syntax::symbol::keywords;
-use syntax::abi::Abi;
 
 use std::iter;
 
@@ -134,8 +133,12 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
         } else {
             let cm = self.ccx.sess().codemap();
             // Walk up the macro expansion chain until we reach a non-expanded span.
+            // We also stop at the function body level because no line stepping can occurr
+            // at the level above that.
             let mut span = source_info.span;
-            while span.expn_id != NO_EXPANSION && span.expn_id != COMMAND_LINE_EXPN {
+            while span.expn_id != NO_EXPANSION &&
+                  span.expn_id != COMMAND_LINE_EXPN &&
+                  span.expn_id != self.mir.span.expn_id {
                 if let Some(callsite_span) = cm.with_expn_info(span.expn_id,
                                                     |ei| ei.map(|ei| ei.call_site.clone())) {
                     span = callsite_span;
@@ -144,7 +147,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 }
             }
             let scope = self.scope_metadata_for_loc(source_info.scope, span.lo);
-            // Use span of the outermost call site, while keeping the original lexical scope
+            // Use span of the outermost expansion site, while keeping the original lexical scope.
             (scope, span)
         }
     }
@@ -201,15 +204,14 @@ impl<'tcx> LocalRef<'tcx> {
 pub fn trans_mir<'a, 'tcx: 'a>(
     ccx: &'a CrateContext<'a, 'tcx>,
     llfn: ValueRef,
-    fn_ty: FnType,
     mir: &'a Mir<'tcx>,
     instance: Instance<'tcx>,
-    sig: &ty::FnSig<'tcx>,
-    abi: Abi,
+    sig: ty::FnSig<'tcx>,
 ) {
+    let fn_ty = FnType::new(ccx, sig, &[]);
     debug!("fn_ty: {:?}", fn_ty);
     let debug_context =
-        debuginfo::create_function_debug_context(ccx, instance, sig, abi, llfn, mir);
+        debuginfo::create_function_debug_context(ccx, instance, sig, llfn, mir);
     let bcx = Builder::new_block(ccx, llfn, "entry-block");
 
     let cleanup_kinds = analyze::cleanup_kinds(&mir);
@@ -318,7 +320,9 @@ pub fn trans_mir<'a, 'tcx: 'a>(
     mircx.cleanup_kinds.iter_enumerated().map(|(bb, cleanup_kind)| {
         if let CleanupKind::Funclet = *cleanup_kind {
             let bcx = mircx.get_builder(bb);
-            bcx.set_personality_fn(mircx.ccx.eh_personality());
+            unsafe {
+                llvm::LLVMSetPersonalityFn(mircx.llfn, mircx.ccx.eh_personality());
+            }
             if base::wants_msvc_seh(ccx.sess()) {
                 return Some(Funclet::new(bcx.cleanup_pad(None, &[])));
             }
@@ -381,7 +385,7 @@ fn arg_local_refs<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
             // individual LLVM function arguments.
 
             let tupled_arg_tys = match arg_ty.sty {
-                ty::TyTuple(ref tys) => tys,
+                ty::TyTuple(ref tys, _) => tys,
                 _ => bug!("spread argument isn't a tuple?!")
             };
 

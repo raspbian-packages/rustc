@@ -19,10 +19,13 @@
 
 use std::fs::{self, File};
 use std::io::prelude::*;
+use std::io;
+use std::path::Path;
 use std::process::Command;
 
 use {Build, Compiler, Mode};
-use util::{up_to_date, cp_r};
+use util::{cp_r, symlink_dir};
+use build_helper::up_to_date;
 
 /// Invoke `rustbook` as compiled in `stage` for `target` for the doc book
 /// `name` into the `out` path.
@@ -46,6 +49,7 @@ pub fn rustbook(build: &Build, target: &str, name: &str) {
     build.run(build.tool_cmd(&compiler, "rustbook")
                    .arg("build")
                    .arg(&src)
+                   .arg("-d")
                    .arg(out));
 }
 
@@ -75,12 +79,9 @@ pub fn standalone(build: &Build, target: &str) {
     if !up_to_date(&version_input, &version_info) {
         let mut info = String::new();
         t!(t!(File::open(&version_input)).read_to_string(&mut info));
-        let blank = String::new();
-        let short = build.short_ver_hash.as_ref().unwrap_or(&blank);
-        let hash = build.ver_hash.as_ref().unwrap_or(&blank);
-        let info = info.replace("VERSION", &build.release)
-                       .replace("SHORT_HASH", short)
-                       .replace("STAMP", hash);
+        let info = info.replace("VERSION", &build.rust_release())
+                       .replace("SHORT_HASH", build.rust_info.sha_short().unwrap_or(""))
+                       .replace("STAMP", build.rust_info.sha().unwrap_or(""));
         t!(t!(File::create(&version_info)).write_all(info.as_bytes()));
     }
 
@@ -113,10 +114,6 @@ pub fn standalone(build: &Build, target: &str) {
            .arg("-o").arg(&out)
            .arg(&path);
 
-        if filename == "reference.md" {
-           cmd.arg("--html-in-header").arg(&full_toc);
-        }
-
         if filename == "not_found.md" {
             cmd.arg("--markdown-no-toc")
                .arg("--markdown-css")
@@ -146,19 +143,32 @@ pub fn std(build: &Build, stage: u32, target: &str) {
                        .join(target).join("doc");
     let rustdoc = build.rustdoc(&compiler);
 
-    build.clear_if_dirty(&out_dir, &rustdoc);
+    // Here what we're doing is creating a *symlink* (directory junction on
+    // Windows) to the final output location. This is not done as an
+    // optimization but rather for correctness. We've got three trees of
+    // documentation, one for std, one for test, and one for rustc. It's then
+    // our job to merge them all together.
+    //
+    // Unfortunately rustbuild doesn't know nearly as well how to merge doc
+    // trees as rustdoc does itself, so instead of actually having three
+    // separate trees we just have rustdoc output to the same location across
+    // all of them.
+    //
+    // This way rustdoc generates output directly into the output, and rustdoc
+    // will also directly handle merging.
+    let my_out = build.crate_doc_out(target);
+    build.clear_if_dirty(&my_out, &rustdoc);
+    t!(symlink_dir_force(&my_out, &out_dir));
 
     let mut cargo = build.cargo(&compiler, Mode::Libstd, target, "doc");
     cargo.arg("--manifest-path")
-         .arg(build.src.join("src/rustc/std_shim/Cargo.toml"))
+         .arg(build.src.join("src/libstd/Cargo.toml"))
          .arg("--features").arg(build.std_features());
 
     // We don't want to build docs for internal std dependencies unless
     // in compiler-docs mode. When not in that mode, we whitelist the crates
     // for which docs must be built.
-    if build.config.compiler_docs {
-        cargo.arg("-p").arg("std");
-    } else {
+    if !build.config.compiler_docs {
         cargo.arg("--no-deps");
         for krate in &["alloc", "collections", "core", "std", "std_unicode"] {
             cargo.arg("-p").arg(krate);
@@ -171,7 +181,7 @@ pub fn std(build: &Build, stage: u32, target: &str) {
 
 
     build.run(&mut cargo);
-    cp_r(&out_dir, &out)
+    cp_r(&my_out, &out);
 }
 
 /// Compile all libtest documentation.
@@ -192,13 +202,16 @@ pub fn test(build: &Build, stage: u32, target: &str) {
                        .join(target).join("doc");
     let rustdoc = build.rustdoc(&compiler);
 
-    build.clear_if_dirty(&out_dir, &rustdoc);
+    // See docs in std above for why we symlink
+    let my_out = build.crate_doc_out(target);
+    build.clear_if_dirty(&my_out, &rustdoc);
+    t!(symlink_dir_force(&my_out, &out_dir));
 
     let mut cargo = build.cargo(&compiler, Mode::Libtest, target, "doc");
     cargo.arg("--manifest-path")
-         .arg(build.src.join("src/rustc/test_shim/Cargo.toml"));
+         .arg(build.src.join("src/libtest/Cargo.toml"));
     build.run(&mut cargo);
-    cp_r(&out_dir, &out)
+    cp_r(&my_out, &out);
 }
 
 /// Generate all compiler documentation.
@@ -218,15 +231,34 @@ pub fn rustc(build: &Build, stage: u32, target: &str) {
     let out_dir = build.stage_out(&compiler, Mode::Librustc)
                        .join(target).join("doc");
     let rustdoc = build.rustdoc(&compiler);
-    if !up_to_date(&rustdoc, &out_dir.join("rustc/index.html")) && out_dir.exists() {
-        t!(fs::remove_dir_all(&out_dir));
-    }
+
+    // See docs in std above for why we symlink
+    let my_out = build.crate_doc_out(target);
+    build.clear_if_dirty(&my_out, &rustdoc);
+    t!(symlink_dir_force(&my_out, &out_dir));
+
     let mut cargo = build.cargo(&compiler, Mode::Librustc, target, "doc");
     cargo.arg("--manifest-path")
          .arg(build.src.join("src/rustc/Cargo.toml"))
          .arg("--features").arg(build.rustc_features());
+
+    if build.config.compiler_docs {
+        // src/rustc/Cargo.toml contains bin crates called rustc and rustdoc
+        // which would otherwise overwrite the docs for the real rustc and
+        // rustdoc lib crates.
+        cargo.arg("-p").arg("rustc_driver")
+             .arg("-p").arg("rustdoc");
+    } else {
+        // Like with libstd above if compiler docs aren't enabled then we're not
+        // documenting internal dependencies, so we have a whitelist.
+        cargo.arg("--no-deps");
+        for krate in &["proc_macro"] {
+            cargo.arg("-p").arg(krate);
+        }
+    }
+
     build.run(&mut cargo);
-    cp_r(&out_dir, &out)
+    cp_r(&my_out, &out);
 }
 
 /// Generates the HTML rendered error-index by running the
@@ -244,4 +276,20 @@ pub fn error_index(build: &Build, target: &str) {
     index.env("CFG_BUILD", &build.config.build);
 
     build.run(&mut index);
+}
+
+fn symlink_dir_force(src: &Path, dst: &Path) -> io::Result<()> {
+    if let Ok(m) = fs::symlink_metadata(dst) {
+        if m.file_type().is_dir() {
+            try!(fs::remove_dir_all(dst));
+        } else {
+            // handle directory junctions on windows by falling back to
+            // `remove_dir`.
+            try!(fs::remove_file(dst).or_else(|_| {
+                fs::remove_dir(dst)
+            }));
+        }
+    }
+
+    symlink_dir(src, dst)
 }

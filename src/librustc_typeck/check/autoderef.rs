@@ -12,6 +12,7 @@ use astconv::AstConv;
 
 use super::FnCtxt;
 
+use rustc::infer::InferOk;
 use rustc::traits;
 use rustc::ty::{self, Ty, TraitRef};
 use rustc::ty::{ToPredicate, TypeFoldable};
@@ -54,12 +55,16 @@ impl<'a, 'gcx, 'tcx> Iterator for Autoderef<'a, 'gcx, 'tcx> {
 
         if self.steps.len() == tcx.sess.recursion_limit.get() {
             // We've reached the recursion limit, error gracefully.
+            let suggested_limit = tcx.sess.recursion_limit.get() * 2;
             struct_span_err!(tcx.sess,
                              self.span,
                              E0055,
                              "reached the recursion limit while auto-dereferencing {:?}",
                              self.cur_ty)
                 .span_label(self.span, &format!("deref recursion limit reached"))
+                .help(&format!(
+                        "consider adding a `#[recursion_limit=\"{}\"]` attribute to your crate",
+                        suggested_limit))
                 .emit();
             return None;
         }
@@ -146,6 +151,14 @@ impl<'a, 'gcx, 'tcx> Autoderef<'a, 'gcx, 'tcx> {
     pub fn finalize<'b, I>(self, pref: LvaluePreference, exprs: I)
         where I: IntoIterator<Item = &'b hir::Expr>
     {
+        let fcx = self.fcx;
+        fcx.register_infer_ok_obligations(self.finalize_as_infer_ok(pref, exprs));
+    }
+
+    pub fn finalize_as_infer_ok<'b, I>(self, pref: LvaluePreference, exprs: I)
+                                       -> InferOk<'tcx, ()>
+        where I: IntoIterator<Item = &'b hir::Expr>
+    {
         let methods: Vec<_> = self.steps
             .iter()
             .map(|&(ty, kind)| {
@@ -172,8 +185,9 @@ impl<'a, 'gcx, 'tcx> Autoderef<'a, 'gcx, 'tcx> {
             }
         }
 
-        for obligation in self.obligations {
-            self.fcx.register_predicate(obligation);
+        InferOk {
+            value: (),
+            obligations: self.obligations
         }
     }
 }

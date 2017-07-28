@@ -18,11 +18,9 @@ Description: Set DT_SONAME when building dylibs
 Author: Angus Lees <gus@debian.org>
 Forwarded: no
 
-Index: rust/src/librustc_trans/back/link.rs
-===================================================================
---- rust.orig/src/librustc_trans/back/link.rs
-+++ rust/src/librustc_trans/back/link.rs
-@@ -927,6 +927,13 @@ fn link_args(cmd: &mut Linker,
+--- a/src/librustc_trans/back/link.rs
++++ b/src/librustc_trans/back/link.rs
+@@ -993,6 +993,13 @@
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }
  

@@ -1,0 +1,187 @@
+Description: Use local web resources instead of remote ones
+Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Bug: https://github.com/azerupi/mdBook/issues/271
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+Index: rust/src/vendor/mdbook/src/theme/index.hbs
+===================================================================
+--- rust.orig/src/vendor/mdbook/src/theme/index.hbs
++++ rust/src/vendor/mdbook/src/theme/index.hbs
+@@ -10,26 +10,19 @@
+         <base href="{{ path_to_root }}">
+ 
+         <link rel="stylesheet" href="book.css">
+-        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+ 
+         <link rel="shortcut icon" href="{{ favicon }}">
+ 
+         <!-- Font Awesome -->
+-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
++        <link rel="stylesheet" href="../font-awesome.min.css">
+ 
+-        <link rel="stylesheet" href="highlight.css">
++        <link rel="stylesheet" href="../highlight.css">
+         <link rel="stylesheet" href="tomorrow-night.css">
+ 
+         <!-- MathJax -->
+-        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+ 
+-        <!-- Fetch JQuery from CDN but have a local fallback -->
+-        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+-        <script>
+-            if (typeof jQuery == 'undefined') {
+-                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+-            }
+-        </script>
++        <script src="../jquery.min.js"></script>
+     </head>
+     <body class="light">
+         <!-- Set the theme before any content is loaded, prevents flash -->
+@@ -100,17 +93,10 @@
+         </div>
+ 
+ 
+-        <!-- Local fallback for Font Awesome -->
+-        <script>
+-            if ($(".fa").css("font-family") !== "FontAwesome") {
+-                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+-            }
+-        </script>
+-
+         <!-- Livereload script (if served using the cli tool) -->
+         {{{livereload}}}
+ 
+-        <script src="highlight.js"></script>
++        <script src="../highlight.js"></script>
+         <script src="book.js"></script>
+     </body>
+ </html>
+Index: rust/src/vendor/mdbook/.cargo-checksum.json
+===================================================================
+--- rust.orig/src/vendor/mdbook/.cargo-checksum.json
++++ rust/src/vendor/mdbook/.cargo-checksum.json
+@@ -1 +1 @@
+-{"files":{".cargo-ok":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",".gitignore":"7612c630f7ceaf8827018e5b963438fde7229dbc1d3ab93ae3a523e8897dea58",".travis.yml":"f7395c0908345b0789deb17928eec3f6a0fe8a47357017d744996cd84ffee733","Cargo.toml":"c746cd3068000de8351bf0e16b0d66be592b6d4f168b6e980675418d47b6bfc8","LICENSE":"daccd6f5b8e0fd07c0992116280fcddc77c2a612c4ebeb64d8b114ed9da1a10b","README.md":"2fc124d6d972c896d9e7bb3ea0bbe916901ff9a2cc1f795fe1cd5c2992e8f5bd","appveyor.yml":"e3709a665d17a8d34956e228a5399cdafb75a64be270a16b8ec36b1f7680d254","build.rs":"7e5ab4e28bc535181b74290dcc518a9166fc61ccf2c5a5d4c4f0b4384639b0f7","ci/before_deploy.sh":"234420ac249ed2bdc7a74d470fe2f1b898ac1e165a931a659cb23792ac399d84","ci/install.sh":"0edce34ea7a51a664b43d8397173cf484119145b7a89d913805b8635d45c92ca","ci/script.sh":"9bad90afed9fb44c2e0b0078b5d2b03f29669e3432e92e731b329420f9ceb7a3","deploy.sh":"8333f8b912eb9dc5bda56973896769a2af642ab27a477f7a4957967bec820818","rustfmt.toml":"a83bbacf9b2554d73c50739b272d5e64fb9f3d0249e72c4813071db3a96243ce","src/bin/mdbook.rs":"cf629a1cbfb786ba479337c81c723ca27e740447072436fc76de0c71b36b4f52","src/book/bookconfig.rs":"93c6bf4d41dc0a93bdf6ffda9f69f745c9093a37c40a807ba7b4dc70ab86206b","src/book/bookconfig_test.rs":"baa9d2dd36376e5d481b5fda15a0c01c847b2a8e52fce60832309277bbd19934","src/book/bookitem.rs":"4b6d39c5779bec278e5d6139a017fb306c275245d4dfd8cc5bd6325ba58903db","src/book/mod.rs":"574e527a95b267faf8641254097eff0097dbd1af7844f5215adada6404e72760","src/lib.rs":"9dcf6fc0c878aa658e544e21335fab58acd535631d7678e5035f089fce14c89c","src/parse/mod.rs":"8d17800a04d1b77a0fbf6b27c52a4adb0755a6d004819ebacdf5adf94f231fc4","src/parse/summary.rs":"8b8aeaeceb16c74b1ac45ab3b05e32932b9f2624a5d5b7768f02f45cef4a3178","src/renderer/html_handlebars/hbs_renderer.rs":"c96036218a002460f557f268f8faf597814528977b95d96c6694a94a29b6ac07","src/renderer/html_handlebars/helpers/mod.rs":"243447b1957ece344721546933bb6643c2b084270bf0133f8b8233842936c612","src/renderer/html_handlebars/helpers/navigation.rs":"4d1cafdbf07eade70701974f70db2cf52a8f5ed8460e51aa7b26a3e2b258028e","src/renderer/html_handlebars/helpers/playpen.rs":"ce88beb25f24a37830f4346ac054093b047d62cd571f0eaa4eb0aec26518c106","src/renderer/html_handlebars/helpers/toc.rs":"c5ce81576eeef9e46ad0f6d0fdb3b66a019cc2cdfd64bd84f19fcef4d0c7236c","src/renderer/html_handlebars/mod.rs":"fd11f3b70867696c710a077af4030c3ff21f0b36a412d62b5628528376f1f3c2","src/renderer/mod.rs":"c530f762a3eb8c65e70372769f857b92d2eb6b355a717a3d09d1203ac87316b4","src/theme/_FontAwesome/css/font-awesome.min.css":"768686e989a8f39ac9cf934d0c967d218feef8319e8cd4b73ad5dc38631a2451","src/theme/_FontAwesome/fonts/FontAwesome.otf":"7961070f76a33c1307de19ce2a93dc2b26d6747fa759aee5045118644c758acc","src/theme/_FontAwesome/fonts/fontawesome-webfont.eot":"d4f5a99224154f2a808e42a441ddc9248ffe78b7a4083684ce159270b30b912a","src/theme/_FontAwesome/fonts/fontawesome-webfont.svg":"465bf89cbd83d64810d14b81764495396d58aa6b333aaa050b213cde12b84ba5","src/theme/_FontAwesome/fonts/fontawesome-webfont.ttf":"1b7f3de49d68b01f415574ebb82e6110a1d09cda2071ad8451bdb5124131a292","src/theme/_FontAwesome/fonts/fontawesome-webfont.woff":"a7c7e4930090e038a280fd61d88f0dc03dad4aeaedbd8c9be3dd9aa4c3b6f8d1","src/theme/_FontAwesome/fonts/fontawesome-webfont.woff2":"3c4a1bb7ce3234407184f0d80cc4dec075e4ad616b44dcc5778e1cfb1bc24019","src/theme/book.css":"45a2252df40588c838d2f854c9fb52563360e2f43a9a54bf3559291b99072ac4","src/theme/book.js":"39ca36b138a988f72a07fb1c427b6a2cf4c7f47a42cdb2348d6f980102f036c0","src/theme/favicon.png":"8114d1fc74f4b5621ad9afde7746ed9cf7e420be317a6e29023d2298d58aa15b","src/theme/highlight.css":"a8e0cdb65ed7959c997b047be0cc3809bdabb64c093c870ddff001a45fd34831","src/theme/highlight.js":"350fc176452dcb8b6ad142004119e0df3679684f54691efbf57ed9803781d058","src/theme/index.hbs":"1fec26960b6378311238f4e7dc6c54339c5b94d815766596b50c23efa3ff5954","src/theme/jquery-2.1.4.min.js":"de4b3c3d1dc2506b6693f0f98884e1dc074cda9d66cab39b7b48a115fdfc4c0f","src/theme/mod.rs":"085bee96e8e8ce86aa32bea73e319272e5f08d891c237380103fd78d0f48d314","src/theme/stylus/book.styl":"7424e30554a62ddde341d055a2c576ff8b36b5ad2de30af9799bf79e76748b74","src/theme/stylus/general.styl":"0715113493c30a724cfd2657811b45b3cb3a1b84fb5ef5591cc4122668d47b52","src/theme/stylus/menu.styl":"5699bc3eee208af30c7ca1a4518c347b2f043a58d0e1307cb08ab15995557fd5","src/theme/stylus/nav-icons.styl":"ce371f2eeaf0d50a6d94ce1407578908753fb4010bba30d9b0dcabfc7b3b779e","src/theme/stylus/page.styl":"a8a1718e2e4fb3d48e4d527e5400e954ab7b6a1ae87f1b6b40b28a11b6926e73","src/theme/stylus/print.styl":"54efe6860611698dc520f82b05e9e17f4cdbc913822b17f1c44e0808ecf163eb","src/theme/stylus/sidebar.styl":"648c3c3b2fa0541321a646f7742a5222f655db39e4f20ef43a9ba3dcdbdb293f","src/theme/stylus/theme-popup.styl":"8c801836bc8d91c68e933dbc3b94eaac132a3fc04fd87b85550dc1f628765447","src/theme/stylus/themes/base.styl":"1366617517a339607e5a82a356780120d300b5cae45cbe1ada48866a7fcf26f4","src/theme/stylus/themes/coal.styl":"cf36aacc7915a1f40abd64ea7a8e597c742dc06d16e9b593fd5830380d9d512f","src/theme/stylus/themes/index.styl":"95e8b593c227f6419750f62472a4e2ea7cd881e0de96fae00edade538435656c","src/theme/stylus/themes/light.styl":"926dd84e7d419ce270839dce8c42370166081acfed75125c493252f2df485cc5","src/theme/stylus/themes/navy.styl":"d5aa13bc529fc0087f334baf6f253e336a7e94cbc2986828e8bcd21761850a37","src/theme/stylus/themes/rust.styl":"b38c903cde167788954c9e572288c13d37823ebd80fa196e762b1eff8981943a","src/theme/stylus/variables.styl":"15f1215c0336336966a2db1a741860f2cb400d9816eaad9a1b24aba494c78f29","src/theme/tomorrow-night.css":"c50d01aea634fb78b058fa95bfa93e8338a5595a6e1cf9c34822f82a0176e418","src/utils/fs.rs":"5e25134e524b4244806b65fbec5a9088612c41731622bd5b172d015feaaf981c","src/utils/mod.rs":"3a8e2c6084faa7423511e473619119d71515d6410bd78be59cef9e5584ac7cfe"},"package":"06a68e8738e42b38a02755d3ce5fa12d559e17acb238e4326cbc3cc056e65280"}
+\ No newline at end of file
++{"files":{".cargo-ok":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",".gitignore":"7612c630f7ceaf8827018e5b963438fde7229dbc1d3ab93ae3a523e8897dea58",".travis.yml":"f7395c0908345b0789deb17928eec3f6a0fe8a47357017d744996cd84ffee733","Cargo.toml":"c746cd3068000de8351bf0e16b0d66be592b6d4f168b6e980675418d47b6bfc8","LICENSE":"daccd6f5b8e0fd07c0992116280fcddc77c2a612c4ebeb64d8b114ed9da1a10b","README.md":"2fc124d6d972c896d9e7bb3ea0bbe916901ff9a2cc1f795fe1cd5c2992e8f5bd","appveyor.yml":"e3709a665d17a8d34956e228a5399cdafb75a64be270a16b8ec36b1f7680d254","build.rs":"7e5ab4e28bc535181b74290dcc518a9166fc61ccf2c5a5d4c4f0b4384639b0f7","ci/before_deploy.sh":"234420ac249ed2bdc7a74d470fe2f1b898ac1e165a931a659cb23792ac399d84","ci/install.sh":"0edce34ea7a51a664b43d8397173cf484119145b7a89d913805b8635d45c92ca","ci/script.sh":"9bad90afed9fb44c2e0b0078b5d2b03f29669e3432e92e731b329420f9ceb7a3","deploy.sh":"8333f8b912eb9dc5bda56973896769a2af642ab27a477f7a4957967bec820818","rustfmt.toml":"a83bbacf9b2554d73c50739b272d5e64fb9f3d0249e72c4813071db3a96243ce","src/bin/mdbook.rs":"cf629a1cbfb786ba479337c81c723ca27e740447072436fc76de0c71b36b4f52","src/book/bookconfig.rs":"93c6bf4d41dc0a93bdf6ffda9f69f745c9093a37c40a807ba7b4dc70ab86206b","src/book/bookconfig_test.rs":"baa9d2dd36376e5d481b5fda15a0c01c847b2a8e52fce60832309277bbd19934","src/book/bookitem.rs":"4b6d39c5779bec278e5d6139a017fb306c275245d4dfd8cc5bd6325ba58903db","src/book/mod.rs":"f10cfc37267a9e5bdb96857d51b6f7cd02fb20c7bf383cbacbecbd76fe6a8449","src/lib.rs":"9dcf6fc0c878aa658e544e21335fab58acd535631d7678e5035f089fce14c89c","src/parse/mod.rs":"8d17800a04d1b77a0fbf6b27c52a4adb0755a6d004819ebacdf5adf94f231fc4","src/parse/summary.rs":"8b8aeaeceb16c74b1ac45ab3b05e32932b9f2624a5d5b7768f02f45cef4a3178","src/renderer/html_handlebars/hbs_renderer.rs":"37a286a33b958da4d05e5dab5546521a6b39da061385d85fdb0e042f164cdbac","src/renderer/html_handlebars/helpers/mod.rs":"243447b1957ece344721546933bb6643c2b084270bf0133f8b8233842936c612","src/renderer/html_handlebars/helpers/navigation.rs":"4d1cafdbf07eade70701974f70db2cf52a8f5ed8460e51aa7b26a3e2b258028e","src/renderer/html_handlebars/helpers/playpen.rs":"ce88beb25f24a37830f4346ac054093b047d62cd571f0eaa4eb0aec26518c106","src/renderer/html_handlebars/helpers/toc.rs":"c5ce81576eeef9e46ad0f6d0fdb3b66a019cc2cdfd64bd84f19fcef4d0c7236c","src/renderer/html_handlebars/mod.rs":"fd11f3b70867696c710a077af4030c3ff21f0b36a412d62b5628528376f1f3c2","src/renderer/mod.rs":"c530f762a3eb8c65e70372769f857b92d2eb6b355a717a3d09d1203ac87316b4","src/theme/book.css":"45a2252df40588c838d2f854c9fb52563360e2f43a9a54bf3559291b99072ac4","src/theme/book.js":"39ca36b138a988f72a07fb1c427b6a2cf4c7f47a42cdb2348d6f980102f036c0","src/theme/favicon.png":"8114d1fc74f4b5621ad9afde7746ed9cf7e420be317a6e29023d2298d58aa15b","src/theme/index.hbs":"f6e670aa9e4180d16add118a9150490cb226a5440a53b596c0ab12517b875563","src/theme/mod.rs":"82ecb87d0f458e852f46fe33c2a4de86e66afbb75589794577678e63d0cf25d6","src/theme/stylus/book.styl":"7424e30554a62ddde341d055a2c576ff8b36b5ad2de30af9799bf79e76748b74","src/theme/stylus/general.styl":"0715113493c30a724cfd2657811b45b3cb3a1b84fb5ef5591cc4122668d47b52","src/theme/stylus/menu.styl":"5699bc3eee208af30c7ca1a4518c347b2f043a58d0e1307cb08ab15995557fd5","src/theme/stylus/nav-icons.styl":"ce371f2eeaf0d50a6d94ce1407578908753fb4010bba30d9b0dcabfc7b3b779e","src/theme/stylus/page.styl":"a8a1718e2e4fb3d48e4d527e5400e954ab7b6a1ae87f1b6b40b28a11b6926e73","src/theme/stylus/print.styl":"54efe6860611698dc520f82b05e9e17f4cdbc913822b17f1c44e0808ecf163eb","src/theme/stylus/sidebar.styl":"648c3c3b2fa0541321a646f7742a5222f655db39e4f20ef43a9ba3dcdbdb293f","src/theme/stylus/theme-popup.styl":"8c801836bc8d91c68e933dbc3b94eaac132a3fc04fd87b85550dc1f628765447","src/theme/stylus/themes/base.styl":"1366617517a339607e5a82a356780120d300b5cae45cbe1ada48866a7fcf26f4","src/theme/stylus/themes/coal.styl":"cf36aacc7915a1f40abd64ea7a8e597c742dc06d16e9b593fd5830380d9d512f","src/theme/stylus/themes/index.styl":"95e8b593c227f6419750f62472a4e2ea7cd881e0de96fae00edade538435656c","src/theme/stylus/themes/light.styl":"926dd84e7d419ce270839dce8c42370166081acfed75125c493252f2df485cc5","src/theme/stylus/themes/navy.styl":"d5aa13bc529fc0087f334baf6f253e336a7e94cbc2986828e8bcd21761850a37","src/theme/stylus/themes/rust.styl":"b38c903cde167788954c9e572288c13d37823ebd80fa196e762b1eff8981943a","src/theme/stylus/variables.styl":"15f1215c0336336966a2db1a741860f2cb400d9816eaad9a1b24aba494c78f29","src/theme/tomorrow-night.css":"c50d01aea634fb78b058fa95bfa93e8338a5595a6e1cf9c34822f82a0176e418","src/utils/fs.rs":"5e25134e524b4244806b65fbec5a9088612c41731622bd5b172d015feaaf981c","src/utils/mod.rs":"3a8e2c6084faa7423511e473619119d71515d6410bd78be59cef9e5584ac7cfe"},"package":"06a68e8738e42b38a02755d3ce5fa12d559e17acb238e4326cbc3cc056e65280"}
+Index: rust/src/vendor/mdbook/src/theme/mod.rs
+===================================================================
+--- rust.orig/src/vendor/mdbook/src/theme/mod.rs
++++ rust/src/vendor/mdbook/src/theme/mod.rs
+@@ -7,17 +7,7 @@ pub static INDEX: &'static [u8] = includ
+ pub static CSS: &'static [u8] = include_bytes!("book.css");
+ pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
+ pub static JS: &'static [u8] = include_bytes!("book.js");
+-pub static HIGHLIGHT_JS: &'static [u8] = include_bytes!("highlight.js");
+ pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
+-pub static HIGHLIGHT_CSS: &'static [u8] = include_bytes!("highlight.css");
+-pub static JQUERY: &'static [u8] = include_bytes!("jquery-2.1.4.min.js");
+-pub static FONT_AWESOME: &'static [u8] = include_bytes!("_FontAwesome/css/font-awesome.min.css");
+-pub static FONT_AWESOME_EOT: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.eot");
+-pub static FONT_AWESOME_SVG: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.svg");
+-pub static FONT_AWESOME_TTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.ttf");
+-pub static FONT_AWESOME_WOFF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff");
+-pub static FONT_AWESOME_WOFF2: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff2");
+-pub static FONT_AWESOME_OTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/FontAwesome.otf");
+ 
+ /// The `Theme` struct should be used instead of the static variables because the `new()` method
+ /// will look if the user has a theme directory in his source folder and use the users theme instead
+@@ -30,10 +20,7 @@ pub struct Theme {
+     pub css: Vec<u8>,
+     pub favicon: Vec<u8>,
+     pub js: Vec<u8>,
+-    pub highlight_css: Vec<u8>,
+     pub tomorrow_night_css: Vec<u8>,
+-    pub highlight_js: Vec<u8>,
+-    pub jquery: Vec<u8>,
+ }
+ 
+ impl Theme {
+@@ -45,10 +32,7 @@ impl Theme {
+             css: CSS.to_owned(),
+             favicon: FAVICON.to_owned(),
+             js: JS.to_owned(),
+-            highlight_css: HIGHLIGHT_CSS.to_owned(),
+             tomorrow_night_css: TOMORROW_NIGHT_CSS.to_owned(),
+-            highlight_js: HIGHLIGHT_JS.to_owned(),
+-            jquery: JQUERY.to_owned(),
+         };
+ 
+         // Check if the given path exists
+@@ -82,18 +66,6 @@ impl Theme {
+             let _ = f.read_to_end(&mut theme.favicon);
+         }
+ 
+-        // highlight.js
+-        if let Ok(mut f) = File::open(&src.join("highlight.js")) {
+-            theme.highlight_js.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_js);
+-        }
+-
+-        // highlight.css
+-        if let Ok(mut f) = File::open(&src.join("highlight.css")) {
+-            theme.highlight_css.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_css);
+-        }
+-
+         // tomorrow-night.css
+         if let Ok(mut f) = File::open(&src.join("tomorrow-night.css")) {
+             theme.tomorrow_night_css.clear();
+Index: rust/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+===================================================================
+--- rust.orig/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
++++ rust/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+@@ -161,17 +161,7 @@ impl Renderer for HtmlHandlebars {
+         try!(book.write_file("book.js", &theme.js));
+         try!(book.write_file("book.css", &theme.css));
+         try!(book.write_file("favicon.png", &theme.favicon));
+-        try!(book.write_file("jquery.js", &theme.jquery));
+-        try!(book.write_file("highlight.css", &theme.highlight_css));
+         try!(book.write_file("tomorrow-night.css", &theme.tomorrow_night_css));
+-        try!(book.write_file("highlight.js", &theme.highlight_js));
+-        try!(book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF));
+-        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2));
+-        try!(book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF));
+ 
+         // Copy all remaining files
+         try!(utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"]));
+Index: rust/src/tools/linkchecker/main.rs
+===================================================================
+--- rust.orig/src/tools/linkchecker/main.rs
++++ rust/src/tools/linkchecker/main.rs
+@@ -162,6 +162,11 @@ fn check(cache: &mut Cache,
+            url.starts_with("irc:") || url.starts_with("data:") {
+             return;
+         }
++        // Ignore parent URLs, so that the package installation process can
++        // provide a symbolic link later
++        if url.starts_with("../") {
++            return;
++        }
+         let mut parts = url.splitn(2, "#");
+         let url = parts.next().unwrap();
+         let fragment = parts.next();
+Index: rust/src/vendor/mdbook/src/book/mod.rs
+===================================================================
+--- rust.orig/src/vendor/mdbook/src/book/mod.rs
++++ rust/src/vendor/mdbook/src/book/mod.rs
+@@ -262,14 +262,6 @@ impl MDBook {
+         let mut js = try!(File::create(&theme_dir.join("book.js")));
+         try!(js.write_all(theme::JS));
+ 
+-        // highlight.css
+-        let mut highlight_css = try!(File::create(&theme_dir.join("highlight.css")));
+-        try!(highlight_css.write_all(theme::HIGHLIGHT_CSS));
+-
+-        // highlight.js
+-        let mut highlight_js = try!(File::create(&theme_dir.join("highlight.js")));
+-        try!(highlight_js.write_all(theme::HIGHLIGHT_JS));
+-
+         Ok(())
+     }
+ 

@@ -1,3 +1,76 @@
+rustc (1.17.0+dfsg2-8+rpi1) buster-staging; urgency=medium
+
+  [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
+  * Fix clean target.
+  * Build for armv6.
+  * Manually fixup "install" step so that only armv6 stuff ends up
+    in the resulting packages.
+
+ -- Raspbian forward porter <root@raspbian.org>  Fri, 28 Jul 2017 13:32:44 +0000
+
+rustc (1.17.0+dfsg2-8) unstable; urgency=medium
+
+  * Workaround for linux #865549, fix FTBFS on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 13:41:59 +0200
+
+rustc (1.17.0+dfsg2-7) unstable; urgency=medium
+
+  * Show exception traceback in bootstrap.py to examine ppc64el build failure.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 10:46:27 +0200
+
+rustc (1.17.0+dfsg2-6) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 00:24:22 +0200
+
+rustc (1.17.0+dfsg2-5) experimental; urgency=medium
+
+  * More work-arounds for armhf test failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 16 Jun 2017 13:27:45 +0200
+
+rustc (1.17.0+dfsg2-4) experimental; urgency=medium
+
+  * Fix arch-indep and arch-dep tests.
+  * Bump the LLVM requirement to fix FTBFS on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 21:37:16 +0200
+
+rustc (1.17.0+dfsg2-3) experimental; urgency=medium
+
+  * Try to force the real gdb package. Some resolvers like aspcud will select
+    gdb-minimal under some circumstances, but this causes the debuginfo-gdb
+    tests to break.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 00:48:37 +0200
+
+rustc (1.17.0+dfsg2-2) experimental; urgency=medium
+
+  * Support and document cross-compiling of rustc itself.
+  * Document cross-compiling other rust packages such as cargo.
+  * Work around upstream #39015 by disabling those tests rather than by
+    disabling optimisation, which causes FTBFS on 1.17.0 ppc64el. See
+    upstream #42476 and #42532 for details.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 13 Jun 2017 21:13:31 +0200
+
+rustc (1.17.0+dfsg2-1) experimental; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * New upstream release
+
+  [ Ximin Luo ]
+  * Adapt packaging for rustbuild, the new upstream cargo-based build system.
+
+  [ Matthijs van Otterdijk ]
+  * Add a binary package, rust-src. (Closes: #846177)
+  * Link to local Debian web resources in the docs, instead of remote ones.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 18:00:53 +0200
+
 rustc (1.16.0+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]

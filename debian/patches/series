@@ -1,33 +1,34 @@
 # Patches for upstream
 # Ideally we would order these as follows:
 # [ applied already ], [ pending ], [ forwarded or to-be-forwarded ]
+u-exception-traceback.patch
 u-reproducible-dl-stage0.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
 u-ignoretest-armhf_03.patch
-u-ignoretest-armhf_04.patch
-u-ignoretest-arm64-stdcall.patch
-#u-ignoretest-i386.patch
+u-ignoretest-armhf_05.patch
 u-ignoretest-arm64.patch
-u-detect-mips-cpu.patch
-u-ignoretest-powerpc.patch
-#u-destdir-support.diff
-u-arm-on-64bit-kernel.diff
+u-ignoretest-ppc64el.patch
+u-workaround-testfailure-armhf_01.patch
+u-fix-weird-arm-logic.diff
+u-fix-debuginfo.patch
+u-allow-stable-features.patch
+u-only-run-linkchecker-if-docs.patch
+u-skip-main-thread-stack-guard.patch
+
+gcc-4.8-aarch64-ice.diff
 
 # Debian-specific patches, not suitable for upstream
+d-raise-min-llvm-version.patch
+d-disable-cargo-vendor.patch
 d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-d-fix-configure-for-deb-arches.patch
 d-dynamic-link-llvm.patch
 d-use-system-jquery.patch
-d-fill-in-mips-mk-rules.patch
-d-missing-ref-dlsym-ppc64el.patch
+d-no-web-dependencies-in-doc.patch
+d-cross-compile-install.patch
 
-# This might be useful for 1.16 when mk/ is deleted; however we need to figure
-# out how to apply the equivalent patch in a different file, as Makefile is a
-# generated file. For 1.15 mk/ still applies and all-no-docs still exists
-#d-disable-doc-build-in-all.diff
-
-gcc-4.8-aarch64-ice.diff
+# Work around for some porterboxes, keep this commented
+#d-host-duplicates.patch

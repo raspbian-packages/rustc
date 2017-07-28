@@ -285,12 +285,15 @@ impl Config {
         } else if msvc {
             // If we're on MSVC we need to be sure to use the right generator or
             // otherwise we won't get 32/64 bit correct automatically.
+            // This also guarantees that NMake generator isn't chosen implicitly.
             if self.generator.is_none() {
                 cmd.arg("-G").arg(self.visual_studio_generator(&target));
             }
         }
+        let mut is_ninja = false;
         if let Some(ref generator) = self.generator {
             cmd.arg("-G").arg(generator);
+            is_ninja = generator.to_string_lossy().contains("Ninja");
         }
         let profile = self.profile.clone().unwrap_or_else(|| {
             match &getenv_unwrap("PROFILE")[..] {
@@ -314,7 +317,23 @@ impl Config {
             cmd.arg(dstflag);
         }
 
+        let build_type = self.defines.iter().find(|&&(ref a, _)| {
+            a == "CMAKE_BUILD_TYPE"
+        }).map(|x| x.1.to_str().unwrap()).unwrap_or(&profile);
+        let build_type_upcase = build_type.chars()
+                                          .flat_map(|c| c.to_uppercase())
+                                          .collect::<String>();
+
         {
+            // let cmake deal with optimization/debuginfo
+            let skip_arg = |arg: &OsStr| {
+                match arg.to_str() {
+                    Some(s) => {
+                        s.starts_with("-O") || s.starts_with("/O") || s == "-g"
+                    }
+                    None => false,
+                }
+            };
             let mut set_compiler = |kind: &str,
                                     compiler: &gcc::Tool,
                                     extra: &OsString| {
@@ -326,10 +345,39 @@ impl Config {
                     flagsflag.push("=");
                     flagsflag.push(extra);
                     for arg in compiler.args() {
+                        if skip_arg(arg) {
+                            continue
+                        }
                         flagsflag.push(" ");
                         flagsflag.push(arg);
                     }
                     cmd.arg(flagsflag);
+                }
+
+                // The visual studio generator apparently doesn't respect
+                // `CMAKE_C_FLAGS` but does respect `CMAKE_C_FLAGS_RELEASE` and
+                // such. We need to communicate /MD vs /MT, so set those vars
+                // here.
+                //
+                // Note that for other generators, though, this *overrides*
+                // things like the optimization flags, which is bad.
+                if self.generator.is_none() && msvc {
+                    let flag_var_alt = format!("CMAKE_{}_FLAGS_{}", kind,
+                                               build_type_upcase);
+                    if !self.defined(&flag_var_alt) {
+                        let mut flagsflag = OsString::from("-D");
+                        flagsflag.push(&flag_var_alt);
+                        flagsflag.push("=");
+                        flagsflag.push(extra);
+                        for arg in compiler.args() {
+                            if skip_arg(arg) {
+                                continue
+                            }
+                            flagsflag.push(" ");
+                            flagsflag.push(arg);
+                        }
+                        cmd.arg(flagsflag);
+                    }
                 }
 
                 // Apparently cmake likes to have an absolute path to the
@@ -339,15 +387,25 @@ impl Config {
                 // what's up, but at least this means cmake doesn't get
                 // confused?
                 //
-                // Also don't specify this on Windows as it's not needed for
-                // MSVC and for MinGW it doesn't really vary.
+                // Also specify this on Windows only if we use MSVC with Ninja,
+                // as it's not needed for MSVC with Visual Studio generators and
+                // for MinGW it doesn't really vary.
                 if !self.defined("CMAKE_TOOLCHAIN_FILE")
                    && !self.defined(&tool_var)
-                   && env::consts::FAMILY != "windows" {
+                   && (env::consts::FAMILY != "windows" || (msvc && is_ninja)) {
                     let mut ccompiler = OsString::from("-D");
                     ccompiler.push(&tool_var);
                     ccompiler.push("=");
                     ccompiler.push(find_exe(compiler.path()));
+                    #[cfg(windows)] {
+                        // CMake doesn't like unescaped `\`s in compiler paths
+                        // so we either have to escape them or replace with `/`s.
+                        use std::os::windows::ffi::{OsStrExt, OsStringExt};
+                        let wchars = ccompiler.encode_wide().map(|wchar| {
+                            if wchar == b'\\' as u16 { '/' as u16 } else { wchar }
+                        }).collect::<Vec<_>>();
+                        ccompiler = OsString::from_wide(&wchars);
+                    }
                     cmd.arg(ccompiler);
                 }
             };
@@ -366,24 +424,43 @@ impl Config {
             }
         }
 
+        for &(ref k, ref v) in c_compiler.env() {
+            cmd.env(k, v);
+        }
+
         run(cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path), "cmake");
 
         let mut parallel_args = Vec::new();
-        if fs::metadata(&dst.join("build/Makefile")).is_ok() {
-            if let Ok(s) = env::var("NUM_JOBS") {
-                parallel_args.push(format!("-j{}", s));
+        if let Ok(s) = env::var("NUM_JOBS") {
+            match self.generator.as_ref().map(|g| g.to_string_lossy()) {
+                Some(ref g) if g.contains("Ninja") => {
+                    parallel_args.push(format!("-j{}", s));
+                }
+                Some(ref g) if g.contains("Visual Studio") => {
+                    parallel_args.push(format!("/m:{}", s));
+                }
+                Some(ref g) if g.contains("NMake") => {
+                    // NMake creates `Makefile`s, but doesn't understand `-jN`.
+                }
+                _ => if fs::metadata(&dst.join("build/Makefile")).is_ok() {
+                    // This looks like `make`, let's hope it understands `-jN`.
+                    parallel_args.push(format!("-j{}", s));
+                }
             }
         }
 
         // And build!
         let target = self.cmake_target.clone().unwrap_or("install".to_string());
-        run(Command::new("cmake")
-                    .arg("--build").arg(".")
-                    .arg("--target").arg(target)
-                    .arg("--config").arg(profile)
-                    .arg("--").args(&self.build_args)
-                    .args(&parallel_args)
-                    .current_dir(&build), "cmake");
+        let mut cmd = Command::new("cmake");
+        for &(ref k, ref v) in c_compiler.env() {
+            cmd.env(k, v);
+        }
+        run(cmd.arg("--build").arg(".")
+               .arg("--target").arg(target)
+               .arg("--config").arg(&profile)
+               .arg("--").args(&self.build_args)
+               .args(&parallel_args)
+               .current_dir(&build), "cmake");
 
         println!("cargo:root={}", dst.display());
         return dst
@@ -462,10 +539,6 @@ impl Config {
         // isn't relevant to us but we canonicalize it here to ensure
         // we're both checking the same thing.
         let path = fs::canonicalize(&self.path).unwrap_or(self.path.clone());
-        let src = match path.to_str() {
-            Some(src) => src,
-            None => return,
-        };
         let mut f = match File::open(dir.join("CMakeCache.txt")) {
             Ok(f) => f,
             Err(..) => return,
@@ -478,10 +551,21 @@ impl Config {
         let contents = String::from_utf8_lossy(&u8contents);
         drop(f);
         for line in contents.lines() {
-            if line.contains("CMAKE_HOME_DIRECTORY") && !line.contains(src) {
-                println!("detected home dir change, cleaning out entire build \
-                          directory");
-                fs::remove_dir_all(dir).unwrap();
+            if line.starts_with("CMAKE_HOME_DIRECTORY") {
+                let needs_cleanup = match line.split('=').next_back() {
+                    Some(cmake_home) => {
+                        fs::canonicalize(cmake_home)
+                            .ok()
+                            .map(|cmake_home| cmake_home != path)
+                            .unwrap_or(true)
+                    },
+                    None => true
+                };
+                if needs_cleanup {
+                    println!("detected home dir change, cleaning out entire build \
+                              directory");
+                    fs::remove_dir_all(dir).unwrap();
+                }
                 break
             }
         }
