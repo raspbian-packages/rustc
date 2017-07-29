@@ -186,14 +186,6 @@ endif
 override_dh_auto_install:
 	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) dist $(RUSTBUILD_FLAGS) --install
 
-	#upstream build produces both armv6 and armv7 stuff and installs a 
-	#mixture of both. Fix things up so that only the armv6 stuff ends up
-	#in the packages.
-	cp arm-unknown-linux-gnueabihf/stage2/bin/rustc debian/tmp/usr/bin/
-	cp arm-unknown-linux-gnueabihf/stage2/bin/rustdoc debian/tmp/usr/bin/
-	cp arm-unknown-linux-gnueabihf/stage2/lib/*.so debian/tmp/usr/lib/
-	rm -rf debian/tmp/usr/lib/rustlib/*armv7-unknown-linux-gnueabihf
-
 	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
 	mv $(DEB_DESTDIR)/usr/lib/lib*.so $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
 

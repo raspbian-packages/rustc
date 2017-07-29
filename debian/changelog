@@ -3,8 +3,6 @@ rustc (1.17.0+dfsg2-8+rpi1) buster-staging; urgency=medium
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Fix clean target.
   * Build for armv6.
-  * Manually fixup "install" step so that only armv6 stuff ends up
-    in the resulting packages.
 
  -- Raspbian forward porter <root@raspbian.org>  Fri, 28 Jul 2017 13:32:44 +0000
 
