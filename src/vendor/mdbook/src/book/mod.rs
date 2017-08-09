@@ -276,14 +276,6 @@ impl MDBook {
         let mut js = try!(File::create(&theme_dir.join("book.js")));
         try!(js.write_all(theme::JS));
 
-        // highlight.css
-        let mut highlight_css = try!(File::create(&theme_dir.join("highlight.css")));
-        try!(highlight_css.write_all(theme::HIGHLIGHT_CSS));
-
-        // highlight.js
-        let mut highlight_js = try!(File::create(&theme_dir.join("highlight.js")));
-        try!(highlight_js.write_all(theme::HIGHLIGHT_JS));
-
         Ok(())
     }
 
