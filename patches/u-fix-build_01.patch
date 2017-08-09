@@ -1,0 +1,42 @@
+Description: Use custom cargo/rustc paths when parsing flags.
+Author: Mark Simulacrum <mark.simulacrum@gmail.com>
+Bug: https://github.com/rust-lang/rust/issues/42543
+Applied-Upstream: commit:73267374d4176ac1c5d685ff2bac36556cfa4730
+
+--- a/src/bootstrap/flags.rs
++++ b/src/bootstrap/flags.rs
+@@ -234,11 +234,18 @@
+         let cwd = t!(env::current_dir());
+         let paths = matches.free[1..].iter().map(|p| cwd.join(p)).collect::<Vec<_>>();
+ 
++        let cfg_file = matches.opt_str("config").map(PathBuf::from).or_else(|| {
++            if fs::metadata("config.toml").is_ok() {
++                Some(PathBuf::from("config.toml"))
++            } else {
++                None
++            }
++        });
+ 
+         // All subcommands can have an optional "Available paths" section
+         if matches.opt_present("verbose") {
+             let flags = Flags::parse(&["build".to_string()]);
+-            let mut config = Config::default();
++            let mut config = Config::parse(&flags.build, cfg_file.clone());
+             config.build = flags.build.clone();
+             let mut build = Build::new(flags, config);
+             metadata::build(&mut build);
+@@ -295,14 +302,6 @@
+         };
+ 
+ 
+-        let cfg_file = matches.opt_str("config").map(PathBuf::from).or_else(|| {
+-            if fs::metadata("config.toml").is_ok() {
+-                Some(PathBuf::from("config.toml"))
+-            } else {
+-                None
+-            }
+-        });
+-
+         let mut stage = matches.opt_str("stage").map(|j| j.parse().unwrap());
+ 
+         if matches.opt_present("incremental") {

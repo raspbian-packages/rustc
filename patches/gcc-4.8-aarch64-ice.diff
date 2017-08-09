@@ -1,0 +1,23 @@
+--- a/src/compiler-rt/lib/builtins/trunctfdf2.c
++++ b/src/compiler-rt/lib/builtins/trunctfdf2.c
+@@ -7,6 +7,12 @@
+ //
+ //===----------------------------------------------------------------------===//
+ 
++#if defined(__aarch64__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ <= 8)
++// work around https://launchpad.net/bugs/1667761
++#pragma GCC push_options
++#pragma GCC optimize "O1"
++#endif
++
+ #define QUAD_PRECISION
+ #include "fp_lib.h"
+ 
+@@ -20,3 +26,7 @@
+ }
+ 
+ #endif
++
++#if defined(__aarch64__) && (__GNUC__ <= 4) && (__GNUC_MINOR__ <= 8)
++#pragma GCC pop_options
++#endif

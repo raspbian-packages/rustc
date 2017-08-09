@@ -1,0 +1,17 @@
+Description: Only run check-linkchecker when actually building docs
+ Otherwise the build fails, when running tests but not building docs
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/42651
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/bootstrap/step.rs
++++ b/src/bootstrap/step.rs
+@@ -463,7 +463,7 @@
+     rules.test("check-linkchecker", "src/tools/linkchecker")
+          .dep(|s| s.name("tool-linkchecker").stage(0))
+          .dep(|s| s.name("default:doc"))
+-         .default(true)
++         .default(build.config.docs)
+          .host(true)
+          .run(move |s| check::linkcheck(build, s.target));
+     rules.test("check-cargotest", "src/tools/cargotest")
