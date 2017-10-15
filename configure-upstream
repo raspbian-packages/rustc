@@ -1,0 +1,36 @@
+#!/bin/sh
+# This script can be used to configure a mostly-clean upstream checkout
+# in case you need to test any differences between it and Debian
+set -e
+test -f ./configure
+cat > config.toml <<EOF
+[build]
+submodules = false
+vendor = true
+locked-deps = false
+
+build = "x86_64-unknown-linux-gnu"
+host = ["x86_64-unknown-linux-gnu"]
+target = ["x86_64-unknown-linux-gnu"]
+
+docs = false
+
+[install]
+prefix = "/usr"
+
+[target.x86_64-unknown-linux-gnu]
+llvm-config = "/usr/lib/llvm-4.0/bin/llvm-config"
+
+[llvm]
+
+[rust]
+channel = "stable"
+
+# parallel codegen interferes with reproducibility, see
+# https://github.com/rust-lang/rust/issues/34902#issuecomment-319463586
+#codegen-units = 0
+debuginfo = true
+debuginfo-lines = true
+rpath = false
+EOF
+./configure --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=stable --disable-debuginfo-only-std --llvm-root=/usr/lib/llvm-4.0 --enable-local-rust --local-rust-root=/usr
