@@ -5,6 +5,7 @@
 
 all:
 ifeq ($(UNAME),Linux)
+ifeq (,$(filter armv7-unknown-linux-gnueabihf,$(TARGET)))
 ifeq ($(filter x86,$(LLVM_COMPONENTS)),x86)
 	$(RUSTC) --target=i686-unknown-linux-gnu atomic_lock_free.rs
 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | grep -vq __atomic_fetch_add
@@ -38,5 +39,6 @@ ifeq ($(filter powerpc,$(LLVM_COMPONENTS)),powerpc)
 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | grep -vq __atomic_fetch_add
 	$(RUSTC) --target=s390x-unknown-linux-gnu atomic_lock_free.rs
 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | grep -vq __atomic_fetch_add
+endif
 endif
 endif
