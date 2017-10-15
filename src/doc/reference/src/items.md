@@ -411,7 +411,7 @@ bodies defined in Rust code _can be called by foreign code_. They are defined
 in the same way as any other Rust function, except that they have the `extern`
 modifier.
 
-```rust
+```rust,ignore
 // Declares an extern fn, the ABI defaults to "C"
 extern fn new_i32() -> i32 { 0 }
 
