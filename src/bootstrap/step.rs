@@ -1268,9 +1268,12 @@ invalid rule dependency graph detected, was a rule added and maybe typo'd?
         }
 
         // Check for postponed failures from `test --no-fail-fast`.
-        let failures = self.build.delayed_failures.get();
-        if failures > 0 {
-            println!("\n{} command(s) did not execute successfully.\n", failures);
+        let failures = self.build.delayed_failures.borrow();
+        if failures.len() > 0 {
+            println!("\n{} command(s) did not execute successfully:\n", failures.len());
+            for failure in failures.iter() {
+                println!("  - {}\n", failure);
+            }
             process::exit(1);
         }
     }

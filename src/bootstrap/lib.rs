@@ -79,7 +79,7 @@ extern crate toml;
 #[cfg(unix)]
 extern crate libc;
 
-use std::cell::Cell;
+use std::cell::RefCell;
 use std::cmp;
 use std::collections::HashMap;
 use std::env;
@@ -181,7 +181,7 @@ pub struct Build {
     is_sudo: bool,
     src_is_git: bool,
     ci_env: CiEnv,
-    delayed_failures: Cell<usize>,
+    delayed_failures: RefCell<Vec<String>>,
 }
 
 #[derive(Debug)]
@@ -276,7 +276,7 @@ impl Build {
             is_sudo: is_sudo,
             src_is_git: src_is_git,
             ci_env: CiEnv::current(),
-            delayed_failures: Cell::new(0),
+            delayed_failures: RefCell::new(Vec::new()),
         }
     }
 

@@ -61,8 +61,8 @@ impl fmt::Display for TestKind {
 fn try_run(build: &Build, cmd: &mut Command) {
     if build.flags.cmd.no_fail_fast() {
         if !build.try_run(cmd) {
-            let failures = build.delayed_failures.get();
-            build.delayed_failures.set(failures + 1);
+            let mut failures = &mut build.delayed_failures.borrow_mut();
+            failures.push(format!("{:?}", cmd));
         }
     } else {
         build.run(cmd);
@@ -72,8 +72,8 @@ fn try_run(build: &Build, cmd: &mut Command) {
 fn try_run_quiet(build: &Build, cmd: &mut Command) {
     if build.flags.cmd.no_fail_fast() {
         if !build.try_run_quiet(cmd) {
-            let failures = build.delayed_failures.get();
-            build.delayed_failures.set(failures + 1);
+            let mut failures = &mut build.delayed_failures.borrow_mut();
+            failures.push(format!("{:?}", cmd));
         }
     } else {
         build.run_quiet(cmd);
