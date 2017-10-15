@@ -1,0 +1,19 @@
+3. Upstream updated the "install_std" functionality to install libstd for all
+   targets that were built. For a cross-build this is both the native and the
+   foreign arches. Probably, we can either (a) get rid of d-cross-compile-install.patch
+   then rely on our debian/rules install recipes to install the right target
+   into the package, or (b) keep the patch, and further patch install.rs/step.rs
+   so that install_std() takes a single "target" parameter; test this.
+
+Older backlog
+=============
+
+ * Use Compiler-rt package
+ * Improve the bootstrap (do the local build first on our systems, upload
+   to Debian and use the packages)
+ * Port on other archs
+ * Create a runtime package (rust-runtime)
+ * Move the runtime library into a public directory
+ * Package the various editors plugins (emacs, kate & vim)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 20 Jan 2015 08:50:28 +0100

@@ -1,0 +1,75 @@
+Description: rustbuild: with --no-fail-fast, report the specific commands that failed
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/44680
+
+--- a/src/bootstrap/check.rs
++++ b/src/bootstrap/check.rs
+@@ -61,8 +61,8 @@
+ fn try_run(build: &Build, cmd: &mut Command) {
+     if build.flags.cmd.no_fail_fast() {
+         if !build.try_run(cmd) {
+-            let failures = build.delayed_failures.get();
+-            build.delayed_failures.set(failures + 1);
++            let mut failures = &mut build.delayed_failures.borrow_mut();
++            failures.push(format!("{:?}", cmd));
+         }
+     } else {
+         build.run(cmd);
+@@ -72,8 +72,8 @@
+ fn try_run_quiet(build: &Build, cmd: &mut Command) {
+     if build.flags.cmd.no_fail_fast() {
+         if !build.try_run_quiet(cmd) {
+-            let failures = build.delayed_failures.get();
+-            build.delayed_failures.set(failures + 1);
++            let mut failures = &mut build.delayed_failures.borrow_mut();
++            failures.push(format!("{:?}", cmd));
+         }
+     } else {
+         build.run_quiet(cmd);
+--- a/src/bootstrap/lib.rs
++++ b/src/bootstrap/lib.rs
+@@ -79,7 +79,7 @@
+ #[cfg(unix)]
+ extern crate libc;
+ 
+-use std::cell::Cell;
++use std::cell::RefCell;
+ use std::cmp;
+ use std::collections::HashMap;
+ use std::env;
+@@ -181,7 +181,7 @@
+     is_sudo: bool,
+     src_is_git: bool,
+     ci_env: CiEnv,
+-    delayed_failures: Cell<usize>,
++    delayed_failures: RefCell<Vec<String>>,
+ }
+ 
+ #[derive(Debug)]
+@@ -276,7 +276,7 @@
+             is_sudo: is_sudo,
+             src_is_git: src_is_git,
+             ci_env: CiEnv::current(),
+-            delayed_failures: Cell::new(0),
++            delayed_failures: RefCell::new(Vec::new()),
+         }
+     }
+ 
+--- a/src/bootstrap/step.rs
++++ b/src/bootstrap/step.rs
+@@ -1268,9 +1268,12 @@
+         }
+ 
+         // Check for postponed failures from `test --no-fail-fast`.
+-        let failures = self.build.delayed_failures.get();
+-        if failures > 0 {
+-            println!("\n{} command(s) did not execute successfully.\n", failures);
++        let failures = self.build.delayed_failures.borrow();
++        if failures.len() > 0 {
++            println!("\n{} command(s) did not execute successfully:\n", failures.len());
++            for failure in failures.iter() {
++                println!("  - {}\n", failure);
++            }
+             process::exit(1);
+         }
+     }
