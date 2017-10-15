@@ -645,6 +645,9 @@ actual:\n\
                 script_str.push_str(&format!("file {}\n",
                                              exe_file.to_str().unwrap()
                                              .replace(r"\", r"\\")));
+                if self.config.gdb_native_rust {
+                    script_str.push_str("set language rust\n");
+                }
 
                 // Force GDB to print values in the Rust format.
                 if self.config.gdb_native_rust {
