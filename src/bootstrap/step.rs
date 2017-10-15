@@ -1056,11 +1056,18 @@ pub struct Rules<'a> {
 
 impl<'a> Rules<'a> {
     fn new(build: &'a Build) -> Rules<'a> {
+        let target_env = ::std::env::var("DEB_HOST_RUST_TYPE").unwrap();
+        // rust forces us to do this dance because of lifetimes :/
+        let hosts = &build.hosts;
+        let target = match hosts.iter().position(|x| x == target_env.as_str()) {
+            None => &build.build,
+            Some(tidx) => hosts[tidx].as_str()
+        };
         Rules {
             build: build,
             sbuild: Step {
                 stage: build.flags.stage.unwrap_or(2),
-                target: &build.build,
+                target: target,
                 host: &build.build,
                 name: "",
             },
