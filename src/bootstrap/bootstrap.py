@@ -24,16 +24,18 @@ import tempfile
 from time import time
 
 
-def get(url, path, verbose=False):
+def get(url, path, verbose=False, use_local_hash_if_present=True):
     suffix = '.sha256'
     sha_url = url + suffix
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = temp_file.name
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as sha_file:
-        sha_path = sha_file.name
+    sha_path = path + suffix
 
     try:
-        download(sha_path, sha_url, False, verbose)
+        if use_local_hash_if_present and os.path.exists(sha_path):
+            print("using already-download file " + sha_path)
+        else:
+            download(sha_path, sha_url, False, verbose)
         if os.path.exists(path):
             if verify(path, sha_path, False):
                 if verbose:
@@ -51,7 +53,6 @@ def get(url, path, verbose=False):
             print("moving {} to {}".format(temp_path, path))
         shutil.move(temp_path, path)
     finally:
-        delete_if_present(sha_path, verbose)
         delete_if_present(temp_path, verbose)
 
 
@@ -185,7 +186,7 @@ class RustBuild(object):
                 rustc_channel, self.build)
             url = self._download_url + "/dist/" + self.stage0_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
+            if True:
                 get("{}/{}".format(url, filename),
                     tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
@@ -195,7 +196,7 @@ class RustBuild(object):
             filename = "rustc-{}-{}.tar.gz".format(rustc_channel, self.build)
             url = self._download_url + "/dist/" + self.stage0_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
+            if True:
                 get("{}/{}".format(url, filename),
                     tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
@@ -222,7 +223,7 @@ class RustBuild(object):
             filename = "cargo-{}-{}.tar.gz".format(cargo_channel, self.build)
             url = self._download_url + "/dist/" + self.stage0_date()
             tarball = os.path.join(rustc_cache, filename)
-            if not os.path.exists(tarball):
+            if True:
                 get("{}/{}".format(url, filename),
                     tarball, verbose=self.verbose)
             unpack(tarball, self.bin_root(),
