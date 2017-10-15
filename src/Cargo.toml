@@ -15,7 +15,6 @@ members = [
   "tools/remote-test-client",
   "tools/remote-test-server",
   "tools/rust-installer",
-  "tools/cargo",
 ]
 
 # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
