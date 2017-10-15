@@ -149,6 +149,11 @@ fn check(cache: &mut Cache,
            url.starts_with("irc:") || url.starts_with("data:") {
             return;
         }
+        // Ignore parent URLs, so that the package installation process can
+        // provide a symbolic link later
+        if url.starts_with("../") {
+            return;
+        }
         let mut parts = url.splitn(2, "#");
         let url = parts.next().unwrap();
         let fragment = parts.next();

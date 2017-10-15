@@ -167,17 +167,7 @@ impl Renderer for HtmlHandlebars {
         book.write_file("book.js", &theme.js)?;
         book.write_file("book.css", &theme.css)?;
         book.write_file("favicon.png", &theme.favicon)?;
-        book.write_file("jquery.js", &theme.jquery)?;
-        book.write_file("highlight.css", &theme.highlight_css)?;
         book.write_file("tomorrow-night.css", &theme.tomorrow_night_css)?;
-        book.write_file("highlight.js", &theme.highlight_js)?;
-        book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME)?;
-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT)?;
-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG)?;
-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF)?;
-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF)?;
-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2)?;
-        book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF)?;
 
         // Copy all remaining files
         utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"])?;
