@@ -1,0 +1,14 @@
+Description: Fix compiletest to allow bootstrapping from 1.17 as well as 1.16
+Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Forwarded: https://github.com/rust-lang/rust/pull/42020
+---
+--- a/src/tools/compiletest/src/main.rs
++++ b/src/tools/compiletest/src/main.rs
+@@ -16,6 +16,7 @@
+ #![feature(libc)]
+ 
+ #![deny(warnings)]
++#![allow(stable_features)] // needed to compile the tests with both 1.16 and 1.17
+ 
+ extern crate libc;
+ extern crate test;
