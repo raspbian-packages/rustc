@@ -175,10 +175,12 @@ install!((self, builder, _config),
         install_docs(builder, self.stage, self.target);
     };
     Std, "src/libstd", true, only_hosts: true, {
-        builder.ensure(dist::Std {
-            compiler: builder.compiler(self.stage, self.host),
-            target: self.target
-        });
+        for target in &builder.build.targets {
+            builder.ensure(dist::Std {
+                compiler: builder.compiler(self.stage, self.host),
+                target: *target
+            });
+        }
         install_std(builder, self.stage);
     };
     Cargo, "cargo", _config.extended, only_hosts: true, {
