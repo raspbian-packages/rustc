@@ -1,0 +1,11 @@
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -88,7 +88,7 @@
+             option = "-#"
+         else:
+             option = "-s"
+-        run(["curl", option, "--retry", "3", "-Sf", "-o", path, url],
++        run(["curl", option, "-R", "--retry", "3", "-Sf", "-o", path, url],
+             verbose=verbose,
+             exception=exception)
+ 
