@@ -510,10 +510,6 @@ class RustBuild(object):
             args.append("--verbose")
             if self.verbose > 1:
                 args.append("--verbose")
-        if self.use_locked_deps:
-            args.append("--locked")
-        if self.use_vendored_sources:
-            args.append("--frozen")
         run(args, env=env, verbose=self.verbose)
 
     def build_triple(self):
