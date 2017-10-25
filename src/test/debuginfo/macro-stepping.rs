@@ -11,6 +11,7 @@
 // ignore-windows
 // ignore-android
 // ignore-aarch64
+// ignore-arm
 // min-lldb-version: 310
 
 // aux-build:macro-stepping.rs
