@@ -1,0 +1,40 @@
+[build]
+submodules = false
+vendor = true
+locked-deps = false
+
+build = "DEB_BUILD_RUST_TYPE"
+host = ["DEB_HOST_RUST_TYPE"]
+target = ["DEB_TARGET_RUST_TYPE"]
+
+docs = false
+
+[install]
+prefix = "/usr"
+
+[target.DEB_BUILD_RUST_TYPE]
+llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+
+ifelse(DEB_BUILD_RUST_TYPE,DEB_HOST_RUST_TYPE,,
+[target.DEB_HOST_RUST_TYPE]
+llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+
+)dnl
+ifelse(DEB_BUILD_RUST_TYPE,DEB_TARGET_RUST_TYPE,,DEB_HOST_RUST_TYPE,DEB_TARGET_RUST_TYPE,,
+[target.DEB_TARGET_RUST_TYPE]
+llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+
+)dnl
+[llvm]
+
+[rust]
+use-jemalloc = false
+
+channel = "RELEASE_CHANNEL"
+
+# parallel codegen interferes with reproducibility, see
+# https://github.com/rust-lang/rust/issues/34902#issuecomment-319463586
+#codegen-units = 0
+debuginfo = true
+debuginfo-lines = true
+rpath = false
