@@ -5,6 +5,7 @@ pub type wchar_t = i32;
 pub type nlink_t = u64;
 pub type blksize_t = i64;
 pub type suseconds_t = i64;
+pub type __u64 = ::c_ulong;
 
 s! {
     pub struct stat {
@@ -285,8 +286,6 @@ pub const TIOCMBIC: ::c_ulong = 0x5417;
 pub const TIOCMSET: ::c_ulong = 0x5418;
 pub const TIOCCONS: ::c_ulong = 0x541D;
 
-pub const CLONE_NEWCGROUP: ::c_int = 0x02000000;
-
 pub const SFD_CLOEXEC: ::c_int = 0x080000;
 
 pub const NCCS: usize = 32;
@@ -383,6 +382,15 @@ pub const ISIG: ::tcflag_t = 0x80;
 pub const ICANON: ::tcflag_t = 0x100;
 pub const PENDIN: ::tcflag_t = 0x20000000;
 pub const NOFLSH: ::tcflag_t = 0x80000000;
+pub const VSWTC: usize = 9;
+pub const OLCUC:  ::tcflag_t = 0o000004;
+pub const NLDLY:  ::tcflag_t = 0o001400;
+pub const CRDLY:  ::tcflag_t = 0o030000;
+pub const TABDLY: ::tcflag_t = 0o006000;
+pub const BSDLY:  ::tcflag_t = 0o100000;
+pub const FFDLY:  ::tcflag_t = 0o040000;
+pub const VTDLY:  ::tcflag_t = 0o200000;
+pub const XTABS:  ::tcflag_t = 0o006000;
 
 pub const B0: ::speed_t = 0o000000;
 pub const B50: ::speed_t = 0o000001;

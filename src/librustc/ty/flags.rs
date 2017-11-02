@@ -155,9 +155,8 @@ impl FlagComputation {
                 self.add_tys(&ts[..]);
             }
 
-            &ty::TyFnDef(_, substs, f) => {
+            &ty::TyFnDef(_, substs) => {
                 self.add_substs(substs);
-                self.add_fn_sig(f);
             }
 
             &ty::TyFnPtr(f) => {
@@ -194,12 +193,12 @@ impl FlagComputation {
     }
 
     fn add_existential_projection(&mut self, projection: &ty::ExistentialProjection) {
-        self.add_substs(projection.trait_ref.substs);
+        self.add_substs(projection.substs);
         self.add_ty(projection.ty);
     }
 
     fn add_projection_ty(&mut self, projection_ty: &ty::ProjectionTy) {
-        self.add_substs(projection_ty.trait_ref.substs);
+        self.add_substs(projection_ty.substs);
     }
 
     fn add_substs(&mut self, substs: &Substs) {

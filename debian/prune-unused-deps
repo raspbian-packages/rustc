@@ -11,7 +11,7 @@ had_configure_upstream=$(if test -e "$scriptdir/debian/configure-upstream"; then
 "$scriptdir/debian/configure-upstream"
 "$scriptdir/debian/ensure-patch" -N "$scriptdir/debian/patches/d-ignore-removed-submodules.patch"
 test -f src/Cargo.lock.orig || cp src/Cargo.lock src/Cargo.lock.orig
-./x.py build src/bootstrap
+./x.py build nonexistent/path/to/trigger/cargo/metadata src/bootstrap
 
 not_needed() {
 	diff -ru src/Cargo.lock.orig src/Cargo.lock | grep '^-"checksum' | cut '-d ' -f2-3

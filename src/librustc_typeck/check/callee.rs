@@ -15,7 +15,7 @@ use super::method::MethodCallee;
 use hir::def::Def;
 use hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::{infer, traits};
-use rustc::ty::{self, TyCtxt, LvaluePreference, Ty};
+use rustc::ty::{self, TyCtxt, TypeFoldable, LvaluePreference, Ty};
 use rustc::ty::subst::Subst;
 use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow};
 use syntax::abi;
@@ -108,7 +108,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // haven't yet decided on whether the closure is fn vs
                 // fnmut vs fnonce. If so, we have to defer further processing.
                 if self.closure_kind(def_id).is_none() {
-                    let closure_ty = self.closure_type(def_id).subst(self.tcx, substs.substs);
+                    let closure_ty = self.fn_sig(def_id).subst(self.tcx, substs.substs);
                     let fn_sig = self.replace_late_bound_regions_with_fresh_var(call_expr.span,
                                                                    infer::FnCall,
                                                                    &closure_ty)
@@ -196,8 +196,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             expected: Expectation<'tcx>)
                             -> Ty<'tcx> {
         let (fn_sig, def_span) = match callee_ty.sty {
-            ty::TyFnDef(def_id, .., sig) => {
-                (sig, self.tcx.hir.span_if_local(def_id))
+            ty::TyFnDef(def_id, _) => {
+                (callee_ty.fn_sig(self.tcx), self.tcx.hir.span_if_local(def_id))
             }
             ty::TyFnPtr(sig) => (sig, None),
             ref t => {
@@ -209,17 +209,16 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         }
                     }
                 }
-                let mut err = if let Some(path) = unit_variant {
-                    let mut err = self.type_error_struct(call_expr.span, |_| {
-                        format!("`{}` is being called, but it is not a function", path)
-                    }, callee_ty);
+                let mut err = type_error_struct!(self.tcx.sess, call_expr.span, callee_ty, E0618,
+                                                 "expected function, found `{}`",
+                                                 if let Some(ref path) = unit_variant {
+                                                     path.to_string()
+                                                 } else {
+                                                     callee_ty.to_string()
+                                                 });
+                if let Some(path) = unit_variant {
                     err.help(&format!("did you mean to write `{}`?", path));
-                    err
-                } else {
-                    self.type_error_struct(call_expr.span, |actual| {
-                        format!("expected function, found `{}`", actual)
-                    }, callee_ty)
-                };
+                }
 
                 if let hir::ExprCall(ref expr, _) = call_expr.node {
                     let def = if let hir::ExprPath(ref qpath) = expr.node {

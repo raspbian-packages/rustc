@@ -5,7 +5,7 @@ Bug: https://github.com/rust-lang/rust/pull/42792
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -684,7 +684,8 @@
+@@ -700,7 +700,8 @@
              exit_code = e.code
          else:
              exit_code = 1

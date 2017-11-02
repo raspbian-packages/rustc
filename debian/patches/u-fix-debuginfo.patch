@@ -4,7 +4,7 @@ Bug: https://github.com/rust-lang/rust/issues/40557
 ---
 --- a/src/tools/compiletest/src/runtest.rs
 +++ b/src/tools/compiletest/src/runtest.rs
-@@ -646,6 +646,9 @@
+@@ -645,6 +645,9 @@
                  script_str.push_str(&format!("file {}\n",
                                               exe_file.to_str().unwrap()
                                               .replace(r"\", r"\\")));

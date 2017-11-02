@@ -23,7 +23,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <link rel="stylesheet" href="tomorrow-night.css">
  
          <!-- MathJax -->
--        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+-        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
 +        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
  
 -        <!-- Fetch JQuery from CDN but have a local fallback -->
@@ -37,7 +37,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
      </head>
      <body class="light">
          <!-- Set the theme before any content is loaded, prevents flash -->
-@@ -101,17 +93,10 @@
+@@ -101,30 +93,10 @@
          </div>
  
  
@@ -51,6 +51,19 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <!-- Livereload script (if served using the cli tool) -->
          {{{livereload}}}
  
+-        {{#if google_analytics}}
+-        <script>
+-        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+-        (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+-        m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+-        })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+-
+-        ga('create', '{{google_analytics}}', 'auto');
+-        ga('send', 'pageview');
+-        </script>
+-      {{/if}}
+-
+-
 -        <script src="highlight.js"></script>
 +        <script src="../highlight.js"></script>
          <script src="book.js"></script>
@@ -74,9 +87,9 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -pub static FONT_AWESOME_WOFF2: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff2");
 -pub static FONT_AWESOME_OTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/FontAwesome.otf");
  
- /// The `Theme` struct should be used instead of the static variables because the `new()` method
- /// will look if the user has a theme directory in his source folder and use the users theme instead
-@@ -30,10 +20,7 @@
+ /// The `Theme` struct should be used instead of the static variables because
+ /// the `new()` method
+@@ -33,10 +23,7 @@
      pub css: Vec<u8>,
      pub favicon: Vec<u8>,
      pub js: Vec<u8>,
@@ -87,7 +100,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  }
  
  impl Theme {
-@@ -45,10 +32,7 @@
+@@ -48,10 +35,7 @@
              css: CSS.to_owned(),
              favicon: FAVICON.to_owned(),
              js: JS.to_owned(),
@@ -98,7 +111,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          };
  
          // Check if the given path exists
-@@ -82,18 +66,6 @@
+@@ -85,18 +69,6 @@
              let _ = f.read_to_end(&mut theme.favicon);
          }
  
@@ -119,24 +132,24 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              theme.tomorrow_night_css.clear();
 --- a/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
 +++ b/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
-@@ -162,17 +162,7 @@
-         try!(book.write_file("book.js", &theme.js));
-         try!(book.write_file("book.css", &theme.css));
-         try!(book.write_file("favicon.png", &theme.favicon));
--        try!(book.write_file("jquery.js", &theme.jquery));
--        try!(book.write_file("highlight.css", &theme.highlight_css));
-         try!(book.write_file("tomorrow-night.css", &theme.tomorrow_night_css));
--        try!(book.write_file("highlight.js", &theme.highlight_js));
--        try!(book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME));
--        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT));
--        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG));
--        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF));
--        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF));
--        try!(book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2));
--        try!(book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF));
+@@ -167,17 +167,7 @@
+         book.write_file("book.js", &theme.js)?;
+         book.write_file("book.css", &theme.css)?;
+         book.write_file("favicon.png", &theme.favicon)?;
+-        book.write_file("jquery.js", &theme.jquery)?;
+-        book.write_file("highlight.css", &theme.highlight_css)?;
+         book.write_file("tomorrow-night.css", &theme.tomorrow_night_css)?;
+-        book.write_file("highlight.js", &theme.highlight_js)?;
+-        book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2)?;
+-        book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF)?;
  
          // Copy all remaining files
-         try!(utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"]));
+         utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"])?;
 --- a/src/tools/linkchecker/main.rs
 +++ b/src/tools/linkchecker/main.rs
 @@ -149,6 +149,11 @@
@@ -153,17 +166,17 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          let fragment = parts.next();
 --- a/src/vendor/mdbook/src/book/mod.rs
 +++ b/src/vendor/mdbook/src/book/mod.rs
-@@ -285,14 +285,6 @@
-         let mut js = try!(File::create(&theme_dir.join("book.js")));
-         try!(js.write_all(theme::JS));
+@@ -296,14 +296,6 @@
+         let mut js = File::create(&theme_dir.join("book.js"))?;
+         js.write_all(theme::JS)?;
  
 -        // highlight.css
--        let mut highlight_css = try!(File::create(&theme_dir.join("highlight.css")));
--        try!(highlight_css.write_all(theme::HIGHLIGHT_CSS));
+-        let mut highlight_css = File::create(&theme_dir.join("highlight.css"))?;
+-        highlight_css.write_all(theme::HIGHLIGHT_CSS)?;
 -
 -        // highlight.js
--        let mut highlight_js = try!(File::create(&theme_dir.join("highlight.js")));
--        try!(highlight_js.write_all(theme::HIGHLIGHT_JS));
+-        let mut highlight_js = File::create(&theme_dir.join("highlight.js"))?;
+-        highlight_js.write_all(theme::HIGHLIGHT_JS)?;
 -
          Ok(())
      }

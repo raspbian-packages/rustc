@@ -1,5 +1,5 @@
---- a/src/compiler-rt/lib/builtins/trunctfdf2.c
-+++ b/src/compiler-rt/lib/builtins/trunctfdf2.c
+--- a/src/libcompiler_builtins/compiler-rt/lib/builtins/trunctfdf2.c
++++ b/src/libcompiler_builtins/compiler-rt/lib/builtins/trunctfdf2.c
 @@ -7,6 +7,12 @@
  //
  //===----------------------------------------------------------------------===//

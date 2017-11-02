@@ -93,6 +93,32 @@ impl<'a> AstValidator<'a> {
             }
         }
     }
+
+    /// matches '-' lit | lit (cf. parser::Parser::parse_pat_literal_maybe_minus),
+    /// or path for ranges.
+    ///
+    /// FIXME: do we want to allow expr -> pattern conversion to create path expressions?
+    /// That means making this work:
+    ///
+    /// ```rust,ignore (FIXME)
+    ///     struct S;
+    ///     macro_rules! m {
+    ///         ($a:expr) => {
+    ///             let $a = S;
+    ///         }
+    ///     }
+    ///     m!(S);
+    /// ```
+    fn check_expr_within_pat(&self, expr: &Expr, allow_paths: bool) {
+        match expr.node {
+            ExprKind::Lit(..) => {}
+            ExprKind::Path(..) if allow_paths => {}
+            ExprKind::Unary(UnOp::Neg, ref inner)
+                if match inner.node { ExprKind::Lit(_) => true, _ => false } => {}
+            _ => self.err_handler().span_err(expr.span, "arbitrary expressions aren't allowed \
+                                                         in patterns")
+        }
+    }
 }
 
 impl<'a> Visitor<'a> for AstValidator<'a> {
@@ -113,6 +139,23 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             ExprKind::Break(Some(ident), _) |
             ExprKind::Continue(Some(ident)) => {
                 self.check_label(ident.node, ident.span);
+            }
+            ExprKind::MethodCall(ref segment, ..) => {
+                if let Some(ref params) = segment.parameters {
+                    match **params {
+                        PathParameters::AngleBracketed(ref param_data) => {
+                            if !param_data.bindings.is_empty() {
+                                let binding_span = param_data.bindings[0].span;
+                                self.err_handler().span_err(binding_span,
+                                    "type bindings cannot be used in method calls");
+                            }
+                        }
+                        PathParameters::Parenthesized(..) => {
+                            self.err_handler().span_err(expr.span,
+                                "parenthesized parameters cannot be used on method calls");
+                        }
+                    }
+                }
             }
             _ => {}
         }
@@ -307,6 +350,21 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             }
         }
         visit::walk_generics(self, g)
+    }
+
+    fn visit_pat(&mut self, pat: &'a Pat) {
+        match pat.node {
+            PatKind::Lit(ref expr) => {
+                self.check_expr_within_pat(expr, false);
+            }
+            PatKind::Range(ref start, ref end, _) => {
+                self.check_expr_within_pat(start, true);
+                self.check_expr_within_pat(end, true);
+            }
+            _ => {}
+        }
+
+        visit::walk_pat(self, pat)
     }
 }
 

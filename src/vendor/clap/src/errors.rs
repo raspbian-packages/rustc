@@ -9,7 +9,7 @@ use std::result::Result as StdResult;
 
 // Internal
 use args::{FlagBuilder, AnyArg};
-use fmt;
+use fmt::{Colorizer, ColorizerOption, ColorWhen};
 use suggestions;
 
 /// Short hand for [`Result`] type
@@ -26,11 +26,11 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("speed")
     ///         .possible_value("fast")
     ///         .possible_value("slow"))
-    ///     .get_matches_from_safe(vec!["myprog", "other"]);
+    ///     .get_matches_from_safe(vec!["prog", "other"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::InvalidValue);
     /// ```
@@ -43,9 +43,9 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::from_usage("--flag 'some flag'"))
-    ///     .get_matches_from_safe(vec!["myprog", "--other"]);
+    ///     .get_matches_from_safe(vec!["prog", "--other"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::UnknownArgument);
     /// ```
@@ -61,13 +61,13 @@ pub enum ErrorKind {
     #[cfg_attr(not(feature="suggestions"), doc=" ```no_run")]
     #[cfg_attr(    feature="suggestions" , doc=" ```")]
     /// # use clap::{App, Arg, ErrorKind, SubCommand};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .subcommand(SubCommand::with_name("config")
     ///         .about("Used for configuration")
     ///         .arg(Arg::with_name("config_file")
     ///             .help("The configuration file to use")
     ///             .index(1)))
-    ///     .get_matches_from_safe(vec!["myprog", "confi"]);
+    ///     .get_matches_from_safe(vec!["prog", "confi"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::InvalidSubcommand);
     /// ```
@@ -87,13 +87,13 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind, SubCommand};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .subcommand(SubCommand::with_name("config")
     ///         .about("Used for configuration")
     ///         .arg(Arg::with_name("config_file")
     ///             .help("The configuration file to use")
     ///             .index(1)))
-    ///     .get_matches_from_safe(vec!["myprog", "help", "nothing"]);
+    ///     .get_matches_from_safe(vec!["prog", "help", "nothing"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::UnrecognizedSubcommand);
     /// ```
@@ -109,11 +109,11 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let res = App::new("myprog")
+    /// let res = App::new("prog")
     ///     .arg(Arg::with_name("color")
     ///          .long("color")
     ///          .empty_values(false))
-    ///     .get_matches_from_safe(vec!["myprog", "--color="]);
+    ///     .get_matches_from_safe(vec!["prog", "--color="]);
     /// assert!(res.is_err());
     /// assert_eq!(res.unwrap_err().kind, ErrorKind::EmptyValue);
     /// ```
@@ -133,10 +133,10 @@ pub enum ErrorKind {
     ///     }
     /// }
     ///
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("num")
     ///          .validator(is_numeric))
-    ///     .get_matches_from_safe(vec!["myprog", "NotANumber"]);
+    ///     .get_matches_from_safe(vec!["prog", "NotANumber"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::ValueValidation);
     /// ```
@@ -149,11 +149,11 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("arg")
     ///         .multiple(true)
     ///         .max_values(2))
-    ///     .get_matches_from_safe(vec!["myprog", "too", "many", "values"]);
+    ///     .get_matches_from_safe(vec!["prog", "too", "many", "values"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::TooManyValues);
     /// ```
@@ -167,11 +167,11 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("some_opt")
     ///         .long("opt")
     ///         .min_values(3))
-    ///     .get_matches_from_safe(vec!["myprog", "--opt", "too", "few"]);
+    ///     .get_matches_from_safe(vec!["prog", "--opt", "too", "few"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::TooFewValues);
     /// ```
@@ -186,12 +186,12 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("some_opt")
     ///         .long("opt")
     ///         .takes_value(true)
     ///         .number_of_values(2))
-    ///     .get_matches_from_safe(vec!["myprog", "--opt", "wrong"]);
+    ///     .get_matches_from_safe(vec!["prog", "--opt", "wrong"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::WrongNumberOfValues);
     /// ```
@@ -207,13 +207,13 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("debug")
     ///         .long("debug")
     ///         .conflicts_with("color"))
     ///     .arg(Arg::with_name("color")
     ///         .long("color"))
-    ///     .get_matches_from_safe(vec!["myprog", "--debug", "--color"]);
+    ///     .get_matches_from_safe(vec!["prog", "--debug", "--color"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::ArgumentConflict);
     /// ```
@@ -225,10 +225,10 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("debug")
     ///         .required(true))
-    ///     .get_matches_from_safe(vec!["myprog"]);
+    ///     .get_matches_from_safe(vec!["prog"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::MissingRequiredArgument);
     /// ```
@@ -241,7 +241,7 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, AppSettings, SubCommand, ErrorKind};
-    /// let err = App::new("myprog")
+    /// let err = App::new("prog")
     ///     .setting(AppSettings::SubcommandRequired)
     ///     .subcommand(SubCommand::with_name("test"))
     ///     .get_matches_from_safe(vec![
@@ -261,13 +261,13 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, AppSettings, ErrorKind, SubCommand};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .setting(AppSettings::ArgRequiredElseHelp)
     ///     .subcommand(SubCommand::with_name("config")
     ///         .about("Used for configuration")
     ///         .arg(Arg::with_name("config_file")
     ///             .help("The configuration file to use")))
-    ///     .get_matches_from_safe(vec!["myprog"]);
+    ///     .get_matches_from_safe(vec!["prog"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::MissingArgumentOrSubcommand);
     /// ```
@@ -281,11 +281,11 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .arg(Arg::with_name("debug")
     ///         .long("debug")
     ///         .multiple(false))
-    ///     .get_matches_from_safe(vec!["myprog", "--debug", "--debug"]);
+    ///     .get_matches_from_safe(vec!["prog", "--debug", "--debug"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::UnexpectedMultipleUsage);
     /// ```
@@ -305,7 +305,7 @@ pub enum ErrorKind {
     /// # use clap::{App, Arg, ErrorKind, AppSettings};
     /// # use std::os::unix::ffi::OsStringExt;
     /// # use std::ffi::OsString;
-    /// let result = App::new("myprog")
+    /// let result = App::new("prog")
     ///     .setting(AppSettings::StrictUtf8)
     ///     .arg(Arg::with_name("utf8")
     ///         .short("u")
@@ -329,8 +329,8 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
-    ///     .get_matches_from_safe(vec!["myprog", "--help"]);
+    /// let result = App::new("prog")
+    ///     .get_matches_from_safe(vec!["prog", "--help"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::HelpDisplayed);
     /// ```
@@ -343,8 +343,8 @@ pub enum ErrorKind {
     ///
     /// ```rust
     /// # use clap::{App, Arg, ErrorKind};
-    /// let result = App::new("myprog")
-    ///     .get_matches_from_safe(vec!["myprog", "--version"]);
+    /// let result = App::new("prog")
+    ///     .get_matches_from_safe(vec!["prog", "--version"]);
     /// assert!(result.is_err());
     /// assert_eq!(result.unwrap_err().kind, ErrorKind::VersionDisplayed);
     /// ```
@@ -408,17 +408,17 @@ impl Error {
     pub fn argument_conflict<'a, 'b, A, O, U>(arg: &A,
                                               other: Option<O>,
                                               usage: U,
-                                              color: fmt::ColorWhen)
+                                              color: ColorWhen)
                                               -> Self
         where A: AnyArg<'a, 'b> + Display,
               O: Into<String>,
               U: Display
     {
         let mut v = vec![arg.name().to_owned()];
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The argument '{}' cannot be used with {}\n\n\
                             {}\n\n\
@@ -444,14 +444,14 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn empty_value<'a, 'b, A, U>(arg: &A, usage: U, color: fmt::ColorWhen) -> Self
+    pub fn empty_value<'a, 'b, A, U>(arg: &A, usage: U, color: ColorWhen) -> Self
         where A: AnyArg<'a, 'b> + Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The argument '{}' requires a value but none was supplied\
                             \n\n\
@@ -471,21 +471,21 @@ impl Error {
                                              good_vals: &[G],
                                              arg: &A,
                                              usage: U,
-                                             color: fmt::ColorWhen)
+                                             color: ColorWhen)
                                              -> Self
         where B: AsRef<str>,
               G: AsRef<str> + Display,
               A: AnyArg<'a, 'b> + Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         let suffix =
-            suggestions::did_you_mean_suffix(bad_val.as_ref(),
-                                             good_vals.iter(),
-                                             suggestions::DidYouMeanMessageStyle::EnumValue);
+            suggestions::did_you_mean_value_suffix(
+                bad_val.as_ref(),
+                good_vals.iter());
 
         let mut sorted = vec![];
         for v in good_vals {
@@ -517,7 +517,7 @@ impl Error {
                                           did_you_mean: D,
                                           name: N,
                                           usage: U,
-                                          color: fmt::ColorWhen)
+                                          color: ColorWhen)
                                           -> Self
         where S: Into<String>,
               D: AsRef<str> + Display,
@@ -525,10 +525,10 @@ impl Error {
               U: Display
     {
         let s = subcmd.into();
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The subcommand '{}' wasn't recognized\n\t\
                             Did you mean '{}'?\n\n\
@@ -550,15 +550,15 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn unrecognized_subcommand<S, N>(subcmd: S, name: N, color: fmt::ColorWhen) -> Self
+    pub fn unrecognized_subcommand<S, N>(subcmd: S, name: N, color: ColorWhen) -> Self
         where S: Into<String>,
               N: Display
     {
         let s = subcmd.into();
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The subcommand '{}' wasn't recognized\n\n\
                             {}\n\t\
@@ -575,14 +575,14 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn missing_required_argument<R, U>(required: R, usage: U, color: fmt::ColorWhen) -> Self
+    pub fn missing_required_argument<R, U>(required: R, usage: U, color: ColorWhen) -> Self
         where R: Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The following required arguments were not provided:{}\n\n\
                             {}\n\n\
@@ -597,14 +597,14 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn missing_subcommand<N, U>(name: N, usage: U, color: fmt::ColorWhen) -> Self
+    pub fn missing_subcommand<N, U>(name: N, usage: U, color: ColorWhen) -> Self
         where N: AsRef<str> + Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} '{}' requires a subcommand, but one was not provided\n\n\
                             {}\n\n\
@@ -620,13 +620,13 @@ impl Error {
 
 
     #[doc(hidden)]
-    pub fn invalid_utf8<U>(usage: U, color: fmt::ColorWhen) -> Self
+    pub fn invalid_utf8<U>(usage: U, color: ColorWhen) -> Self
         where U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} Invalid UTF-8 was detected in one or more arguments\n\n\
                             {}\n\n\
@@ -643,17 +643,17 @@ impl Error {
     pub fn too_many_values<'a, 'b, V, A, U>(val: V,
                                             arg: &A,
                                             usage: U,
-                                            color: fmt::ColorWhen)
+                                            color: ColorWhen)
                                             -> Self
         where V: AsRef<str> + Display + ToOwned,
               A: AnyArg<'a, 'b> + Display,
               U: Display
     {
         let v = val.as_ref();
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The value '{}' was provided to '{}', but it wasn't expecting \
                             any more values\n\n\
@@ -674,15 +674,15 @@ impl Error {
                                         min_vals: u64,
                                         curr_vals: usize,
                                         usage: U,
-                                        color: fmt::ColorWhen)
+                                        color: ColorWhen)
                                         -> Self
         where A: AnyArg<'a, 'b> + Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The argument '{}' requires at least {} values, but only {} w{} \
                             provided\n\n\
@@ -701,13 +701,13 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn value_validation<'a, 'b, A>(arg: Option<&A>, err: String, color: fmt::ColorWhen) -> Self
+    pub fn value_validation<'a, 'b, A>(arg: Option<&A>, err: String, color: ColorWhen) -> Self
         where A: AnyArg<'a, 'b> + Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} Invalid value{}: {}",
                              c.error("error:"),
@@ -725,7 +725,7 @@ impl Error {
     #[doc(hidden)]
     pub fn value_validation_auto(err: String) -> Self {
         let n: Option<&FlagBuilder> = None; 
-        Error::value_validation(n, err, fmt::ColorWhen::Auto)
+        Error::value_validation(n, err, ColorWhen::Auto)
     }
 
     #[doc(hidden)]
@@ -734,16 +734,16 @@ impl Error {
                                                    curr_vals: usize,
                                                    suffix: S,
                                                    usage: U,
-                                                   color: fmt::ColorWhen)
+                                                   color: ColorWhen)
                                                    -> Self
         where A: AnyArg<'a, 'b> + Display,
               S: Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The argument '{}' requires {} values, but {} w{} \
                             provided\n\n\
@@ -762,14 +762,14 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn unexpected_multiple_usage<'a, 'b, A, U>(arg: &A, usage: U, color: fmt::ColorWhen) -> Self
+    pub fn unexpected_multiple_usage<'a, 'b, A, U>(arg: &A, usage: U, color: ColorWhen) -> Self
         where A: AnyArg<'a, 'b> + Display,
               U: Display
     {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} The argument '{}' was provided more than once, but cannot \
                             be used multiple times\n\n\
@@ -788,16 +788,16 @@ impl Error {
     pub fn unknown_argument<A, U>(arg: A,
                                   did_you_mean: &str,
                                   usage: U,
-                                  color: fmt::ColorWhen)
+                                  color: ColorWhen)
                                   -> Self
         where A: Into<String>,
               U: Display
     {
         let a = arg.into();
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} Found argument '{}' which wasn't expected, or isn't valid in \
             this context{}\n\
@@ -818,11 +818,11 @@ impl Error {
     }
 
     #[doc(hidden)]
-    pub fn io_error(e: &Error, color: fmt::ColorWhen) -> Self {
-        let c = fmt::Colorizer {
+    pub fn io_error(e: &Error, color: ColorWhen) -> Self {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: color,
-        };
+        });
         Error {
             message: format!("{} {}", c.error("error:"), e.description()),
             kind: ErrorKind::Io,
@@ -835,10 +835,10 @@ impl Error {
         where A: Into<String>
     {
         let a = arg.into();
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
-            when: fmt::ColorWhen::Auto,
-        };
+            when: ColorWhen::Auto,
+        });
         Error {
             message: format!("{} The argument '{}' wasn't found",
                              c.error("error:"),
@@ -853,10 +853,10 @@ impl Error {
     /// This can be used in combination with `Error::exit` to exit your program
     /// with a custom error message.
     pub fn with_description(description: &str, kind: ErrorKind) -> Self {
-        let c = fmt::Colorizer {
+        let c = Colorizer::new(ColorizerOption {
             use_stderr: true,
-            when: fmt::ColorWhen::Auto,
-        };
+            when: ColorWhen::Auto,
+        });
         Error {
             message: format!("{} {}", c.error("error:"), description),
             kind: kind,

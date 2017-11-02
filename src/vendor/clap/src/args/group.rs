@@ -10,8 +10,9 @@ use yaml_rust::Yaml;
 /// exclusion rules instead of having to list each argument individually, or when you want a rule
 /// to apply "any but not all" arguments.
 ///
-/// For instance, you can make an entire `ArgGroup` required, this means that one (and *only* one,
-/// if [`ArgGroup::multiple(true)`] is set) argument from that group must be present.
+/// For instance, you can make an entire `ArgGroup` required. If [`ArgGroup::multiple(true)`] is
+/// set, this means that at least one argument from that group must be present. If
+/// [`ArgGroup::multiple(false)`] is set (the default), one and *only* one must be present.
 ///
 /// You can also do things such as name an entire `ArgGroup` as a [conflict] or [requirement] for
 /// another argument, meaning any of the arguments that belong to that group will cause a failure
@@ -151,6 +152,7 @@ impl<'a> ArgGroup<'a> {
     /// assert!(m.is_present("flag"));
     /// ```
     /// [argument]: ./struct.Arg.html
+    #[cfg_attr(feature = "lints", allow(should_assert_eq))]
     pub fn arg(mut self, n: &'a str) -> Self {
         assert!(self.name != n,
                 "ArgGroup '{}' can not have same name as arg inside it",
@@ -470,9 +472,10 @@ impl<'a> From<&'a BTreeMap<Yaml, Yaml>> for ArgGroup<'a> {
             b
         };
 
-        for (k, v) in group_settings.iter() {
+        for (k, v) in group_settings {
             a = match k.as_str().unwrap() {
                 "required" => a.required(v.as_bool().unwrap()),
+                "multiple" => a.multiple(v.as_bool().unwrap()),
                 "args" => yaml_vec_or_str!(v, a, arg),
                 "arg" => {
                     if let Some(ys) = v.as_str() {

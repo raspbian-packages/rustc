@@ -59,7 +59,8 @@ use io::prelude::*;
 
 use ffi::OsStr;
 use fmt;
-use io;
+use fs;
+use io::{self, Initializer};
 use path::Path;
 use str;
 use sys::pipe::{read2, AnonPipe};
@@ -207,8 +208,9 @@ impl Read for ChildStdout {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
     }
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        self.inner.read_to_end(buf)
+    #[inline]
+    unsafe fn initializer(&self) -> Initializer {
+        Initializer::nop()
     }
 }
 
@@ -249,8 +251,9 @@ impl Read for ChildStderr {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.inner.read(buf)
     }
-    fn read_to_end(&mut self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        self.inner.read_to_end(buf)
+    #[inline]
+    unsafe fn initializer(&self) -> Initializer {
+        Initializer::nop()
     }
 }
 
@@ -346,15 +349,19 @@ impl Command {
     ///
     /// Only one argument can be passed per use. So instead of:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # std::process::Command::new("sh")
     /// .arg("-C /path/to/repo")
+    /// # ;
     /// ```
     ///
     /// usage would be:
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # std::process::Command::new("sh")
     /// .arg("-C")
     /// .arg("/path/to/repo")
+    /// # ;
     /// ```
     ///
     /// To pass multiple arguments see [`args`].
@@ -542,8 +549,8 @@ impl Command {
     ///         .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
-    pub fn stdin(&mut self, cfg: Stdio) -> &mut Command {
-        self.inner.stdin(cfg.0);
+    pub fn stdin<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
+        self.inner.stdin(cfg.into().0);
         self
     }
 
@@ -562,8 +569,8 @@ impl Command {
     ///         .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
-    pub fn stdout(&mut self, cfg: Stdio) -> &mut Command {
-        self.inner.stdout(cfg.0);
+    pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
+        self.inner.stdout(cfg.into().0);
         self
     }
 
@@ -582,8 +589,8 @@ impl Command {
     ///         .expect("ls command failed to start");
     /// ```
     #[stable(feature = "process", since = "1.0.0")]
-    pub fn stderr(&mut self, cfg: Stdio) -> &mut Command {
-        self.inner.stderr(cfg.0);
+    pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut Command {
+        self.inner.stderr(cfg.into().0);
         self
     }
 
@@ -748,6 +755,34 @@ impl FromInner<imp::Stdio> for Stdio {
 impl fmt::Debug for Stdio {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.pad("Stdio { .. }")
+    }
+}
+
+#[stable(feature = "stdio_from", since = "1.20.0")]
+impl From<ChildStdin> for Stdio {
+    fn from(child: ChildStdin) -> Stdio {
+        Stdio::from_inner(child.into_inner().into())
+    }
+}
+
+#[stable(feature = "stdio_from", since = "1.20.0")]
+impl From<ChildStdout> for Stdio {
+    fn from(child: ChildStdout) -> Stdio {
+        Stdio::from_inner(child.into_inner().into())
+    }
+}
+
+#[stable(feature = "stdio_from", since = "1.20.0")]
+impl From<ChildStderr> for Stdio {
+    fn from(child: ChildStderr) -> Stdio {
+        Stdio::from_inner(child.into_inner().into())
+    }
+}
+
+#[stable(feature = "stdio_from", since = "1.20.0")]
+impl From<fs::File> for Stdio {
+    fn from(file: fs::File) -> Stdio {
+        Stdio::from_inner(file.into_inner().into())
     }
 }
 

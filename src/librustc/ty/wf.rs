@@ -31,10 +31,10 @@ pub fn obligations<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
                                    span: Span)
                                    -> Option<Vec<traits::PredicateObligation<'tcx>>>
 {
-    let mut wf = WfPredicates { infcx: infcx,
-                                param_env: param_env,
-                                body_id: body_id,
-                                span: span,
+    let mut wf = WfPredicates { infcx,
+                                param_env,
+                                body_id,
+                                span,
                                 out: vec![] };
     if wf.compute(ty) {
         debug!("wf::obligations({:?}, body_id={:?}) = {:?}", ty, body_id, wf.out);
@@ -155,11 +155,11 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
         // A projection is well-formed if (a) the trait ref itself is
         // WF and (b) the trait-ref holds.  (It may also be
         // normalizable and be WF that way.)
-
-        self.compute_trait_ref(&data.trait_ref);
+        let trait_ref = data.trait_ref(self.infcx.tcx);
+        self.compute_trait_ref(&trait_ref);
 
         if !data.has_escaping_regions() {
-            let predicate = data.trait_ref.to_predicate();
+            let predicate = trait_ref.to_predicate();
             let cause = self.cause(traits::ProjectionWf(data));
             self.out.push(traits::Obligation::new(cause, self.param_env, predicate));
         }

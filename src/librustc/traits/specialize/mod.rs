@@ -125,7 +125,7 @@ pub fn find_associated_item<'a, 'tcx>(
     let ancestors = trait_def.ancestors(tcx, impl_data.impl_def_id);
     match ancestors.defs(tcx, item.name, item.kind).next() {
         Some(node_item) => {
-            let substs = tcx.infer_ctxt(()).enter(|infcx| {
+            let substs = tcx.infer_ctxt().enter(|infcx| {
                 let param_env = ty::ParamEnv::empty(Reveal::All);
                 let substs = substs.rebase_onto(tcx, trait_def_id, impl_data.substs);
                 let substs = translate_substs(&infcx, param_env, impl_data.impl_def_id,
@@ -188,7 +188,7 @@ pub fn specializes<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let impl1_trait_ref = tcx.impl_trait_ref(impl1_def_id).unwrap();
 
     // Create a infcx, taking the predicates of impl1 as assumptions:
-    let result = tcx.infer_ctxt(()).enter(|infcx| {
+    let result = tcx.infer_ctxt().enter(|infcx| {
         // Normalize the trait reference. The WF rules ought to ensure
         // that this always succeeds.
         let impl1_trait_ref =
@@ -300,7 +300,8 @@ pub(super) fn specialization_graph_provider<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx
                                                       -> Rc<specialization_graph::Graph> {
     let mut sg = specialization_graph::Graph::new();
 
-    let mut trait_impls: Vec<DefId> = tcx.trait_impls_of(trait_id).iter().collect();
+    let mut trait_impls = Vec::new();
+    tcx.for_each_impl(trait_id, |impl_did| trait_impls.push(impl_did));
 
     // The coherence checking implementation seems to rely on impls being
     // iterated over (roughly) in definition order, so we are sorting by

@@ -16,12 +16,9 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 #![deny(warnings)]
 
-#![feature(associated_consts)]
 #![feature(rustc_diagnostic_macros)]
 
-#![cfg_attr(stage0, unstable(feature = "rustc_private", issue = "27812"))]
-#![cfg_attr(stage0, feature(rustc_private))]
-#![cfg_attr(stage0, feature(staged_api))]
+#![cfg_attr(stage0, feature(associated_consts))]
 
 #[macro_use]
 extern crate log;
@@ -329,7 +326,7 @@ fn resolve_struct_error<'sess, 'a>(resolver: &'sess Resolver,
                              span,
                              E0435,
                              "attempt to use a non-constant value in a constant");
-            err.span_label(span, "non-constant used with constant");
+            err.span_label(span, "non-constant value");
             err
         }
         ResolutionError::BindingShadowsSomethingUnacceptable(what_binding, name, binding) => {
@@ -2412,13 +2409,15 @@ impl<'a> Resolver<'a> {
                     .map(|suggestion| import_candidate_to_paths(&suggestion)).collect::<Vec<_>>();
                 enum_candidates.sort();
                 for (sp, variant_path, enum_path) in enum_candidates {
-                    let msg = format!("there is an enum variant `{}`, did you mean to use `{}`?",
-                                      variant_path,
-                                      enum_path);
                     if sp == DUMMY_SP {
+                        let msg = format!("there is an enum variant `{}`, \
+                                        try using `{}`?",
+                                        variant_path,
+                                        enum_path);
                         err.help(&msg);
                     } else {
-                        err.span_help(sp, &msg);
+                        err.span_suggestion(span, "you can try using the variant's enum",
+                                            enum_path);
                     }
                 }
             }
@@ -2427,18 +2426,20 @@ impl<'a> Resolver<'a> {
                     let self_is_available = this.self_value_is_available(path[0].ctxt, span);
                     match candidate {
                         AssocSuggestion::Field => {
-                            err.span_label(span, format!("did you mean `self.{}`?", path_str));
+                            err.span_suggestion(span, "try",
+                                                format!("self.{}", path_str));
                             if !self_is_available {
                                 err.span_label(span, format!("`self` value is only available in \
                                                                methods with `self` parameter"));
                             }
                         }
                         AssocSuggestion::MethodWithSelf if self_is_available => {
-                            err.span_label(span, format!("did you mean `self.{}(...)`?",
-                                                           path_str));
+                            err.span_suggestion(span, "try",
+                                                format!("self.{}", path_str));
                         }
                         AssocSuggestion::MethodWithSelf | AssocSuggestion::AssocItem => {
-                            err.span_label(span, format!("did you mean `Self::{}`?", path_str));
+                            err.span_suggestion(span, "try",
+                                                format!("Self::{}", path_str));
                         }
                     }
                     return err;
@@ -2470,9 +2471,9 @@ impl<'a> Resolver<'a> {
                                                                  path_str, ident.node));
                             return err;
                         }
-                        ExprKind::MethodCall(ident, ..) => {
+                        ExprKind::MethodCall(ref segment, ..) => {
                             err.span_label(parent.span, format!("did you mean `{}::{}(...)`?",
-                                                                 path_str, ident.node));
+                                                                 path_str, segment.identifier));
                             return err;
                         }
                         _ => {}
@@ -2669,7 +2670,8 @@ impl<'a> Resolver<'a> {
         };
 
         if path.len() > 1 && !global_by_default && result.base_def() != Def::Err &&
-           path[0].name != keywords::CrateRoot.name() && path[0].name != "$crate" {
+           path[0].name != keywords::CrateRoot.name() &&
+           path[0].name != keywords::DollarCrate.name() {
             let unqualified_result = {
                 match self.resolve_path(&[*path.last().unwrap()], Some(ns), false, span) {
                     PathResult::NonModule(path_res) => path_res.base_def(),
@@ -2722,7 +2724,7 @@ impl<'a> Resolver<'a> {
             if i == 0 && ns == TypeNS && ident.name == keywords::CrateRoot.name() {
                 module = Some(self.resolve_crate_root(ident.ctxt.modern()));
                 continue
-            } else if i == 0 && ns == TypeNS && ident.name == "$crate" {
+            } else if i == 0 && ns == TypeNS && ident.name == keywords::DollarCrate.name() {
                 module = Some(self.resolve_crate_root(ident.ctxt));
                 continue
             }
@@ -3147,15 +3149,13 @@ impl<'a> Resolver<'a> {
             ExprKind::Field(ref subexpression, _) => {
                 self.resolve_expr(subexpression, Some(expr));
             }
-            ExprKind::MethodCall(_, ref types, ref arguments) => {
+            ExprKind::MethodCall(ref segment, ref arguments) => {
                 let mut arguments = arguments.iter();
                 self.resolve_expr(arguments.next().unwrap(), Some(expr));
                 for argument in arguments {
                     self.resolve_expr(argument, None);
                 }
-                for ty in types.iter() {
-                    self.visit_ty(ty);
-                }
+                self.visit_path_segment(expr.span, segment);
             }
 
             ExprKind::Repeat(ref element, ref count) => {
@@ -3187,10 +3187,10 @@ impl<'a> Resolver<'a> {
                 let traits = self.get_traits_containing_item(name.node, ValueNS);
                 self.trait_map.insert(expr.id, traits);
             }
-            ExprKind::MethodCall(name, ..) => {
+            ExprKind::MethodCall(ref segment, ..) => {
                 debug!("(recording candidate traits for expr) recording traits for {}",
                        expr.id);
-                let traits = self.get_traits_containing_item(name.node, ValueNS);
+                let traits = self.get_traits_containing_item(segment.identifier, ValueNS);
                 self.trait_map.insert(expr.id, traits);
             }
             _ => {
@@ -3454,11 +3454,11 @@ impl<'a> Resolver<'a> {
                        parent: Module,
                        ident: Ident,
                        ns: Namespace,
-                       binding: &NameBinding,
+                       new_binding: &NameBinding,
                        old_binding: &NameBinding) {
         // Error on the second of two conflicting names
-        if old_binding.span.lo > binding.span.lo {
-            return self.report_conflict(parent, ident, ns, old_binding, binding);
+        if old_binding.span.lo > new_binding.span.lo {
+            return self.report_conflict(parent, ident, ns, old_binding, new_binding);
         }
 
         let container = match parent.kind {
@@ -3468,12 +3468,17 @@ impl<'a> Resolver<'a> {
             _ => "enum",
         };
 
-        let (participle, noun) = match old_binding.is_import() {
-            true => ("imported", "import"),
-            false => ("defined", "definition"),
+        let old_noun = match old_binding.is_import() {
+            true => "import",
+            false => "definition",
         };
 
-        let (name, span) = (ident.name, binding.span);
+        let new_participle = match new_binding.is_import() {
+            true => "imported",
+            false => "defined",
+        };
+
+        let (name, span) = (ident.name, new_binding.span);
 
         if let Some(s) = self.name_already_seen.get(&name) {
             if s == &span {
@@ -3481,36 +3486,47 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let msg = {
-            let kind = match (ns, old_binding.module()) {
-                (ValueNS, _) => "a value",
-                (MacroNS, _) => "a macro",
-                (TypeNS, _) if old_binding.is_extern_crate() => "an extern crate",
-                (TypeNS, Some(module)) if module.is_normal() => "a module",
-                (TypeNS, Some(module)) if module.is_trait() => "a trait",
-                (TypeNS, _) => "a type",
-            };
-            format!("{} named `{}` has already been {} in this {}",
-                    kind, name, participle, container)
+        let old_kind = match (ns, old_binding.module()) {
+            (ValueNS, _) => "value",
+            (MacroNS, _) => "macro",
+            (TypeNS, _) if old_binding.is_extern_crate() => "extern crate",
+            (TypeNS, Some(module)) if module.is_normal() => "module",
+            (TypeNS, Some(module)) if module.is_trait() => "trait",
+            (TypeNS, _) => "type",
         };
 
-        let mut err = match (old_binding.is_extern_crate(), binding.is_extern_crate()) {
+        let namespace = match ns {
+            ValueNS => "value",
+            MacroNS => "macro",
+            TypeNS => "type",
+        };
+
+        let msg = format!("the name `{}` is defined multiple times", name);
+
+        let mut err = match (old_binding.is_extern_crate(), new_binding.is_extern_crate()) {
             (true, true) => struct_span_err!(self.session, span, E0259, "{}", msg),
-            (true, _) | (_, true) => match binding.is_import() && old_binding.is_import() {
+            (true, _) | (_, true) => match new_binding.is_import() && old_binding.is_import() {
                 true => struct_span_err!(self.session, span, E0254, "{}", msg),
                 false => struct_span_err!(self.session, span, E0260, "{}", msg),
             },
-            _ => match (old_binding.is_import(), binding.is_import()) {
+            _ => match (old_binding.is_import(), new_binding.is_import()) {
                 (false, false) => struct_span_err!(self.session, span, E0428, "{}", msg),
                 (true, true) => struct_span_err!(self.session, span, E0252, "{}", msg),
                 _ => struct_span_err!(self.session, span, E0255, "{}", msg),
             },
         };
 
-        err.span_label(span, format!("`{}` already {}", name, participle));
+        err.note(&format!("`{}` must be defined only once in the {} namespace of this {}",
+                          name,
+                          namespace,
+                          container));
+
+        err.span_label(span, format!("`{}` re{} here", name, new_participle));
         if old_binding.span != syntax_pos::DUMMY_SP {
-            err.span_label(old_binding.span, format!("previous {} of `{}` here", noun, name));
+            err.span_label(old_binding.span, format!("previous {} of the {} `{}` here",
+                                                      old_noun, old_kind, name));
         }
+
         err.emit();
         self.name_already_seen.insert(name, span);
     }

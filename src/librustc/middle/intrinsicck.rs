@@ -20,7 +20,7 @@ use hir;
 
 pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     let mut visitor = ItemVisitor {
-        tcx: tcx
+        tcx,
     };
     tcx.hir.krate().visit_all_item_likes(&mut visitor.as_deep_visitor());
 }
@@ -66,11 +66,8 @@ fn unpack_option_like<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 impl<'a, 'tcx> ExprVisitor<'a, 'tcx> {
     fn def_id_is_transmute(&self, def_id: DefId) -> bool {
-        let intrinsic = match self.tcx.type_of(def_id).sty {
-            ty::TyFnDef(.., bfty) => bfty.abi() == RustIntrinsic,
-            _ => return false
-        };
-        intrinsic && self.tcx.item_name(def_id) == "transmute"
+        self.tcx.fn_sig(def_id).abi() == RustIntrinsic &&
+        self.tcx.item_name(def_id) == "transmute"
     }
 
     fn check_transmute(&self, span: Span, from: Ty<'tcx>, to: Ty<'tcx>) {
@@ -86,17 +83,16 @@ impl<'a, 'tcx> ExprVisitor<'a, 'tcx> {
             // Special-case transmutting from `typeof(function)` and
             // `Option<typeof(function)>` to present a clearer error.
             let from = unpack_option_like(self.tcx.global_tcx(), from);
-            match (&from.sty, sk_to) {
-                (&ty::TyFnDef(..), SizeSkeleton::Known(size_to))
-                        if size_to == Pointer.size(self.tcx) => {
+            if let (&ty::TyFnDef(..), SizeSkeleton::Known(size_to)) = (&from.sty, sk_to) {
+                if size_to == Pointer.size(self.tcx) {
                     struct_span_err!(self.tcx.sess, span, E0591,
-                                     "`{}` is zero-sized and can't be transmuted to `{}`",
-                                     from, to)
-                        .span_note(span, "cast with `as` to a pointer instead")
+                                     "can't transmute zero-sized type")
+                        .note(&format!("source type: {}", from))
+                        .note(&format!("target type: {}", to))
+                        .help("cast with `as` to a pointer instead")
                         .emit();
                     return;
                 }
-                _ => {}
             }
         }
 
@@ -111,7 +107,7 @@ impl<'a, 'tcx> ExprVisitor<'a, 'tcx> {
                 }
                 Err(LayoutError::Unknown(bad)) => {
                     if bad == ty {
-                        format!("size can vary")
+                        format!("this type's size can vary")
                     } else {
                         format!("size can vary because of {}", bad)
                     }
@@ -121,14 +117,9 @@ impl<'a, 'tcx> ExprVisitor<'a, 'tcx> {
         };
 
         struct_span_err!(self.tcx.sess, span, E0512,
-                  "transmute called with differently sized types: \
-                   {} ({}) to {} ({})",
-                  from, skeleton_string(from, sk_from),
-                  to, skeleton_string(to, sk_to))
-            .span_label(span,
-                format!("transmuting between {} and {}",
-                    skeleton_string(from, sk_from),
-                    skeleton_string(to, sk_to)))
+            "transmute called with types of different sizes")
+            .note(&format!("source type: {} ({})", from, skeleton_string(from, sk_from)))
+            .note(&format!("target type: {} ({})", to, skeleton_string(to, sk_to)))
             .emit();
     }
 }
@@ -159,22 +150,14 @@ impl<'a, 'tcx> Visitor<'tcx> for ExprVisitor<'a, 'tcx> {
         } else {
             Def::Err
         };
-        match def {
-            Def::Fn(did) if self.def_id_is_transmute(did) => {
+        if let Def::Fn(did) = def {
+            if self.def_id_is_transmute(did) {
                 let typ = self.tables.node_id_to_type(expr.id);
-                let typ = self.tcx.lift_to_global(&typ).unwrap();
-                match typ.sty {
-                    ty::TyFnDef(.., sig) if sig.abi() == RustIntrinsic => {
-                        let from = sig.inputs().skip_binder()[0];
-                        let to = *sig.output().skip_binder();
-                        self.check_transmute(expr.span, from, to);
-                    }
-                    _ => {
-                        span_bug!(expr.span, "transmute wasn't a bare fn?!");
-                    }
-                }
+                let sig = typ.fn_sig(self.tcx);
+                let from = sig.inputs().skip_binder()[0];
+                let to = *sig.output().skip_binder();
+                self.check_transmute(expr.span, from, to);
             }
-            _ => {}
         }
 
         intravisit::walk_expr(self, expr);

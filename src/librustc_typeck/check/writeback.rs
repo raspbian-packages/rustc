@@ -155,11 +155,6 @@ impl<'cx, 'gcx, 'tcx> Visitor<'gcx> for WritebackCx<'cx, 'gcx, 'tcx> {
         NestedVisitorMap::None
     }
 
-    fn visit_stmt(&mut self, s: &'gcx hir::Stmt) {
-        self.visit_node_id(s.span, s.node.id());
-        intravisit::walk_stmt(self, s);
-    }
-
     fn visit_expr(&mut self, e: &'gcx hir::Expr) {
         self.fix_scalar_builtin_expr(e);
 
@@ -382,7 +377,7 @@ impl<'cx, 'gcx, 'tcx> Resolver<'cx, 'gcx, 'tcx> {
 
     fn report_error(&self, t: Ty<'tcx>) {
         if !self.tcx.sess.has_errors() {
-            self.infcx.need_type_info(self.body.id(), self.span.to_span(&self.tcx), t);
+            self.infcx.need_type_info(Some(self.body.id()), self.span.to_span(&self.tcx), t);
         }
     }
 }

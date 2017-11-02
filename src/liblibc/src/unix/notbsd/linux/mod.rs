@@ -225,6 +225,12 @@ s! {
         pub msg_hdr: ::msghdr,
         pub msg_len: ::c_uint,
     }
+
+    pub struct sembuf {
+        pub sem_num: ::c_ushort,
+        pub sem_op: ::c_short,
+        pub sem_flg: ::c_short,
+    }
 }
 
 pub const ABDAY_1: ::nl_item = 0x20000;
@@ -378,6 +384,7 @@ pub const _SC_THREAD_ATTR_STACKSIZE: ::c_int = 78;
 pub const _SC_THREAD_PRIORITY_SCHEDULING: ::c_int = 79;
 pub const _SC_THREAD_PRIO_INHERIT: ::c_int = 80;
 pub const _SC_THREAD_PRIO_PROTECT: ::c_int = 81;
+pub const _SC_NPROCESSORS_CONF: ::c_int = 83;
 pub const _SC_NPROCESSORS_ONLN: ::c_int = 84;
 pub const _SC_ATEXIT_MAX: ::c_int = 87;
 pub const _SC_XOPEN_VERSION: ::c_int = 89;
@@ -697,6 +704,18 @@ pub const PR_CAP_AMBIENT_RAISE: ::c_int = 2;
 pub const PR_CAP_AMBIENT_LOWER: ::c_int = 3;
 pub const PR_CAP_AMBIENT_CLEAR_ALL: ::c_int = 4;
 
+pub const ITIMER_REAL: ::c_int = 0;
+pub const ITIMER_VIRTUAL: ::c_int = 1;
+pub const ITIMER_PROF: ::c_int = 2;
+
+pub const XATTR_CREATE: ::c_int = 0x1;
+pub const XATTR_REPLACE: ::c_int = 0x2;
+
+// On Linux, libc doesn't define this constant, libattr does instead.
+// We still define it for Linux as it's defined by libc on other platforms,
+// and it's mentioned in the man pages for getxattr and setxattr.
+pub const ENOATTR: ::c_int = ::ENODATA;
+
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
         for slot in cpuset.bits.iter_mut() {
@@ -788,6 +807,11 @@ extern {
                   cmd: ::c_int,
                   buf: *mut ::shmid_ds) -> ::c_int;
     pub fn ftok(pathname: *const ::c_char, proj_id: ::c_int) -> ::key_t;
+    pub fn semget(key: ::key_t, nsems: ::c_int, semflag: ::c_int) -> ::c_int;
+    pub fn semop(semid: ::c_int,
+                 sops: *mut ::sembuf, nsops: ::size_t) -> ::c_int;
+    pub fn semctl(semid: ::c_int,
+                  semnum: ::c_int, cmd: ::c_int, ...) -> ::c_int;
     pub fn msgctl(msqid: ::c_int, cmd: ::c_int, buf: *mut msqid_ds) -> ::c_int;
     pub fn msgget(key: ::key_t, msgflg: ::c_int) -> ::c_int;
     pub fn msgrcv(msqid: ::c_int, msgp: *mut ::c_void, msgsz: ::size_t,
@@ -903,6 +927,8 @@ extern {
                        serv: *mut ::c_char,
                        sevlen: ::socklen_t,
                        flags: ::c_int) -> ::c_int;
+    pub fn pthread_setschedprio(native: ::pthread_t,
+                                priority: ::c_int) -> ::c_int;
     pub fn prlimit(pid: ::pid_t, resource: ::c_int, new_limit: *const ::rlimit,
                    old_limit: *mut ::rlimit) -> ::c_int;
     pub fn prlimit64(pid: ::pid_t,
@@ -986,6 +1012,9 @@ extern {
                    flags: ::c_int) -> ::ssize_t;
     pub fn recvmsg(fd: ::c_int, msg: *mut ::msghdr, flags: ::c_int)
                    -> ::ssize_t;
+    pub fn getdomainname(name: *mut ::c_char, len: ::size_t) -> ::c_int;
+    pub fn setdomainname(name: *const ::c_char, len: ::size_t) -> ::c_int;
+    pub fn vhangup() -> ::c_int;
 }
 
 extern {
@@ -993,6 +1022,7 @@ extern {
                     flags: ::c_int) -> ::c_int;
     pub fn recvmmsg(sockfd: ::c_int, msgvec: *mut mmsghdr, vlen: ::c_uint,
                     flags: ::c_int, timeout: *mut ::timespec) -> ::c_int;
+    pub fn sync();
 }
 
 cfg_if! {

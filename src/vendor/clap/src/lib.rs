@@ -274,6 +274,7 @@
 //! ### BYOB (Build Your Own Binary)
 //! 
 //! To test out `clap`'s default auto-generated help/version follow these steps:
+//!
 //! * Create a new cargo project `$ cargo new fake --bin && cd fake`
 //! * Add `clap` to your `Cargo.toml`
 //!
@@ -326,9 +327,9 @@
 //! 
 //! #### Features enabled by default
 //! 
-//! * **"suggestions"**: Turns on the `Did you mean '--myoption'?` feature for when users make typos. (builds dependency `strsim`)
-//! * **"color"**: Turns on colored error messages. This feature only works on non-Windows OSs. (builds dependency `ansi-term` and `libc`)
-//! * **"wrap_help"**: Wraps the help at the actual terminal width when available, instead of 120 chracters. (builds dependency `term_size`, and `libc`)
+//! * `suggestions`: Turns on the `Did you mean '--myoption'?` feature for when users make typos. (builds dependency `strsim`)
+//! * `color`: Turns on colored error messages. This feature only works on non-Windows OSs. (builds dependency `ansi-term` and `atty`)
+//! * `wrap_help`: Wraps the help at the actual terminal width when available, instead of 120 chracters. (builds dependency `term_size`)
 //! 
 //! To disable these, add this to your `Cargo.toml`:
 //! 
@@ -477,7 +478,7 @@
 //! 
 //! ### Compatibility Policy
 //!
-//! Because `clap` takes SemVer and compatibility seriously, this is the official policy regarding
+//! Because `clap` takes `SemVer` and compatibility seriously, this is the official policy regarding
 //! breaking changes and previous versions of Rust.
 //!
 //! `clap` will pin the minimum required version of Rust to the CI builds. Bumping the minimum
@@ -498,8 +499,8 @@
 //!
 //! `clap` will officially support current stable Rust, minus two releases, but may work with prior
 //! releases as well. For example, current stable Rust at the time of this writing is 1.13.0,
-//! meaning `clap` is garunteed to compile with 1.11.0 and beyond. At the 1.14.0 release, `clap`
-//! will be garunteed to compile with 2.12.0 and beyond, etc.
+//! meaning `clap` is guaranteed to compile with 1.11.0 and beyond. At the 1.14.0 release, `clap`
+//! will be guaranteed to compile with 1.12.0 and beyond, etc.
 //! 
 //! Upon bumping the minimum version of Rust (assuming it's within the stable-2 range), it *must* be
 //! clearly annotated in the `CHANGELOG.md`
@@ -526,6 +527,7 @@
 #![cfg_attr(feature = "lints", deny(warnings))]
 #![cfg_attr(feature = "lints", allow(cyclomatic_complexity))]
 #![cfg_attr(feature = "lints", allow(doc_markdown))]
+#![cfg_attr(feature = "lints", allow(explicit_iter_loop))]
 
 #[cfg(feature = "suggestions")]
 extern crate strsim;
@@ -533,15 +535,16 @@ extern crate strsim;
 extern crate ansi_term;
 #[cfg(feature = "yaml")]
 extern crate yaml_rust;
-#[cfg(any(feature = "wrap_help", feature = "color"))]
-extern crate libc;
 extern crate unicode_width;
 #[macro_use]
 extern crate bitflags;
 extern crate vec_map;
 #[cfg(feature = "wrap_help")]
 extern crate term_size;
+extern crate textwrap;
 extern crate unicode_segmentation;
+#[cfg(feature = "color")]
+extern crate atty;
 
 #[cfg(feature = "yaml")]
 pub use yaml_rust::YamlLoader;

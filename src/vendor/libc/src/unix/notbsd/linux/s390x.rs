@@ -16,6 +16,7 @@ pub type greg_t = u64;
 pub type clock_t = i64;
 pub type __fsword_t = ::c_long;
 pub type __priority_which_t = ::c_uint;
+pub type __u64 = u64;
 
 s! {
     pub struct aiocb {
@@ -86,7 +87,7 @@ s! {
         pub sa_sigaction: ::sighandler_t,
         __glibc_reserved0: ::c_int,
         pub sa_flags: ::c_int,
-        _restorer: *mut ::c_void,
+        pub sa_restorer: ::dox::Option<extern fn()>,
         pub sa_mask: sigset_t,
     }
 
@@ -273,8 +274,6 @@ s! {
     }
 }
 
-pub const CLONE_NEWCGROUP: ::c_int = 0x02000000;
-
 pub const SFD_CLOEXEC: ::c_int = 0x080000;
 
 pub const NCCS: usize = 32;
@@ -314,6 +313,7 @@ pub const __SIZEOF_PTHREAD_CONDATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEXATTR_T: usize = 4;
 pub const __SIZEOF_PTHREAD_MUTEX_T: usize = 40;
 pub const __SIZEOF_PTHREAD_RWLOCK_T: usize = 56;
+pub const __SIZEOF_PTHREAD_RWLOCKATTR_T: usize = 8;
 
 pub const EADDRINUSE: ::c_int = 98;
 pub const EADDRNOTAVAIL: ::c_int = 99;
@@ -349,6 +349,14 @@ pub const SO_ERROR: ::c_int = 4;
 pub const SO_RCVTIMEO: ::c_int = 20;
 pub const SO_REUSEADDR: ::c_int = 2;
 pub const SO_SNDTIMEO: ::c_int = 21;
+pub const SO_BINDTODEVICE: ::c_int = 25;
+pub const SO_TIMESTAMP: ::c_int = 29;
+pub const SO_MARK: ::c_int = 36;
+pub const SO_PROTOCOL: ::c_int = 38;
+pub const SO_DOMAIN: ::c_int = 39;
+pub const SO_RXQ_OVFL: ::c_int = 40;
+pub const SO_PEEK_OFF: ::c_int = 42;
+pub const SO_BUSY_POLL: ::c_int = 46;
 
 pub const RLIMIT_RSS: ::c_int = 5;
 pub const RLIMIT_NOFILE: ::c_int = 7;
@@ -537,7 +545,81 @@ pub const BUFSIZ: ::c_uint = 8192;
 pub const TMP_MAX: ::c_uint = 238328;
 pub const FOPEN_MAX: ::c_uint = 16;
 pub const POSIX_MADV_DONTNEED: ::c_int = 4;
+pub const _SC_EQUIV_CLASS_MAX: ::c_int = 41;
+pub const _SC_CHARCLASS_NAME_MAX: ::c_int = 45;
+pub const _SC_PII: ::c_int = 53;
+pub const _SC_PII_XTI: ::c_int = 54;
+pub const _SC_PII_SOCKET: ::c_int = 55;
+pub const _SC_PII_INTERNET: ::c_int = 56;
+pub const _SC_PII_OSI: ::c_int = 57;
+pub const _SC_POLL: ::c_int = 58;
+pub const _SC_SELECT: ::c_int = 59;
+pub const _SC_PII_INTERNET_STREAM: ::c_int = 61;
+pub const _SC_PII_INTERNET_DGRAM: ::c_int = 62;
+pub const _SC_PII_OSI_COTS: ::c_int = 63;
+pub const _SC_PII_OSI_CLTS: ::c_int = 64;
+pub const _SC_PII_OSI_M: ::c_int = 65;
+pub const _SC_T_IOV_MAX: ::c_int = 66;
 pub const _SC_2_C_VERSION: ::c_int = 96;
+pub const _SC_CHAR_BIT: ::c_int = 101;
+pub const _SC_CHAR_MAX: ::c_int = 102;
+pub const _SC_CHAR_MIN: ::c_int = 103;
+pub const _SC_INT_MAX: ::c_int = 104;
+pub const _SC_INT_MIN: ::c_int = 105;
+pub const _SC_LONG_BIT: ::c_int = 106;
+pub const _SC_WORD_BIT: ::c_int = 107;
+pub const _SC_MB_LEN_MAX: ::c_int = 108;
+pub const _SC_SSIZE_MAX: ::c_int = 110;
+pub const _SC_SCHAR_MAX: ::c_int = 111;
+pub const _SC_SCHAR_MIN: ::c_int = 112;
+pub const _SC_SHRT_MAX: ::c_int = 113;
+pub const _SC_SHRT_MIN: ::c_int = 114;
+pub const _SC_UCHAR_MAX: ::c_int = 115;
+pub const _SC_UINT_MAX: ::c_int = 116;
+pub const _SC_ULONG_MAX: ::c_int = 117;
+pub const _SC_USHRT_MAX: ::c_int = 118;
+pub const _SC_NL_ARGMAX: ::c_int = 119;
+pub const _SC_NL_LANGMAX: ::c_int = 120;
+pub const _SC_NL_MSGMAX: ::c_int = 121;
+pub const _SC_NL_NMAX: ::c_int = 122;
+pub const _SC_NL_SETMAX: ::c_int = 123;
+pub const _SC_NL_TEXTMAX: ::c_int = 124;
+pub const _SC_BASE: ::c_int = 134;
+pub const _SC_C_LANG_SUPPORT: ::c_int = 135;
+pub const _SC_C_LANG_SUPPORT_R: ::c_int = 136;
+pub const _SC_DEVICE_IO: ::c_int = 140;
+pub const _SC_DEVICE_SPECIFIC: ::c_int = 141;
+pub const _SC_DEVICE_SPECIFIC_R: ::c_int = 142;
+pub const _SC_FD_MGMT: ::c_int = 143;
+pub const _SC_FIFO: ::c_int = 144;
+pub const _SC_PIPE: ::c_int = 145;
+pub const _SC_FILE_ATTRIBUTES: ::c_int = 146;
+pub const _SC_FILE_LOCKING: ::c_int = 147;
+pub const _SC_FILE_SYSTEM: ::c_int = 148;
+pub const _SC_MULTI_PROCESS: ::c_int = 150;
+pub const _SC_SINGLE_PROCESS: ::c_int = 151;
+pub const _SC_NETWORKING: ::c_int = 152;
+pub const _SC_REGEX_VERSION: ::c_int = 156;
+pub const _SC_SIGNALS: ::c_int = 158;
+pub const _SC_SYSTEM_DATABASE: ::c_int = 162;
+pub const _SC_SYSTEM_DATABASE_R: ::c_int = 163;
+pub const _SC_USER_GROUPS: ::c_int = 166;
+pub const _SC_USER_GROUPS_R: ::c_int = 167;
+pub const _SC_LEVEL1_ICACHE_SIZE: ::c_int = 185;
+pub const _SC_LEVEL1_ICACHE_ASSOC: ::c_int = 186;
+pub const _SC_LEVEL1_ICACHE_LINESIZE: ::c_int = 187;
+pub const _SC_LEVEL1_DCACHE_SIZE: ::c_int = 188;
+pub const _SC_LEVEL1_DCACHE_ASSOC: ::c_int = 189;
+pub const _SC_LEVEL1_DCACHE_LINESIZE: ::c_int = 190;
+pub const _SC_LEVEL2_CACHE_SIZE: ::c_int = 191;
+pub const _SC_LEVEL2_CACHE_ASSOC: ::c_int = 192;
+pub const _SC_LEVEL2_CACHE_LINESIZE: ::c_int = 193;
+pub const _SC_LEVEL3_CACHE_SIZE: ::c_int = 194;
+pub const _SC_LEVEL3_CACHE_ASSOC: ::c_int = 195;
+pub const _SC_LEVEL3_CACHE_LINESIZE: ::c_int = 196;
+pub const _SC_LEVEL4_CACHE_SIZE: ::c_int = 197;
+pub const _SC_LEVEL4_CACHE_ASSOC: ::c_int = 198;
+pub const _SC_LEVEL4_CACHE_LINESIZE: ::c_int = 199;
 pub const O_ASYNC: ::c_int = 0x2000;
 pub const O_NDELAY: ::c_int = 0x800;
 pub const ST_RELATIME: ::c_ulong = 4096;
@@ -691,6 +773,38 @@ pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
 pub const SYS_gettid: ::c_long = 236;
 pub const SYS_perf_event_open: ::c_long = 331;
+
+pub const CMSPAR: ::tcflag_t = 0o10000000000;
+pub const VSWTC: usize = 7;
+pub const OLCUC:  ::tcflag_t = 0o000002;
+pub const NLDLY:  ::tcflag_t = 0o000400;
+pub const CRDLY:  ::tcflag_t = 0o003000;
+pub const CR1: ::tcflag_t  = 0x00000200;
+pub const CR2: ::tcflag_t  = 0x00000400;
+pub const CR3: ::tcflag_t  = 0x00000600;
+pub const TABDLY: ::tcflag_t = 0o014000;
+pub const TAB1: ::tcflag_t = 0x00000800;
+pub const TAB2: ::tcflag_t = 0x00001000;
+pub const TAB3: ::tcflag_t = 0x00001800;
+pub const BSDLY:  ::tcflag_t = 0o020000;
+pub const BS1: ::tcflag_t  = 0x00002000;
+pub const FFDLY:  ::tcflag_t = 0o100000;
+pub const FF1: ::tcflag_t  = 0x00008000;
+pub const VTDLY:  ::tcflag_t = 0o040000;
+pub const VT1: ::tcflag_t  = 0x00004000;
+pub const XTABS:  ::tcflag_t = 0o014000;
+
+pub const TIOCM_LE: ::c_int = 0x001;
+pub const TIOCM_DTR: ::c_int = 0x002;
+pub const TIOCM_RTS: ::c_int = 0x004;
+pub const TIOCM_ST: ::c_int = 0x008;
+pub const TIOCM_SR: ::c_int = 0x010;
+pub const TIOCM_CTS: ::c_int = 0x020;
+pub const TIOCM_CAR: ::c_int = 0x040;
+pub const TIOCM_RNG: ::c_int = 0x080;
+pub const TIOCM_DSR: ::c_int = 0x100;
+pub const TIOCM_CD: ::c_int = TIOCM_CAR;
+pub const TIOCM_RI: ::c_int = TIOCM_RNG;
 
 #[link(name = "util")]
 extern {

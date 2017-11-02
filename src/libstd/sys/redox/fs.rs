@@ -119,10 +119,10 @@ impl FilePermissions {
 impl FileType {
     pub fn is_dir(&self) -> bool { self.is(syscall::MODE_DIR) }
     pub fn is_file(&self) -> bool { self.is(syscall::MODE_FILE) }
-    pub fn is_symlink(&self) -> bool { false /*FIXME: Implement symlink mode*/ }
+    pub fn is_symlink(&self) -> bool { self.is(syscall::MODE_SYMLINK) }
 
     pub fn is(&self, mode: u16) -> bool {
-        self.mode & (syscall::MODE_DIR | syscall::MODE_FILE) == mode
+        self.mode & syscall::MODE_TYPE == mode
     }
 }
 
@@ -285,10 +285,6 @@ impl File {
         self.0.read(buf)
     }
 
-    pub fn read_to_end(&self, buf: &mut Vec<u8>) -> io::Result<usize> {
-        self.0.read_to_end(buf)
-    }
-
     pub fn write(&self, buf: &[u8]) -> io::Result<usize> {
         self.0.write(buf)
     }
@@ -387,9 +383,10 @@ pub fn unlink(p: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn rename(_old: &Path, _new: &Path) -> io::Result<()> {
-    ::sys_common::util::dumb_print(format_args!("Rename\n"));
-    unimplemented!();
+pub fn rename(old: &Path, new: &Path) -> io::Result<()> {
+    copy(old, new)?;
+    unlink(old)?;
+    Ok(())
 }
 
 pub fn set_perm(p: &Path, perm: FilePermissions) -> io::Result<()> {
@@ -424,12 +421,19 @@ fn remove_dir_all_recursive(path: &Path) -> io::Result<()> {
 }
 
 pub fn readlink(p: &Path) -> io::Result<PathBuf> {
-    canonicalize(p)
+    let fd = cvt(syscall::open(p.to_str().unwrap(), syscall::O_SYMLINK | syscall::O_RDONLY))?;
+    let mut buf: [u8; 4096] = [0; 4096];
+    let count = cvt(syscall::read(fd, &mut buf))?;
+    cvt(syscall::close(fd))?;
+    Ok(PathBuf::from(unsafe { String::from_utf8_unchecked(Vec::from(&buf[..count])) }))
 }
 
-pub fn symlink(_src: &Path, _dst: &Path) -> io::Result<()> {
-    ::sys_common::util::dumb_print(format_args!("Symlink\n"));
-    unimplemented!();
+pub fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    let fd = cvt(syscall::open(dst.to_str().unwrap(),
+                               syscall::O_SYMLINK | syscall::O_CREAT | syscall::O_WRONLY | 0o777))?;
+    cvt(syscall::write(fd, src.to_str().unwrap().as_bytes()))?;
+    cvt(syscall::close(fd))?;
+    Ok(())
 }
 
 pub fn link(_src: &Path, _dst: &Path) -> io::Result<()> {
@@ -444,7 +448,10 @@ pub fn stat(p: &Path) -> io::Result<FileAttr> {
 }
 
 pub fn lstat(p: &Path) -> io::Result<FileAttr> {
-    stat(p)
+    let fd = cvt(syscall::open(p.to_str().unwrap(),
+                               syscall::O_CLOEXEC | syscall::O_STAT | syscall::O_NOFOLLOW))?;
+    let file = File(FileDesc::new(fd));
+    file.file_attr()
 }
 
 pub fn canonicalize(p: &Path) -> io::Result<PathBuf> {

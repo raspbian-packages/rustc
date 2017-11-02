@@ -4,8 +4,8 @@ Forwarded: https://github.com/rust-lang/rust/pull/42020
 ---
 --- a/src/tools/compiletest/src/main.rs
 +++ b/src/tools/compiletest/src/main.rs
-@@ -16,6 +16,7 @@
- #![feature(libc)]
+@@ -13,6 +13,7 @@
+ #![feature(test)]
  
  #![deny(warnings)]
 +#![allow(stable_features)] // needed to compile the tests with both 1.16 and 1.17

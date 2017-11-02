@@ -1,5 +1,15 @@
 # Change Log
 
+## [0.26.1](https://github.com/sunng87/handlebars-rust/compare/0.25.3...0.26.1) - 2017-04-23
+
+* [Changed] Updated to Serde 1.0
+* [Changed] Dropped rustc_serialize, serde is now the default type system
+
+## [0.25.3](https://github.com/sunng87/handlebars-rust/compare/0.25.2...0.25.3) - 2017-04-19
+
+* [Changed] Fixed path up [#147](https://github.com/sunng87/handlebars-rust/issues/147)
+* [Changed] Fixed duplicated template inclusion [#146](https://github.com/sunng87/handlebars-rust/issues/146)
+
 ## [0.25.2](https://github.com/sunng87/handlebars-rust/compare/0.25.1...0.25.2) - 2017-03-22
 
 * [Changed] Fixed bug when including two partials with same name [#143](https://github.com/sunng87/handlebars-rust/issues/143)

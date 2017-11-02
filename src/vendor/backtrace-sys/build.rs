@@ -35,6 +35,7 @@ fn find_tool(compiler: &gcc::Tool, cc: &str, tool: &str) -> PathBuf {
     }
     let tool_suffix = format!("-{}", tool);
     try_tool(compiler, cc, "-gcc", &tool_suffix)
+        .or_else(|| try_tool(compiler, cc, "-clang", &tool_suffix))
         .or_else(|| try_tool(compiler, cc, "-cc", &tool_suffix))
         .unwrap_or_else(|| PathBuf::from(tool))
 }
@@ -71,7 +72,8 @@ fn main() {
         flags.push(flag);
     }
     let ar = find_tool(&compiler, cc, "ar");
-    run(Command::new(src.join("src/libbacktrace/configure"))
+    run(Command::new("sh")
+                .arg(src.join("src/libbacktrace/configure"))
                 .current_dir(&dst)
                 .env("CC", compiler.path())
                 .env("CFLAGS", flags)
@@ -79,9 +81,8 @@ fn main() {
                 .arg("--disable-multilib")
                 .arg("--disable-shared")
                 .arg("--disable-host-shared")
-                .arg(format!("--target={}", target))
                 .arg(format!("--host={}", target))
-                .arg(format!("--build={}", host)), // GNU vs LLVM terminology
+                .arg(format!("--build={}", host)),
         "sh");
     run(Command::new("make")
                 .current_dir(&dst)

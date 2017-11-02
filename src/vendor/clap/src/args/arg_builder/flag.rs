@@ -3,13 +3,15 @@ use std::convert::From;
 use std::fmt::{Display, Formatter, Result};
 use std::rc::Rc;
 use std::result::Result as StdResult;
+use std::ffi::{OsStr, OsString};
+use std::mem;
 
 // Third Party
-use vec_map::VecMap;
+use vec_map::{self, VecMap};
 
 // Internal
 use Arg;
-use args::{ArgSettings, ArgKind, Base, Switched, AnyArg, DispOrder};
+use args::{ArgSettings, Base, Switched, AnyArg, DispOrder};
 
 #[derive(Default, Clone, Debug)]
 #[doc(hidden)]
@@ -26,11 +28,18 @@ impl<'n, 'e> FlagBuilder<'n, 'e> {
 
 impl<'a, 'b, 'z> From<&'z Arg<'a, 'b>> for FlagBuilder<'a, 'b> {
     fn from(a: &'z Arg<'a, 'b>) -> Self {
-        // No need to check for index() or takes_value() as that is handled above
-
         FlagBuilder {
             b: Base::from(a),
             s: Switched::from(a),
+        }
+    }
+}
+
+impl<'a, 'b> From<Arg<'a, 'b>> for FlagBuilder<'a, 'b> {
+    fn from(mut a: Arg<'a, 'b>) -> Self {
+        FlagBuilder {
+            b: mem::replace(&mut a.b, Base::default()),
+            s: mem::replace(&mut a.s, Switched::default()),
         }
     }
 }
@@ -49,10 +58,10 @@ impl<'n, 'e> Display for FlagBuilder<'n, 'e> {
 
 impl<'n, 'e> AnyArg<'n, 'e> for FlagBuilder<'n, 'e> {
     fn name(&self) -> &'n str { self.b.name }
-    fn id(&self) -> usize { self.b.id }
-    fn kind(&self) -> ArgKind { ArgKind::Flag }
     fn overrides(&self) -> Option<&[&'e str]> { self.b.overrides.as_ref().map(|o| &o[..]) }
-    fn requires(&self) -> Option<&[&'e str]> { self.b.requires.as_ref().map(|o| &o[..]) }
+    fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> {
+        self.b.requires.as_ref().map(|o| &o[..])
+    }
     fn blacklist(&self) -> Option<&[&'e str]> { self.b.blacklist.as_ref().map(|o| &o[..]) }
     fn required_unless(&self) -> Option<&[&'e str]> { None }
     fn is_set(&self, s: ArgSettings) -> bool { self.b.settings.is_set(s) }
@@ -64,12 +73,18 @@ impl<'n, 'e> AnyArg<'n, 'e> for FlagBuilder<'n, 'e> {
     fn num_vals(&self) -> Option<u64> { None }
     fn possible_vals(&self) -> Option<&[&'e str]> { None }
     fn validator(&self) -> Option<&Rc<Fn(String) -> StdResult<(), String>>> { None }
+    fn validator_os(&self) -> Option<&Rc<Fn(&OsStr) -> StdResult<(), OsString>>> { None }
     fn min_vals(&self) -> Option<u64> { None }
     fn short(&self) -> Option<char> { self.s.short }
     fn long(&self) -> Option<&'e str> { self.s.long }
     fn val_delim(&self) -> Option<char> { None }
     fn help(&self) -> Option<&'e str> { self.b.help }
-    fn default_val(&self) -> Option<&'n str> { None }
+    fn long_help(&self) -> Option<&'e str> { self.b.long_help }
+    fn val_terminator(&self) -> Option<&'e str> { None }
+    fn default_val(&self) -> Option<&'e OsStr> { None }
+    fn default_vals_ifs(&self) -> Option<vec_map::Values<(&'n str, Option<&'e OsStr>, &'e OsStr)>> {
+        None
+    }
     fn longest_filter(&self) -> bool { self.s.long.is_some() }
     fn aliases(&self) -> Option<Vec<&'e str>> {
         if let Some(ref aliases) = self.s.aliases {
@@ -89,6 +104,12 @@ impl<'n, 'e> AnyArg<'n, 'e> for FlagBuilder<'n, 'e> {
 
 impl<'n, 'e> DispOrder for FlagBuilder<'n, 'e> {
     fn disp_ord(&self) -> usize { self.s.disp_ord }
+}
+
+impl<'n, 'e> PartialEq for FlagBuilder<'n, 'e> {
+    fn eq(&self, other: &FlagBuilder<'n, 'e>) -> bool {
+        self.b == other.b
+    }
 }
 
 #[cfg(test)]

@@ -673,7 +673,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                                expected: ty::Ty<'tcx>) -> bool {
         match method.def() {
             Def::Method(def_id) => {
-                let fty = self.tcx.type_of(def_id).fn_sig();
+                let fty = self.tcx.fn_sig(def_id);
                 self.probe(|_| {
                     let substs = self.fresh_substs_for_item(self.span, method.def_id);
                     let output = fty.output().subst(self.tcx, substs);
@@ -718,10 +718,8 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                                                      import_id: Option<ast::NodeId>,
                                                      trait_def_id: DefId,
                                                      item: ty::AssociatedItem) {
-        let trait_def = self.tcx.trait_def(trait_def_id);
-
         // FIXME(arielb1): can we use for_each_relevant_impl here?
-        trait_def.for_each_impl(self.tcx, |impl_def_id| {
+        self.tcx.for_each_impl(trait_def_id, |impl_def_id| {
             debug!("assemble_extension_candidates_for_trait_impl: trait_def_id={:?} \
                                                                   impl_def_id={:?}",
                    trait_def_id,
@@ -861,7 +859,10 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             debug!("assemble_projection_candidates: step={:?}", step);
 
             let (def_id, substs) = match step.self_ty.sty {
-                ty::TyProjection(ref data) => (data.trait_ref.def_id, data.trait_ref.substs),
+                ty::TyProjection(ref data) => {
+                    let trait_ref = data.trait_ref(self.tcx);
+                    (trait_ref.def_id, trait_ref.substs)
+                },
                 ty::TyAnon(def_id, substs) => (def_id, substs),
                 _ => continue,
             };
@@ -1288,7 +1289,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                             impl_ty: Ty<'tcx>,
                             substs: &Substs<'tcx>)
                             -> Ty<'tcx> {
-        let self_ty = self.tcx.type_of(method).fn_sig().input(0);
+        let self_ty = self.tcx.fn_sig(method).input(0);
         debug!("xform_self_ty(impl_ty={:?}, self_ty={:?}, substs={:?})",
                impl_ty,
                self_ty,

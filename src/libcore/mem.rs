@@ -109,7 +109,7 @@ pub use intrinsics::transmute;
 /// [`Clone`][clone]. You need the value's destructor to run only once,
 /// because a double `free` is undefined behavior.
 ///
-/// An example is the definition of [`mem::swap`][swap] in this module:
+/// An example is a possible implementation of [`mem::swap`][swap]:
 ///
 /// ```
 /// use std::mem;
@@ -328,11 +328,18 @@ pub fn align_of_val<T: ?Sized>(val: &T) -> usize {
 ///
 /// Here's an example of how a collection might make use of needs_drop:
 ///
-/// ```ignore
+/// ```
 /// #![feature(needs_drop)]
 /// use std::{mem, ptr};
 ///
-/// pub struct MyCollection<T> { /* ... */ }
+/// pub struct MyCollection<T> {
+/// #   data: [T; 1],
+///     /* ... */
+/// }
+/// # impl<T> MyCollection<T> {
+/// #   fn iter_mut(&mut self) -> &mut [T] { &mut self.data }
+/// #   fn free_buffer(&mut self) {}
+/// # }
 ///
 /// impl<T> Drop for MyCollection<T> {
 ///     fn drop(&mut self) {
@@ -499,18 +506,7 @@ pub unsafe fn uninitialized<T>() -> T {
 #[stable(feature = "rust1", since = "1.0.0")]
 pub fn swap<T>(x: &mut T, y: &mut T) {
     unsafe {
-        // Give ourselves some scratch space to work with
-        let mut t: T = uninitialized();
-
-        // Perform the swap, `&mut` pointers never alias
-        ptr::copy_nonoverlapping(&*x, &mut t, 1);
-        ptr::copy_nonoverlapping(&*y, x, 1);
-        ptr::copy_nonoverlapping(&t, y, 1);
-
-        // y and t now point to the same thing, but we need to completely
-        // forget `t` because we do not want to run the destructor for `T`
-        // on its value, which is still owned somewhere outside this function.
-        forget(t);
+        ptr::swap_nonoverlapping(x, y, 1);
     }
 }
 
@@ -534,7 +530,7 @@ pub fn swap<T>(x: &mut T, y: &mut T) {
 /// `replace` allows consumption of a struct field by replacing it with another value.
 /// Without `replace` you can run into issues like these:
 ///
-/// ```ignore
+/// ```compile_fail,E0507
 /// struct Buffer<T> { buf: Vec<T> }
 ///
 /// impl<T> Buffer<T> {
@@ -604,7 +600,7 @@ pub fn replace<T>(dest: &mut T, mut src: T) -> T {
 ///
 /// Borrows are based on lexical scope, so this produces an error:
 ///
-/// ```ignore
+/// ```compile_fail,E0502
 /// let mut v = vec![1, 2, 3];
 /// let x = &v[0];
 ///
@@ -799,7 +795,6 @@ pub fn discriminant<T>(v: &T) -> Discriminant<T> {
 /// the type:
 ///
 /// ```rust
-/// # #![feature(manually_drop)]
 /// use std::mem::ManuallyDrop;
 /// struct Peach;
 /// struct Banana;
@@ -825,7 +820,7 @@ pub fn discriminant<T>(v: &T) -> Discriminant<T> {
 ///     }
 /// }
 /// ```
-#[unstable(feature = "manually_drop", issue = "40673")]
+#[stable(feature = "manually_drop", since = "1.20.0")]
 #[allow(unions_with_drop_fields)]
 pub union ManuallyDrop<T>{ value: T }
 
@@ -835,11 +830,10 @@ impl<T> ManuallyDrop<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # #![feature(manually_drop)]
     /// use std::mem::ManuallyDrop;
     /// ManuallyDrop::new(Box::new(()));
     /// ```
-    #[unstable(feature = "manually_drop", issue = "40673")]
+    #[stable(feature = "manually_drop", since = "1.20.0")]
     #[inline]
     pub fn new(value: T) -> ManuallyDrop<T> {
         ManuallyDrop { value: value }
@@ -850,12 +844,11 @@ impl<T> ManuallyDrop<T> {
     /// # Examples
     ///
     /// ```rust
-    /// # #![feature(manually_drop)]
     /// use std::mem::ManuallyDrop;
     /// let x = ManuallyDrop::new(Box::new(()));
     /// let _: Box<()> = ManuallyDrop::into_inner(x);
     /// ```
-    #[unstable(feature = "manually_drop", issue = "40673")]
+    #[stable(feature = "manually_drop", since = "1.20.0")]
     #[inline]
     pub fn into_inner(slot: ManuallyDrop<T>) -> T {
         unsafe {
@@ -870,14 +863,14 @@ impl<T> ManuallyDrop<T> {
     /// This function runs the destructor of the contained value and thus the wrapped value
     /// now represents uninitialized data. It is up to the user of this method to ensure the
     /// uninitialized data is not actually used.
-    #[unstable(feature = "manually_drop", issue = "40673")]
+    #[stable(feature = "manually_drop", since = "1.20.0")]
     #[inline]
     pub unsafe fn drop(slot: &mut ManuallyDrop<T>) {
         ptr::drop_in_place(&mut slot.value)
     }
 }
 
-#[unstable(feature = "manually_drop", issue = "40673")]
+#[stable(feature = "manually_drop", since = "1.20.0")]
 impl<T> ::ops::Deref for ManuallyDrop<T> {
     type Target = T;
     #[inline]
@@ -888,7 +881,7 @@ impl<T> ::ops::Deref for ManuallyDrop<T> {
     }
 }
 
-#[unstable(feature = "manually_drop", issue = "40673")]
+#[stable(feature = "manually_drop", since = "1.20.0")]
 impl<T> ::ops::DerefMut for ManuallyDrop<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
@@ -898,7 +891,7 @@ impl<T> ::ops::DerefMut for ManuallyDrop<T> {
     }
 }
 
-#[unstable(feature = "manually_drop", issue = "40673")]
+#[stable(feature = "manually_drop", since = "1.20.0")]
 impl<T: ::fmt::Debug> ::fmt::Debug for ManuallyDrop<T> {
     fn fmt(&self, fmt: &mut ::fmt::Formatter) -> ::fmt::Result {
         unsafe {

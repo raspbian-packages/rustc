@@ -2,9 +2,6 @@
 
 # applied already
 u-fix-debuginfo.patch
-u-only-run-linkchecker-if-docs.patch
-u-skip-main-thread-stack-guard.patch
-u-fix-backtrace-build.patch
 u-allow-disable-debuginfo-only-std.patch
 
 # pending, forwarded
@@ -16,7 +13,6 @@ u-ignoretest-armhf_03.patch
 u-ignoretest-armhf_05.patch
 u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
-u-ignoretest-arm64_02.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
 

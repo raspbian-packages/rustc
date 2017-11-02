@@ -139,11 +139,18 @@ struct MatcherPos {
     sep: Option<Token>,
     idx: usize,
     up: Option<Box<MatcherPos>>,
-    matches: Vec<Vec<Rc<NamedMatch>>>,
+    matches: Vec<Rc<Vec<NamedMatch>>>,
     match_lo: usize,
     match_cur: usize,
     match_hi: usize,
     sp_lo: BytePos,
+}
+
+impl MatcherPos {
+    fn push_match(&mut self, idx: usize, m: NamedMatch) {
+        let matches = Rc::make_mut(&mut self.matches[idx]);
+        matches.push(m);
+    }
 }
 
 pub type NamedParseResult = ParseResult<HashMap<Ident, Rc<NamedMatch>>>;
@@ -151,15 +158,10 @@ pub type NamedParseResult = ParseResult<HashMap<Ident, Rc<NamedMatch>>>;
 pub fn count_names(ms: &[TokenTree]) -> usize {
     ms.iter().fold(0, |count, elt| {
         count + match *elt {
-            TokenTree::Sequence(_, ref seq) => {
-                seq.num_captures
-            }
-            TokenTree::Delimited(_, ref delim) => {
-                count_names(&delim.tts)
-            }
-            TokenTree::MetaVarDecl(..) => {
-                1
-            }
+            TokenTree::Sequence(_, ref seq) => seq.num_captures,
+            TokenTree::Delimited(_, ref delim) => count_names(&delim.tts),
+            TokenTree::MetaVar(..) => 0,
+            TokenTree::MetaVarDecl(..) => 1,
             TokenTree::Token(..) => 0,
         }
     })
@@ -199,14 +201,15 @@ fn initial_matcher_pos(ms: Vec<TokenTree>, lo: BytePos) -> Box<MatcherPos> {
 /// only on the nesting depth of `ast::TTSeq`s in the originating
 /// token tree it was derived from.
 
+#[derive(Debug, Clone)]
 pub enum NamedMatch {
-    MatchedSeq(Vec<Rc<NamedMatch>>, syntax_pos::Span),
+    MatchedSeq(Rc<Vec<NamedMatch>>, syntax_pos::Span),
     MatchedNonterminal(Rc<Nonterminal>)
 }
 
-fn nameize<I: Iterator<Item=Rc<NamedMatch>>>(sess: &ParseSess, ms: &[TokenTree], mut res: I)
+fn nameize<I: Iterator<Item=NamedMatch>>(sess: &ParseSess, ms: &[TokenTree], mut res: I)
                                              -> NamedParseResult {
-    fn n_rec<I: Iterator<Item=Rc<NamedMatch>>>(sess: &ParseSess, m: &TokenTree, mut res: &mut I,
+    fn n_rec<I: Iterator<Item=NamedMatch>>(sess: &ParseSess, m: &TokenTree, mut res: &mut I,
              ret_val: &mut HashMap<Ident, Rc<NamedMatch>>)
              -> Result<(), (syntax_pos::Span, String)> {
         match *m {
@@ -228,14 +231,15 @@ fn nameize<I: Iterator<Item=Rc<NamedMatch>>>(sess: &ParseSess, ms: &[TokenTree],
             TokenTree::MetaVarDecl(sp, bind_name, _) => {
                 match ret_val.entry(bind_name) {
                     Vacant(spot) => {
-                        spot.insert(res.next().unwrap());
+                        // FIXME(simulacrum): Don't construct Rc here
+                        spot.insert(Rc::new(res.next().unwrap()));
                     }
                     Occupied(..) => {
                         return Err((sp, format!("duplicated bind name: {}", bind_name)))
                     }
                 }
             }
-            TokenTree::Token(..) => (),
+            TokenTree::MetaVar(..) | TokenTree::Token(..) => (),
         }
 
         Ok(())
@@ -280,8 +284,8 @@ fn token_name_eq(t1 : &Token, t2 : &Token) -> bool {
     }
 }
 
-fn create_matches(len: usize) -> Vec<Vec<Rc<NamedMatch>>> {
-    (0..len).into_iter().map(|_| Vec::new()).collect()
+fn create_matches(len: usize) -> Vec<Rc<Vec<NamedMatch>>> {
+    (0..len).into_iter().map(|_| Rc::new(Vec::new())).collect()
 }
 
 fn inner_parse_loop(sess: &ParseSess,
@@ -320,15 +324,10 @@ fn inner_parse_loop(sess: &ParseSess,
                     // update matches (the MBE "parse tree") by appending
                     // each tree as a subtree.
 
-                    // I bet this is a perf problem: we're preemptively
-                    // doing a lot of array work that will get thrown away
-                    // most of the time.
-
                     // Only touch the binders we have actually bound
                     for idx in ei.match_lo..ei.match_hi {
                         let sub = ei.matches[idx].clone();
-                        new_pos.matches[idx]
-                            .push(Rc::new(MatchedSeq(sub, Span { lo: ei.sp_lo, ..span })));
+                        new_pos.push_match(idx, MatchedSeq(sub, Span { lo: ei.sp_lo, ..span }));
                     }
 
                     new_pos.match_cur = ei.match_hi;
@@ -362,7 +361,7 @@ fn inner_parse_loop(sess: &ParseSess,
                         new_ei.match_cur += seq.num_captures;
                         new_ei.idx += 1;
                         for idx in ei.match_cur..ei.match_cur + seq.num_captures {
-                            new_ei.matches[idx].push(Rc::new(MatchedSeq(vec![], sp)));
+                            new_ei.push_match(idx, MatchedSeq(Rc::new(vec![]), sp));
                         }
                         cur_eis.push(new_ei);
                     }
@@ -387,12 +386,11 @@ fn inner_parse_loop(sess: &ParseSess,
                         return Error(span, "missing fragment specifier".to_string());
                     }
                 }
-                TokenTree::MetaVarDecl(..) => {
+                TokenTree::MetaVarDecl(_, _, id) => {
                     // Built-in nonterminals never start with these tokens,
                     // so we can eliminate them from consideration.
-                    match *token {
-                        token::CloseDelim(_) => {},
-                        _ => bb_eis.push(ei),
+                    if may_begin_with(&*id.name.as_str(), token) {
+                        bb_eis.push(ei);
                     }
                 }
                 seq @ TokenTree::Delimited(..) | seq @ TokenTree::Token(_, DocComment(..)) => {
@@ -405,12 +403,11 @@ fn inner_parse_loop(sess: &ParseSess,
                     ei.idx = 0;
                     cur_eis.push(ei);
                 }
-                TokenTree::Token(_, ref t) => {
-                    if token_name_eq(t, token) {
-                        ei.idx += 1;
-                        next_eis.push(ei);
-                    }
+                TokenTree::Token(_, ref t) if token_name_eq(t, token) => {
+                    ei.idx += 1;
+                    next_eis.push(ei);
                 }
+                TokenTree::Token(..) | TokenTree::MetaVar(..) => {}
             }
         }
     }
@@ -446,7 +443,9 @@ pub fn parse(sess: &ParseSess,
         /* error messages here could be improved with links to orig. rules */
         if token_name_eq(&parser.token, &token::Eof) {
             if eof_eis.len() == 1 {
-                let matches = eof_eis[0].matches.iter_mut().map(|mut dv| dv.pop().unwrap());
+                let matches = eof_eis[0].matches.iter_mut().map(|mut dv| {
+                    Rc::make_mut(dv).pop().unwrap()
+                });
                 return nameize(sess, ms, matches);
             } else if eof_eis.len() > 1 {
                 return Error(parser.span, "ambiguity: multiple successful parses".to_string());
@@ -479,8 +478,8 @@ pub fn parse(sess: &ParseSess,
             let mut ei = bb_eis.pop().unwrap();
             if let TokenTree::MetaVarDecl(span, _, ident) = ei.top_elts.get_tt(ei.idx) {
                 let match_cur = ei.match_cur;
-                ei.matches[match_cur].push(Rc::new(MatchedNonterminal(
-                            Rc::new(parse_nt(&mut parser, span, &ident.name.as_str())))));
+                ei.push_match(match_cur,
+                    MatchedNonterminal(Rc::new(parse_nt(&mut parser, span, &ident.name.as_str()))));
                 ei.idx += 1;
                 ei.match_cur += 1;
             } else {
@@ -490,6 +489,73 @@ pub fn parse(sess: &ParseSess,
         }
 
         assert!(!cur_eis.is_empty());
+    }
+}
+
+/// Checks whether a non-terminal may begin with a particular token.
+///
+/// Returning `false` is a *stability guarantee* that such a matcher will *never* begin with that
+/// token. Be conservative (return true) if not sure.
+fn may_begin_with(name: &str, token: &Token) -> bool {
+    /// Checks whether the non-terminal may contain a single (non-keyword) identifier.
+    fn may_be_ident(nt: &token::Nonterminal) -> bool {
+        match *nt {
+            token::NtItem(_) | token::NtBlock(_) | token::NtVis(_) => false,
+            _ => true,
+        }
+    }
+
+    match name {
+        "expr" => token.can_begin_expr(),
+        "ty" => token.can_begin_type(),
+        "ident" => token.is_ident(),
+        "vis" => match *token { // The follow-set of :vis + "priv" keyword + interpolated
+            Token::Comma | Token::Ident(_) | Token::Interpolated(_) => true,
+            _ => token.can_begin_type(),
+        },
+        "block" => match *token {
+            Token::OpenDelim(token::Brace) => true,
+            Token::Interpolated(ref nt) => match nt.0 {
+                token::NtItem(_) |
+                token::NtPat(_) |
+                token::NtTy(_) |
+                token::NtIdent(_) |
+                token::NtMeta(_) |
+                token::NtPath(_) |
+                token::NtVis(_) => false, // none of these may start with '{'.
+                _ => true,
+            },
+            _ => false,
+        },
+        "path" | "meta" => match *token {
+            Token::ModSep | Token::Ident(_) => true,
+            Token::Interpolated(ref nt) => match nt.0 {
+                token::NtPath(_) | token::NtMeta(_) => true,
+                _ => may_be_ident(&nt.0),
+            },
+            _ => false,
+        },
+        "pat" => match *token {
+            Token::Ident(_) |               // box, ref, mut, and other identifiers (can stricten)
+            Token::OpenDelim(token::Paren) |    // tuple pattern
+            Token::OpenDelim(token::Bracket) |  // slice pattern
+            Token::BinOp(token::And) |          // reference
+            Token::BinOp(token::Minus) |        // negative literal
+            Token::AndAnd |                     // double reference
+            Token::Literal(..) |                // literal
+            Token::DotDot |                     // range pattern (future compat)
+            Token::DotDotDot |                  // range pattern (future compat)
+            Token::ModSep |                     // path
+            Token::Lt |                         // path (UFCS constant)
+            Token::BinOp(token::Shl) |          // path (double UFCS)
+            Token::Underscore => true,          // placeholder
+            Token::Interpolated(ref nt) => may_be_ident(&nt.0),
+            _ => false,
+        },
+        _ => match *token {
+            token::CloseDelim(_) => false,
+            _ => true,
+        },
     }
 }
 

@@ -70,22 +70,24 @@ complete -F _{name} -o bashdefault -o default {name}
     }
 
     fn all_subcommands(&self) -> String {
+        debugln!("BashGen::all_subcommands;");
         let mut subcmds = String::new();
         let scs = completions::all_subcommand_names(self.p);
 
         for sc in &scs {
             subcmds = format!("{}
             {name})
-                cmd+=\"_{name}\"
+                cmd+=\"__{name}\"
                 ;;",
                               subcmds,
-                              name = sc.replace("-", "_"));
+                              name = sc.replace("-", "__"));
         }
 
         subcmds
     }
 
     fn subcommand_details(&self) -> String {
+        debugln!("BashGen::subcommand_details;");
         let mut subcmd_dets = String::new();
         let mut scs = completions::get_all_subcommand_paths(self.p, true);
         scs.sort();
@@ -109,9 +111,9 @@ complete -F _{name} -o bashdefault -o default {name}
             return 0
             ;;",
                                   subcmd_dets,
-                                  subcmd = sc.replace("-", "_"),
+                                  subcmd = sc.replace("-", "__"),
                                   sc_opts = self.all_options_for_path(&*sc),
-                                  level = sc.split("_").map(|_| 1).fold(0, |acc, n| acc + n),
+                                  level = sc.split("__").map(|_| 1).fold(0, |acc, n| acc + n),
                                   opts_details = self.option_details_for_path(&*sc));
         }
 
@@ -119,24 +121,11 @@ complete -F _{name} -o bashdefault -o default {name}
     }
 
     fn option_details_for_path(&self, path: &str) -> String {
+        debugln!("BashGen::option_details_for_path: path={}", path);
         let mut p = self.p;
-        for sc in path.split('_').skip(1) {
-            debugln!("iter;sc={}", sc);
-            p = &p.subcommands
-                .iter()
-                .find(|s| {
-                    s.p.meta.name == sc ||
-                    (s.p.meta.aliases.is_some() &&
-                     s.p
-                        .meta
-                        .aliases
-                        .as_ref()
-                        .unwrap()
-                        .iter()
-                        .any(|&(n, _)| n == sc))
-                })
-                .unwrap()
-                .p;
+        for sc in path.split("__").skip(1) {
+            debugln!("BashGen::option_details_for_path:iter: sc={}", sc);
+            p = &find_subcmd!(p, sc).unwrap().p;
         }
         let mut opts = String::new();
         for o in p.opts() {
@@ -165,6 +154,7 @@ complete -F _{name} -o bashdefault -o default {name}
     }
 
     fn vals_for(&self, o: &OptBuilder) -> String {
+        debugln!("BashGen::vals_for: o={}", o.b.name);
         use args::AnyArg;
         let mut ret = String::new();
         let mut needs_quotes = true;
@@ -206,31 +196,16 @@ complete -F _{name} -o bashdefault -o default {name}
         ret
     }
     fn all_options_for_path(&self, path: &str) -> String {
+        debugln!("BashGen::all_options_for_path: path={}", path);
         let mut p = self.p;
-        for sc in path.split('_').skip(1) {
-            debugln!("iter;sc={}", sc);
-            p = &p.subcommands
-                .iter()
-                .find(|s| {
-                    s.p.meta.name == sc ||
-                    (s.p.meta.aliases.is_some() &&
-                     s.p
-                        .meta
-                        .aliases
-                        .as_ref()
-                        .unwrap()
-                        .iter()
-                        .any(|&(n, _)| n == sc))
-                })
-                .unwrap()
-                .p;
+        for sc in path.split("__").skip(1) {
+            debugln!("BashGen::all_options_for_path:iter: sc={}", sc);
+            p = &find_subcmd!(p, sc).unwrap().p;
         }
-        let mut opts = p.short_list.iter().fold(String::new(), |acc, s| format!("{} -{}", acc, s));
+        let mut opts = shorts!(p).fold(String::new(), |acc, s| format!("{} -{}", acc, s));
         opts = format!("{} {}",
                        opts,
-                       p.long_list
-                           .iter()
-                           .fold(String::new(), |acc, l| format!("{} --{}", acc, l)));
+                       longs!(p).fold(String::new(), |acc, l| format!("{} --{}", acc, l)));
         opts = format!("{} {}",
                        opts,
                        p.positionals

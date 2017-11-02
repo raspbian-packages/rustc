@@ -169,8 +169,10 @@ pub trait OpenOptionsExt {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # #[cfg(for_demonstration_only)]
     /// extern crate winapi;
+    /// # mod winapi { pub const FILE_FLAG_DELETE_ON_CLOSE: u32 = 0x04000000; }
     ///
     /// use std::fs::OpenOptions;
     /// use std::os::windows::prelude::*;
@@ -204,8 +206,10 @@ pub trait OpenOptionsExt {
     ///
     /// # Examples
     ///
-    /// ```ignore
+    /// ```no_run
+    /// # #[cfg(for_demonstration_only)]
     /// extern crate winapi;
+    /// # mod winapi { pub const FILE_ATTRIBUTE_HIDDEN: u32 = 2; }
     ///
     /// use std::fs::OpenOptions;
     /// use std::os::windows::prelude::*;
@@ -473,7 +477,7 @@ pub fn symlink_file<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q)
 /// use std::os::windows::fs;
 ///
 /// # fn foo() -> std::io::Result<()> {
-/// fs::symlink_file("a", "b")?;
+/// fs::symlink_dir("a", "b")?;
 /// # Ok(())
 /// # }
 /// ```

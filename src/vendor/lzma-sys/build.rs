@@ -29,8 +29,6 @@ fn main() {
                         .unwrap_or(String::new());
     if target.contains("msvc") {
         println!("cargo:rustc-link-lib=static=liblzma");
-        let mut msbuild = gcc::windows_registry::find(&target, "msbuild")
-                              .expect("needs msbuild installed");
         let build = dst.join("build");
         let _ = fs::remove_dir_all(&build);
         let _ = fs::remove_dir_all(dst.join("lib"));
@@ -43,9 +41,20 @@ fn main() {
             "Release"
         };
 
-        run(msbuild.current_dir(build.join("windows"))
-                   .arg("liblzma.vcxproj")
-                   .arg(&format!("/p:Configuration={}", profile)));
+        let mut build_succeeded = false;
+        for platform_toolset in &["v141", "v140", "v120", "v110"] {
+            let mut msbuild = gcc::windows_registry::find(&target, "msbuild")
+                    .expect("needs msbuild installed");
+            if try_run(msbuild.current_dir(build.join("windows"))
+                    .arg("liblzma.vcxproj")
+                    .arg(&format!("/p:Configuration={}", profile))
+                    .arg(&format!("/p:PlatformToolset={}", platform_toolset))) {
+                build_succeeded = true;
+                break;
+            }
+        }
+        assert!(build_succeeded);
+
         t!(fs::create_dir(dst.join("lib")));
         t!(fs::create_dir(dst.join("include")));
         let platform = if target.contains("x86_64") {"X64"} else {"Win32"};
@@ -124,20 +133,36 @@ fn main() {
         }
 
         run(&mut cmd);
-        run(Command::new("make")
+        run(make()
                     .arg(&format!("-j{}", env::var("NUM_JOBS").unwrap()))
                     .current_dir(&dst.join("build")));
         // Unset DESTDIR or liblzma.a ends up in it and cargo can't find it
         env::remove_var("DESTDIR");
-        run(Command::new("make")
+        run(make()
                     .arg("install")
                     .current_dir(&dst.join("build/src/liblzma")));
     }
 }
 
-fn run(cmd: &mut Command) {
+fn make() -> Command {
+    let mut cmd = Command::new("make");
+
+    // We're using the MSYS make which doesn't work with the mingw32-make-style
+    // MAKEFLAGS, so remove that from the env if present.
+    if cfg!(windows) {
+        cmd.env_remove("MAKEFLAGS").env_remove("MFLAGS");
+    }
+
+    return cmd
+}
+
+fn try_run(cmd: &mut Command) -> bool {
     println!("running: {:?}", cmd);
-    assert!(t!(cmd.status()).success());
+    t!(cmd.status()).success()
+}
+
+fn run(cmd: &mut Command) {
+    assert!(try_run(cmd));
 }
 
 fn cp_r(src: &Path, dst: &Path) {

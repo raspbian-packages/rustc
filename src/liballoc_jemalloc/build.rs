@@ -137,8 +137,6 @@ fn main() {
         cmd.arg("--enable-debug");
     }
 
-    // Turn off broken quarantine (see jemalloc/jemalloc#161)
-    cmd.arg("--disable-fill");
     cmd.arg(format!("--host={}", build_helper::gnu_target(&target)));
     cmd.arg(format!("--build={}", build_helper::gnu_target(&host)));
 
@@ -153,6 +151,11 @@ fn main() {
     let mut make = Command::new(build_helper::make(&host));
     make.current_dir(&native.out_dir)
         .arg("build_lib_static");
+
+    // These are intended for mingw32-make which we don't use
+    if cfg!(windows) {
+        make.env_remove("MAKEFLAGS").env_remove("MFLAGS");
+    }
 
     // mingw make seems... buggy? unclear...
     if !host.contains("windows") {

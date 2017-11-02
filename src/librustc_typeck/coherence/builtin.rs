@@ -208,7 +208,7 @@ pub fn coerce_unsized_info<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
            source,
            target);
 
-    tcx.infer_ctxt(()).enter(|infcx| {
+    tcx.infer_ctxt().enter(|infcx| {
         let cause = ObligationCause::misc(span, impl_node_id);
         let check_mutbl = |mt_a: ty::TypeAndMut<'tcx>,
                            mt_b: ty::TypeAndMut<'tcx>,
@@ -386,7 +386,7 @@ pub fn coerce_unsized_info<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         // Check that all transitive obligations are satisfied.
         if let Err(errors) = fulfill_cx.select_all_or_error(&infcx) {
-            infcx.report_fulfillment_errors(&errors);
+            infcx.report_fulfillment_errors(&errors, None);
         }
 
         // Finally, resolve all regions.

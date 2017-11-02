@@ -680,6 +680,11 @@ pub const OPOST: ::tcflag_t = 0x1;
 pub const CS5: ::tcflag_t = 0x00000000;
 pub const CRTSCTS: ::tcflag_t = 0x80000000;
 pub const ECHO: ::tcflag_t = 0x00000008;
+pub const OCRNL:  ::tcflag_t = 0o000010;
+pub const ONOCR:  ::tcflag_t = 0o000020;
+pub const ONLRET: ::tcflag_t = 0o000040;
+pub const OFILL:  ::tcflag_t = 0o000100;
+pub const OFDEL:  ::tcflag_t = 0o000200;
 
 pub const CLONE_VM: ::c_int = 0x100;
 pub const CLONE_FS: ::c_int = 0x200;
@@ -703,6 +708,7 @@ pub const CLONE_NEWUSER: ::c_int = 0x10000000;
 pub const CLONE_NEWPID: ::c_int = 0x20000000;
 pub const CLONE_NEWNET: ::c_int = 0x40000000;
 pub const CLONE_IO: ::c_int = 0x80000000;
+pub const CLONE_NEWCGROUP: ::c_int = 0x02000000;
 
 pub const WNOHANG: ::c_int = 0x00000001;
 pub const WUNTRACED: ::c_int = 0x00000002;
@@ -835,6 +841,9 @@ extern {
                            rqtp: *const ::timespec,
                            rmtp:  *mut ::timespec) -> ::c_int;
     pub fn clock_settime(clk_id: clockid_t, tp: *const ::timespec) -> ::c_int;
+    pub fn dirfd(dirp: *mut ::DIR) -> ::c_int;
+    pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
+
     pub fn prctl(option: ::c_int, ...) -> ::c_int;
     pub fn pthread_getattr_np(native: ::pthread_t,
                               attr: *mut ::pthread_attr_t) -> ::c_int;
@@ -853,6 +862,9 @@ extern {
     pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
     pub fn sched_get_priority_max(policy: ::c_int) -> ::c_int;
     pub fn sched_get_priority_min(policy: ::c_int) -> ::c_int;
+    pub fn sched_setparam(pid: ::pid_t, param: *const sched_param) -> ::c_int;
+    pub fn sched_getparam(pid: ::pid_t, param: *mut sched_param) -> ::c_int;
+    pub fn sched_rr_get_interval(pid: ::pid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn epoll_create(size: ::c_int) -> ::c_int;
     pub fn epoll_create1(flags: ::c_int) -> ::c_int;
     pub fn epoll_ctl(epfd: ::c_int,
@@ -957,6 +969,12 @@ extern {
                                        pshared: ::c_int) -> ::c_int;
     pub fn pthread_condattr_getpshared(attr: *const pthread_condattr_t,
                                        pshared: *mut ::c_int) -> ::c_int;
+    pub fn pthread_getschedparam(native: ::pthread_t,
+                                 policy: *mut ::c_int,
+                                 param: *mut ::sched_param) -> ::c_int;
+    pub fn pthread_setschedparam(native: ::pthread_t,
+                                 policy: ::c_int,
+                                 param: *const ::sched_param) -> ::c_int;
     pub fn sched_getaffinity(pid: ::pid_t,
                              cpusetsize: ::size_t,
                              cpuset: *mut cpu_set_t) -> ::c_int;
@@ -975,12 +993,44 @@ extern {
                                         pshared: ::c_int) -> ::c_int;
     pub fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t,
                                         pshared: *mut ::c_int) -> ::c_int;
+    pub fn pthread_rwlockattr_getpshared(attr: *const pthread_rwlockattr_t,
+                                         val: *mut ::c_int) -> ::c_int;
+    pub fn pthread_rwlockattr_setpshared(attr: *mut pthread_rwlockattr_t,
+                                         val: ::c_int) -> ::c_int;
     pub fn ptsname_r(fd: ::c_int,
                      buf: *mut ::c_char,
                      buflen: ::size_t) -> ::c_int;
     pub fn clearenv() -> ::c_int;
     pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,
                   options: ::c_int) -> ::c_int;
+    pub fn sigsuspend(mask: *const ::sigset_t) -> ::c_int;
+    pub fn setreuid(ruid: ::uid_t, euid: ::uid_t) -> ::c_int;
+    pub fn setregid(rgid: ::gid_t, egid: ::gid_t) -> ::c_int;
+    pub fn getresuid(ruid: *mut ::uid_t, euid: *mut ::uid_t,
+                     suid: *mut ::uid_t) -> ::c_int;
+    pub fn getresgid(rgid: *mut ::gid_t, egid: *mut ::gid_t,
+                     sgid: *mut ::gid_t) -> ::c_int;
+    pub fn personality(persona: ::c_ulong) -> ::c_int;
+    pub fn swapon(path: *const ::c_char, swapflags: ::c_int) -> ::c_int;
+    pub fn swapoff(puath: *const ::c_char) -> ::c_int;
+    pub fn acct(filename: *const ::c_char) -> ::c_int;
+    pub fn brk(addr: *mut ::c_void) -> ::c_int;
+    pub fn sbrk(increment: ::intptr_t) -> *mut ::c_void;
+    pub fn vfork() -> ::pid_t;
+    pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
+    pub fn setresgid(rgid: ::gid_t, egid: ::gid_t, sgid: ::gid_t) -> ::c_int;
+    pub fn setresuid(ruid: ::uid_t, euid: ::uid_t, suid: ::uid_t) -> ::c_int;
+    pub fn wait4(pid: ::pid_t, status: *mut ::c_int, options: ::c_int,
+                 rusage: *mut ::rusage) -> ::pid_t;
+    pub fn openpty(amaster: *mut ::c_int,
+                aslave: *mut ::c_int,
+                name: *mut ::c_char,
+                termp: *const termios,
+                winp: *const ::winsize) -> ::c_int;
+    pub fn forkpty(amaster: *mut ::c_int,
+                name: *mut ::c_char,
+                termp: *const termios,
+                winp: *const ::winsize) -> ::pid_t;
 }
 
 cfg_if! {

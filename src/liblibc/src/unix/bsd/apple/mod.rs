@@ -1516,6 +1516,13 @@ pub const P_ALL: idtype_t = 0;
 pub const P_PID: idtype_t = 1;
 pub const P_PGID: idtype_t = 2;
 
+pub const XATTR_NOFOLLOW: ::c_int = 0x0001;
+pub const XATTR_CREATE: ::c_int = 0x0002;
+pub const XATTR_REPLACE: ::c_int = 0x0004;
+pub const XATTR_NOSECURITY: ::c_int = 0x0008;
+pub const XATTR_NODEFAULT: ::c_int = 0x0010;
+pub const XATTR_SHOWCOMPRESSION: ::c_int = 0x0020;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -1551,6 +1558,8 @@ extern {
     pub fn aio_cancel(fd: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
     pub fn lio_listio(mode: ::c_int, aiocb_list: *const *mut aiocb,
                       nitems: ::c_int, sevp: *mut sigevent) -> ::c_int;
+
+    pub fn dirfd(dirp: *mut ::DIR) -> ::c_int;
 
     pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
 
@@ -1665,13 +1674,36 @@ extern {
     pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
 
+    pub fn getxattr(path: *const ::c_char, name: *const ::c_char,
+                    value: *mut ::c_void, size: ::size_t, position: u32,
+                    flags: ::c_int) -> ::ssize_t;
+    pub fn fgetxattr(filedes: ::c_int, name: *const ::c_char,
+                     value: *mut ::c_void, size: ::size_t, position: u32,
+                     flags: ::c_int) -> ::ssize_t;
+    pub fn setxattr(path: *const ::c_char, name: *const ::c_char,
+                    value: *const ::c_void, size: ::size_t, position: u32,
+                    flags: ::c_int) -> ::c_int;
+    pub fn fsetxattr(filedes: ::c_int, name: *const ::c_char,
+                     value: *const ::c_void, size: ::size_t, position: u32,
+                     flags: ::c_int) -> ::c_int;
+    pub fn listxattr(path: *const ::c_char, list: *mut ::c_char,
+                     size: ::size_t, flags: ::c_int) -> ::ssize_t;
+    pub fn flistxattr(filedes: ::c_int, list: *mut ::c_char,
+                      size: ::size_t, flags: ::c_int) -> ::ssize_t;
+    pub fn removexattr(path: *const ::c_char, name: *const ::c_char,
+                       flags: ::c_int) -> ::c_int;
+    pub fn fremovexattr(filedes: ::c_int, name: *const ::c_char,
+                        flags: ::c_int) -> ::c_int;
+
     pub fn initgroups(user: *const ::c_char, basegroup: ::c_int) -> ::c_int;
 
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "waitid$UNIX2003")]
     pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,
                   options: ::c_int) -> ::c_int;
-
+    pub fn brk(addr: *const ::c_void) -> *mut ::c_void;
+    pub fn sbrk(increment: ::c_int) -> *mut ::c_void;
+    pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
 }
 
 cfg_if! {

@@ -128,7 +128,7 @@ impl<'a> base::Resolver for Resolver<'a> {
         impl<'a, 'b> Folder for EliminateCrateVar<'a, 'b> {
             fn fold_path(&mut self, mut path: ast::Path) -> ast::Path {
                 let ident = path.segments[0].identifier;
-                if ident.name == "$crate" {
+                if ident.name == keywords::DollarCrate.name() {
                     path.segments[0].identifier.name = keywords::CrateRoot.name();
                     let module = self.0.resolve_crate_root(ident.ctxt);
                     if !module.is_local() {
@@ -285,10 +285,7 @@ impl<'a> base::Resolver for Resolver<'a> {
                      -> Result<Option<Rc<SyntaxExtension>>, Determinacy> {
         let def = match invoc.kind {
             InvocationKind::Attr { attr: None, .. } => return Ok(None),
-            _ => match self.resolve_invoc_to_def(invoc, scope, force) {
-                Ok(def) => def,
-                Err(determinacy) => return Err(determinacy),
-            },
+            _ => self.resolve_invoc_to_def(invoc, scope, force)?,
         };
 
         self.macro_defs.insert(invoc.expansion_data.mark, def.def_id());
@@ -661,9 +658,10 @@ impl<'a> Resolver<'a> {
         if let Some(suggestion) = suggestion {
             if suggestion != name {
                 if let MacroKind::Bang = kind {
-                    err.help(&format!("did you mean `{}!`?", suggestion));
+                    err.span_suggestion(span, "you could try the macro",
+                                        format!("{}!", suggestion));
                 } else {
-                    err.help(&format!("did you mean `{}`?", suggestion));
+                    err.span_suggestion(span, "try", suggestion.to_string());
                 }
             } else {
                 err.help("have you added the `#[macro_use]` on the module/import?");

@@ -38,28 +38,48 @@ pub struct Analysis {
     pub prelude: Option<CratePreludeData>,
     pub imports: Vec<Import>,
     pub defs: Vec<Def>,
+    pub impls: Vec<Impl>,
     pub refs: Vec<Ref>,
     pub macro_refs: Vec<MacroRef>,
     pub relations: Vec<Relation>,
+    #[cfg(feature = "borrows")]
+    pub per_fn_borrows: Vec<BorrowData>,
 }
 
 impl Analysis {
+    #[cfg(not(feature = "borrows"))]
     pub fn new() -> Analysis {
         Analysis {
             kind: Format::Json,
             prelude: None,
             imports: vec![],
             defs: vec![],
+            impls: vec![],
             refs: vec![],
             macro_refs: vec![],
             relations: vec![],
+        }
+    }
+
+    #[cfg(feature = "borrows")]
+    pub fn new() -> Analysis {
+        Analysis {
+            kind: Format::Json,
+            prelude: None,
+            imports: vec![],
+            defs: vec![],
+            impls: vec![],
+            refs: vec![],
+            macro_refs: vec![],
+            relations: vec![],
+            per_fn_borrows: vec![],
         }
     }
 }
 
 // DefId::index is a newtype and so the JSON serialisation is ugly. Therefore
 // we use our own Id which is the same, but without the newtype.
-#[derive(Clone, Copy, Debug, RustcDecodable, RustcEncodable)]
+#[derive(Clone, Copy, Debug, RustcDecodable, RustcEncodable, PartialEq, Eq)]
 pub struct Id {
     pub krate: u32,
     pub index: u32,
@@ -154,6 +174,36 @@ pub enum DefKind {
 }
 
 #[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
+pub struct Impl {
+    pub id: u32,
+    pub kind: ImplKind,
+    pub span: SpanData,
+    pub value: String,
+    pub parent: Option<Id>,
+    pub children: Vec<Id>,
+    pub docs: String,
+    pub sig: Option<Signature>,
+    pub attributes: Vec<Attribute>,
+}
+
+#[derive(Debug, RustcDecodable, RustcEncodable, Clone, PartialEq, Eq)]
+pub enum ImplKind {
+    // impl Foo { ... }
+    Inherent,
+    // impl Bar for Foo { ... }
+    Direct,
+    // impl Bar for &Foo { ... }
+    Indirect,
+    // impl<T: Baz> Bar for T { ... }
+    //   where Foo: Baz
+    Blanket,
+    // impl Bar for Baz { ... } or impl Baz { ... }, etc.
+    //   where Foo: Deref<Target = Baz>
+    // Args are name and id of Baz
+    Deref(String, Id),
+}
+
+#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
 pub struct Attribute {
     pub value: String,
     pub span: SpanData,
@@ -173,7 +223,6 @@ pub enum RefKind {
     Type,
     Variable,
 }
-
 
 #[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
 pub struct MacroRef {
@@ -198,10 +247,7 @@ pub enum RelationKind {
 
 #[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
 pub struct Signature {
-    pub span: SpanData,
     pub text: String,
-    pub ident_start: usize,
-    pub ident_end: usize,
     pub defs: Vec<SigElement>,
     pub refs: Vec<SigElement>,
 }
@@ -211,4 +257,53 @@ pub struct SigElement {
     pub id: Id,
     pub start: usize,
     pub end: usize,
+}
+
+// Each `BorrowData` represents all of the scopes, loans and moves
+// within an fn or closure referred to by `ref_id`.
+#[cfg(feature = "borrows")]
+#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
+pub struct BorrowData {
+    pub ref_id: Id,
+    pub scopes: Vec<Scope>,
+    pub loans: Vec<Loan>,
+    pub moves: Vec<Move>,
+}
+
+#[cfg(feature = "borrows")]
+#[derive(Debug, RustcDecodable, RustcEncodable, Clone, Copy)]
+pub enum BorrowKind {
+    ImmBorrow,
+    MutBorrow,
+}
+
+// Each `Loan` is either temporary or assigned to a variable.
+// The `ref_id` refers to the value that is being loaned/borrowed.
+// Not all loans will be valid. Invalid loans can be used to help explain
+// improper usage.
+#[cfg(feature = "borrows")]
+#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
+pub struct Loan {
+    pub ref_id: Id,
+    pub kind: BorrowKind,
+    pub span: SpanData,
+}
+
+// Each `Move` represents an attempt to move the value referred to by `ref_id`.
+// Not all `Move`s will be valid but can be used to help explain improper usage.
+#[cfg(feature = "borrows")]
+#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
+pub struct Move {
+    pub ref_id: Id,
+    pub span: SpanData,
+}
+
+// Each `Scope` refers to "scope" of a variable (we don't track all values here).
+// Its ref_id refers to the variable, and the span refers to the scope/region where
+// the variable is "live".
+#[cfg(feature = "borrows")]
+#[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
+pub struct Scope {
+    pub ref_id: Id,
+    pub span: SpanData,
 }

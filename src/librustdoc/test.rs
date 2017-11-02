@@ -25,7 +25,7 @@ use rustc_lint;
 use rustc::dep_graph::DepGraph;
 use rustc::hir;
 use rustc::hir::intravisit;
-use rustc::session::{self, config};
+use rustc::session::{self, CompileIncomplete, config};
 use rustc::session::config::{OutputType, OutputTypes, Externs};
 use rustc::session::search_paths::{SearchPaths, PathKind};
 use rustc_back::dynamic_lib::DynamicLibrary;
@@ -167,16 +167,16 @@ fn scrape_test_config(krate: &::rustc::hir::Crate) -> TestOptions {
     opts
 }
 
-fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
-           externs: Externs,
-           should_panic: bool, no_run: bool, as_test_harness: bool,
-           compile_fail: bool, mut error_codes: Vec<String>, opts: &TestOptions,
-           maybe_sysroot: Option<PathBuf>) {
+fn run_test(test: &str, cratename: &str, filename: &str, cfgs: Vec<String>, libs: SearchPaths,
+            externs: Externs,
+            should_panic: bool, no_run: bool, as_test_harness: bool,
+            compile_fail: bool, mut error_codes: Vec<String>, opts: &TestOptions,
+            maybe_sysroot: Option<PathBuf>) {
     // the test harness wants its own `main` & top level functions, so
     // never wrap the test in `fn main() { ... }`
-    let test = maketest(test, Some(cratename), as_test_harness, opts);
+    let test = make_test(test, Some(cratename), as_test_harness, opts);
     let input = config::Input::Str {
-        name: driver::anon_src(),
+        name: filename.to_owned(),
         input: test.to_owned(),
     };
     let outputs = OutputTypes::new(&[(OutputType::Exe, None)]);
@@ -253,34 +253,24 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
         driver::compile_input(&sess, &cstore, &input, &out, &None, None, &control)
     }));
 
-    match res {
-        Ok(r) => {
-            match r {
-                Err(count) => {
-                    if count > 0 && !compile_fail {
-                        sess.fatal("aborting due to previous error(s)")
-                    } else if count == 0 && compile_fail {
-                        panic!("test compiled while it wasn't supposed to")
-                    }
-                    if count > 0 && error_codes.len() > 0 {
-                        let out = String::from_utf8(data.lock().unwrap().to_vec()).unwrap();
-                        error_codes.retain(|err| !out.contains(err));
-                    }
-                }
-                Ok(()) if compile_fail => {
-                    panic!("test compiled while it wasn't supposed to")
-                }
-                _ => {}
-            }
+    let compile_result = match res {
+        Ok(Ok(())) | Ok(Err(CompileIncomplete::Stopped)) => Ok(()),
+        Err(_) | Ok(Err(CompileIncomplete::Errored(_))) => Err(())
+    };
+
+    match (compile_result, compile_fail) {
+        (Ok(()), true) => {
+            panic!("test compiled while it wasn't supposed to")
         }
-        Err(_) => {
-            if !compile_fail {
-                panic!("couldn't compile the test");
-            }
+        (Ok(()), false) => {}
+        (Err(()), true) => {
             if error_codes.len() > 0 {
                 let out = String::from_utf8(data.lock().unwrap().to_vec()).unwrap();
                 error_codes.retain(|err| !out.contains(err));
             }
+        }
+        (Err(()), false) => {
+            panic!("couldn't compile the test")
         }
     }
 
@@ -323,8 +313,11 @@ fn runtest(test: &str, cratename: &str, cfgs: Vec<String>, libs: SearchPaths,
     }
 }
 
-pub fn maketest(s: &str, cratename: Option<&str>, dont_insert_main: bool,
-                opts: &TestOptions) -> String {
+pub fn make_test(s: &str,
+                 cratename: Option<&str>,
+                 dont_insert_main: bool,
+                 opts: &TestOptions)
+                 -> String {
     let (crate_attrs, everything_else) = partition_source(s);
 
     let mut prog = String::new();
@@ -467,7 +460,7 @@ impl Collector {
     pub fn add_test(&mut self, test: String,
                     should_panic: bool, no_run: bool, should_ignore: bool,
                     as_test_harness: bool, compile_fail: bool, error_codes: Vec<String>,
-                    line: usize, filename: String) {
+                    line: usize, filename: String, allow_fail: bool) {
         let name = self.generate_name(line, &filename);
         // to be removed when hoedown is removed
         if self.render_type == RenderType::Pulldown {
@@ -499,6 +492,7 @@ impl Collector {
                 ignore: should_ignore,
                 // compiler failures are test failures
                 should_panic: testing::ShouldPanic::No,
+                allow_fail: allow_fail,
             },
             testfn: testing::DynTestFn(box move |()| {
                 let panic = io::set_panic(None);
@@ -507,18 +501,19 @@ impl Collector {
                     rustc_driver::in_rustc_thread(move || {
                         io::set_panic(panic);
                         io::set_print(print);
-                        runtest(&test,
-                                &cratename,
-                                cfgs,
-                                libs,
-                                externs,
-                                should_panic,
-                                no_run,
-                                as_test_harness,
-                                compile_fail,
-                                error_codes,
-                                &opts,
-                                maybe_sysroot)
+                        run_test(&test,
+                                 &cratename,
+                                 &filename,
+                                 cfgs,
+                                 libs,
+                                 externs,
+                                 should_panic,
+                                 no_run,
+                                 as_test_harness,
+                                 compile_fail,
+                                 error_codes,
+                                 &opts,
+                                 maybe_sysroot)
                     })
                 } {
                     Ok(()) => (),

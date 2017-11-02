@@ -5,10 +5,8 @@ use std::rc::Rc;
 use std::io::Write;
 use std::io::Error as IOError;
 
-#[cfg(all(feature = "rustc_ser_type", not(feature = "serde_type")))]
-use serialize::json::{ToJson, Json};
-#[cfg(feature = "serde_type")]
-use serde_json::value::{Value as Json, ToJson};
+use serde::Serialize;
+use serde_json::value::{Value as Json};
 
 use template::{Template, TemplateElement, Parameter, HelperTemplate, TemplateMapping, BlockParam,
                Directive as DirectiveTemplate};
@@ -212,7 +210,7 @@ impl<'a> RenderContext<'a> {
     }
 
     pub fn push_block_context<T>(&mut self, ctx: &T)
-        where T: ToJson
+        where T: Serialize
     {
         self.block_context.push_front(Context::wraps(ctx));
     }
@@ -812,26 +810,25 @@ fn test_template() {
 }
 
 #[test]
-#[cfg(all(feature = "rustc_ser_type", not(feature = "serde_type")))]
 fn test_render_context_promotion_and_demotion() {
-    use serialize::json::ToJson;
+    use context::to_json;
     let mut sw = StringWriter::new();
     let mut ctx = Context::null();
     let mut hlps = HashMap::new();
 
     let mut render_context = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
 
-    render_context.set_local_var("@index".to_string(), 0usize.to_json());
+    render_context.set_local_var("@index".to_string(), to_json(&0));
 
     render_context.promote_local_vars();
 
     assert_eq!(render_context.get_local_var(&"@../index".to_string()).unwrap(),
-               &0usize.to_json());
+               &to_json(&0));
 
     render_context.demote_local_vars();
 
     assert_eq!(render_context.get_local_var(&"@index".to_string()).unwrap(),
-               &0usize.to_json());
+               &to_json(&0));
 }
 
 #[test]
@@ -917,4 +914,17 @@ fn test_partial_failback_render() {
 
     let r = r.render("child", &true).expect("should work");
     assert_eq!(r, "<html>content</html>");
+}
+
+#[test]
+fn test_key_with_slash() {
+    let mut r = Registry::new();
+
+    assert!(r.register_template_string("t", "{{#each .}}{{@key}}: {{this}}\n{{/each}}").is_ok());
+
+    let r = r.render("t", &json!({
+        "/foo": "bar"
+    })).expect("should work");
+
+    assert_eq!(r, "/foo: bar\n");
 }

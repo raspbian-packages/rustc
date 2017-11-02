@@ -4,7 +4,7 @@ Bug: https://github.com/rust-lang/rust/issues/34902
 
 --- a/src/librustc_llvm/build.rs
 +++ b/src/librustc_llvm/build.rs
-@@ -137,6 +137,11 @@
+@@ -138,6 +138,11 @@
      let cxxflags = output(&mut cmd);
      let mut cfg = gcc::Config::new();
      for flag in cxxflags.split_whitespace() {

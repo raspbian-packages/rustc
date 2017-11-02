@@ -39,6 +39,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         match expr.kind {
             ExprKind::Scope { extent, value } => {
+                let extent = (extent, source_info);
                 this.in_scope(extent, block, |this| this.into(destination, block, value))
             }
             ExprKind::Block { body: ast_block } => {
@@ -204,11 +205,14 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 // FIXME(canndrew): This is_never should probably be an is_uninhabited
                 let diverges = expr.ty.is_never();
                 let intrinsic = match ty.sty {
-                    ty::TyFnDef(def_id, _, ref f) if
-                        f.abi() == Abi::RustIntrinsic ||
-                        f.abi() == Abi::PlatformIntrinsic =>
-                    {
-                        Some(this.hir.tcx().item_name(def_id).as_str())
+                    ty::TyFnDef(def_id, _)  => {
+                        let f = ty.fn_sig(this.hir.tcx());
+                        if f.abi() == Abi::RustIntrinsic ||
+                           f.abi() == Abi::PlatformIntrinsic {
+                            Some(this.hir.tcx().item_name(def_id).as_str())
+                        } else {
+                            None
+                        }
                     }
                     _ => None
                 };
@@ -233,7 +237,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             .collect();
 
                     let success = this.cfg.start_new_block();
-                    let cleanup = this.diverge_cleanup();
+                    let cleanup = this.diverge_cleanup(expr_span);
                     this.cfg.terminate(block, source_info, TerminatorKind::Call {
                         func: fun,
                         args: args,

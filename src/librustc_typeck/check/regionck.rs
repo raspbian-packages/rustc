@@ -973,18 +973,24 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    /// Create a temporary `MemCategorizationContext` and pass it to the closure.
+    fn with_mc<F, R>(&self, f: F) -> R
+        where F: for<'b> FnOnce(mc::MemCategorizationContext<'b, 'gcx, 'tcx>) -> R
+    {
+        f(mc::MemCategorizationContext::with_infer(&self.infcx,
+                                                   &self.region_maps,
+                                                   &self.tables.borrow()))
+    }
+
     /// Invoked on any adjustments that occur. Checks that if this is a region pointer being
     /// dereferenced, the lifetime of the pointer includes the deref expr.
     fn constrain_adjustments(&mut self, expr: &hir::Expr) -> mc::McResult<mc::cmt<'tcx>> {
         debug!("constrain_adjustments(expr={:?})", expr);
 
-        let mut cmt = {
-            let mc = mc::MemCategorizationContext::new(self, &self.region_maps);
-            mc.cat_expr_unadjusted(expr)?
-        };
+        let mut cmt = self.with_mc(|mc| mc.cat_expr_unadjusted(expr))?;
 
-        //NOTE(@jroesch): mixed RefCell borrow causes crash
-        let adjustments = self.tables.borrow().expr_adjustments(&expr).to_vec();
+        let tables = self.tables.borrow();
+        let adjustments = tables.expr_adjustments(&expr);
         if adjustments.is_empty() {
             return Ok(cmt);
         }
@@ -1035,10 +1041,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                                                expr.id, expr_region);
             }
 
-            {
-                let mc = mc::MemCategorizationContext::new(self, &self.region_maps);
-                cmt = mc.cat_expr_adjusted(expr, cmt, &adjustment)?;
-            }
+            cmt = self.with_mc(|mc| mc.cat_expr_adjusted(expr, cmt, &adjustment))?;
 
             if let Categorization::Deref(_, mc::BorrowedPtr(_, r_ptr)) = cmt.cat {
                 self.mk_subregion_due_to_dereference(expr.span,
@@ -1130,10 +1133,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                     mutability: hir::Mutability, base: &hir::Expr) {
         debug!("link_addr_of(expr={:?}, base={:?})", expr, base);
 
-        let cmt = {
-            let mc = mc::MemCategorizationContext::new(self, &self.region_maps);
-            ignore_err!(mc.cat_expr(base))
-        };
+        let cmt = ignore_err!(self.with_mc(|mc| mc.cat_expr(base)));
 
         debug!("link_addr_of: cmt={:?}", cmt);
 
@@ -1149,9 +1149,8 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
             None => { return; }
             Some(ref expr) => &**expr,
         };
-        let mc = &mc::MemCategorizationContext::new(self, &self.region_maps);
-        let discr_cmt = ignore_err!(mc.cat_expr(init_expr));
-        self.link_pattern(mc, discr_cmt, &local.pat);
+        let discr_cmt = ignore_err!(self.with_mc(|mc| mc.cat_expr(init_expr)));
+        self.link_pattern(discr_cmt, &local.pat);
     }
 
     /// Computes the guarantors for any ref bindings in a match and
@@ -1159,12 +1158,11 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     /// linked to the lifetime of its guarantor (if any).
     fn link_match(&self, discr: &hir::Expr, arms: &[hir::Arm]) {
         debug!("regionck::for_match()");
-        let mc = &mc::MemCategorizationContext::new(self, &self.region_maps);
-        let discr_cmt = ignore_err!(mc.cat_expr(discr));
+        let discr_cmt = ignore_err!(self.with_mc(|mc| mc.cat_expr(discr)));
         debug!("discr_cmt={:?}", discr_cmt);
         for arm in arms {
             for root_pat in &arm.pats {
-                self.link_pattern(mc, discr_cmt.clone(), &root_pat);
+                self.link_pattern(discr_cmt.clone(), &root_pat);
             }
         }
     }
@@ -1174,30 +1172,28 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     /// linked to the lifetime of its guarantor (if any).
     fn link_fn_args(&self, body_scope: CodeExtent, args: &[hir::Arg]) {
         debug!("regionck::link_fn_args(body_scope={:?})", body_scope);
-        let mc = &mc::MemCategorizationContext::new(self, &self.region_maps);
         for arg in args {
             let arg_ty = self.node_ty(arg.id);
             let re_scope = self.tcx.mk_region(ty::ReScope(body_scope));
-            let arg_cmt = mc.cat_rvalue(
-                arg.id, arg.pat.span, re_scope, arg_ty);
+            let arg_cmt = self.with_mc(|mc| {
+                mc.cat_rvalue(arg.id, arg.pat.span, re_scope, arg_ty)
+            });
             debug!("arg_ty={:?} arg_cmt={:?} arg={:?}",
                    arg_ty,
                    arg_cmt,
                    arg);
-            self.link_pattern(mc, arg_cmt, &arg.pat);
+            self.link_pattern(arg_cmt, &arg.pat);
         }
     }
 
     /// Link lifetimes of any ref bindings in `root_pat` to the pointers found
     /// in the discriminant, if needed.
-    fn link_pattern<'t>(&self,
-                        mc: &mc::MemCategorizationContext<'a, 'gcx, 'tcx>,
-                        discr_cmt: mc::cmt<'tcx>,
-                        root_pat: &hir::Pat) {
+    fn link_pattern(&self, discr_cmt: mc::cmt<'tcx>, root_pat: &hir::Pat) {
         debug!("link_pattern(discr_cmt={:?}, root_pat={:?})",
                discr_cmt,
                root_pat);
-        let _ = mc.cat_pattern(discr_cmt, root_pat, |_, sub_cmt, sub_pat| {
+        let _ = self.with_mc(|mc| {
+            mc.cat_pattern(discr_cmt, root_pat, |sub_cmt, sub_pat| {
                 match sub_pat.node {
                     // `ref x` pattern
                     PatKind::Binding(hir::BindByRef(mutbl), ..) => {
@@ -1206,7 +1202,8 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                     }
                     _ => {}
                 }
-            });
+            })
+        });
     }
 
     /// Link lifetime of borrowed pointer resulting from autoref to lifetimes in the value being
@@ -1364,8 +1361,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         // Detect by-ref upvar `x`:
         let cause = match note {
             mc::NoteUpvarRef(ref upvar_id) => {
-                let upvar_capture_map = &self.tables.borrow_mut().upvar_capture_map;
-                match upvar_capture_map.get(upvar_id) {
+                match self.tables.borrow().upvar_capture_map.get(upvar_id) {
                     Some(&ty::UpvarCapture::ByRef(ref upvar_borrow)) => {
                         // The mutability of the upvar may have been modified
                         // by the above adjustment, so update our local variable.
@@ -1599,15 +1595,15 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         // the problem is to add `T: 'r`, which isn't true. So, if there are no
         // inference variables, we use a verify constraint instead of adding
         // edges, which winds up enforcing the same condition.
-        let needs_infer = projection_ty.trait_ref.needs_infer();
+        let needs_infer = projection_ty.needs_infer();
         if env_bounds.is_empty() && needs_infer {
             debug!("projection_must_outlive: no declared bounds");
 
-            for component_ty in projection_ty.trait_ref.substs.types() {
+            for component_ty in projection_ty.substs.types() {
                 self.type_must_outlive(origin.clone(), component_ty, region);
             }
 
-            for r in projection_ty.trait_ref.substs.regions() {
+            for r in projection_ty.substs.regions() {
                 self.sub_regions(origin.clone(), region, r);
             }
 
@@ -1625,7 +1621,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         if !env_bounds.is_empty() && env_bounds[1..].iter().all(|b| *b == env_bounds[0]) {
             let unique_bound = env_bounds[0];
             debug!("projection_must_outlive: unique declared bound = {:?}", unique_bound);
-            if projection_ty.trait_ref.substs.regions().any(|r| env_bounds.contains(&r)) {
+            if projection_ty.substs.regions().any(|r| env_bounds.contains(&r)) {
                 debug!("projection_must_outlive: unique declared bound appears in trait ref");
                 self.sub_regions(origin.clone(), region, unique_bound);
                 return;
@@ -1695,8 +1691,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                declared_bounds, projection_ty);
 
         // see the extensive comment in projection_must_outlive
-        let item_name = projection_ty.item_name(self.tcx);
-        let ty = self.tcx.mk_projection(projection_ty.trait_ref, item_name);
+        let ty = self.tcx.mk_projection(projection_ty.item_def_id, projection_ty.substs);
         let recursive_bound = self.recursive_type_bound(span, ty);
 
         VerifyBound::AnyRegion(declared_bounds).or(recursive_bound)
@@ -1762,9 +1757,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     {
         debug!("projection_bounds(projection_ty={:?})",
                projection_ty);
-        let item_name = projection_ty.item_name(self.tcx);
-        let ty = self.tcx.mk_projection(projection_ty.trait_ref.clone(),
-                                        item_name);
+        let ty = self.tcx.mk_projection(projection_ty.item_def_id, projection_ty.substs);
 
         // Say we have a projection `<T as SomeTrait<'a>>::SomeType`. We are interested
         // in looking for a trait definition like:
@@ -1776,7 +1769,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         // ```
         //
         // we can thus deduce that `<T as SomeTrait<'a>>::SomeType : 'a`.
-        let trait_predicates = self.tcx.predicates_of(projection_ty.trait_ref.def_id);
+        let trait_predicates = self.tcx.predicates_of(projection_ty.trait_ref(self.tcx).def_id);
         assert_eq!(trait_predicates.parent, None);
         let predicates = trait_predicates.predicates.as_slice().to_vec();
         traits::elaborate_predicates(self.tcx, predicates)
@@ -1792,7 +1785,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
 
                 // apply the substitutions (and normalize any projected types)
                 let outlives = self.instantiate_type_scheme(span,
-                                                            projection_ty.trait_ref.substs,
+                                                            projection_ty.substs,
                                                             &outlives);
 
                 debug!("projection_bounds: outlives={:?} (2)",
@@ -1802,7 +1795,8 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                     let (outlives, _) =
                         self.replace_late_bound_regions_with_fresh_var(
                             span,
-                            infer::AssocTypeProjection(projection_ty.item_name(self.tcx)),
+                            infer::AssocTypeProjection(
+                                self.tcx.associated_item(projection_ty.item_def_id).name),
                             &outlives);
 
                     debug!("projection_bounds: outlives={:?} (3)",
@@ -1811,12 +1805,12 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                     // check whether this predicate applies to our current projection
                     let cause = self.fcx.misc(span);
                     match self.at(&cause, self.fcx.param_env).eq(outlives.0, ty) {
-                        Ok(ok) => {
-                            self.register_infer_ok_obligations(ok);
-                            Ok(outlives.1)
-                        }
-                        Err(_) => { Err(()) }
+                        Ok(ok) => Ok((ok, outlives.1)),
+                        Err(_) => Err(())
                     }
+                }).map(|(ok, result)| {
+                    self.register_infer_ok_obligations(ok);
+                    result
                 });
 
                 debug!("projection_bounds: region_result={:?}",

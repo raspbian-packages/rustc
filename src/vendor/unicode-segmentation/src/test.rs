@@ -16,40 +16,44 @@ use std::prelude::v1::*;
 fn test_graphemes() {
     use testdata::{TEST_SAME, TEST_DIFF};
 
-    for &(s, g) in TEST_SAME {
+    pub const EXTRA_DIFF: &'static [(&'static str,
+                                     &'static [&'static str],
+                                     &'static [&'static str])] = &[
+        // Official test suite doesn't include two Prepend chars between two other chars.
+        ("\u{20}\u{600}\u{600}\u{20}",
+         &["\u{20}", "\u{600}\u{600}\u{20}"],
+         &["\u{20}", "\u{600}", "\u{600}", "\u{20}"]),
+
+        // Test for Prepend followed by two Any chars
+        ("\u{600}\u{20}\u{20}",
+         &["\u{600}\u{20}", "\u{20}"],
+         &["\u{600}", "\u{20}", "\u{20}"]),
+    ];
+
+    pub const EXTRA_SAME: &'static [(&'static str, &'static [&'static str])] = &[
+        // family emoji (more than two emoji joined by ZWJ)
+        ("\u{1f468}\u{200d}\u{1f467}\u{200d}\u{1f466}",
+         &["\u{1f468}\u{200d}\u{1f467}\u{200d}\u{1f466}"]),
+    ];
+
+    for &(s, g) in TEST_SAME.iter().chain(EXTRA_SAME) {
         // test forward iterator
-        assert!(UnicodeSegmentation::graphemes(s, true)
-                .zip(g.iter().cloned())
-                .all(|(a,b)| a == b));
-        assert!(UnicodeSegmentation::graphemes(s, false)
-                .zip(g.iter().cloned())
-                .all(|(a,b)| a == b));
+        assert!(UnicodeSegmentation::graphemes(s, true).eq(g.iter().cloned()));
+        assert!(UnicodeSegmentation::graphemes(s, false).eq(g.iter().cloned()));
 
         // test reverse iterator
-        assert!(UnicodeSegmentation::graphemes(s, true).rev()
-                .zip(g.iter().rev().cloned())
-                .all(|(a,b)| a == b));
-        assert!(UnicodeSegmentation::graphemes(s, false).rev()
-                .zip(g.iter().rev().cloned())
-                .all(|(a,b)| a == b));
+        assert!(UnicodeSegmentation::graphemes(s, true).rev().eq(g.iter().rev().cloned()));
+        assert!(UnicodeSegmentation::graphemes(s, false).rev().eq(g.iter().rev().cloned()));
     }
 
-    for &(s, gt, gf) in TEST_DIFF {
+    for &(s, gt, gf) in TEST_DIFF.iter().chain(EXTRA_DIFF) {
         // test forward iterator
-        assert!(UnicodeSegmentation::graphemes(s, true)
-                .zip(gt.iter().cloned())
-                .all(|(a,b)| a == b));
-        assert!(UnicodeSegmentation::graphemes(s, false)
-                .zip(gf.iter().cloned())
-                .all(|(a,b)| a == b));
+        assert!(UnicodeSegmentation::graphemes(s, true).eq(gt.iter().cloned()));
+        assert!(UnicodeSegmentation::graphemes(s, false).eq(gf.iter().cloned()));
 
         // test reverse iterator
-        assert!(UnicodeSegmentation::graphemes(s, true).rev()
-                .zip(gt.iter().rev().cloned())
-                .all(|(a,b)| a == b));
-        assert!(UnicodeSegmentation::graphemes(s, false).rev()
-                .zip(gf.iter().rev().cloned())
-                .all(|(a,b)| a == b));
+        assert!(UnicodeSegmentation::graphemes(s, true).rev().eq(gt.iter().rev().cloned()));
+        assert!(UnicodeSegmentation::graphemes(s, false).rev().eq(gf.iter().rev().cloned()));
     }
 
     // test the indices iterators
@@ -82,16 +86,36 @@ fn test_graphemes() {
 fn test_words() {
     use testdata::TEST_WORD;
 
-    for &(s, w) in TEST_WORD {
+    // Unicode's official tests don't really test longer chains of flag emoji
+    // TODO This could be improved with more tests like flag emoji with interspersed Extend chars and ZWJ
+    const EXTRA_TESTS: &'static [(&'static str, &'static [&'static str])] = &[
+        ("🇦🇫🇦🇽🇦🇱🇩🇿🇦🇸🇦🇩🇦🇴", &["🇦🇫", "🇦🇽", "🇦🇱", "🇩🇿", "🇦🇸", "🇦🇩", "🇦🇴"]),
+        ("🇦🇫🇦🇽🇦🇱🇩🇿🇦🇸🇦🇩🇦", &["🇦🇫", "🇦🇽", "🇦🇱", "🇩🇿", "🇦🇸", "🇦🇩", "🇦"]),
+        ("🇦a🇫🇦🇽a🇦🇱🇩🇿🇦🇸🇦🇩🇦", &["🇦", "a", "🇫🇦", "🇽", "a", "🇦🇱", "🇩🇿", "🇦🇸", "🇦🇩", "🇦"]),
+        ("\u{1f468}\u{200d}\u{1f468}\u{200d}\u{1f466}",  &["\u{1f468}\u{200d}\u{1f468}\u{200d}\u{1f466}"]),
+        ("😌👎🏼",  &["😌", "👎🏼"]),
+        // perhaps wrong, spaces should not be included?
+        ("hello world", &["hello", " ", "world"]),
+        ("🇨🇦🇨🇭🇿🇲🇿 hi", &["🇨🇦", "🇨🇭", "🇿🇲", "🇿", " ", "hi"]),
+    ];
+    for &(s, w) in TEST_WORD.iter().chain(EXTRA_TESTS.iter()) {
+        macro_rules! assert_ {
+            ($test:expr, $exp:expr, $name:expr) => {
+                // collect into vector for better diagnostics in failure case
+                let testing = $test.collect::<Vec<_>>();
+                let expected = $exp.collect::<Vec<_>>();
+                assert_eq!(testing, expected, "{} test for testcase ({:?}, {:?}) failed.", $name, s, w)
+            }
+        }
         // test forward iterator
-        assert!(s.split_word_bounds()
-                .zip(w.iter().cloned())
-                .all(|(a,b)| a == b));
+        assert_!(s.split_word_bounds(),
+                w.iter().cloned(),
+                "Forward word boundaries");
 
         // test reverse iterator
-        assert!(s.split_word_bounds().rev()
-                .zip(w.iter().rev().cloned())
-                .all(|(a,b)| a == b));
+        assert_!(s.split_word_bounds().rev(),
+                w.iter().rev().cloned(),
+                "Reverse word boundaries");
 
         // generate offsets from word string lengths
         let mut indices = vec![0];
@@ -102,13 +126,47 @@ fn test_words() {
         let indices = indices;
 
         // test forward indices iterator
-        assert!(s.split_word_bound_indices()
-                 .zip(indices.iter())
-                 .all(|((l,_),m)| l == *m));
+        assert_!(s.split_word_bound_indices().map(|(l,_)| l),
+                 indices.iter().cloned(),
+                 "Forward word indices");
 
         // test backward indices iterator
-        assert!(s.split_word_bound_indices().rev()
-                 .zip(indices.iter().rev())
-                 .all(|((l,_),m)| l == *m));
+        assert_!(s.split_word_bound_indices().rev().map(|(l,_)| l),
+                 indices.iter().rev().cloned(),
+                 "Reverse word indices");
+    }
+}
+
+quickcheck! {
+    fn quickcheck_forward_reverse_graphemes_extended(s: String) -> bool {
+        let a = s.graphemes(true).collect::<Vec<_>>();
+        let mut b = s.graphemes(true).rev().collect::<Vec<_>>();
+        b.reverse();
+        a == b
+    }
+
+    fn quickcheck_forward_reverse_graphemes_legacy(s: String) -> bool {
+        let a = s.graphemes(false).collect::<Vec<_>>();
+        let mut b = s.graphemes(false).rev().collect::<Vec<_>>();
+        b.reverse();
+        a == b
+    }
+
+    fn quickcheck_join_graphemes(s: String) -> bool {
+        let a = s.graphemes(true).collect::<String>();
+        let b = s.graphemes(false).collect::<String>();
+        a == s && b == s
+    }
+
+    fn quickcheck_forward_reverse_words(s: String) -> bool {
+        let a = s.split_word_bounds().collect::<Vec<_>>();
+        let mut b = s.split_word_bounds().rev().collect::<Vec<_>>();
+        b.reverse();
+        a == b
+    }
+
+    fn quickcheck_join_words(s: String) -> bool {
+        let a = s.split_word_bounds().collect::<String>();
+        a == s
     }
 }

@@ -15,7 +15,7 @@ use io::prelude::*;
 use cmp;
 use error;
 use fmt;
-use io::{self, DEFAULT_BUF_SIZE, Error, ErrorKind, SeekFrom};
+use io::{self, Initializer, DEFAULT_BUF_SIZE, Error, ErrorKind, SeekFrom};
 use memchr;
 
 /// The `BufReader` struct adds buffering to any reader.
@@ -92,11 +92,16 @@ impl<R: Read> BufReader<R> {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with_capacity(cap: usize, inner: R) -> BufReader<R> {
-        BufReader {
-            inner: inner,
-            buf: vec![0; cap].into_boxed_slice(),
-            pos: 0,
-            cap: 0,
+        unsafe {
+            let mut buffer = Vec::with_capacity(cap);
+            buffer.set_len(cap);
+            inner.initializer().initialize(&mut buffer);
+            BufReader {
+                inner: inner,
+                buf: buffer.into_boxed_slice(),
+                pos: 0,
+                cap: 0,
+            }
         }
     }
 
@@ -179,6 +184,11 @@ impl<R: Read> Read for BufReader<R> {
         };
         self.consume(nread);
         Ok(nread)
+    }
+
+    // we can't skip unconditionally because of the large buffer case in read.
+    unsafe fn initializer(&self) -> Initializer {
+        self.inner.initializer()
     }
 }
 
@@ -266,7 +276,10 @@ impl<R: Seek> Seek for BufReader<R> {
 /// `BufWriter` keeps an in-memory buffer of data and writes it to an underlying
 /// writer in large, infrequent batches.
 ///
-/// The buffer will be written out when the writer is dropped.
+/// When the `BufWriter` is dropped, the contents of its buffer will be written
+/// out. However, any errors that happen in the process of flushing the buffer
+/// when the writer is dropped will be ignored. Code that wishes to handle such
+/// errors must manually call [`flush`] before the writer is dropped.
 ///
 /// # Examples
 ///
@@ -306,6 +319,7 @@ impl<R: Seek> Seek for BufReader<R> {
 /// [`Write`]: ../../std/io/trait.Write.html
 /// [`Tcpstream::write`]: ../../std/net/struct.TcpStream.html#method.write
 /// [`TcpStream`]: ../../std/net/struct.TcpStream.html
+/// [`flush`]: #method.flush
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct BufWriter<W: Write> {
     inner: Option<W>,

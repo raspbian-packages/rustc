@@ -21,7 +21,6 @@ use std::io;
 use std::mem;
 use std::usize;
 use syntax::ast;
-use syntax::print::pp;
 use syntax::print::pprust::PrintState;
 use util::nodemap::NodeMap;
 use hir;
@@ -157,7 +156,7 @@ impl<'a, 'tcx, O:DataFlowOperator> pprust::PpAnn for DataFlowContext<'a, 'tcx, O
             ps.synth_comment(
                 format!("id {}: {}{}{}{}", id, entry_str,
                         gens_str, action_kills_str, scope_kills_str))?;
-            pp::space(&mut ps.s)?;
+            ps.s.space()?;
         }
         Ok(())
     }
@@ -260,16 +259,16 @@ impl<'a, 'tcx, O:DataFlowOperator> DataFlowContext<'a, 'tcx, O> {
         let nodeid_to_index = build_nodeid_to_index(body, cfg);
 
         DataFlowContext {
-            tcx: tcx,
-            analysis_name: analysis_name,
-            words_per_id: words_per_id,
-            nodeid_to_index: nodeid_to_index,
-            bits_per_id: bits_per_id,
-            oper: oper,
-            gens: gens,
+            tcx,
+            analysis_name,
+            words_per_id,
+            nodeid_to_index,
+            bits_per_id,
+            oper,
+            gens,
             action_kills: kills1,
             scope_kills: kills2,
-            on_entry: on_entry
+            on_entry,
         }
     }
 

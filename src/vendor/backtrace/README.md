@@ -13,12 +13,15 @@ more stable and programmatic interface.
 
 ```toml
 [dependencies]
-backtrace = "0.2"
+backtrace = "0.3"
 ```
 
 ```rust
 extern crate backtrace;
 ```
+
+Note that this crate requires `make`, `objcopy`, and `ar` to be present on Linux
+systems.
 
 ## Usage
 

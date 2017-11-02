@@ -15,7 +15,7 @@ pub use self::IntVarValue::*;
 pub use self::LvaluePreference::*;
 pub use self::fold::TypeFoldable;
 
-use dep_graph::DepNode;
+use dep_graph::{DepNode, DepConstructor};
 use hir::{map as hir_map, FreevarMap, TraitMap};
 use hir::def::{Def, CtorKind, ExportMap};
 use hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX, LOCAL_CRATE};
@@ -206,7 +206,7 @@ impl AssociatedItem {
                 // late-bound regions, and we don't want method signatures to show up
                 // `as for<'r> fn(&'r MyType)`.  Pretty-printing handles late-bound
                 // regions just fine, showing `fn(&MyType)`.
-                format!("{}", tcx.type_of(self.def_id).fn_sig().skip_binder())
+                format!("{}", tcx.fn_sig(self.def_id).skip_binder())
             }
             ty::AssociatedKind::Type => format!("type {};", self.name.to_string()),
             ty::AssociatedKind::Const => {
@@ -465,9 +465,39 @@ impl<'tcx> Hash for TyS<'tcx> {
     }
 }
 
-impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for ty::TyS<'tcx> {
+impl<'tcx> TyS<'tcx> {
+    pub fn is_primitive_ty(&self) -> bool {
+        match self.sty {
+            TypeVariants::TyBool |
+                TypeVariants::TyChar |
+                TypeVariants::TyInt(_) |
+                TypeVariants::TyUint(_) |
+                TypeVariants::TyFloat(_) |
+                TypeVariants::TyInfer(InferTy::IntVar(_)) |
+                TypeVariants::TyInfer(InferTy::FloatVar(_)) |
+                TypeVariants::TyInfer(InferTy::FreshIntTy(_)) |
+                TypeVariants::TyInfer(InferTy::FreshFloatTy(_)) => true,
+            TypeVariants::TyRef(_, x) => x.ty.is_primitive_ty(),
+            _ => false,
+        }
+    }
+
+    pub fn is_suggestable(&self) -> bool {
+        match self.sty {
+            TypeVariants::TyAnon(..) |
+            TypeVariants::TyFnDef(..) |
+            TypeVariants::TyFnPtr(..) |
+            TypeVariants::TyDynamic(..) |
+            TypeVariants::TyClosure(..) |
+            TypeVariants::TyProjection(..) => false,
+            _ => true,
+        }
+    }
+}
+
+impl<'a, 'gcx, 'tcx> HashStable<StableHashingContext<'a, 'gcx, 'tcx>> for ty::TyS<'tcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'a, 'tcx>,
+                                          hcx: &mut StableHashingContext<'a, 'gcx, 'tcx>,
                                           hasher: &mut StableHasher<W>) {
         let ty::TyS {
             ref sty,
@@ -918,7 +948,7 @@ impl<'tcx> TraitPredicate<'tcx> {
     }
 
     /// Creates the dep-node for selecting/evaluating this trait reference.
-    fn dep_node(&self) -> DepNode<DefId> {
+    fn dep_node(&self, tcx: TyCtxt) -> DepNode {
         // Extact the trait-def and first def-id from inputs.  See the
         // docs for `DepNode::TraitSelect` for more information.
         let trait_def_id = self.def_id();
@@ -926,15 +956,17 @@ impl<'tcx> TraitPredicate<'tcx> {
             self.input_types()
                 .flat_map(|t| t.walk())
                 .filter_map(|t| match t.sty {
-                    ty::TyAdt(adt_def, _) => Some(adt_def.did),
+                    ty::TyAdt(adt_def, ..) => Some(adt_def.did),
+                    ty::TyClosure(def_id, ..) => Some(def_id),
+                    ty::TyFnDef(def_id, ..) => Some(def_id),
                     _ => None
                 })
                 .next()
                 .unwrap_or(trait_def_id);
-        DepNode::TraitSelect {
-            trait_def_id: trait_def_id,
-            input_def_id: input_def_id
-        }
+        DepNode::new(tcx, DepConstructor::TraitSelect {
+            trait_def_id,
+            input_def_id,
+        })
     }
 
     pub fn input_types<'a>(&'a self) -> impl DoubleEndedIterator<Item=Ty<'tcx>> + 'a {
@@ -952,9 +984,9 @@ impl<'tcx> PolyTraitPredicate<'tcx> {
         self.0.def_id()
     }
 
-    pub fn dep_node(&self) -> DepNode<DefId> {
+    pub fn dep_node(&self, tcx: TyCtxt) -> DepNode {
         // ok to skip binder since depnode does not care about regions
-        self.0.dep_node()
+        self.0.dep_node(tcx)
     }
 }
 
@@ -998,8 +1030,13 @@ pub struct ProjectionPredicate<'tcx> {
 pub type PolyProjectionPredicate<'tcx> = Binder<ProjectionPredicate<'tcx>>;
 
 impl<'tcx> PolyProjectionPredicate<'tcx> {
-    pub fn item_name(&self, tcx: TyCtxt) -> Name {
-        self.0.projection_ty.item_name(tcx) // safe to skip the binder to access a name
+    pub fn to_poly_trait_ref(&self, tcx: TyCtxt) -> PolyTraitRef<'tcx> {
+        // Note: unlike with TraitRef::to_poly_trait_ref(),
+        // self.0.trait_ref is permitted to have escaping regions.
+        // This is because here `self` has a `Binder` and so does our
+        // return value, so we are preserving the number of binding
+        // levels.
+        ty::Binder(self.0.projection_ty.trait_ref(tcx))
     }
 }
 
@@ -1017,17 +1054,6 @@ impl<'tcx> ToPolyTraitRef<'tcx> for TraitRef<'tcx> {
 impl<'tcx> ToPolyTraitRef<'tcx> for PolyTraitPredicate<'tcx> {
     fn to_poly_trait_ref(&self) -> PolyTraitRef<'tcx> {
         self.map_bound_ref(|trait_pred| trait_pred.trait_ref)
-    }
-}
-
-impl<'tcx> ToPolyTraitRef<'tcx> for PolyProjectionPredicate<'tcx> {
-    fn to_poly_trait_ref(&self) -> PolyTraitRef<'tcx> {
-        // Note: unlike with TraitRef::to_poly_trait_ref(),
-        // self.0.trait_ref is permitted to have escaping regions.
-        // This is because here `self` has a `Binder` and so does our
-        // return value, so we are preserving the number of binding
-        // levels.
-        ty::Binder(self.0.projection_ty.trait_ref)
     }
 }
 
@@ -1100,8 +1126,7 @@ impl<'tcx> Predicate<'tcx> {
                 vec![]
             }
             ty::Predicate::Projection(ref data) => {
-                let trait_inputs = data.0.projection_ty.trait_ref.input_types();
-                trait_inputs.chain(Some(data.0.ty)).collect()
+                data.0.projection_ty.substs.types().chain(Some(data.0.ty)).collect()
             }
             ty::Predicate::WellFormed(data) => {
                 vec![data]
@@ -1212,12 +1237,12 @@ impl<'tcx> ParamEnv<'tcx> {
         if value.has_param_types() || value.has_self_ty() {
             ParamEnvAnd {
                 param_env: self,
-                value: value,
+                value,
             }
         } else {
             ParamEnvAnd {
                 param_env: ParamEnv::empty(self.reveal),
-                value: value,
+                value,
             }
         }
     }
@@ -1318,9 +1343,9 @@ impl<'tcx> serialize::UseSpecializedEncodable for &'tcx AdtDef {
 impl<'tcx> serialize::UseSpecializedDecodable for &'tcx AdtDef {}
 
 
-impl<'a, 'tcx> HashStable<StableHashingContext<'a, 'tcx>> for AdtDef {
+impl<'a, 'gcx, 'tcx> HashStable<StableHashingContext<'a, 'gcx, 'tcx>> for AdtDef {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'a, 'tcx>,
+                                          hcx: &mut StableHashingContext<'a, 'gcx, 'tcx>,
                                           hasher: &mut StableHasher<W>) {
         let ty::AdtDef {
             did,
@@ -1366,7 +1391,7 @@ impl_stable_hash_for!(struct ReprFlags {
 #[derive(Copy, Clone, Eq, PartialEq, RustcEncodable, RustcDecodable, Default)]
 pub struct ReprOptions {
     pub int: Option<attr::IntType>,
-    pub align: u16,
+    pub align: u32,
     pub flags: ReprFlags,
 }
 
@@ -1455,10 +1480,10 @@ impl<'a, 'gcx, 'tcx> AdtDef {
             AdtKind::Struct => {}
         }
         AdtDef {
-            did: did,
-            variants: variants,
-            flags: flags,
-            repr: repr,
+            did,
+            variants,
+            flags,
+            repr,
         }
     }
 
@@ -2081,11 +2106,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         AssociatedItem {
             name: trait_item_ref.name,
-            kind: kind,
+            kind,
             // Visibility of trait items is inherited from their traits.
             vis: Visibility::from_hir(parent_vis, trait_item_ref.id.node_id, self),
             defaultness: trait_item_ref.defaultness,
-            def_id: def_id,
+            def_id,
             container: TraitContainer(parent_def_id),
             method_has_self_argument: has_self
         }
@@ -2106,11 +2131,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         ty::AssociatedItem {
             name: impl_item_ref.name,
-            kind: kind,
+            kind,
             // Visibility of trait impl items doesn't matter.
             vis: ty::Visibility::from_hir(&impl_item_ref.vis, impl_item_ref.id.node_id, self),
             defaultness: impl_item_ref.defaultness,
-            def_id: def_id,
+            def_id,
             container: ImplContainer(parent_def_id),
             method_has_self_argument: has_self
         }
@@ -2505,7 +2530,6 @@ pub fn provide(providers: &mut ty::maps::Providers) {
         param_env,
         trait_of_item,
         trait_impls_of: trait_def::trait_impls_of_provider,
-        relevant_trait_impls_for: trait_def::relevant_trait_impls_provider,
         ..*providers
     };
 }
@@ -2515,7 +2539,6 @@ pub fn provide_extern(providers: &mut ty::maps::Providers) {
         adt_sized_constraint,
         adt_dtorck_constraint,
         trait_impls_of: trait_def::trait_impls_of_provider,
-        relevant_trait_impls_for: trait_def::relevant_trait_impls_provider,
         param_env,
         ..*providers
     };

@@ -70,12 +70,16 @@
 #![deny(warnings)]
 
 extern crate libc;
-#[cfg(feature = "kernel32-sys")] extern crate kernel32;
-#[cfg(feature = "winapi")] extern crate winapi;
-#[cfg(feature = "dbghelp")] extern crate dbghelp;
+#[cfg(all(windows, feature = "kernel32-sys"))] extern crate kernel32;
+#[cfg(all(windows, feature = "winapi"))] extern crate winapi;
+#[cfg(all(windows, feature = "dbghelp"))] extern crate dbghelp;
 
 #[cfg(feature = "serde")]
 extern crate serde;
+
+#[cfg(feature = "serde_derive")]
+#[cfg_attr(feature = "serde_derive", macro_use)]
+extern crate serde_derive;
 
 #[cfg(feature = "rustc-serialize")]
 extern crate rustc_serialize;
@@ -84,6 +88,9 @@ extern crate rustc_serialize;
 extern crate cfg_if;
 
 extern crate rustc_demangle;
+
+#[cfg(feature = "cpp_demangle")]
+extern crate cpp_demangle;
 
 #[allow(dead_code)] // not used everywhere
 #[cfg(unix)]
@@ -97,9 +104,7 @@ pub use symbolize::{resolve, Symbol, SymbolName};
 mod symbolize;
 
 pub use capture::{Backtrace, BacktraceFrame, BacktraceSymbol};
-mod capture {
-    include!(concat!(env!("OUT_DIR"), "/capture.rs"));
-}
+mod capture;
 
 #[allow(dead_code)]
 struct Bomb {

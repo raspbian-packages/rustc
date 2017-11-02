@@ -5,18 +5,9 @@ use ansi_term::ANSIString;
 use ansi_term::Colour::{Green, Red, Yellow};
 
 #[cfg(feature = "color")]
-use libc;
+use atty;
 use std::fmt;
-
-#[cfg(all(feature = "color", not(target_os = "windows")))]
-const STDERR: i32 = libc::STDERR_FILENO;
-#[cfg(all(feature = "color", not(target_os = "windows")))]
-const STDOUT: i32 = libc::STDOUT_FILENO;
-
-#[cfg(target_os = "windows")]
-const STDERR: i32 = 0;
-#[cfg(target_os = "windows")]
-const STDOUT: i32 = 0;
+use std::env;
 
 #[doc(hidden)]
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -28,32 +19,38 @@ pub enum ColorWhen {
 
 #[cfg(feature = "color")]
 pub fn is_a_tty(stderr: bool) -> bool {
-    debugln!("fn=is_a_tty;");
-    debugln!("Use stderr...{:?}", stderr);
-    let fd = if stderr { STDERR } else { STDOUT };
-    unsafe { libc::isatty(fd) != 0 }
+    debugln!("is_a_tty: stderr={:?}", stderr);
+    let stream = if stderr {
+        atty::Stream::Stderr
+    } else {
+        atty::Stream::Stdout
+    };
+    atty::is(stream)
 }
 
 #[cfg(not(feature = "color"))]
 pub fn is_a_tty(_: bool) -> bool {
-    debugln!("fn=is_a_tty;");
+    debugln!("is_a_tty;");
     false
+}
+
+pub fn is_term_dumb() -> bool { env::var("TERM").ok() == Some(String::from("dumb")) }
+
+#[doc(hidden)]
+pub struct ColorizerOption {
+    pub use_stderr: bool,
+    pub when: ColorWhen,
 }
 
 #[doc(hidden)]
 pub struct Colorizer {
-    pub use_stderr: bool,
-    pub when: ColorWhen,
+    when: ColorWhen,
 }
 
 macro_rules! color {
     ($_self:ident, $c:ident, $m:expr) => {
         match $_self.when {
-            ColorWhen::Auto => if is_a_tty($_self.use_stderr) {
-                Format::$c($m)
-            } else {
-                Format::None($m)
-            },
+            ColorWhen::Auto => Format::$c($m),
             ColorWhen::Always => Format::$c($m),
             ColorWhen::Never => Format::None($m),
         }
@@ -61,41 +58,53 @@ macro_rules! color {
 }
 
 impl Colorizer {
+    pub fn new(option: ColorizerOption) -> Colorizer {
+        let is_a_tty = is_a_tty(option.use_stderr);
+        let is_term_dumb = is_term_dumb();
+        Colorizer {
+            when: if is_a_tty && !is_term_dumb {
+                option.when
+            } else {
+                ColorWhen::Never
+            },
+        }
+    }
+
     pub fn good<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("fn=good;");
+        debugln!("Colorizer::good;");
         color!(self, Good, msg)
     }
 
     pub fn warning<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("fn=warning;");
+        debugln!("Colorizer::warning;");
         color!(self, Warning, msg)
     }
 
     pub fn error<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("fn=error;");
+        debugln!("Colorizer::error;");
         color!(self, Error, msg)
     }
 
     pub fn none<T>(&self, msg: T) -> Format<T>
         where T: fmt::Display + AsRef<str>
     {
-        debugln!("fn=none;");
+        debugln!("Colorizer::none;");
         Format::None(msg)
     }
 }
 
 impl Default for Colorizer {
     fn default() -> Self {
-        Colorizer {
+        Colorizer::new(ColorizerOption {
             use_stderr: true,
             when: ColorWhen::Auto,
-        }
+        })
     }
 }
 

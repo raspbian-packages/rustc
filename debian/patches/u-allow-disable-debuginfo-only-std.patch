@@ -3,7 +3,7 @@ Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/rust-lang/rust/pull/43297
 --- a/configure
 +++ b/configure
-@@ -558,8 +558,8 @@
+@@ -560,8 +560,8 @@
            *-pc-windows-gnu)
              ;;
            *)
@@ -14,7 +14,7 @@ Bug: https://github.com/rust-lang/rust/pull/43297
              ;;
          esac
  
-@@ -570,8 +570,8 @@
+@@ -572,8 +572,8 @@
            *-pc-windows-gnu)
              ;;
            *)

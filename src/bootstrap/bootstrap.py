@@ -25,10 +25,11 @@ from time import time
 
 
 def get(url, path, verbose=False, use_local_hash_if_present=True):
-    sha_url = url + ".sha256"
+    suffix = '.sha256'
+    sha_url = url + suffix
     with tempfile.NamedTemporaryFile(delete=False) as temp_file:
         temp_path = temp_file.name
-    sha_path = path + ".sha256"
+    sha_path = path + suffix
 
     try:
         if use_local_hash_if_present and os.path.exists(sha_path):
@@ -56,6 +57,7 @@ def get(url, path, verbose=False, use_local_hash_if_present=True):
 
 
 def delete_if_present(path, verbose):
+    """Remove the given file if present"""
     if os.path.isfile(path):
         if verbose:
             print("removing " + path)
@@ -93,12 +95,13 @@ def _download(path, url, probably_big, verbose, exception):
 
 
 def verify(path, sha_path, verbose):
+    """Check if the sha256 sum of the given path is valid"""
     if verbose:
         print("verifying " + path)
-    with open(path, "rb") as f:
-        found = hashlib.sha256(f.read()).hexdigest()
-    with open(sha_path, "r") as f:
-        expected = f.readline().split()[0]
+    with open(path, "rb") as source:
+        found = hashlib.sha256(source.read()).hexdigest()
+    with open(sha_path, "r") as sha256sum:
+        expected = sha256sum.readline().split()[0]
     verified = found == expected
     if not verified:
         print("invalid checksum:\n"
@@ -108,6 +111,7 @@ def verify(path, sha_path, verbose):
 
 
 def unpack(tarball, dst, verbose=False, match=None):
+    """Unpack the given tarball file"""
     print("extracting " + tarball)
     fname = os.path.basename(tarball).replace(".tar.gz", "")
     with contextlib.closing(tarfile.open(tarball)) as tar:
@@ -128,6 +132,7 @@ def unpack(tarball, dst, verbose=False, match=None):
                 continue
             shutil.move(tp, fp)
     shutil.rmtree(os.path.join(dst, fname))
+
 
 def run(args, verbose=False, exception=False, **kwargs):
     if verbose:
@@ -246,7 +251,8 @@ class RustBuild(object):
             return
 
         # At this point we're pretty sure the user is running NixOS
-        print("info: you seem to be running NixOS. Attempting to patch " + fname)
+        nix_os_msg = "info: you seem to be running NixOS. Attempting to patch"
+        print(nix_os_msg, fname)
 
         try:
             interpreter = subprocess.check_output(
@@ -294,18 +300,22 @@ class RustBuild(object):
         return self._cargo_channel
 
     def rustc_stamp(self):
+        """Return the path for .rustc-stamp"""
         return os.path.join(self.bin_root(), '.rustc-stamp')
 
     def cargo_stamp(self):
+        """Return the path for .cargo-stamp"""
         return os.path.join(self.bin_root(), '.cargo-stamp')
 
     def rustc_out_of_date(self):
+        """Check if rustc is out of date"""
         if not os.path.exists(self.rustc_stamp()) or self.clean:
             return True
         with open(self.rustc_stamp(), 'r') as f:
             return self.stage0_date() != f.read()
 
     def cargo_out_of_date(self):
+        """Check if cargo is out of date"""
         if not os.path.exists(self.cargo_stamp()) or self.clean:
             return True
         with open(self.cargo_stamp(), 'r') as f:
@@ -358,8 +368,7 @@ class RustBuild(object):
     def exe_suffix(self):
         if sys.platform == 'win32':
             return '.exe'
-        else:
-            return ''
+        return ''
 
     def print_what_it_means_to_bootstrap(self):
         if hasattr(self, 'printed'):
@@ -367,7 +376,7 @@ class RustBuild(object):
         self.printed = True
         if os.path.exists(self.bootstrap_binary()):
             return
-        if not '--help' in sys.argv or len(sys.argv) == 1:
+        if '--help' not in sys.argv or len(sys.argv) == 1:
             return
 
         print('info: the build system for Rust is written in Rust, so this')
@@ -386,6 +395,7 @@ class RustBuild(object):
         if self.clean and os.path.exists(build_dir):
             shutil.rmtree(build_dir)
         env = os.environ.copy()
+        env["RUSTC_BOOTSTRAP"] = '1'
         env["CARGO_TARGET_DIR"] = build_dir
         env["RUSTC"] = self.rustc()
         env["LD_LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib") + \
@@ -457,8 +467,8 @@ class RustBuild(object):
             # always emit 'i386' on x86/amd64 systems).  As such, isainfo -k
             # must be used instead.
             try:
-                cputype = subprocess.check_output(['isainfo',
-                                                   '-k']).strip().decode(default_encoding)
+                cputype = subprocess.check_output(
+                    ['isainfo', '-k']).strip().decode(default_encoding)
             except (subprocess.CalledProcessError, OSError):
                 err = "isainfo not found"
                 if self.verbose:
@@ -558,21 +568,26 @@ class RustBuild(object):
         default_encoding = sys.getdefaultencoding()
         run(["git", "submodule", "-q", "sync"], cwd=self.rust_root)
         submodules = [s.split(' ', 1)[1] for s in subprocess.check_output(
-            ["git", "config", "--file", os.path.join(self.rust_root, ".gitmodules"),
+            ["git", "config", "--file",
+             os.path.join(self.rust_root, ".gitmodules"),
              "--get-regexp", "path"]
         ).decode(default_encoding).splitlines()]
         submodules = [module for module in submodules
                       if not ((module.endswith("llvm") and
-                               (self.get_toml('llvm-config') or self.get_mk('CFG_LLVM_ROOT'))) or
+                               (self.get_toml('llvm-config') or
+                                self.get_mk('CFG_LLVM_ROOT'))) or
                               (module.endswith("jemalloc") and
-                               (self.get_toml('jemalloc') or self.get_mk('CFG_JEMALLOC_ROOT'))))
-                     ]
+                               (self.get_toml('jemalloc') or
+                                self.get_mk('CFG_JEMALLOC_ROOT'))))]
         run(["git", "submodule", "update",
-                  "--init"] + submodules, cwd=self.rust_root, verbose=self.verbose)
+             "--init", "--recursive"] + submodules,
+            cwd=self.rust_root, verbose=self.verbose)
         run(["git", "submodule", "-q", "foreach", "git",
-                  "reset", "-q", "--hard"], cwd=self.rust_root, verbose=self.verbose)
+             "reset", "-q", "--hard"],
+            cwd=self.rust_root, verbose=self.verbose)
         run(["git", "submodule", "-q", "foreach", "git",
-                  "clean", "-qdfx"], cwd=self.rust_root, verbose=self.verbose)
+             "clean", "-qdfx"],
+            cwd=self.rust_root, verbose=self.verbose)
 
 
 def bootstrap():
@@ -664,6 +679,7 @@ def bootstrap():
     env["BUILD"] = rb.build
     env["SRC"] = rb.rust_root
     env["BOOTSTRAP_PARENT_ID"] = str(os.getpid())
+    env["BOOTSTRAP_PYTHON"] = sys.executable
     run(args, env=env, verbose=rb.verbose)
 
 
@@ -687,6 +703,7 @@ def main():
             print("Build completed unsuccessfully in %s" %
                   format_build_time(time() - start_time))
         sys.exit(exit_code)
+
 
 if __name__ == '__main__':
     main()

@@ -124,6 +124,7 @@ impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
             let mut r = cx.renderinfo.borrow_mut();
             r.deref_trait_did = cx.tcx.lang_items.deref_trait();
             r.deref_mut_trait_did = cx.tcx.lang_items.deref_mut_trait();
+            r.owned_box_did = cx.tcx.lang_items.owned_box();
         }
 
         let mut externs = Vec::new();
@@ -240,7 +241,7 @@ impl Clean<ExternalCrate> for CrateNum {
                 }
             }).collect()
         } else {
-            cx.tcx.sess.cstore.item_children(root).iter().map(|item| item.def)
+            cx.tcx.sess.cstore.item_children(root, cx.tcx.sess).iter().map(|item| item.def)
               .filter_map(as_primitive).collect()
         };
 
@@ -309,6 +310,9 @@ impl Item {
     }
     pub fn is_ty_method(&self) -> bool {
         self.type_() == ItemType::TyMethod
+    }
+    pub fn is_typedef(&self) -> bool {
+        self.type_() == ItemType::Typedef
     }
     pub fn is_primitive(&self) -> bool {
         self.type_() == ItemType::Primitive
@@ -948,15 +952,15 @@ impl<'tcx> Clean<WherePredicate> for ty::ProjectionPredicate<'tcx> {
 
 impl<'tcx> Clean<Type> for ty::ProjectionTy<'tcx> {
     fn clean(&self, cx: &DocContext) -> Type {
-        let trait_ = match self.trait_ref.clean(cx) {
+        let trait_ = match self.trait_ref(cx.tcx).clean(cx) {
             TyParamBound::TraitBound(t, _) => t.trait_,
             TyParamBound::RegionBound(_) => {
                 panic!("cleaning a trait got a region")
             }
         };
         Type::QPath {
-            name: self.item_name(cx.tcx).clean(cx),
-            self_type: box self.trait_ref.self_ty().clean(cx),
+            name: cx.tcx.associated_item(self.item_def_id).name.clean(cx),
+            self_type: box self.self_ty().clean(cx),
             trait_: box trait_
         }
     }
@@ -1363,7 +1367,7 @@ impl<'tcx> Clean<Item> for ty::AssociatedItem {
             ty::AssociatedKind::Method => {
                 let generics = (cx.tcx.generics_of(self.def_id),
                                 &cx.tcx.predicates_of(self.def_id)).clean(cx);
-                let sig = cx.tcx.type_of(self.def_id).fn_sig();
+                let sig = cx.tcx.fn_sig(self.def_id);
                 let mut decl = (self.def_id, sig).clean(cx);
 
                 if self.method_has_self_argument {
@@ -1780,7 +1784,7 @@ impl Clean<Type> for hir::Ty {
                 let mut def = Def::Err;
                 let ty = hir_ty_to_ty(cx.tcx, self);
                 if let ty::TyProjection(proj) = ty.sty {
-                    def = Def::Trait(proj.trait_ref.def_id);
+                    def = Def::Trait(proj.trait_ref(cx.tcx).def_id);
                 }
                 let trait_path = hir::Path {
                     span: self.span,
@@ -1838,17 +1842,21 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
                 mutability: mt.mutbl.clean(cx),
                 type_: box mt.ty.clean(cx),
             },
-            ty::TyFnDef(.., sig) |
-            ty::TyFnPtr(sig) => BareFunction(box BareFunctionDecl {
-                unsafety: sig.unsafety(),
-                generics: Generics {
-                    lifetimes: Vec::new(),
-                    type_params: Vec::new(),
-                    where_predicates: Vec::new()
-                },
-                decl: (cx.tcx.hir.local_def_id(ast::CRATE_NODE_ID), sig).clean(cx),
-                abi: sig.abi(),
-            }),
+            ty::TyFnDef(..) |
+            ty::TyFnPtr(_) => {
+                let ty = cx.tcx.lift(self).unwrap();
+                let sig = ty.fn_sig(cx.tcx);
+                BareFunction(box BareFunctionDecl {
+                    unsafety: sig.unsafety(),
+                    generics: Generics {
+                        lifetimes: Vec::new(),
+                        type_params: Vec::new(),
+                        where_predicates: Vec::new()
+                    },
+                    decl: (cx.tcx.hir.local_def_id(ast::CRATE_NODE_ID), sig).clean(cx),
+                    abi: sig.abi(),
+                })
+            }
             ty::TyAdt(def, substs) => {
                 let did = def.did;
                 let kind = match def.adt_kind() {
@@ -1893,7 +1901,7 @@ impl<'tcx> Clean<Type> for ty::Ty<'tcx> {
                     let mut bindings = vec![];
                     for ty::Binder(ref pb) in obj.projection_bounds() {
                         bindings.push(TypeBinding {
-                            name: pb.item_name.clean(cx),
+                            name: cx.tcx.associated_item(pb.item_def_id).name.clean(cx),
                             ty: pb.ty.clean(cx)
                         });
                     }

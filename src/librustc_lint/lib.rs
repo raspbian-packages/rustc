@@ -35,10 +35,6 @@
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_patterns)]
 
-#![cfg_attr(stage0, unstable(feature = "rustc_private", issue = "27812"))]
-#![cfg_attr(stage0, feature(rustc_private))]
-#![cfg_attr(stage0, feature(staged_api))]
-
 #[macro_use]
 extern crate syntax;
 #[macro_use]
@@ -186,6 +182,10 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                                        vec![
         FutureIncompatibleInfo {
             id: LintId::of(PRIVATE_IN_PUBLIC),
+            reference: "issue #34537 <https://github.com/rust-lang/rust/issues/34537>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(PUB_USE_OF_PRIVATE_EXTERN_CRATE),
             reference: "issue #34537 <https://github.com/rust-lang/rust/issues/34537>",
         },
         FutureIncompatibleInfo {

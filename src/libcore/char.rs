@@ -19,7 +19,7 @@ use char_private::is_printable;
 use convert::TryFrom;
 use fmt::{self, Write};
 use slice;
-use str::from_utf8_unchecked_mut;
+use str::{from_utf8_unchecked_mut, FromStr};
 use iter::FusedIterator;
 use mem::transmute;
 
@@ -208,6 +208,63 @@ impl From<u8> for char {
     }
 }
 
+
+/// An error which can be returned when parsing a char.
+#[stable(feature = "char_from_str", since = "1.20.0")]
+#[derive(Clone, Debug)]
+pub struct ParseCharError {
+    kind: CharErrorKind,
+}
+
+impl ParseCharError {
+    #[unstable(feature = "char_error_internals",
+               reason = "this method should not be available publicly",
+               issue = "0")]
+    #[doc(hidden)]
+    pub fn __description(&self) -> &str {
+        match self.kind {
+            CharErrorKind::EmptyString => {
+                "cannot parse char from empty string"
+            },
+            CharErrorKind::TooManyChars => "too many characters in string"
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum CharErrorKind {
+    EmptyString,
+    TooManyChars,
+}
+
+#[stable(feature = "char_from_str", since = "1.20.0")]
+impl fmt::Display for ParseCharError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.__description().fmt(f)
+    }
+}
+
+
+#[stable(feature = "char_from_str", since = "1.20.0")]
+impl FromStr for char {
+    type Err = ParseCharError;
+
+    #[inline]
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut chars = s.chars();
+        match (chars.next(), chars.next()) {
+            (None, _) => {
+                Err(ParseCharError { kind: CharErrorKind::EmptyString })
+            },
+            (Some(c), None) => Ok(c),
+            _ => {
+                Err(ParseCharError { kind: CharErrorKind::TooManyChars })
+            }
+        }
+    }
+}
+
+
 #[unstable(feature = "try_from", issue = "33417")]
 impl TryFrom<u32> for char {
     type Error = CharTryFromError;
@@ -322,7 +379,7 @@ pub trait CharExt {
     fn escape_unicode(self) -> EscapeUnicode;
     #[stable(feature = "core", since = "1.6.0")]
     fn escape_default(self) -> EscapeDefault;
-    #[unstable(feature = "char_escape_debug", issue = "35068")]
+    #[stable(feature = "char_escape_debug", since = "1.20.0")]
     fn escape_debug(self) -> EscapeDebug;
     #[stable(feature = "core", since = "1.6.0")]
     fn len_utf8(self) -> usize;
@@ -719,24 +776,24 @@ impl fmt::Display for EscapeDefault {
 ///
 /// [`escape_debug`]: ../../std/primitive.char.html#method.escape_debug
 /// [`char`]: ../../std/primitive.char.html
-#[unstable(feature = "char_escape_debug", issue = "35068")]
+#[stable(feature = "char_escape_debug", since = "1.20.0")]
 #[derive(Clone, Debug)]
 pub struct EscapeDebug(EscapeDefault);
 
-#[unstable(feature = "char_escape_debug", issue = "35068")]
+#[stable(feature = "char_escape_debug", since = "1.20.0")]
 impl Iterator for EscapeDebug {
     type Item = char;
     fn next(&mut self) -> Option<char> { self.0.next() }
     fn size_hint(&self) -> (usize, Option<usize>) { self.0.size_hint() }
 }
 
-#[unstable(feature = "char_escape_debug", issue = "35068")]
+#[stable(feature = "char_escape_debug", since = "1.20.0")]
 impl ExactSizeIterator for EscapeDebug { }
 
 #[unstable(feature = "fused", issue = "35602")]
 impl FusedIterator for EscapeDebug {}
 
-#[unstable(feature = "char_escape_debug", issue = "35068")]
+#[stable(feature = "char_escape_debug", since = "1.20.0")]
 impl fmt::Display for EscapeDebug {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         fmt::Display::fmt(&self.0, f)

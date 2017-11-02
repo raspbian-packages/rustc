@@ -79,7 +79,7 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
 
     // check that the impl type can be made to match the trait type.
 
-    tcx.infer_ctxt(()).enter(|ref infcx| {
+    tcx.infer_ctxt().enter(|ref infcx| {
         let impl_param_env = tcx.param_env(self_type_did);
         let tcx = infcx.tcx;
         let mut fulfillment_cx = traits::FulfillmentContext::new();
@@ -110,7 +110,7 @@ fn ensure_drop_params_and_item_params_correspond<'a, 'tcx>(
 
         if let Err(ref errors) = fulfillment_cx.select_all_or_error(&infcx) {
             // this could be reached when we get lazy normalization
-            infcx.report_fulfillment_errors(errors);
+            infcx.report_fulfillment_errors(errors, None);
             return Err(ErrorReported);
         }
 

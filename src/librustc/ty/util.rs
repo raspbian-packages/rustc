@@ -25,6 +25,7 @@ use middle::lang_items;
 use rustc_const_math::{ConstInt, ConstIsize, ConstUsize};
 use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
                                            HashStable};
+use rustc_data_structures::fx::FxHashMap;
 use std::cmp;
 use std::hash::Hash;
 use std::intrinsics;
@@ -175,7 +176,7 @@ impl<'tcx> ty::ParamEnv<'tcx> {
                                        self_type: Ty<'tcx>, span: Span)
                                        -> Result<(), CopyImplementationError<'tcx>> {
         // FIXME: (@jroesch) float this code up
-        tcx.infer_ctxt(()).enter(|infcx| {
+        tcx.infer_ctxt().enter(|infcx| {
             let (adt, substs) = match self_type.sty {
                 ty::TyAdt(adt, substs) => (adt, substs),
                 _ => return Err(CopyImplementationError::NotAnAdt),
@@ -316,15 +317,26 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                  target: Ty<'tcx>)
                                  -> (Ty<'tcx>, Ty<'tcx>) {
         let (mut a, mut b) = (source, target);
-        while let (&TyAdt(a_def, a_substs), &TyAdt(b_def, b_substs)) = (&a.sty, &b.sty) {
-            if a_def != b_def || !a_def.is_struct() {
-                break;
-            }
-            match a_def.struct_variant().fields.last() {
-                Some(f) => {
-                    a = f.ty(self, a_substs);
-                    b = f.ty(self, b_substs);
-                }
+        loop {
+            match (&a.sty, &b.sty) {
+                (&TyAdt(a_def, a_substs), &TyAdt(b_def, b_substs))
+                        if a_def == b_def && a_def.is_struct() => {
+                    if let Some(f) = a_def.struct_variant().fields.last() {
+                        a = f.ty(self, a_substs);
+                        b = f.ty(self, b_substs);
+                    } else {
+                        break;
+                    }
+                },
+                (&TyTuple(a_tys, _), &TyTuple(b_tys, _))
+                        if a_tys.len() == b_tys.len() => {
+                    if let Some(a_last) = a_tys.last() {
+                        a = a_last;
+                        b = b_tys.last().unwrap();
+                    } else {
+                        break;
+                    }
+                },
                 _ => break,
             }
         }
@@ -410,7 +422,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         let mut dtor_did = None;
         let ty = self.type_of(adt_did);
-        self.trait_def(drop_trait).for_each_relevant_impl(self, ty, |impl_did| {
+        self.for_each_relevant_impl(drop_trait, ty, |impl_did| {
             if let Some(item) = self.associated_items(impl_did).next() {
                 if let Ok(()) = validate(self, impl_did) {
                     dtor_did = Some(item.def_id);
@@ -678,7 +690,7 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             TyRef(_, m) => self.hash(m.mutbl),
             TyClosure(def_id, _) |
             TyAnon(def_id, _) |
-            TyFnDef(def_id, ..) => self.def_id(def_id),
+            TyFnDef(def_id, _) => self.def_id(def_id),
             TyAdt(d, _) => self.def_id(d.did),
             TyFnPtr(f) => {
                 self.hash(f.unsafety());
@@ -835,27 +847,33 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
             })
         }
 
-        fn are_inner_types_recursive<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span,
-                                               seen: &mut Vec<Ty<'tcx>>, ty: Ty<'tcx>)
-                                               -> Representability {
+        fn are_inner_types_recursive<'a, 'tcx>(
+            tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span,
+            seen: &mut Vec<Ty<'tcx>>,
+            representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
+            ty: Ty<'tcx>)
+            -> Representability
+        {
             match ty.sty {
                 TyTuple(ref ts, _) => {
                     // Find non representable
                     fold_repr(ts.iter().map(|ty| {
-                        is_type_structurally_recursive(tcx, sp, seen, ty)
+                        is_type_structurally_recursive(tcx, sp, seen, representable_cache, ty)
                     }))
                 }
                 // Fixed-length vectors.
                 // FIXME(#11924) Behavior undecided for zero-length vectors.
                 TyArray(ty, _) => {
-                    is_type_structurally_recursive(tcx, sp, seen, ty)
+                    is_type_structurally_recursive(tcx, sp, seen, representable_cache, ty)
                 }
                 TyAdt(def, substs) => {
                     // Find non representable fields with their spans
                     fold_repr(def.all_fields().map(|field| {
                         let ty = field.ty(tcx, substs);
                         let span = tcx.hir.span_if_local(field.did).unwrap_or(sp);
-                        match is_type_structurally_recursive(tcx, span, seen, ty) {
+                        match is_type_structurally_recursive(tcx, span, seen,
+                                                             representable_cache, ty)
+                        {
                             Representability::SelfRecursive(_) => {
                                 Representability::SelfRecursive(vec![span])
                             }
@@ -896,12 +914,34 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
 
         // Does the type `ty` directly (without indirection through a pointer)
         // contain any types on stack `seen`?
-        fn is_type_structurally_recursive<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                                    sp: Span,
-                                                    seen: &mut Vec<Ty<'tcx>>,
-                                                    ty: Ty<'tcx>) -> Representability {
+        fn is_type_structurally_recursive<'a, 'tcx>(
+            tcx: TyCtxt<'a, 'tcx, 'tcx>,
+            sp: Span,
+            seen: &mut Vec<Ty<'tcx>>,
+            representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
+            ty: Ty<'tcx>) -> Representability
+        {
             debug!("is_type_structurally_recursive: {:?} {:?}", ty, sp);
+            if let Some(representability) = representable_cache.get(ty) {
+                debug!("is_type_structurally_recursive: {:?} {:?} - (cached) {:?}",
+                       ty, sp, representability);
+                return representability.clone();
+            }
 
+            let representability = is_type_structurally_recursive_inner(
+                tcx, sp, seen, representable_cache, ty);
+
+            representable_cache.insert(ty, representability.clone());
+            representability
+        }
+
+        fn is_type_structurally_recursive_inner<'a, 'tcx>(
+            tcx: TyCtxt<'a, 'tcx, 'tcx>,
+            sp: Span,
+            seen: &mut Vec<Ty<'tcx>>,
+            representable_cache: &mut FxHashMap<Ty<'tcx>, Representability>,
+            ty: Ty<'tcx>) -> Representability
+        {
             match ty.sty {
                 TyAdt(def, _) => {
                     {
@@ -948,13 +988,13 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                     // For structs and enums, track all previously seen types by pushing them
                     // onto the 'seen' stack.
                     seen.push(ty);
-                    let out = are_inner_types_recursive(tcx, sp, seen, ty);
+                    let out = are_inner_types_recursive(tcx, sp, seen, representable_cache, ty);
                     seen.pop();
                     out
                 }
                 _ => {
                     // No need to push in other cases.
-                    are_inner_types_recursive(tcx, sp, seen, ty)
+                    are_inner_types_recursive(tcx, sp, seen, representable_cache, ty)
                 }
             }
         }
@@ -965,7 +1005,9 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
         // contains a different, structurally recursive type, maintain a stack
         // of seen types and check recursion for each of them (issues #3008, #3779).
         let mut seen: Vec<Ty> = Vec::new();
-        let r = is_type_structurally_recursive(tcx, sp, &mut seen, self);
+        let mut representable_cache = FxHashMap();
+        let r = is_type_structurally_recursive(
+            tcx, sp, &mut seen, &mut representable_cache, self);
         debug!("is_type_representable: {:?} is {:?}", self, r);
         r
     }
@@ -977,7 +1019,7 @@ fn is_copy_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 {
     let (param_env, ty) = query.into_parts();
     let trait_def_id = tcx.require_lang_item(lang_items::CopyTraitLangItem);
-    tcx.infer_ctxt(())
+    tcx.infer_ctxt()
        .enter(|infcx| traits::type_known_to_meet_bound(&infcx,
                                                        param_env,
                                                        ty,
@@ -991,7 +1033,7 @@ fn is_sized_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 {
     let (param_env, ty) = query.into_parts();
     let trait_def_id = tcx.require_lang_item(lang_items::SizedTraitLangItem);
-    tcx.infer_ctxt(())
+    tcx.infer_ctxt()
        .enter(|infcx| traits::type_known_to_meet_bound(&infcx,
                                                        param_env,
                                                        ty,
@@ -1005,7 +1047,7 @@ fn is_freeze_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 {
     let (param_env, ty) = query.into_parts();
     let trait_def_id = tcx.require_lang_item(lang_items::FreezeTraitLangItem);
-    tcx.infer_ctxt(())
+    tcx.infer_ctxt()
        .enter(|infcx| traits::type_known_to_meet_bound(&infcx,
                                                        param_env,
                                                        ty,

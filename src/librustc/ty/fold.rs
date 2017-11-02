@@ -150,10 +150,6 @@ pub trait TypeVisitor<'tcx> : Sized {
         t.super_visit_with(self)
     }
 
-    fn visit_trait_ref(&mut self, trait_ref: ty::TraitRef<'tcx>) -> bool {
-        trait_ref.super_visit_with(self)
-    }
-
     fn visit_region(&mut self, r: ty::Region<'tcx>) -> bool {
         r.super_visit_with(self)
     }
@@ -238,10 +234,10 @@ impl<'a, 'gcx, 'tcx> RegionFolder<'a, 'gcx, 'tcx> {
         where F : FnMut(ty::Region<'tcx>, u32) -> ty::Region<'tcx>
     {
         RegionFolder {
-            tcx: tcx,
-            skipped_regions: skipped_regions,
+            tcx,
+            skipped_regions,
             current_depth: 1,
-            fld_r: fld_r,
+            fld_r,
         }
     }
 }
@@ -393,9 +389,9 @@ impl<'a, 'gcx, 'tcx> RegionReplacer<'a, 'gcx, 'tcx> {
         where F : FnMut(ty::BoundRegion) -> ty::Region<'tcx>
     {
         RegionReplacer {
-            tcx: tcx,
+            tcx,
             current_depth: 1,
-            fld_r: fld_r,
+            fld_r,
             map: FxHashMap()
         }
     }
@@ -621,7 +617,7 @@ impl LateBoundRegionsCollector {
         LateBoundRegionsCollector {
             current_depth: 1,
             regions: FxHashSet(),
-            just_constrained: just_constrained,
+            just_constrained,
         }
     }
 }

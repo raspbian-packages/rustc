@@ -28,7 +28,7 @@ use mir::transform::Passes;
 use ty::subst::{Kind, Substs};
 use ty::ReprOptions;
 use traits;
-use ty::{self, TraitRef, Ty, TypeAndMut};
+use ty::{self, Ty, TypeAndMut};
 use ty::{TyS, TypeVariants, Slice};
 use ty::{AdtKind, AdtDef, ClosureSubsts, Region};
 use hir::FreevarMap;
@@ -107,7 +107,7 @@ pub struct CtxtInterners<'tcx> {
 impl<'gcx: 'tcx, 'tcx> CtxtInterners<'tcx> {
     fn new(arena: &'tcx DroplessArena) -> CtxtInterners<'tcx> {
         CtxtInterners {
-            arena: arena,
+            arena,
             type_: RefCell::new(FxHashSet()),
             type_list: RefCell::new(FxHashSet()),
             substs: RefCell::new(FxHashSet()),
@@ -376,8 +376,8 @@ impl<'tcx> TypeckTables<'tcx> {
         }
     }
 
-    pub fn upvar_capture(&self, upvar_id: ty::UpvarId) -> Option<ty::UpvarCapture<'tcx>> {
-        Some(self.upvar_capture_map.get(&upvar_id).unwrap().clone())
+    pub fn upvar_capture(&self, upvar_id: ty::UpvarId) -> ty::UpvarCapture<'tcx> {
+        self.upvar_capture_map[&upvar_id]
     }
 }
 
@@ -732,12 +732,12 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             global_interners: interners,
             dep_graph: dep_graph.clone(),
             types: common_types,
-            named_region_map: named_region_map,
+            named_region_map,
             trait_map: resolutions.trait_map,
             export_map: resolutions.export_map,
             fulfilled_predicates: RefCell::new(fulfilled_predicates),
-            hir: hir,
-            def_path_hash_to_def_id: def_path_hash_to_def_id,
+            hir,
+            def_path_hash_to_def_id,
             maps: maps::Maps::new(providers),
             mir_passes,
             freevars: RefCell::new(resolutions.freevars),
@@ -745,7 +745,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             rcache: RefCell::new(FxHashMap()),
             normalized_cache: RefCell::new(FxHashMap()),
             inhabitedness_cache: RefCell::new(FxHashMap()),
-            lang_items: lang_items,
+            lang_items,
             used_unsafe: RefCell::new(NodeSet()),
             used_mut_nodes: RefCell::new(NodeSet()),
             stability: RefCell::new(stability),
@@ -753,7 +753,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             evaluation_cache: traits::EvaluationCache::new(),
             rvalue_promotable_to_static: RefCell::new(NodeMap()),
             crate_name: Symbol::intern(crate_name),
-            data_layout: data_layout,
+            data_layout,
             layout_interner: RefCell::new(FxHashSet()),
             layout_depth: Cell::new(0),
             derive_macros: RefCell::new(NodeMap()),
@@ -964,8 +964,8 @@ pub mod tls {
             let prev = tls.get();
             tls.set(Some((gcx_ptr, interners_ptr)));
             let ret = f(TyCtxt {
-                gcx: gcx,
-                interners: interners
+                gcx,
+                interners,
             });
             tls.set(prev);
             ret
@@ -980,8 +980,8 @@ pub mod tls {
             let gcx = unsafe { &*(gcx as *const GlobalCtxt) };
             let interners = unsafe { &*(interners as *const CtxtInterners) };
             f(TyCtxt {
-                gcx: gcx,
-                interners: interners
+                gcx,
+                interners,
             })
         })
     }
@@ -1378,9 +1378,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn mk_fn_def(self, def_id: DefId,
-                     substs: &'tcx Substs<'tcx>,
-                     fty: PolyFnSig<'tcx>) -> Ty<'tcx> {
-        self.mk_ty(TyFnDef(def_id, substs, fty))
+                     substs: &'tcx Substs<'tcx>) -> Ty<'tcx> {
+        self.mk_ty(TyFnDef(def_id, substs))
     }
 
     pub fn mk_fn_ptr(self, fty: PolyFnSig<'tcx>) -> Ty<'tcx> {
@@ -1396,12 +1395,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn mk_projection(self,
-                         trait_ref: TraitRef<'tcx>,
-                         item_name: Name)
+                         item_def_id: DefId,
+                         substs: &'tcx Substs<'tcx>)
         -> Ty<'tcx> {
-            // take a copy of substs so that we own the vectors inside
-            let inner = ProjectionTy::from_ref_and_name(self, trait_ref, item_name);
-            self.mk_ty(TyProjection(inner))
+            self.mk_ty(TyProjection(ProjectionTy {
+                item_def_id: item_def_id,
+                substs: substs,
+            }))
         }
 
     pub fn mk_closure(self,
@@ -1409,7 +1409,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                       substs: &'tcx Substs<'tcx>)
         -> Ty<'tcx> {
         self.mk_closure_from_closure_substs(closure_id, ClosureSubsts {
-            substs: substs
+            substs,
         })
     }
 

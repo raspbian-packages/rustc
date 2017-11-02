@@ -152,11 +152,11 @@ impl<'a, 'gcx, 'tcx> FulfillmentContext<'tcx> {
                           cause: ObligationCause<'tcx>)
     {
         let trait_ref = ty::TraitRef {
-            def_id: def_id,
+            def_id,
             substs: infcx.tcx.mk_substs_trait(ty, &[]),
         };
         self.register_predicate_obligation(infcx, Obligation {
-            cause: cause,
+            cause,
             recursion_depth: 0,
             param_env,
             predicate: trait_ref.to_predicate()
@@ -183,13 +183,15 @@ impl<'a, 'gcx, 'tcx> FulfillmentContext<'tcx> {
 
         assert!(!infcx.is_in_snapshot());
 
-        if infcx.tcx.fulfilled_predicates.borrow().check_duplicate(&obligation.predicate) {
+        let tcx = infcx.tcx;
+
+        if tcx.fulfilled_predicates.borrow().check_duplicate(tcx, &obligation.predicate) {
             debug!("register_predicate_obligation: duplicate");
             return
         }
 
         self.predicates.register_obligation(PendingPredicateObligation {
-            obligation: obligation,
+            obligation,
             stalled_on: vec![]
         });
     }
@@ -257,7 +259,7 @@ impl<'a, 'gcx, 'tcx> FulfillmentContext<'tcx> {
 
             // Process pending obligations.
             let outcome = self.predicates.process_obligations(&mut FulfillProcessor {
-                selcx: selcx,
+                selcx,
                 region_obligations: &mut self.region_obligations,
             });
             debug!("select: outcome={:?}", outcome);
@@ -373,7 +375,8 @@ fn process_predicate<'a, 'gcx, 'tcx>(
 
     match obligation.predicate {
         ty::Predicate::Trait(ref data) => {
-            if selcx.tcx().fulfilled_predicates.borrow().check_duplicate_trait(data) {
+            let tcx = selcx.tcx();
+            if tcx.fulfilled_predicates.borrow().check_duplicate_trait(tcx, data) {
                 return Ok(Some(vec![]));
             }
 
@@ -477,8 +480,9 @@ fn process_predicate<'a, 'gcx, 'tcx>(
             let project_obligation = obligation.with(data.clone());
             match project::poly_project_and_unify_type(selcx, &project_obligation) {
                 Ok(None) => {
+                    let tcx = selcx.tcx();
                     pending_obligation.stalled_on =
-                        trait_ref_type_vars(selcx, data.to_poly_trait_ref());
+                        trait_ref_type_vars(selcx, data.to_poly_trait_ref(tcx));
                     Ok(None)
                 }
                 Ok(v) => Ok(v),
@@ -603,26 +607,26 @@ impl<'a, 'gcx, 'tcx> GlobalFulfilledPredicates<'gcx> {
     pub fn new(dep_graph: DepGraph) -> GlobalFulfilledPredicates<'gcx> {
         GlobalFulfilledPredicates {
             set: FxHashSet(),
-            dep_graph: dep_graph,
+            dep_graph,
         }
     }
 
-    pub fn check_duplicate(&self, key: &ty::Predicate<'tcx>) -> bool {
+    pub fn check_duplicate(&self, tcx: TyCtxt, key: &ty::Predicate<'tcx>) -> bool {
         if let ty::Predicate::Trait(ref data) = *key {
-            self.check_duplicate_trait(data)
+            self.check_duplicate_trait(tcx, data)
         } else {
             false
         }
     }
 
-    pub fn check_duplicate_trait(&self, data: &ty::PolyTraitPredicate<'tcx>) -> bool {
+    pub fn check_duplicate_trait(&self, tcx: TyCtxt, data: &ty::PolyTraitPredicate<'tcx>) -> bool {
         // For the global predicate registry, when we find a match, it
         // may have been computed by some other task, so we want to
         // add a read from the node corresponding to the predicate
         // processing to make sure we get the transitive dependencies.
         if self.set.contains(data) {
             debug_assert!(data.is_global());
-            self.dep_graph.read(data.dep_node());
+            self.dep_graph.read(data.dep_node(tcx));
             debug!("check_duplicate: global predicate `{:?}` already proved elsewhere", data);
 
             true

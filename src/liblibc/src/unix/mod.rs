@@ -124,6 +124,20 @@ s! {
         // Actually a union of an int and a void*
         pub sival_ptr: *mut ::c_void
     }
+
+    // <sys/time.h>
+    pub struct itimerval {
+        pub it_interval: ::timeval,
+        pub it_value: ::timeval,
+    }
+
+    // <sys/times.h>
+    pub struct tms {
+        pub tms_utime: ::clock_t,
+        pub tms_stime: ::clock_t,
+        pub tms_cutime: ::clock_t,
+        pub tms_cstime: ::clock_t,
+    }
 }
 
 pub const SIG_DFL: sighandler_t = 0 as sighandler_t;
@@ -405,7 +419,9 @@ extern {
     pub fn lchown(path: *const c_char, uid: uid_t,
                   gid: gid_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
-               link_name = "close$UNIX2003")]
+               link_name = "close$NOCANCEL$UNIX2003")]
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86_64"),
+               link_name = "close$NOCANCEL")]
     pub fn close(fd: ::c_int) -> ::c_int;
     pub fn dup(fd: ::c_int) -> ::c_int;
     pub fn dup2(src: ::c_int, dst: ::c_int) -> ::c_int;
@@ -456,6 +472,7 @@ extern {
     pub fn read(fd: ::c_int, buf: *mut ::c_void, count: ::size_t)
                 -> ::ssize_t;
     pub fn rmdir(path: *const c_char) -> ::c_int;
+    pub fn seteuid(uid: uid_t) -> ::c_int;
     pub fn setgid(gid: gid_t) -> ::c_int;
     pub fn setpgid(pid: pid_t, pgid: pid_t) -> ::c_int;
     pub fn setsid() -> pid_t;
@@ -566,6 +583,8 @@ extern {
     #[cfg_attr(target_os = "netbsd", link_name = "__gettimeofday50")]
     pub fn gettimeofday(tp: *mut ::timeval,
                         tz: *mut ::c_void) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__times13")]
+    pub fn times(buf: *mut ::tms) -> ::clock_t;
 
     pub fn pthread_self() -> ::pthread_t;
     pub fn pthread_create(native: *mut ::pthread_t,
@@ -713,8 +732,10 @@ extern {
     pub fn mktime(tm: *mut tm) -> time_t;
     #[cfg_attr(target_os = "netbsd", link_name = "__time50")]
     pub fn time(time: *mut time_t) -> time_t;
+    #[cfg_attr(target_os = "netbsd", link_name = "__gmtime50")]
+    pub fn gmtime(time_p: *const time_t) -> *mut tm;
     #[cfg_attr(target_os = "netbsd", link_name = "__locatime50")]
-    pub fn localtime(time: *const time_t) -> *mut tm;
+    pub fn localtime(time_p: *const time_t) -> *mut tm;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__mknod50")]
     pub fn mknod(pathname: *const ::c_char, mode: ::mode_t,
@@ -793,6 +814,8 @@ extern {
                        set: *const sigset_t,
                        oldset: *mut sigset_t)
                        -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
+    pub fn sigpending(set: *mut sigset_t) -> ::c_int;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__timegm50")]
     pub fn timegm(tm: *mut ::tm) -> time_t;
@@ -854,10 +877,13 @@ extern {
 }
 
 cfg_if! {
-    if #[cfg(any(target_os = "linux",
-                 target_os = "android",
-                 target_os = "emscripten",
-                 target_os = "fuchsia"))] {
+    if #[cfg(target_env = "uclibc")] {
+        mod uclibc;
+        pub use self::uclibc::*;
+    } else if #[cfg(any(target_os = "linux",
+                        target_os = "android",
+                        target_os = "emscripten",
+                        target_os = "fuchsia"))] {
         mod notbsd;
         pub use self::notbsd::*;
     } else if #[cfg(any(target_os = "macos",

@@ -110,12 +110,13 @@ impl<T: 'static> fmt::Debug for LocalKey<T> {
     }
 }
 
+#[cfg(not(stage0))]
 /// Declare a new thread local storage key of type [`std::thread::LocalKey`].
 ///
 /// # Syntax
 ///
 /// The macro wraps any number of static declarations and makes them thread local.
-/// Each static may be public or private, and attributes are allowed. Example:
+/// Publicity and attributes for each static are allowed. Example:
 ///
 /// ```
 /// use std::cell::RefCell;
@@ -132,6 +133,60 @@ impl<T: 'static> fmt::Debug for LocalKey<T> {
 /// information.
 ///
 /// [`std::thread::LocalKey`]: ../std/thread/struct.LocalKey.html
+#[macro_export]
+#[stable(feature = "rust1", since = "1.0.0")]
+#[allow_internal_unstable]
+macro_rules! thread_local {
+    // empty (base case for the recursion)
+    () => {};
+
+    // process multiple declarations
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $t:ty = $init:expr; $($rest:tt)*) => (
+        __thread_local_inner!($(#[$attr])* $vis $name, $t, $init);
+        thread_local!($($rest)*);
+    );
+
+    // handle a single declaration
+    ($(#[$attr:meta])* $vis:vis static $name:ident: $t:ty = $init:expr) => (
+        __thread_local_inner!($(#[$attr])* $vis $name, $t, $init);
+    );
+}
+
+#[cfg(not(stage0))]
+#[doc(hidden)]
+#[unstable(feature = "thread_local_internals",
+           reason = "should not be necessary",
+           issue = "0")]
+#[macro_export]
+#[allow_internal_unstable]
+macro_rules! __thread_local_inner {
+    ($(#[$attr:meta])* $vis:vis $name:ident, $t:ty, $init:expr) => {
+        $(#[$attr])* $vis static $name: $crate::thread::LocalKey<$t> = {
+            fn __init() -> $t { $init }
+
+            fn __getit() -> $crate::option::Option<
+                &'static $crate::cell::UnsafeCell<
+                    $crate::option::Option<$t>>>
+            {
+                #[thread_local]
+                #[cfg(target_thread_local)]
+                static __KEY: $crate::thread::__FastLocalKeyInner<$t> =
+                    $crate::thread::__FastLocalKeyInner::new();
+
+                #[cfg(not(target_thread_local))]
+                static __KEY: $crate::thread::__OsLocalKeyInner<$t> =
+                    $crate::thread::__OsLocalKeyInner::new();
+
+                __KEY.get()
+            }
+
+            $crate::thread::LocalKey::new(__getit, __init)
+        };
+    }
+}
+
+#[cfg(stage0)]
+/// Declare a new thread local storage key of type `std::thread::LocalKey`.
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 #[allow_internal_unstable]
@@ -164,6 +219,7 @@ macro_rules! thread_local {
     );
 }
 
+#[cfg(stage0)]
 #[doc(hidden)]
 #[unstable(feature = "thread_local_internals",
            reason = "should not be necessary",
@@ -232,6 +288,32 @@ pub enum LocalKeyState {
     Destroyed,
 }
 
+/// An error returned by [`LocalKey::try_with`](struct.LocalKey.html#method.try_with).
+#[unstable(feature = "thread_local_state",
+           reason = "state querying was recently added",
+           issue = "27716")]
+pub struct AccessError {
+    _private: (),
+}
+
+#[unstable(feature = "thread_local_state",
+           reason = "state querying was recently added",
+           issue = "27716")]
+impl fmt::Debug for AccessError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("AccessError").finish()
+    }
+}
+
+#[unstable(feature = "thread_local_state",
+           reason = "state querying was recently added",
+           issue = "27716")]
+impl fmt::Display for AccessError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt("already destroyed", f)
+    }
+}
+
 impl<T: 'static> LocalKey<T> {
     #[doc(hidden)]
     #[unstable(feature = "thread_local_internals",
@@ -258,15 +340,8 @@ impl<T: 'static> LocalKey<T> {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn with<F, R>(&'static self, f: F) -> R
                       where F: FnOnce(&T) -> R {
-        unsafe {
-            let slot = (self.inner)();
-            let slot = slot.expect("cannot access a TLS value during or \
-                                    after it is destroyed");
-            f(match *slot.get() {
-                Some(ref inner) => inner,
-                None => self.init(slot),
-            })
-        }
+        self.try_with(f).expect("cannot access a TLS value during or \
+                                 after it is destroyed")
     }
 
     unsafe fn init(&self, slot: &UnsafeCell<Option<T>>) -> &T {
@@ -331,6 +406,108 @@ impl<T: 'static> LocalKey<T> {
             }
         }
     }
+
+    /// Acquires a reference to the value in this TLS key.
+    ///
+    /// This will lazily initialize the value if this thread has not referenced
+    /// this key yet. If the key has been destroyed (which may happen if this is called
+    /// in a destructor), this function will return a ThreadLocalError.
+    ///
+    /// # Panics
+    ///
+    /// This function will still `panic!()` if the key is uninitialized and the
+    /// key's initializer panics.
+    #[unstable(feature = "thread_local_state",
+               reason = "state querying was recently added",
+               issue = "27716")]
+    pub fn try_with<F, R>(&'static self, f: F) -> Result<R, AccessError>
+                      where F: FnOnce(&T) -> R {
+        unsafe {
+            let slot = (self.inner)().ok_or(AccessError {
+                _private: (),
+            })?;
+            Ok(f(match *slot.get() {
+                Some(ref inner) => inner,
+                None => self.init(slot),
+            }))
+        }
+    }
+}
+
+#[doc(hidden)]
+#[cfg(target_thread_local)]
+pub mod fast {
+    use cell::{Cell, UnsafeCell};
+    use fmt;
+    use mem;
+    use ptr;
+    use sys::fast_thread_local::{register_dtor, requires_move_before_drop};
+
+    pub struct Key<T> {
+        inner: UnsafeCell<Option<T>>,
+
+        // Metadata to keep track of the state of the destructor. Remember that
+        // these variables are thread-local, not global.
+        dtor_registered: Cell<bool>,
+        dtor_running: Cell<bool>,
+    }
+
+    impl<T> fmt::Debug for Key<T> {
+        fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+            f.pad("Key { .. }")
+        }
+    }
+
+    unsafe impl<T> ::marker::Sync for Key<T> { }
+
+    impl<T> Key<T> {
+        pub const fn new() -> Key<T> {
+            Key {
+                inner: UnsafeCell::new(None),
+                dtor_registered: Cell::new(false),
+                dtor_running: Cell::new(false)
+            }
+        }
+
+        pub fn get(&'static self) -> Option<&'static UnsafeCell<Option<T>>> {
+            unsafe {
+                if mem::needs_drop::<T>() && self.dtor_running.get() {
+                    return None
+                }
+                self.register_dtor();
+            }
+            Some(&self.inner)
+        }
+
+        unsafe fn register_dtor(&self) {
+            if !mem::needs_drop::<T>() || self.dtor_registered.get() {
+                return
+            }
+
+            register_dtor(self as *const _ as *mut u8,
+                          destroy_value::<T>);
+            self.dtor_registered.set(true);
+        }
+    }
+
+    unsafe extern fn destroy_value<T>(ptr: *mut u8) {
+        let ptr = ptr as *mut Key<T>;
+        // Right before we run the user destructor be sure to flag the
+        // destructor as running for this thread so calls to `get` will return
+        // `None`.
+        (*ptr).dtor_running.set(true);
+
+        // Some implementations may require us to move the value before we drop
+        // it as it could get re-initialized in-place during destruction.
+        //
+        // Hence, we use `ptr::read` on those platforms (to move to a "safe"
+        // location) instead of drop_in_place.
+        if requires_move_before_drop() {
+            ptr::read((*ptr).inner.get());
+        } else {
+            ptr::drop_in_place((*ptr).inner.get());
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -378,8 +555,8 @@ pub mod os {
                     return Some(&(*ptr).value);
                 }
 
-                // If the lookup returned null, we haven't initialized our own local
-                // copy, so do that now.
+                // If the lookup returned null, we haven't initialized our own
+                // local copy, so do that now.
                 let ptr: Box<Value<T>> = box Value {
                     key: self,
                     value: UnsafeCell::new(None),
@@ -391,7 +568,7 @@ pub mod os {
         }
     }
 
-    pub unsafe extern fn destroy_value<T: 'static>(ptr: *mut u8) {
+    unsafe extern fn destroy_value<T: 'static>(ptr: *mut u8) {
         // The OS TLS ensures that this key contains a NULL value when this
         // destructor starts to run. We set it back to a sentinel value of 1 to
         // ensure that any future calls to `get` for this thread will return

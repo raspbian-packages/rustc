@@ -75,6 +75,9 @@ use errors::{DiagnosticBuilder, DiagnosticStyledString};
 
 mod note;
 
+mod need_type_info;
+mod named_anon_conflict;
+
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn note_and_explain_region(self,
                                    err: &mut DiagnosticBuilder,
@@ -254,8 +257,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 }
 
 impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
-    pub fn report_region_errors(&self,
-                                errors: &Vec<RegionResolutionError<'tcx>>) {
+
+    pub fn report_region_errors(&self, errors: &Vec<RegionResolutionError<'tcx>>) {
         debug!("report_region_errors(): {} errors to start", errors.len());
 
         // try to pre-process the errors, which will group some of them
@@ -266,21 +269,29 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         for error in errors {
             debug!("report_region_errors: error = {:?}", error);
-            match error.clone() {
-                ConcreteFailure(origin, sub, sup) => {
-                    self.report_concrete_failure(origin, sub, sup).emit();
-                }
 
-                GenericBoundFailure(kind, param_ty, sub) => {
-                    self.report_generic_bound_failure(kind, param_ty, sub);
-                }
-
-                SubSupConflict(var_origin,
-                               sub_origin, sub_r,
-                               sup_origin, sup_r) => {
-                    self.report_sub_sup_conflict(var_origin,
-                                                 sub_origin, sub_r,
-                                                 sup_origin, sup_r);
+            if !self.try_report_named_anon_conflict(&error) {
+                match error.clone() {
+                    // These errors could indicate all manner of different
+                    // problems with many different solutions. Rather
+                    // than generate a "one size fits all" error, what we
+                    // attempt to do is go through a number of specific
+                    // scenarios and try to find the best way to present
+                    // the error. If all of these fails, we fall back to a rather
+                    // general bit of code that displays the error information
+                    ConcreteFailure(origin, sub, sup) => {
+                        self.report_concrete_failure(origin, sub, sup).emit();
+                    }
+                    GenericBoundFailure(kind, param_ty, sub) => {
+                        self.report_generic_bound_failure(kind, param_ty, sub);
+                    }
+                    SubSupConflict(var_origin,
+                                 sub_origin, sub_r,
+                                 sup_origin, sup_r) => {
+                        self.report_sub_sup_conflict(var_origin,
+                                                     sub_origin, sub_r,
+                                                     sup_origin, sup_r);
+                    }
                 }
             }
         }
@@ -336,9 +347,12 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             if !(did1.is_local() || did2.is_local()) && did1.krate != did2.krate {
                 let exp_path = self.tcx.item_path_str(did1);
                 let found_path = self.tcx.item_path_str(did2);
+                let exp_abs_path = self.tcx.absolute_item_path_str(did1);
+                let found_abs_path = self.tcx.absolute_item_path_str(did2);
                 // We compare strings because DefPath can be different
                 // for imported and non-imported crates
-                if exp_path == found_path {
+                if exp_path == found_path
+                || exp_abs_path == found_abs_path {
                     let crate_name = self.tcx.sess.cstore.crate_name(did1.krate);
                     err.span_note(sp, &format!("Perhaps two different versions \
                                                 of crate `{}` are being used?",

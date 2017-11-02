@@ -135,12 +135,12 @@ use sys::path::{is_sep_byte, is_verbatim_sep, MAIN_SEP_STR, parse_prefix};
 ///            get_path_prefix(r"\\?\pictures\kittens"));
 /// assert_eq!(VerbatimUNC(OsStr::new("server"), OsStr::new("share")),
 ///            get_path_prefix(r"\\?\UNC\server\share"));
-/// assert_eq!(VerbatimDisk('C' as u8), get_path_prefix(r"\\?\c:\"));
+/// assert_eq!(VerbatimDisk(b'C'), get_path_prefix(r"\\?\c:\"));
 /// assert_eq!(DeviceNS(OsStr::new("BrainInterface")),
 ///            get_path_prefix(r"\\.\BrainInterface"));
 /// assert_eq!(UNC(OsStr::new("server"), OsStr::new("share")),
 ///            get_path_prefix(r"\\server\share"));
-/// assert_eq!(Disk('C' as u8), get_path_prefix(r"C:\Users\Rust\Pictures\Ferris"));
+/// assert_eq!(Disk(b'C'), get_path_prefix(r"C:\Users\Rust\Pictures\Ferris"));
 /// # }
 /// ```
 #[derive(Copy, Clone, Debug, Hash, PartialOrd, Ord, PartialEq, Eq)]
@@ -235,10 +235,10 @@ impl<'a> Prefix<'a> {
     ///
     /// assert!(Verbatim(OsStr::new("pictures")).is_verbatim());
     /// assert!(VerbatimUNC(OsStr::new("server"), OsStr::new("share")).is_verbatim());
-    /// assert!(VerbatimDisk('C' as u8).is_verbatim());
+    /// assert!(VerbatimDisk(b'C').is_verbatim());
     /// assert!(!DeviceNS(OsStr::new("BrainInterface")).is_verbatim());
     /// assert!(!UNC(OsStr::new("server"), OsStr::new("share")).is_verbatim());
-    /// assert!(!Disk('C' as u8).is_verbatim());
+    /// assert!(!Disk(b'C').is_verbatim());
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -276,7 +276,7 @@ impl<'a> Prefix<'a> {
 /// ```
 /// use std::path;
 ///
-/// assert!(path::is_separator('/'));
+/// assert!(path::is_separator('/')); // '/' works for both Unix and Windows
 /// assert!(!path::is_separator('❤'));
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -401,7 +401,7 @@ enum State {
 /// let path = Path::new(r"c:\you\later\");
 /// match path.components().next().unwrap() {
 ///     Component::Prefix(prefix_component) => {
-///         assert_eq!(Prefix::Disk('C' as u8), prefix_component.kind());
+///         assert_eq!(Prefix::Disk(b'C'), prefix_component.kind());
 ///         assert_eq!(OsStr::new("c:"), prefix_component.as_os_str());
 ///     }
 ///     _ => unreachable!(),
@@ -1040,7 +1040,7 @@ impl<'a> cmp::Ord for Components<'a> {
 /// [`Deref`]: ../ops/trait.Deref.html
 ///
 /// More details about the overall approach can be found in
-/// the module documentation.
+/// the [module documentation](index.html).
 ///
 /// # Examples
 ///
@@ -1186,7 +1186,7 @@ impl PathBuf {
         self.inner.push(path);
     }
 
-    /// Truncate `self` to [`self.parent`].
+    /// Truncates `self` to [`self.parent`].
     ///
     /// Returns `false` and does nothing if [`self.file_name`] is [`None`].
     /// Otherwise, returns `true`.
@@ -1327,7 +1327,7 @@ impl PathBuf {
     ///
     /// [`Box`]: ../../std/boxed/struct.Box.html
     /// [`Path`]: struct.Path.html
-    #[unstable(feature = "into_boxed_path", issue = "40380")]
+    #[stable(feature = "into_boxed_path", since = "1.20.0")]
     pub fn into_boxed_path(self) -> Box<Path> {
         unsafe { mem::transmute(self.inner.into_boxed_os_str()) }
     }
@@ -1348,10 +1348,10 @@ impl From<Box<Path>> for PathBuf {
     }
 }
 
-#[stable(feature = "box_from_path_buf", since = "1.18.0")]
-impl Into<Box<Path>> for PathBuf {
-    fn into(self) -> Box<Path> {
-        self.into_boxed_path()
+#[stable(feature = "box_from_path_buf", since = "1.20.0")]
+impl From<PathBuf> for Box<Path> {
+    fn from(p: PathBuf) -> Box<Path> {
+        p.into_boxed_path()
     }
 }
 
@@ -1499,9 +1499,9 @@ impl AsRef<OsStr> for PathBuf {
 /// A slice of a path (akin to [`str`]).
 ///
 /// This type supports a number of operations for inspecting a path, including
-/// breaking the path into its components (separated by `/` or `\`, depending on
-/// the platform), extracting the file name, determining whether the path is
-/// absolute, and so on.
+/// breaking the path into its components (separated by `/` on Unix and by either
+/// `/` or `\` on Windows), extracting the file name, determining whether the path
+/// is absolute, and so on.
 ///
 /// This is an *unsized* type, meaning that it must always be used behind a
 /// pointer like `&` or [`Box`]. For an owned version of this type,
@@ -1512,7 +1512,7 @@ impl AsRef<OsStr> for PathBuf {
 /// [`PathBuf`]: struct.PathBuf.html
 ///
 /// More details about the overall approach can be found in
-/// the module documentation.
+/// the [module documentation](index.html).
 ///
 /// # Examples
 ///
@@ -1520,10 +1520,11 @@ impl AsRef<OsStr> for PathBuf {
 /// use std::path::Path;
 /// use std::ffi::OsStr;
 ///
-/// let path = Path::new("/tmp/foo/bar.txt");
+/// // Note: this example does work on Windows
+/// let path = Path::new("./foo/bar.txt");
 ///
 /// let parent = path.parent();
-/// assert_eq!(parent, Some(Path::new("/tmp/foo")));
+/// assert_eq!(parent, Some(Path::new("./foo")));
 ///
 /// let file_stem = path.file_stem();
 /// assert_eq!(file_stem, Some(OsStr::new("bar")));
@@ -1688,7 +1689,7 @@ impl Path {
         self.has_root() && (cfg!(unix) || cfg!(target_os = "redox") || self.prefix().is_some())
     }
 
-    /// Return `false` if the `Path` is relative, i.e. not absolute.
+    /// Returns `true` if the `Path` is relative, i.e. not absolute.
     ///
     /// See [`is_absolute`]'s documentation for more details.
     ///
@@ -2018,7 +2019,7 @@ impl Path {
     /// * Repeated separators are ignored, so `a/b` and `a//b` both have
     ///   `a` and `b` as components.
     ///
-    /// * Occurentces of `.` are normalized away, exept if they are at the
+    /// * Occurences of `.` are normalized away, except if they are at the
     ///   beginning of the path. For example, `a/./b`, `a/b/`, `a/b/.` and
     ///   `a/b` all have `a` and `b` as components, but `./a/b` starts with
     ///   an additional [`CurDir`] component.
@@ -2215,12 +2216,22 @@ impl Path {
     /// This function will traverse symbolic links to query information about the
     /// destination file. In case of broken symbolic links this will return `false`.
     ///
+    /// If you cannot access the directory containing the file, e.g. because of a
+    /// permission error, this will return `false`.
+    ///
     /// # Examples
     ///
     /// ```no_run
     /// use std::path::Path;
     /// assert_eq!(Path::new("does_not_exist.txt").exists(), false);
     /// ```
+    ///
+    /// # See Also
+    ///
+    /// This is a convenience function that coerces errors to false. If you want to
+    /// check errors, call [fs::metadata].
+    ///
+    /// [fs::metadata]: ../../std/fs/fn.metadata.html
     #[stable(feature = "path_ext", since = "1.5.0")]
     pub fn exists(&self) -> bool {
         fs::metadata(self).is_ok()
@@ -2231,6 +2242,9 @@ impl Path {
     /// This function will traverse symbolic links to query information about the
     /// destination file. In case of broken symbolic links this will return `false`.
     ///
+    /// If you cannot access the directory containing the file, e.g. because of a
+    /// permission error, this will return `false`.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -2238,6 +2252,15 @@ impl Path {
     /// assert_eq!(Path::new("./is_a_directory/").is_file(), false);
     /// assert_eq!(Path::new("a_file.txt").is_file(), true);
     /// ```
+    ///
+    /// # See Also
+    ///
+    /// This is a convenience function that coerces errors to false. If you want to
+    /// check errors, call [fs::metadata] and handle its Result. Then call
+    /// [fs::Metadata::is_file] if it was Ok.
+    ///
+    /// [fs::metadata]: ../../std/fs/fn.metadata.html
+    /// [fs::Metadata::is_file]: ../../std/fs/struct.Metadata.html#method.is_file
     #[stable(feature = "path_ext", since = "1.5.0")]
     pub fn is_file(&self) -> bool {
         fs::metadata(self).map(|m| m.is_file()).unwrap_or(false)
@@ -2248,6 +2271,9 @@ impl Path {
     /// This function will traverse symbolic links to query information about the
     /// destination file. In case of broken symbolic links this will return `false`.
     ///
+    /// If you cannot access the directory containing the file, e.g. because of a
+    /// permission error, this will return `false`.
+    ///
     /// # Examples
     ///
     /// ```no_run
@@ -2255,6 +2281,15 @@ impl Path {
     /// assert_eq!(Path::new("./is_a_directory/").is_dir(), true);
     /// assert_eq!(Path::new("a_file.txt").is_dir(), false);
     /// ```
+    ///
+    /// # See Also
+    ///
+    /// This is a convenience function that coerces errors to false. If you want to
+    /// check errors, call [fs::metadata] and handle its Result. Then call
+    /// [fs::Metadata::is_dir] if it was Ok.
+    ///
+    /// [fs::metadata]: ../../std/fs/fn.metadata.html
+    /// [fs::Metadata::is_dir]: ../../std/fs/struct.Metadata.html#method.is_dir
     #[stable(feature = "path_ext", since = "1.5.0")]
     pub fn is_dir(&self) -> bool {
         fs::metadata(self).map(|m| m.is_dir()).unwrap_or(false)
@@ -2265,7 +2300,7 @@ impl Path {
     ///
     /// [`Box`]: ../../std/boxed/struct.Box.html
     /// [`PathBuf`]: struct.PathBuf.html
-    #[unstable(feature = "into_boxed_path", issue = "40380")]
+    #[stable(feature = "into_boxed_path", since = "1.20.0")]
     pub fn into_path_buf(self: Box<Path>) -> PathBuf {
         let inner: Box<OsStr> = unsafe { mem::transmute(self) };
         PathBuf { inner: OsString::from(inner) }
@@ -2281,8 +2316,8 @@ impl AsRef<OsStr> for Path {
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl fmt::Debug for Path {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        self.inner.fmt(formatter)
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.inner, formatter)
     }
 }
 
@@ -2314,14 +2349,14 @@ pub struct Display<'a> {
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> fmt::Debug for Display<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Debug::fmt(&self.path.to_string_lossy(), f)
+        fmt::Debug::fmt(&self.path, f)
     }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a> fmt::Display for Display<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        fmt::Display::fmt(&self.path.to_string_lossy(), f)
+        self.path.inner.display(f)
     }
 }
 
@@ -3917,5 +3952,11 @@ mod tests {
         path.clone_into(&mut path_buf);
         assert_eq!(path, path_buf);
         assert!(path_buf.into_os_string().capacity() >= 15);
+    }
+
+    #[test]
+    fn display_format_flags() {
+        assert_eq!(format!("a{:#<5}b", Path::new("").display()), "a#####b");
+        assert_eq!(format!("a{:#<5}b", Path::new("a").display()), "aa####b");
     }
 }

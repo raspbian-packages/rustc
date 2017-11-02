@@ -20,7 +20,7 @@ Forwarded: no
 
 --- a/src/librustc_trans/back/link.rs
 +++ b/src/librustc_trans/back/link.rs
-@@ -1024,6 +1024,13 @@
+@@ -1105,6 +1105,13 @@
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }
  

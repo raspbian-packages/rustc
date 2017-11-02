@@ -22,7 +22,6 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 #![deny(warnings)]
 
-#![feature(associated_consts)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(const_fn)]
@@ -33,20 +32,19 @@
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_patterns)]
-#![feature(unicode)]
 #![feature(conservative_impl_trait)]
 
-#![cfg_attr(stage0, unstable(feature = "rustc_private", issue = "27812"))]
-#![cfg_attr(stage0, feature(rustc_private))]
-#![cfg_attr(stage0, feature(staged_api))]
+#![cfg_attr(stage0, feature(associated_consts))]
 
 use rustc::dep_graph::WorkProduct;
 use syntax_pos::symbol::Symbol;
 
-extern crate flate;
+extern crate flate2;
+extern crate crossbeam;
 extern crate libc;
 extern crate owning_ref;
 #[macro_use] extern crate rustc;
+extern crate rustc_allocator;
 extern crate rustc_back;
 extern crate rustc_data_structures;
 extern crate rustc_incremental;
@@ -56,6 +54,8 @@ extern crate rustc_const_math;
 #[macro_use]
 #[no_link]
 extern crate rustc_bitflags;
+extern crate rustc_demangle;
+extern crate jobserver;
 
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;
@@ -86,6 +86,7 @@ mod diagnostics;
 
 mod abi;
 mod adt;
+mod allocator;
 mod asm;
 mod assert_module_sources;
 mod attributes;
@@ -165,6 +166,7 @@ pub struct CrateTranslation {
     pub crate_name: Symbol,
     pub modules: Vec<ModuleTranslation>,
     pub metadata_module: ModuleTranslation,
+    pub allocator_module: Option<ModuleTranslation>,
     pub link: rustc::middle::cstore::LinkMeta,
     pub metadata: rustc::middle::cstore::EncodedMetadata,
     pub exported_symbols: back::symbol_export::ExportedSymbols,

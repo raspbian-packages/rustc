@@ -416,6 +416,7 @@ modifier.
 extern fn new_i32() -> i32 { 0 }
 
 // Declares an extern fn with "stdcall" ABI
+# #[cfg(target_arch = "x86_64")]
 extern "stdcall" fn new_i32_stdcall() -> i32 { 0 }
 ```
 
@@ -591,7 +592,7 @@ struct types, except that it must specify exactly one field:
 
 ```rust
 # union MyUnion { f1: u32, f2: f32 }
-
+#
 let u = MyUnion { f1: 1 };
 ```
 
@@ -612,7 +613,7 @@ union fields have to be placed in `unsafe` blocks.
 ```rust
 # union MyUnion { f1: u32, f2: f32 }
 # let u = MyUnion { f1: 1 };
-
+#
 unsafe {
     let f = u.f1;
 }
@@ -624,7 +625,7 @@ so these writes don't have to be placed in `unsafe` blocks
 ```rust
 # union MyUnion { f1: u32, f2: f32 }
 # let mut u = MyUnion { f1: 1 };
-
+#
 u.f1 = 2;
 ```
 
@@ -639,7 +640,7 @@ to be placed in `unsafe` blocks as well.
 
 ```rust
 # union MyUnion { f1: u32, f2: f32 }
-
+#
 fn f(u: MyUnion) {
     unsafe {
         match u {
@@ -715,11 +716,13 @@ More detailed specification for unions, including unstable bits, can be found in
 
 ## Constant items
 
-A *constant item* is a named _constant value_ which is not associated with a
+A *constant item* is a named _[constant value]_ which is not associated with a
 specific memory location in the program. Constants are essentially inlined
 wherever they are used, meaning that they are copied directly into the relevant
 context when used. References to the same constant are not necessarily
 guaranteed to refer to the same memory address.
+
+[constant value]: expressions.html#constant-expressions
 
 Constant values must not have destructors, and otherwise permit most forms of
 data. Constants may refer to the address of other constants, in which case the
@@ -863,7 +866,7 @@ implement. This interface consists of associated items, which come in
 three varieties:
 
 - functions
-- constants
+- [constants](#associated-constants)
 - types
 
 Associated functions whose first parameter is named `self` are called
@@ -1075,6 +1078,79 @@ Likewise, supertrait methods may also be called on trait objects.
 # let mycircle = 0i32;
 let mycircle = Box::new(mycircle) as Box<Circle>;
 let nonsense = mycircle.radius() * mycircle.area();
+```
+
+#### Associated Constants
+
+
+A trait can define constants like this:
+
+```rust
+trait Foo {
+    const ID: i32;
+}
+
+impl Foo for i32 {
+    const ID: i32 = 1;
+}
+
+fn main() {
+    assert_eq!(1, i32::ID);
+}
+```
+
+Any implementor of `Foo` will have to define `ID`. Without the definition:
+
+```rust,ignore
+trait Foo {
+    const ID: i32;
+}
+
+impl Foo for i32 {
+}
+```
+
+gives
+
+```text
+error: not all trait items implemented, missing: `ID` [E0046]
+     impl Foo for i32 {
+     }
+```
+
+A default value can be implemented as well:
+
+```rust
+trait Foo {
+    const ID: i32 = 1;
+}
+
+impl Foo for i32 {
+}
+
+impl Foo for i64 {
+    const ID: i32 = 5;
+}
+
+fn main() {
+    assert_eq!(1, i32::ID);
+    assert_eq!(5, i64::ID);
+}
+```
+
+As you can see, when implementing `Foo`, you can leave it unimplemented, as
+with `i32`. It will then use the default value. But, as in `i64`, we can also
+add our own definition.
+
+Associated constants don’t have to be associated with a trait. An `impl` block
+for a `struct` or an `enum` works fine too:
+
+```rust
+struct Foo;
+
+impl Foo {
+    const FOO: u32 = 3;
+}
 ```
 
 ### Implementations

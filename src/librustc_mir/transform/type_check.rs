@@ -413,6 +413,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                 }
             }
             StatementKind::InlineAsm { .. } |
+            StatementKind::EndRegion(_) |
             StatementKind::Nop => {}
         }
     }
@@ -461,7 +462,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                 let func_ty = func.ty(mir, tcx);
                 debug!("check_terminator: call, func_ty={:?}", func_ty);
                 let sig = match func_ty.sty {
-                    ty::TyFnDef(.., sig) | ty::TyFnPtr(sig) => sig,
+                    ty::TyFnDef(..) | ty::TyFnPtr(_) => func_ty.fn_sig(tcx),
                     _ => {
                         span_mirbug!(self, term, "call to non-function {:?}", func_ty);
                         return;
@@ -759,7 +760,7 @@ impl MirPass for TypeckMir {
             return;
         }
         let param_env = tcx.param_env(def_id);
-        tcx.infer_ctxt(()).enter(|infcx| {
+        tcx.infer_ctxt().enter(|infcx| {
             let mut checker = TypeChecker::new(&infcx, item_id, param_env);
             {
                 let mut verifier = TypeVerifier::new(&mut checker, mir);

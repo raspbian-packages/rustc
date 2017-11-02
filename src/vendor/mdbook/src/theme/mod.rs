@@ -9,11 +9,14 @@ pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
 pub static JS: &'static [u8] = include_bytes!("book.js");
 pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
 
-/// The `Theme` struct should be used instead of the static variables because the `new()` method
-/// will look if the user has a theme directory in his source folder and use the users theme instead
+/// The `Theme` struct should be used instead of the static variables because
+/// the `new()` method
+/// will look if the user has a theme directory in his source folder and use
+/// the users theme instead
 /// of the default.
 ///
-/// You should exceptionnaly use the static variables only if you need the default theme even if the
+/// You should exceptionnaly use the static variables only if you need the
+/// default theme even if the
 /// user has specified another theme.
 pub struct Theme {
     pub index: Vec<u8>,

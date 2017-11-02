@@ -211,7 +211,7 @@
 //! There's one more subtle bit here: the standard library contains an
 //! interesting implementation of [`IntoIterator`]:
 //!
-//! ```ignore
+//! ```ignore (only-for-syntax-highlight)
 //! impl<I: Iterator> IntoIterator for I
 //! ```
 //!
@@ -314,12 +314,6 @@ pub use self::iterator::Iterator;
            reason = "likely to be replaced by finer-grained traits",
            issue = "42168")]
 pub use self::range::Step;
-#[unstable(feature = "step_by", reason = "recent addition",
-           issue = "27741")]
-#[rustc_deprecated(since = "1.19.0",
-                   reason = "replaced by `iter::StepBy`")]
-#[allow(deprecated)]
-pub use self::range::StepBy as DeprecatedStepBy;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::sources::{Repeat, repeat};
@@ -365,10 +359,18 @@ impl<I> Iterator for Rev<I> where I: DoubleEndedIterator {
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) { self.iter.size_hint() }
 
+    #[inline]
     fn find<P>(&mut self, predicate: P) -> Option<Self::Item>
         where P: FnMut(&Self::Item) -> bool
     {
         self.iter.rfind(predicate)
+    }
+
+    #[inline]
+    fn rposition<P>(&mut self, predicate: P) -> Option<usize> where
+        P: FnMut(Self::Item) -> bool
+    {
+        self.iter.position(predicate)
     }
 }
 

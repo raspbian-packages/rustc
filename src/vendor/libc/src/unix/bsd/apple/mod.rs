@@ -146,6 +146,11 @@ s! {
         __opaque: [u8; __PTHREAD_RWLOCK_SIZE__],
     }
 
+    pub struct pthread_rwlockattr_t {
+        __sig: ::c_long,
+        __opaque: [u8; __PTHREAD_RWLOCKATTR_SIZE__],
+    }
+
     pub struct siginfo_t {
         pub si_signo: ::c_int,
         pub si_errno: ::c_int,
@@ -448,14 +453,8 @@ pub const _PC_PIPE_BUF: ::c_int = 6;
 pub const _PC_CHOWN_RESTRICTED: ::c_int = 7;
 pub const _PC_NO_TRUNC: ::c_int = 8;
 pub const _PC_VDISABLE: ::c_int = 9;
-pub const O_RDONLY: ::c_int = 0;
-pub const O_WRONLY: ::c_int = 1;
-pub const O_RDWR: ::c_int = 2;
-pub const O_APPEND: ::c_int = 8;
-pub const O_CREAT: ::c_int = 512;
-pub const O_EXCL: ::c_int = 2048;
-pub const O_NOCTTY: ::c_int = 131072;
-pub const O_TRUNC: ::c_int = 1024;
+pub const O_DSYNC: ::c_int = 0x400000;
+pub const O_NOCTTY: ::c_int = 0x20000;
 pub const O_CLOEXEC: ::c_int = 0x1000000;
 pub const O_DIRECTORY: ::c_int = 0x100000;
 pub const S_IFIFO: mode_t = 4096;
@@ -671,8 +670,6 @@ pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x0020;
 pub const AT_SYMLINK_FOLLOW: ::c_int = 0x0040;
 pub const AT_REMOVEDIR: ::c_int = 0x0080;
 
-pub const O_ACCMODE: ::c_int = 3;
-
 pub const TIOCMODG: ::c_ulong = 0x40047403;
 pub const TIOCMODS: ::c_ulong = 0x80047404;
 pub const TIOCM_LE: ::c_int = 0x1;
@@ -812,6 +809,8 @@ pub const _SC_XOPEN_UNIX: ::c_int = 115;
 pub const _SC_XOPEN_VERSION: ::c_int = 116;
 pub const _SC_XOPEN_XCU_VERSION: ::c_int = 121;
 
+pub const PTHREAD_PROCESS_PRIVATE: ::c_int = 2;
+pub const PTHREAD_PROCESS_SHARED: ::c_int = 1;
 pub const PTHREAD_CREATE_JOINABLE: ::c_int = 1;
 pub const PTHREAD_CREATE_DETACHED: ::c_int = 2;
 pub const PTHREAD_STACK_MIN: ::size_t = 8192;
@@ -1024,10 +1023,6 @@ pub const LOCK_EX: ::c_int = 2;
 pub const LOCK_NB: ::c_int = 4;
 pub const LOCK_UN: ::c_int = 8;
 
-pub const O_DSYNC: ::c_int = 4194304;
-pub const O_SYNC: ::c_int = 128;
-pub const O_NONBLOCK: ::c_int = 4;
-
 pub const MAP_COPY: ::c_int = 0x0002;
 pub const MAP_RENAME: ::c_int = 0x0020;
 pub const MAP_NORESERVE: ::c_int = 0x0040;
@@ -1237,6 +1232,18 @@ pub const NOTE_BACKGROUND: ::uint32_t = 0x00000040;
 pub const NOTE_TRACK: ::uint32_t = 0x00000001;
 pub const NOTE_TRACKERR: ::uint32_t = 0x00000002;
 pub const NOTE_CHILD: ::uint32_t = 0x00000004;
+
+pub const OCRNL: ::c_int = 0x00000010;
+pub const ONOCR: ::c_int = 0x00000020;
+pub const ONLRET: ::c_int = 0x00000040;
+pub const OFILL: ::c_int = 0x00000080;
+pub const NLDLY: ::c_int = 0x00000300;
+pub const TABDLY: ::c_int = 0x00000c04;
+pub const CRDLY: ::c_int = 0x00003000;
+pub const FFDLY: ::c_int = 0x00004000;
+pub const BSDLY: ::c_int = 0x00008000;
+pub const VTDLY: ::c_int = 0x00010000;
+pub const OFDEL: ::c_int = 0x00020000;
 
 pub const NL0: ::c_int  = 0x00000000;
 pub const NL1: ::c_int  = 0x00000100;
@@ -1516,6 +1523,13 @@ pub const P_ALL: idtype_t = 0;
 pub const P_PID: idtype_t = 1;
 pub const P_PGID: idtype_t = 2;
 
+pub const XATTR_NOFOLLOW: ::c_int = 0x0001;
+pub const XATTR_CREATE: ::c_int = 0x0002;
+pub const XATTR_REPLACE: ::c_int = 0x0004;
+pub const XATTR_NOSECURITY: ::c_int = 0x0008;
+pub const XATTR_NODEFAULT: ::c_int = 0x0010;
+pub const XATTR_SHOWCOMPRESSION: ::c_int = 0x0020;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -1551,6 +1565,8 @@ extern {
     pub fn aio_cancel(fd: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
     pub fn lio_listio(mode: ::c_int, aiocb_list: *const *mut aiocb,
                       nitems: ::c_int, sevp: *mut sigevent) -> ::c_int;
+
+    pub fn dirfd(dirp: *mut ::DIR) -> ::c_int;
 
     pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
 
@@ -1606,6 +1622,10 @@ extern {
                                         pshared: ::c_int) -> ::c_int;
     pub fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t,
                                         pshared: *mut ::c_int) -> ::c_int;
+    pub fn pthread_rwlockattr_getpshared(attr: *const pthread_rwlockattr_t,
+                                         val: *mut ::c_int) -> ::c_int;
+    pub fn pthread_rwlockattr_setpshared(attr: *mut pthread_rwlockattr_t,
+                                         val: ::c_int) -> ::c_int;
     pub fn __error() -> *mut ::c_int;
     pub fn backtrace(buf: *mut *mut ::c_void,
                      sz: ::c_int) -> ::c_int;
@@ -1665,13 +1685,36 @@ extern {
     pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
 
+    pub fn getxattr(path: *const ::c_char, name: *const ::c_char,
+                    value: *mut ::c_void, size: ::size_t, position: u32,
+                    flags: ::c_int) -> ::ssize_t;
+    pub fn fgetxattr(filedes: ::c_int, name: *const ::c_char,
+                     value: *mut ::c_void, size: ::size_t, position: u32,
+                     flags: ::c_int) -> ::ssize_t;
+    pub fn setxattr(path: *const ::c_char, name: *const ::c_char,
+                    value: *const ::c_void, size: ::size_t, position: u32,
+                    flags: ::c_int) -> ::c_int;
+    pub fn fsetxattr(filedes: ::c_int, name: *const ::c_char,
+                     value: *const ::c_void, size: ::size_t, position: u32,
+                     flags: ::c_int) -> ::c_int;
+    pub fn listxattr(path: *const ::c_char, list: *mut ::c_char,
+                     size: ::size_t, flags: ::c_int) -> ::ssize_t;
+    pub fn flistxattr(filedes: ::c_int, list: *mut ::c_char,
+                      size: ::size_t, flags: ::c_int) -> ::ssize_t;
+    pub fn removexattr(path: *const ::c_char, name: *const ::c_char,
+                       flags: ::c_int) -> ::c_int;
+    pub fn fremovexattr(filedes: ::c_int, name: *const ::c_char,
+                        flags: ::c_int) -> ::c_int;
+
     pub fn initgroups(user: *const ::c_char, basegroup: ::c_int) -> ::c_int;
 
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "waitid$UNIX2003")]
     pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,
                   options: ::c_int) -> ::c_int;
-
+    pub fn brk(addr: *const ::c_void) -> *mut ::c_void;
+    pub fn sbrk(increment: ::c_int) -> *mut ::c_void;
+    pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
 }
 
 cfg_if! {

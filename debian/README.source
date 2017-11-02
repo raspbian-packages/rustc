@@ -18,10 +18,16 @@ $ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
 
 # Now `tar tf ../rustc_$ver+dfsg1.orig.tar.xz | less` and look for any extra
 # stuff like new embedded C libraries. If so, add them to Files-Excluded: and
-# run uscan again. Repeat until there's no more issues.
+# run uscan again. Repeat until there's no more issues. Some good stuff to run:
+$ tar xf ../rustc_$ver+dfsg1.orig.tar.xz && cd rustc-$ver-src/
+$ find . -type f -and -not -name '.cargo-checksum.json' -exec file '{}' \; | \
+    sed -e 's/\btext\b\(.*\), with very long lines/verylongtext\1/g' | \
+    grep -v '\b\(text\|empty\)\b' || true
+$ find src/vendor/ -name '*.c' -o -name '*.js'
+$ suspicious-source
 
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
-$ dch -v $ver+dfsg1-1
+$ dch -v $ver+dfsg1-1 -m "New upstream release."
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc

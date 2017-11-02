@@ -14,7 +14,7 @@ use self::MemberDescriptionFactory::*;
 use self::EnumDiscriminantInfo::*;
 
 use super::utils::{debug_context, DIB, span_start, bytes_to_bits, size_and_align_of,
-                   get_namespace_and_span_for_item, create_DIArray, is_node_local_to_unit};
+                   get_namespace_for_item, create_DIArray, is_node_local_to_unit};
 use super::namespace::mangled_name_of_item;
 use super::type_names::compute_debuginfo_type_name;
 use super::{CrateDebugContext};
@@ -38,10 +38,12 @@ use rustc::ty::{self, AdtKind, Ty};
 use rustc::ty::layout::{self, LayoutTyper};
 use rustc::session::{Session, config};
 use rustc::util::nodemap::FxHashMap;
+use rustc::util::common::path2cstr;
 
 use libc::{c_uint, c_longlong};
 use std::ffi::CString;
 use std::ptr;
+use std::path::Path;
 use syntax::ast;
 use syntax::symbol::{Interner, InternedString, Symbol};
 use syntax_pos::{self, Span};
@@ -419,7 +421,7 @@ fn trait_pointer_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
     let containing_scope = match trait_type.sty {
         ty::TyDynamic(ref data, ..) => if let Some(principal) = data.principal() {
             let def_id = principal.def_id();
-            get_namespace_and_span_for_item(cx, def_id).0
+            get_namespace_for_item(cx, def_id)
         } else {
             NO_SCOPE_METADATA
         },
@@ -486,7 +488,6 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
 
     debug!("type_metadata: {:?}", t);
 
-    let sty = &t.sty;
     let ptr_metadata = |ty: Ty<'tcx>| {
         match ty.sty {
             ty::TySlice(typ) => {
@@ -516,7 +517,7 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         }
     };
 
-    let MetadataCreationResult { metadata, already_stored_in_typemap } = match *sty {
+    let MetadataCreationResult { metadata, already_stored_in_typemap } = match t.sty {
         ty::TyNever    |
         ty::TyBool     |
         ty::TyChar     |
@@ -555,10 +556,10 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 Err(metadata) => return metadata,
             }
         }
-        ty::TyFnDef(.., sig) | ty::TyFnPtr(sig) => {
+        ty::TyFnDef(..) | ty::TyFnPtr(_) => {
             let fn_metadata = subroutine_type_metadata(cx,
                                                        unique_type_id,
-                                                       sig,
+                                                       t.fn_sig(cx.tcx()),
                                                        usage_site_span).metadata;
             match debug_context(cx).type_map
                                    .borrow()
@@ -608,7 +609,7 @@ pub fn type_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                    usage_site_span).finalize(cx)
         }
         _ => {
-            bug!("debuginfo: unexpected type in type_metadata: {:?}", sty)
+            bug!("debuginfo: unexpected type in type_metadata: {:?}", t)
         }
     };
 
@@ -794,7 +795,7 @@ pub fn compile_unit_metadata(scc: &SharedCrateContext,
         let file_metadata = llvm::LLVMRustDIBuilderCreateFile(
             debug_context.builder, name_in_debuginfo.as_ptr(), work_dir.as_ptr());
 
-        return llvm::LLVMRustDIBuilderCreateCompileUnit(
+        let unit_metadata = llvm::LLVMRustDIBuilderCreateCompileUnit(
             debug_context.builder,
             DW_LANG_RUST,
             file_metadata,
@@ -802,8 +803,40 @@ pub fn compile_unit_metadata(scc: &SharedCrateContext,
             sess.opts.optimize != config::OptLevel::No,
             flags.as_ptr() as *const _,
             0,
-            split_name.as_ptr() as *const _)
+            split_name.as_ptr() as *const _);
+
+        if sess.opts.debugging_opts.profile {
+            let cu_desc_metadata = llvm::LLVMRustMetadataAsValue(debug_context.llcontext,
+                                                                 unit_metadata);
+
+            let gcov_cu_info = [
+                path_to_mdstring(debug_context.llcontext,
+                                 &scc.output_filenames().with_extension("gcno")),
+                path_to_mdstring(debug_context.llcontext,
+                                 &scc.output_filenames().with_extension("gcda")),
+                cu_desc_metadata,
+            ];
+            let gcov_metadata = llvm::LLVMMDNodeInContext(debug_context.llcontext,
+                                                          gcov_cu_info.as_ptr(),
+                                                          gcov_cu_info.len() as c_uint);
+
+            let llvm_gcov_ident = CString::new("llvm.gcov").unwrap();
+            llvm::LLVMAddNamedMetadataOperand(debug_context.llmod,
+                                              llvm_gcov_ident.as_ptr(),
+                                              gcov_metadata);
+        }
+
+        return unit_metadata;
     };
+
+    fn path_to_mdstring(llcx: llvm::ContextRef, path: &Path) -> llvm::ValueRef {
+        let path_str = path2cstr(path);
+        unsafe {
+            llvm::LLVMMDStringInContext(llcx,
+                                        path_str.as_ptr(),
+                                        path_str.as_bytes().len() as c_uint)
+        }
+    }
 }
 
 struct MetadataCreationResult {
@@ -938,7 +971,7 @@ fn prepare_struct_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         _ => bug!("prepare_struct_metadata on a non-ADT")
     };
 
-    let (containing_scope, _) = get_namespace_and_span_for_item(cx, struct_def_id);
+    let containing_scope = get_namespace_for_item(cx, struct_def_id);
 
     let struct_metadata_stub = create_struct_stub(cx,
                                                   struct_llvm_type,
@@ -1063,7 +1096,7 @@ fn prepare_union_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         _ => bug!("prepare_union_metadata on a non-ADT")
     };
 
-    let (containing_scope, _) = get_namespace_and_span_for_item(cx, union_def_id);
+    let containing_scope = get_namespace_for_item(cx, union_def_id);
 
     let union_metadata_stub = create_union_stub(cx,
                                                 union_llvm_type,
@@ -1450,7 +1483,7 @@ fn prepare_enum_metadata<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                                    -> RecursiveTypeDescription<'tcx> {
     let enum_name = compute_debuginfo_type_name(cx, enum_type, false);
 
-    let (containing_scope, _) = get_namespace_and_span_for_item(cx, enum_def_id);
+    let containing_scope = get_namespace_for_item(cx, enum_def_id);
     // FIXME: This should emit actual file metadata for the enum, but we
     // currently can't get the necessary information when it comes to types
     // imported from other crates. Formerly we violated the ODR when performing
@@ -1748,7 +1781,8 @@ pub fn create_global_var_metadata(cx: &CrateContext,
     let tcx = cx.tcx();
 
     let node_def_id = tcx.hir.local_def_id(node_id);
-    let (var_scope, span) = get_namespace_and_span_for_item(cx, node_def_id);
+    let var_scope = get_namespace_for_item(cx, node_def_id);
+    let span = cx.tcx().def_span(node_def_id);
 
     let (file_metadata, line_number) = if span != syntax_pos::DUMMY_SP {
         let loc = span_start(cx, span);

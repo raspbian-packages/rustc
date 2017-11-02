@@ -127,16 +127,7 @@ pub const BUFSIZ : ::c_uint = 1024;
 pub const FOPEN_MAX : ::c_uint = 20;
 pub const FILENAME_MAX : ::c_uint = 1024;
 pub const L_tmpnam : ::c_uint = 1024;
-pub const O_RDONLY : ::c_int = 0;
-pub const O_WRONLY : ::c_int = 1;
-pub const O_RDWR : ::c_int = 2;
-pub const O_ACCMODE : ::c_int = 3;
-pub const O_APPEND : ::c_int = 8;
-pub const O_CREAT : ::c_int = 512;
-pub const O_EXCL : ::c_int = 2048;
 pub const O_NOCTTY : ::c_int = 32768;
-pub const O_TRUNC : ::c_int = 1024;
-pub const O_SYNC : ::c_int = 128;
 pub const S_IFIFO : mode_t = 4096;
 pub const S_IFCHR : mode_t = 8192;
 pub const S_IFBLK : mode_t = 24576;
@@ -316,8 +307,6 @@ pub const POSIX_MADV_SEQUENTIAL : ::c_int = 2;
 pub const POSIX_MADV_WILLNEED : ::c_int = 3;
 pub const POSIX_MADV_DONTNEED : ::c_int = 4;
 
-pub const _SC_XOPEN_SHM : ::c_int = 30;
-
 pub const PTHREAD_CREATE_JOINABLE : ::c_int = 0;
 pub const PTHREAD_CREATE_DETACHED : ::c_int = 1;
 
@@ -418,6 +407,7 @@ pub const PF_NATM: ::c_int = AF_NATM;
 pub const SOCK_STREAM: ::c_int = 1;
 pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_RAW: ::c_int = 3;
+pub const SOCK_RDM: ::c_int = 4;
 pub const SOCK_SEQPACKET: ::c_int = 5;
 pub const IPPROTO_ICMP: ::c_int = 1;
 pub const IPPROTO_ICMPV6: ::c_int = 58;
@@ -478,8 +468,6 @@ pub const LOCK_EX: ::c_int = 2;
 pub const LOCK_NB: ::c_int = 4;
 pub const LOCK_UN: ::c_int = 8;
 
-pub const O_NONBLOCK : ::c_int = 4;
-
 pub const IPPROTO_RAW : ::c_int = 255;
 
 pub const _SC_ARG_MAX : ::c_int = 1;
@@ -511,6 +499,7 @@ pub const _SC_TZNAME_MAX : ::c_int = 27;
 pub const _SC_PAGESIZE : ::c_int = 28;
 pub const _SC_PAGE_SIZE: ::c_int = _SC_PAGESIZE;
 pub const _SC_FSYNC : ::c_int = 29;
+pub const _SC_XOPEN_SHM : ::c_int = 30;
 
 pub const Q_GETQUOTA: ::c_int = 0x300;
 pub const Q_SETQUOTA: ::c_int = 0x400;
@@ -548,6 +537,23 @@ pub const EXTA: speed_t = 19200;
 pub const EXTB: speed_t = 38400;
 
 pub const SEM_FAILED: *mut sem_t = 0 as *mut sem_t;
+
+pub const CRTSCTS: ::tcflag_t = 0x00010000;
+pub const CRTS_IFLOW: ::tcflag_t = CRTSCTS;
+pub const CCTS_OFLOW: ::tcflag_t = CRTSCTS;
+pub const OCRNL: ::tcflag_t = 0x10;
+
+pub const TIOCM_LE: ::c_int = 0o0001;
+pub const TIOCM_DTR: ::c_int = 0o0002;
+pub const TIOCM_RTS: ::c_int = 0o0004;
+pub const TIOCM_ST: ::c_int = 0o0010;
+pub const TIOCM_SR: ::c_int = 0o0020;
+pub const TIOCM_CTS: ::c_int = 0o0040;
+pub const TIOCM_CAR: ::c_int = 0o0100;
+pub const TIOCM_RNG: ::c_int = 0o0200;
+pub const TIOCM_DSR: ::c_int = 0o0400;
+pub const TIOCM_CD: ::c_int = TIOCM_CAR;
+pub const TIOCM_RI: ::c_int = TIOCM_RNG;
 
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {

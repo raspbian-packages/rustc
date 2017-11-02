@@ -1,3 +1,361 @@
+<a name="v2.24.2"></a>
+### v2.25.0 (2017-06-20)
+
+
+#### Features
+
+*   use textwrap crate for wrapping help texts ([b93870c1](https://github.com/kbknapp/clap-rs/commit/b93870c10ae3bd90d233c586a33e086803117285))
+
+#### Improvements
+
+* **Suggestions:**  suggests to use flag after subcommand when applicable ([2671ca72](https://github.com/kbknapp/clap-rs/commit/2671ca7260119d4311d21c4075466aafdd9da734))
+* Bumps bitflags crate to v0.9
+
+#### Documentation
+
+*   Change `who's` -> `whose` ([53c1ffe8](https://github.com/kbknapp/clap-rs/commit/53c1ffe87f38b05d8804a0f7832412a952845349))
+
+#### Documentation
+
+* **App::template:**  adds details about the necessity to use AppSettings::UnifiedHelpMessage when using {unified} tags in the help template ([cbea3d5a](https://github.com/kbknapp/clap-rs/commit/cbea3d5acf3271a7a734498c4d99c709941c331e), closes [#949](https://github.com/kbknapp/clap-rs/issues/949))
+* **Arg::allow_hyphen_values:**  updates the docs to include warnings for allow_hyphen_values and multiple(true) used together ([f9b0d657](https://github.com/kbknapp/clap-rs/commit/f9b0d657835d3f517f313d70962177dc30acf4a7))
+* **README.md:**
+  *  added a warning about using ~ deps ([821929b5](https://github.com/kbknapp/clap-rs/commit/821929b51bd60213955705900a436c9a64fcb79f), closes [#964](https://github.com/kbknapp/clap-rs/issues/964))
+  *  added a warning about using ~ deps ([667697b0](https://github.com/kbknapp/clap-rs/commit/667697b0018369b71da41d02d567ab57df0f4887))
+* **clap_app!:**  adds using the @group specifier to the macro docs ([826048cb](https://github.com/kbknapp/clap-rs/commit/826048cb3cbc0280169303f1498ff0a2b7395883), closes [#932](https://github.com/kbknapp/clap-rs/issues/932))
+
+
+
+<a name="v2.24.2"></a>
+### v2.24.2 (2017-05-15)
+
+
+#### Bug Fixes
+
+*   adds a debug assertion to ensure all args added to groups actually exist ([14f6b8f3](https://github.com/kbknapp/clap-rs/commit/14f6b8f3a2f6df73aeeec9c54a54909b1acfc158), closes [#917](https://github.com/kbknapp/clap-rs/issues/917))
+*   fixes a bug where args that allow values to start with a hyphen couldnt contain a double hyphen -- as a value ([ebf73a09](https://github.com/kbknapp/clap-rs/commit/ebf73a09db6f3c03c19cdd76b1ba6113930e1643), closes [#960](https://github.com/kbknapp/clap-rs/issues/960))
+*   fixes a bug where positional argument help text is misaligned ([54c16836](https://github.com/kbknapp/clap-rs/commit/54c16836dea4651806a2cfad53146a83fa3abf21))
+
+#### Documentation
+
+* **App::template:**  adds details about the necessity to use AppSettings::UnifiedHelpMessage when using {unified} tags in the help template ([cf569438](https://github.com/kbknapp/clap-rs/commit/cf569438f309c199800bb8e46c9f140187de69d7), closes [#949](https://github.com/kbknapp/clap-rs/issues/949))
+* **Arg::allow_hyphen_values:**  updates the docs to include warnings for allow_hyphen_values and multiple(true) used together ([ded5a2f1](https://github.com/kbknapp/clap-rs/commit/ded5a2f15474d4a5bd46a67b130ccb8b6781bd01))
+* **clap_app!:**  adds using the @group specifier to the macro docs ([fe85fcb1](https://github.com/kbknapp/clap-rs/commit/fe85fcb1772b61f13b20b7ea5290e2437a76190c), closes [#932](https://github.com/kbknapp/clap-rs/issues/932))
+
+
+
+<a name="v2.24.0"></a>
+### v2.24.0 (2017-05-07)
+
+
+#### Bug Fixes
+
+*   fixes a bug where args with last(true) and required(true) set were not being printed in the usage string ([3ac533fe](https://github.com/kbknapp/clap-rs/commit/3ac533fedabf713943eedf006f830a5a486bbe80), closes [#944](https://github.com/kbknapp/clap-rs/issues/944))
+*   fixes a bug that was printing the arg name, instead of value name when Arg::last(true) was used ([e1fe8ac3](https://github.com/kbknapp/clap-rs/commit/e1fe8ac3bc1f9cf4e36df0d881f8419755f1787b), closes [#940](https://github.com/kbknapp/clap-rs/issues/940))
+*   fixes a bug where flags were parsed as flags AND positional values when specific combinations of settings were used ([20f83292](https://github.com/kbknapp/clap-rs/commit/20f83292d070038b8cee2a6b47e91f6b0a2f7871), closes [#946](https://github.com/kbknapp/clap-rs/issues/946))
+
+
+
+<a name="v2.24.0"></a>
+## v2.24.0 (2017-05-05)
+
+
+#### Documentation
+
+* **README.md:**  fix some typos ([fa34deac](https://github.com/kbknapp/clap-rs/commit/fa34deac079f334c3af97bb7fb151880ba8887f8))
+
+#### API Additions
+
+* **Arg:**  add `default_value_os` ([d5ef8955](https://github.com/kbknapp/clap-rs/commit/d5ef8955414b1587060f7218385256105b639c88))
+* **arg_matches.rs:**  Added a Default implementation for Values and OsValues iterators. ([0a4384e3](https://github.com/kbknapp/clap-rs/commit/0a4384e350eed74c2a4dc8964c203f21ac64897f))
+
+
+<a name="v2.23.2"></a>
+### v2.23.2 (2017-04-19)
+
+
+#### Bug Fixes
+
+* **PowerShell Completions:**  fixes a bug where powershells completions cant be used if no subcommands are defined ([a8bce558](https://github.com/kbknapp/clap-rs/commit/a8bce55837dc4e0fb187dc93180884a40ae09c6f), closes [#931](https://github.com/kbknapp/clap-rs/issues/931))
+
+#### Improvements
+
+*   bumps term_size to take advantage of better terminal dimension handling ([e05100b7](https://github.com/kbknapp/clap-rs/commit/e05100b73d74066a90876bf38f952adf5e8ee422))
+* **PowerShell Completions:**  massively dedups subcommand names in the generate script to make smaller scripts that are still functionally equiv ([85b0e1cc](https://github.com/kbknapp/clap-rs/commit/85b0e1cc4b9755dda75a93d898d79bc38631552b))
+
+#### Documentation
+
+*   Fix a typo the minimum rust version required ([71dabba3](https://github.com/kbknapp/clap-rs/commit/71dabba3ea0a17c88b0e2199c9d99f0acbf3bc17))
+
+<a name="v2.23.1"></a>
+### v2.23.1 (2017-04-05)
+
+
+#### Bug Fixes
+
+*   fixes a missing newline character in the autogenerated help and version messages in some instances ([5ae9007d](https://github.com/kbknapp/clap-rs/commit/5ae9007d984ae94ae2752df51bcbaeb0ec89bc15))
+
+
+<a name="v2.23.0"></a>
+## v2.23.0 (2017-04-05)
+
+
+#### API Additions
+
+* `App::long_about`
+* `App::long_version`
+* `App::print_long_help`
+* `App::write_long_help`
+* `App::print_long_version`
+* `App::write_long_version`
+* `Arg::long_help`
+
+#### Features
+
+*   allows distinguishing between short and long version messages (-V/short or --version/long) ([59272b06](https://github.com/kbknapp/clap-rs/commit/59272b06cc213289dc604dbc694cb95d383a5d68))
+*   allows distinguishing between short and long help with subcommands in the same manner as args ([6b371891](https://github.com/kbknapp/clap-rs/commit/6b371891a1702173a849d1e95f9fecb168bf6fc4))
+*   allows specifying a short help vs a long help (i.e. varying levels of detail depending on if -h or --help was used) ([ef1b24c3](https://github.com/kbknapp/clap-rs/commit/ef1b24c3a0dff2f58c5e2e90880fbc2b69df20ee))
+* **clap_app!:**  adds support for arg names with hyphens similar to longs with hyphens ([f7a88779](https://github.com/kbknapp/clap-rs/commit/f7a8877978c8f90e6543d4f0d9600c086cf92cd7), closes [#869](https://github.com/kbknapp/clap-rs/issues/869))
+
+#### Bug Fixes
+
+*   fixes a bug that wasn't allowing help and version to be properly overridden ([8b2ceb83](https://github.com/kbknapp/clap-rs/commit/8b2ceb8368bcb70689fadf1c7f4b9549184926c1), closes [#922](https://github.com/kbknapp/clap-rs/issues/922))
+
+#### Documentation
+
+* **clap_app!:**  documents the `--("some-arg")` method for using args with hyphens inside them ([bc08ef3e](https://github.com/kbknapp/clap-rs/commit/bc08ef3e185393073d969d301989b6319c616c1f), closes [#919](https://github.com/kbknapp/clap-rs/issues/919))
+
+
+
+<a name="v2.22.2"></a>
+### v2.22.2 (2017-03-30)
+
+
+#### Bug Fixes
+
+* **Custom Usage Strings:**  fixes the usage string regression when using help templates ([0e4fd96d](https://github.com/kbknapp/clap-rs/commit/0e4fd96d74280d306d09e60ac44f938a82321769))
+
+
+
+<a name="v2.22.1"></a>
+### v2.22.1 (2017-03-24)
+
+
+#### Bug Fixes
+
+* **usage:**  fixes a big regression with custom usage strings ([2c41caba](https://github.com/kbknapp/clap-rs/commit/2c41caba3c7d723a2894e315d04da796b0e97759))
+
+<a name="v2.22.0"></a>
+## v2.22.0 (2017-03-23)
+
+#### API Additions
+
+* **App::name:**  adds the ability to change the name of the App instance after creation ([d49e8292](https://github.com/kbknapp/clap-rs/commit/d49e8292b026b06e2b70447cd9f08299f4fcba76), closes [#908](https://github.com/kbknapp/clap-rs/issues/908))
+* **Arg::hide_default_value:**  adds ability to hide the default value of an argument from the help string ([89e6ea86](https://github.com/kbknapp/clap-rs/commit/89e6ea861e16a1ad56757ca12f6b32d02253e44a), closes [#902](https://github.com/kbknapp/clap-rs/issues/902))
+
+
+<a name="v2.21.3"></a>
+### v2.21.3 (2017-03-23)
+
+#### Bug Fixes
+
+* **yaml:**  adds support for loading author info from yaml ([e04c390c](https://github.com/kbknapp/clap-rs/commit/e04c390c597a55fa27e724050342f16c42f1c5c9))
+
+
+<a name="v2.21.2"></a>
+### v2.21.2 (2017-03-17)
+
+
+#### Improvements
+
+*   add fish subcommand help support ([f8f68cf8](https://github.com/kbknapp/clap-rs/commit/f8f68cf8251669aef4539a25a7c1166f0ac81ea6))
+*   options that use `require_equals(true)` now display the equals sign in help messages, usage strings, and errors" ([c8eb0384](https://github.com/kbknapp/clap-rs/commit/c8eb0384d394d2900ccdc1593099c97808a3fa05), closes [#903](https://github.com/kbknapp/clap-rs/issues/903))
+
+
+#### Bug Fixes
+
+*  setting the max term width now correctly propagates down through child subcommands
+
+
+
+<a name="v2.21.1"></a>
+### v2.21.1 (2017-03-12)
+
+
+#### Bug Fixes
+
+* **ArgRequiredElseHelp:**  fixes the precedence of this error to prioritize over other error messages ([74b751ff](https://github.com/kbknapp/clap-rs/commit/74b751ff2e3631e337b7946347c1119829a41c53), closes [#895](https://github.com/kbknapp/clap-rs/issues/895))
+* **Positionals:**  fixes some regression bugs resulting from old asserts in debug mode. ([9a3bc98e](https://github.com/kbknapp/clap-rs/commit/9a3bc98e9b55e7514b74b73374c5ac8b6e5e0508), closes [#896](https://github.com/kbknapp/clap-rs/issues/896))
+
+
+
+<a name="v2.21.0"></a>
+## v2.21.0 (2017-03-09)
+
+#### Performance
+
+*   doesn't run `arg_post_processing` on multiple values anymore ([ec516182](https://github.com/kbknapp/clap-rs/commit/ec5161828729f6a53f0fccec8648f71697f01f78))
+*   changes internal use of `VecMap` to `Vec` for matched values of `Arg`s ([22bf137a](https://github.com/kbknapp/clap-rs/commit/22bf137ac581684c6ed460d2c3c640c503d62621))
+*   vastly reduces the amount of cloning when adding non-global args minus when they're added from `App::args` which is forced to clone ([8da0303b](https://github.com/kbknapp/clap-rs/commit/8da0303bc02db5fe047cfc0631a9da41d9dc60f7))
+*   refactor to remove unneeded vectors and allocations and checks for significant performance increases ([0efa4119](https://github.com/kbknapp/clap-rs/commit/0efa4119632f134fc5b8b9695b007dd94b76735d))
+
+#### Documentation
+
+*   Fix examples link in CONTRIBUTING.md ([60cf875d](https://github.com/kbknapp/clap-rs/commit/60cf875d67a252e19bb85054be57696fac2c57a1))
+
+#### Improvements
+
+*   when `AppSettings::SubcommandsNegateReqs` and `ArgsNegateSubcommands` are used, a new more accurate double line usage string is shown ([50f02300](https://github.com/kbknapp/clap-rs/commit/50f02300d81788817acefef0697e157e01b6ca32), closes [#871](https://github.com/kbknapp/clap-rs/issues/871))
+
+#### API Additions
+
+* **Arg::last:**  adds the ability to mark a positional argument as 'last' which means it should be used with `--` syntax and can be accessed early ([6a7aea90](https://github.com/kbknapp/clap-rs/commit/6a7aea9043b83badd9ab038b4ecc4c787716147e), closes [#888](https://github.com/kbknapp/clap-rs/issues/888))
+*   provides `default_value_os` and `default_value_if[s]_os` ([0f2a3782](https://github.com/kbknapp/clap-rs/commit/0f2a378219a6930748d178ba350fe5925be5dad5), closes [#849](https://github.com/kbknapp/clap-rs/issues/849))
+*   provides `App::help_message` and `App::version_message` which allows one to override the auto-generated help/version flag associated help ([389c413](https://github.com/kbknapp/clap-rs/commit/389c413b7023dccab8c76aa00577ea1d048e7a99), closes [#889](https://github.com/kbknapp/clap-rs/issues/889))
+
+#### New Settings
+
+* **InferSubcommands:**  adds a setting to allow one to infer shortened subcommands or aliases (i.e. for subcommmand "test", "t", "te", or "tes" would be allowed assuming no other ambiguities) ([11602032](https://github.com/kbknapp/clap-rs/commit/11602032f6ff05881e3adf130356e37d5e66e8f9), closes [#863](https://github.com/kbknapp/clap-rs/issues/863))
+
+#### Bug Fixes
+
+*   doesn't print the argument sections in the help message if all args in that section are hidden ([ce5ee5f5](https://github.com/kbknapp/clap-rs/commit/ce5ee5f5a76f838104aeddd01c8ec956dd347f50))
+*   doesn't include the various [ARGS] [FLAGS] or [OPTIONS] if the only ones available are hidden ([7b4000af](https://github.com/kbknapp/clap-rs/commit/7b4000af97637703645c5fb2ac8bb65bd546b95b), closes [#882](https://github.com/kbknapp/clap-rs/issues/882))
+*   now correctly shows subcommand as required in the usage string when AppSettings::SubcommandRequiredElseHelp is used ([8f0884c1](https://github.com/kbknapp/clap-rs/commit/8f0884c1764983a49b45de52a1eddf8d721564d8))
+*   fixes some memory leaks when an error is detected and clap exits ([8c2dd287](https://github.com/kbknapp/clap-rs/commit/8c2dd28718262ace4ae0db98563809548e02a86b))
+*   fixes a trait that's marked private accidentlly, but should be crate internal public ([1ae21108](https://github.com/kbknapp/clap-rs/commit/1ae21108015cea87e5360402e1747025116c7878))
+* **Completions:**   fixes a bug that tried to propogate global args multiple times when generating multiple completion scripts ([5e9b9cf4](https://github.com/kbknapp/clap-rs/commit/5e9b9cf4dd80fa66a624374fd04e6545635c1f94), closes [#846](https://github.com/kbknapp/clap-rs/issues/846))
+
+#### Features
+
+* **Options:**  adds the ability to require the equals syntax with options --opt=val ([f002693d](https://github.com/kbknapp/clap-rs/commit/f002693dec6a6959c4e9590cb7b7bfffd6d6e5bc), closes [#833](https://github.com/kbknapp/clap-rs/issues/833))
+
+
+
+<a name="v2.20.5"></a>
+### v2.20.5 (2017-02-18)
+
+
+#### Bug Fixes
+
+* **clap_app!:**   fixes a critical bug of a missing fragment specifier when using `!property` style tags. ([5635c1f94](https://github.com/kbknapp/clap-rs/commit/5e9b9cf4dd80fa66a624374fd04e6545635c1f94))
+
+
+<a name="v2.20.4"></a>
+### v2.20.4 (2017-02-15)
+
+
+#### Bug Fixes
+
+* **Completions:**   fixes a bug that tried to propogate global args multiple times when generating multiple completion scripts ([5e9b9cf4](https://github.com/kbknapp/clap-rs/commit/5e9b9cf4dd80fa66a624374fd04e6545635c1f94), closes [#846](https://github.com/kbknapp/clap-rs/issues/846))
+
+#### Documentation
+
+*   Fix examples link in CONTRIBUTING.md ([60cf875d](https://github.com/kbknapp/clap-rs/commit/60cf875d67a252e19bb85054be57696fac2c57a1))
+
+
+<a name="v2.20.3"></a>
+### v2.20.3 (2017-02-03)
+
+
+#### Documentation
+
+* **Macros:**  adds a warning about changing values in Cargo.toml not triggering a rebuild automatically ([112aea3e](https://github.com/kbknapp/clap-rs/commit/112aea3e42ae9e0c0a2d33ebad89496dbdd95e5d), closes [#838](https://github.com/kbknapp/clap-rs/issues/838))
+
+#### Bug Fixes
+
+*   fixes a println->debugln typo ([279aa62e](https://github.com/kbknapp/clap-rs/commit/279aa62eaf08f56ce090ba16b937bc763cbb45be))
+*   fixes bash completions for commands that have an underscore in the name ([7f5cfa72](https://github.com/kbknapp/clap-rs/commit/7f5cfa724f0ac4e098f5fe466c903febddb2d994), closes [#581](https://github.com/kbknapp/clap-rs/issues/581))
+*   fixes a bug where ZSH completions would panic if the binary name had an underscore in it ([891a2a00](https://github.com/kbknapp/clap-rs/commit/891a2a006f775e92c556dda48bb32fac9807c4fb), closes [#581](https://github.com/kbknapp/clap-rs/issues/581))
+*   allow final word to be wrapped in wrap_help ([564c5f0f](https://github.com/kbknapp/clap-rs/commit/564c5f0f1730f4a2c1cdd128664f1a981c31dcd4), closes [#828](https://github.com/kbknapp/clap-rs/issues/828))
+* fixes a bug where global args weren't included in the generated completion scripts ([9a1e006e](https://github.com/kbknapp/clap-rs/commit/9a1e006eb75ad5a6057ebd119aa90f7e06c0ace8), closes [#841](https://github.com/kbknapp/clap-rs/issues/841))
+
+
+
+<a name="v2.20.2"></a>
+### v2.20.2 (2017-02-03)
+
+#### Bug Fixes
+
+*   fixes a critical bug where subcommand settings were being propogated too far ([74648c94](https://github.com/kbknapp/clap-rs/commit/74648c94b893df542bfa5bb595e68c7bb8167e36), closes [#832](https://github.com/kbknapp/clap-rs/issues/832))
+
+
+#### Improvements
+
+*   adds ArgGroup::multiple to the supported YAML fields for building ArgGroups from YAML ([d8590037](https://github.com/kbknapp/clap-rs/commit/d8590037ce07dafd8cd5b26928aa4a9fd3018288), closes [#840](https://github.com/kbknapp/clap-rs/issues/840))
+
+<a name="v2.20.1"></a>
+### v2.20.1 (2017-01-31)
+
+#### Bug Fixes
+
+*   allow final word to be wrapped in wrap_help ([564c5f0f](https://github.com/kbknapp/clap-rs/commit/564c5f0f1730f4a2c1cdd128664f1a981c31dcd4), closes [#828](https://github.com/kbknapp/clap-rs/issues/828))
+*   actually show character in debug output ([84d8c547](https://github.com/kbknapp/clap-rs/commit/84d8c5476de95b7f37d61888bc4f13688b712434))
+*   include final character in line lenght ([aff4ba18](https://github.com/kbknapp/clap-rs/commit/aff4ba18da8147e1259b04b0bfbc1fcb5c78a3c0))
+
+#### Improvements
+
+*   updates libc and term_size deps for the libc version conflict ([6802ac4a](https://github.com/kbknapp/clap-rs/commit/6802ac4a59c142cda9ec55ca0c45ae5cb9a6ab55))
+
+#### Documentation
+
+*   fix link from app_from_crate! to crate_authors! (#822) ([5b29be9b](https://github.com/kbknapp/clap-rs/commit/5b29be9b073330ab1f7227cdd19fe4aab39d5dcb))
+*   fix spelling of "guaranteed" ([4f30a65b](https://github.com/kbknapp/clap-rs/commit/4f30a65b9c03eb09607eb91a929a6396637dc105))
+
+<a name="v2.20.0"></a>
+
+#### New Settings
+
+* **ArgsNegateSubcommands:**  disables args being allowed between subcommands ([5e2af8c9](https://github.com/kbknapp/clap-rs/commit/5e2af8c96adb5ab75fa2d1536237ebcb41869494), closes [#793](https://github.com/kbknapp/clap-rs/issues/793))
+* **DontCollapseArgsInUsage:** disables the collapsing of positional args into `[ARGS]` in the usage string  ([c2978afc](https://github.com/kbknapp/clap-rs/commit/c2978afc61fb46d5263ab3b2d87ecde1c9ce1553), closes [#769](https://github.com/kbknapp/clap-rs/issues/769))
+* **DisableHelpSubcommand:**  disables building the `help` subcommand  ([a10fc859](https://github.com/kbknapp/clap-rs/commit/a10fc859ee20159fbd9ff4337be59b76467a64f2))
+* **AllowMissingPositional:**  allows one to implement `$ prog [optional] <required>` style CLIs where the second postional argument is required, but the first is optional ([1110fdc7](https://github.com/kbknapp/clap-rs/commit/1110fdc7a345c108820dc45783a9bf893fa4c214), closes [#636](https://github.com/kbknapp/clap-rs/issues/636))
+* **PropagateGlobalValuesDown:**  automatically propagats global arg's values down through *used* subcommands ([985536c8](https://github.com/kbknapp/clap-rs/commit/985536c8ebcc09af98aac835f42a8072ad58c262), closes [#694](https://github.com/kbknapp/clap-rs/issues/694))
+
+#### API Additions
+
+##### Arg
+
+* **Arg::value_terminator:**  adds the ability to terminate multiple values with a given string or char ([be64ce0c](https://github.com/kbknapp/clap-rs/commit/be64ce0c373efc106384baca3f487ea99fe7b8cf), closes [#782](https://github.com/kbknapp/clap-rs/issues/782))
+* **Arg::default_value_if[s]:**  adds new methods for *conditional* default values (such as a particular value from another argument was used) ([eb4010e7](https://github.com/kbknapp/clap-rs/commit/eb4010e7b21724447ef837db11ac441915728f22))
+* **Arg::requires_if[s]:**  adds the ability to *conditionally* require additional args (such as if a particular value was used) ([198449d6](https://github.com/kbknapp/clap-rs/commit/198449d64393c265f0bc327aaeac23ec4bb97226))
+* **Arg::required_if[s]:**  adds the ability for an arg to be *conditionally* required (i.e. "arg X is only required if arg Y was used with value Z") ([ee9cfddf](https://github.com/kbknapp/clap-rs/commit/ee9cfddf345a6b5ae2af42ba72aa5c89e2ca7f59))
+* **Arg::validator_os:**  adds ability to validate values which may contain invalid UTF-8 ([47232498](https://github.com/kbknapp/clap-rs/commit/47232498a813db4f3366ccd3e9faf0bff56433a4))
+
+##### Macros
+
+* **crate_description!:** Uses the `Cargo.toml` description field to fill in the `App::about` method at compile time ([4d9a82db](https://github.com/kbknapp/clap-rs/commit/4d9a82db8e875e9b64a9c2a5c6e22c25afc1279d), closes [#778](https://github.com/kbknapp/clap-rs/issues/778))
+* **crate_name!:** Uses the `Cargo.toml` name field to fill in the `App::new` method at compile time ([4d9a82db](https://github.com/kbknapp/clap-rs/commit/4d9a82db8e875e9b64a9c2a5c6e22c25afc1279d), closes [#778](https://github.com/kbknapp/clap-rs/issues/778))
+* **app_from_crate!:** Combines `crate_version!`, `crate_name!`, `crate_description!`, and `crate_authors!` into a single macro call to build a default `App` instance from the `Cargo.toml` fields ([4d9a82db](https://github.com/kbknapp/clap-rs/commit/4d9a82db8e875e9b64a9c2a5c6e22c25afc1279d), closes [#778](https://github.com/kbknapp/clap-rs/issues/778))
+
+
+#### Features
+
+* **no_cargo:**  adds a `no_cargo` feature to disable Cargo-env-var-dependent macros for those *not* using `cargo` to build their crates (#786) ([6fdd2f9d](https://github.com/kbknapp/clap-rs/commit/6fdd2f9d693aaf1118fc61bd362273950703f43d))
+
+#### Bug Fixes
+
+* **Options:**  fixes a critical bug where options weren't forced to have a value ([5a5f2b1e](https://github.com/kbknapp/clap-rs/commit/5a5f2b1e9f598a0d0280ef3e98abbbba2bc41132), closes [#665](https://github.com/kbknapp/clap-rs/issues/665))
+*   fixes a bug where calling the help of a subcommand wasn't ignoring required args of parent commands ([d3d34a2b](https://github.com/kbknapp/clap-rs/commit/d3d34a2b51ef31004055b0ab574f766d801c3adf), closes [#789](https://github.com/kbknapp/clap-rs/issues/789))
+* **Help Subcommand:**  fixes a bug where the help subcommand couldn't be overriden ([d34ec3e0](https://github.com/kbknapp/clap-rs/commit/d34ec3e032d03e402d8e87af9b2942fe2819b2da), closes [#787](https://github.com/kbknapp/clap-rs/issues/787))
+* **Low Index Multiples:**  fixes a bug which caused combinations of LowIndexMultiples and `Arg::allow_hyphen_values` to fail parsing ([26c670ca](https://github.com/kbknapp/clap-rs/commit/26c670ca16d2c80dc26d5c1ce83380ace6357318))
+
+#### Improvements
+
+* **Default Values:**  improves the error message when default values are involved ([1f33de54](https://github.com/kbknapp/clap-rs/commit/1f33de545036e7fd2f80faba251fca009bd519b8), closes [#774](https://github.com/kbknapp/clap-rs/issues/774))
+* **YAML:**  adds conditional requirements and conditional default values to YAML ([9a4df327](https://github.com/kbknapp/clap-rs/commit/9a4df327893486adb5558ffefba790c634ccdc6e), closes [#764](https://github.com/kbknapp/clap-rs/issues/764))
+*  Support `--("some-arg-name")` syntax for defining long arg names when using `clap_app!` macro ([f41ec962](https://github.com/kbknapp/clap-rs/commit/f41ec962c243a5ffff8b1be1ae2ad63970d3d1d4))
+*  Support `("some app name")` syntax for defining app names when using `clap_app!` macro ([9895b671](https://github.com/kbknapp/clap-rs/commit/9895b671cff784f35cf56abcd8270f7c2ba09699), closes [#759](https://github.com/kbknapp/clap-rs/issues/759))
+* **Help Wrapping:**  long app names (with spaces), authors, and descriptions are now wrapped appropriately ([ad4691b7](https://github.com/kbknapp/clap-rs/commit/ad4691b71a63e951ace346318238d8834e04ad8a), closes [#777](https://github.com/kbknapp/clap-rs/issues/777))
+
+
+#### Documentation
+
+* **Conditional Default Values:**  fixes the failing doc tests of Arg::default_value_ifs ([4ef09101](https://github.com/kbknapp/clap-rs/commit/4ef091019c083b4db1a0c13f1c1e95ac363259f2))
+* **Conditional Requirements:**  adds docs for Arg::requires_ifs ([7f296e29](https://github.com/kbknapp/clap-rs/commit/7f296e29db7d9036e76e5dbcc9c8b20dfe7b25bd))
+* **README.md:**  fix some typos ([f22c21b4](https://github.com/kbknapp/clap-rs/commit/f22c21b422d5b287d1a1ac183a379ee02eebf54f))
+* **src/app/mod.rs:**  fix some typos ([5c9b0d47](https://github.com/kbknapp/clap-rs/commit/5c9b0d47ca78dea285c5b9dec79063d24c3e451a))
+
 <a name="v2.19.3"></a>
 ### v2.19.3 (2016-12-28)
 

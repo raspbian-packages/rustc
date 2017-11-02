@@ -124,6 +124,20 @@ s! {
         // Actually a union of an int and a void*
         pub sival_ptr: *mut ::c_void
     }
+
+    // <sys/time.h>
+    pub struct itimerval {
+        pub it_interval: ::timeval,
+        pub it_value: ::timeval,
+    }
+
+    // <sys/times.h>
+    pub struct tms {
+        pub tms_utime: ::clock_t,
+        pub tms_stime: ::clock_t,
+        pub tms_cutime: ::clock_t,
+        pub tms_cstime: ::clock_t,
+    }
 }
 
 pub const SIG_DFL: sighandler_t = 0 as sighandler_t;
@@ -237,6 +251,10 @@ cfg_if! {
     } else if #[cfg(target_os = "fuchsia")] {
         #[link(name = "c")]
         #[link(name = "mxio")]
+        extern {}
+    } else if #[cfg(target_env = "newlib")] {
+        #[link(name = "c")]
+        #[link(name = "m")]
         extern {}
     } else {
         #[link(name = "c")]
@@ -405,7 +423,9 @@ extern {
     pub fn lchown(path: *const c_char, uid: uid_t,
                   gid: gid_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
-               link_name = "close$UNIX2003")]
+               link_name = "close$NOCANCEL$UNIX2003")]
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86_64"),
+               link_name = "close$NOCANCEL")]
     pub fn close(fd: ::c_int) -> ::c_int;
     pub fn dup(fd: ::c_int) -> ::c_int;
     pub fn dup2(src: ::c_int, dst: ::c_int) -> ::c_int;
@@ -456,6 +476,7 @@ extern {
     pub fn read(fd: ::c_int, buf: *mut ::c_void, count: ::size_t)
                 -> ::ssize_t;
     pub fn rmdir(path: *const c_char) -> ::c_int;
+    pub fn seteuid(uid: uid_t) -> ::c_int;
     pub fn setgid(gid: gid_t) -> ::c_int;
     pub fn setpgid(pid: pid_t, pgid: pid_t) -> ::c_int;
     pub fn setsid() -> pid_t;
@@ -566,6 +587,8 @@ extern {
     #[cfg_attr(target_os = "netbsd", link_name = "__gettimeofday50")]
     pub fn gettimeofday(tp: *mut ::timeval,
                         tz: *mut ::c_void) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__times13")]
+    pub fn times(buf: *mut ::tms) -> ::clock_t;
 
     pub fn pthread_self() -> ::pthread_t;
     pub fn pthread_create(native: *mut ::pthread_t,
@@ -629,6 +652,10 @@ extern {
     pub fn pthread_condattr_init(attr: *mut pthread_condattr_t) -> ::c_int;
     pub fn pthread_condattr_destroy(attr: *mut pthread_condattr_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "pthread_rwlock_init$UNIX2003")]
+    pub fn pthread_rwlock_init(lock: *mut pthread_rwlock_t,
+                               attr: *const pthread_rwlockattr_t) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "pthread_rwlock_destroy$UNIX2003")]
     pub fn pthread_rwlock_destroy(lock: *mut pthread_rwlock_t) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
@@ -646,6 +673,9 @@ extern {
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "pthread_rwlock_unlock$UNIX2003")]
     pub fn pthread_rwlock_unlock(lock: *mut pthread_rwlock_t) -> ::c_int;
+    pub fn pthread_rwlockattr_init(attr: *mut pthread_rwlockattr_t) -> ::c_int;
+    pub fn pthread_rwlockattr_destroy(attr: *mut pthread_rwlockattr_t)
+                                      -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "pthread_sigmask$UNIX2003")]
     pub fn pthread_sigmask(how: ::c_int, set: *const sigset_t,
@@ -694,6 +724,14 @@ extern {
                        res: *mut *mut addrinfo) -> ::c_int;
     pub fn freeaddrinfo(res: *mut addrinfo);
     pub fn gai_strerror(errcode: ::c_int) -> *const ::c_char;
+    #[cfg_attr(any(
+                   all(target_os = "linux", not(target_env = "musl")),
+                   target_os = "freebsd",
+                   target_os = "dragonfly"),
+               link_name = "__res_init")]
+    #[cfg_attr(any(target_os = "macos", target_os = "ios"),
+               link_name = "res_9_init")]
+    pub fn res_init() -> ::c_int;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__gmtime_r50")]
     pub fn gmtime_r(time_p: *const time_t, result: *mut tm) -> *mut tm;
@@ -705,8 +743,10 @@ extern {
     pub fn mktime(tm: *mut tm) -> time_t;
     #[cfg_attr(target_os = "netbsd", link_name = "__time50")]
     pub fn time(time: *mut time_t) -> time_t;
+    #[cfg_attr(target_os = "netbsd", link_name = "__gmtime50")]
+    pub fn gmtime(time_p: *const time_t) -> *mut tm;
     #[cfg_attr(target_os = "netbsd", link_name = "__locatime50")]
-    pub fn localtime(time: *const time_t) -> *mut tm;
+    pub fn localtime(time_p: *const time_t) -> *mut tm;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__mknod50")]
     pub fn mknod(pathname: *const ::c_char, mode: ::mode_t,
@@ -785,6 +825,8 @@ extern {
                        set: *const sigset_t,
                        oldset: *mut sigset_t)
                        -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__sigpending14")]
+    pub fn sigpending(set: *mut sigset_t) -> ::c_int;
 
     #[cfg_attr(target_os = "netbsd", link_name = "__timegm50")]
     pub fn timegm(tm: *mut ::tm) -> time_t;
@@ -825,6 +867,7 @@ extern {
                      termios: *const ::termios) -> ::c_int;
     pub fn tcflow(fd: ::c_int, action: ::c_int) -> ::c_int;
     pub fn tcflush(fd: ::c_int, action: ::c_int) -> ::c_int;
+    pub fn tcgetsid(fd: ::c_int) -> ::pid_t;
     pub fn tcsendbreak(fd: ::c_int, duration: ::c_int) -> ::c_int;
     pub fn mkstemp(template: *mut ::c_char) -> ::c_int;
     pub fn mkdtemp(template: *mut ::c_char) -> *mut ::c_char;
@@ -846,10 +889,16 @@ extern {
 }
 
 cfg_if! {
-    if #[cfg(any(target_os = "linux",
-                 target_os = "android",
-                 target_os = "emscripten",
-                 target_os = "fuchsia"))] {
+    if #[cfg(target_env = "uclibc")] {
+        mod uclibc;
+        pub use self::uclibc::*;
+    } else if #[cfg(target_env = "newlib")] {
+        mod newlib;
+        pub use self::newlib::*;
+    } else if #[cfg(any(target_os = "linux",
+                        target_os = "android",
+                        target_os = "emscripten",
+                        target_os = "fuchsia"))] {
         mod notbsd;
         pub use self::notbsd::*;
     } else if #[cfg(any(target_os = "macos",

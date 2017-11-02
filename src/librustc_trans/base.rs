@@ -43,10 +43,11 @@ use rustc::dep_graph::AssertDepGraphSafe;
 use rustc::middle::cstore::LinkMeta;
 use rustc::hir::map as hir_map;
 use rustc::util::common::time;
-use rustc::session::config::{self, NoDebugInfo};
+use rustc::session::config::{self, NoDebugInfo, OutputFilenames};
 use rustc::session::Session;
 use rustc_incremental::IncrementalHashesMap;
 use abi;
+use allocator;
 use mir::lvalue::LvalueRef;
 use attributes;
 use builder::Builder;
@@ -727,7 +728,9 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
                             link_meta: &LinkMeta,
                             exported_symbols: &NodeSet)
                             -> (ContextRef, ModuleRef, EncodedMetadata) {
-    use flate;
+    use std::io::Write;
+    use flate2::Compression;
+    use flate2::write::DeflateEncoder;
 
     let (metadata_llcx, metadata_llmod) = unsafe {
         context::create_context_and_module(tcx.sess, "metadata")
@@ -767,7 +770,8 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
 
     assert!(kind == MetadataKind::Compressed);
     let mut compressed = cstore.metadata_encoding_version().to_vec();
-    compressed.extend_from_slice(&flate::deflate_bytes(&metadata.raw_data));
+    DeflateEncoder::new(&mut compressed, Compression::Fast)
+        .write_all(&metadata.raw_data).unwrap();
 
     let llmeta = C_bytes_in_context(metadata_llcx, &compressed);
     let llconst = C_struct_in_context(metadata_llcx, &[llmeta], false);
@@ -1049,7 +1053,8 @@ pub fn find_exported_symbols(tcx: TyCtxt, reachable: &NodeSet) -> NodeSet {
 
 pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              analysis: ty::CrateAnalysis,
-                             incremental_hashes_map: &IncrementalHashesMap)
+                             incremental_hashes_map: &IncrementalHashesMap,
+                             output_filenames: &OutputFilenames)
                              -> CrateTranslation {
     // Be careful with this krate: obviously it gives access to the
     // entire contents of the krate. So if you push any subtasks of
@@ -1066,7 +1071,8 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let shared_ccx = SharedCrateContext::new(tcx,
                                              exported_symbols,
-                                             check_overflow);
+                                             check_overflow,
+                                             output_filenames);
     // Translate the metadata.
     let (metadata_llcx, metadata_llmod, metadata) =
         time(tcx.sess.time_passes(), "write metadata", || {
@@ -1081,7 +1087,9 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             llmod: metadata_llmod,
         }),
     };
+
     let no_builtins = attr::contains_name(&krate.attrs, "no_builtins");
+
 
     // Skip crate items and just output metadata in -Z no-trans mode.
     if tcx.sess.opts.debugging_opts.no_trans ||
@@ -1092,6 +1100,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             crate_name: tcx.crate_name(LOCAL_CRATE),
             modules: vec![],
             metadata_module: metadata_module,
+            allocator_module: None,
             link: link_meta,
             metadata: metadata,
             exported_symbols: empty_exported_symbols,
@@ -1111,7 +1120,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         .into_iter()
         .map(|cgu| {
             let dep_node = cgu.work_product_dep_node();
-            let (stats, module) =
+            let ((stats, module), _) =
                 tcx.dep_graph.with_task(dep_node,
                                         AssertDepGraphSafe(&shared_ccx),
                                         AssertDepGraphSafe(cgu),
@@ -1145,9 +1154,9 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     Some(work_product)
                 } else {
                     if scx.sess().opts.debugging_opts.incremental_info {
-                        println!("incremental: CGU `{}` invalidated because of \
-                                  changed partitioning hash.",
-                                 cgu.name());
+                        eprintln!("incremental: CGU `{}` invalidated because of \
+                                   changed partitioning hash.",
+                                   cgu.name());
                     }
                     debug!("trans_reuse_previous_work_products: \
                             not reusing {:?} because hash changed to {:?}",
@@ -1291,6 +1300,41 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         create_imps(sess, &llvm_modules);
     }
 
+    // Translate an allocator shim, if any
+    //
+    // If LTO is enabled and we've got some previous LLVM module we translated
+    // above, then we can just translate directly into that LLVM module. If not,
+    // however, we need to create a separate module and trans into that. Note
+    // that the separate translation is critical for the standard library where
+    // the rlib's object file doesn't have allocator functions but the dylib
+    // links in an object file that has allocator functions. When we're
+    // compiling a final LTO artifact, though, there's no need to worry about
+    // this as we're not working with this dual "rlib/dylib" functionality.
+    let allocator_module = tcx.sess.allocator_kind.get().and_then(|kind| unsafe {
+        if sess.lto() && llvm_modules.len() > 0 {
+            time(tcx.sess.time_passes(), "write allocator module", || {
+                allocator::trans(tcx, &llvm_modules[0], kind)
+            });
+            None
+        } else {
+            let (llcx, llmod) =
+                context::create_context_and_module(tcx.sess, "allocator");
+            let modules = ModuleLlvm {
+                llmod: llmod,
+                llcx: llcx,
+            };
+            time(tcx.sess.time_passes(), "write allocator module", || {
+                allocator::trans(tcx, &modules, kind)
+            });
+
+            Some(ModuleTranslation {
+                name: link::ALLOCATOR_MODULE_NAME.to_string(),
+                symbol_name_hash: 0, // we always rebuild allocator shims
+                source: ModuleSource::Translated(modules),
+            })
+        }
+    });
+
     let linker_info = LinkerInfo::new(&shared_ccx, &exported_symbols);
 
     let subsystem = attr::first_attr_value_str_by_name(&krate.attrs,
@@ -1308,6 +1352,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         crate_name: tcx.crate_name(LOCAL_CRATE),
         modules: modules,
         metadata_module: metadata_module,
+        allocator_module: allocator_module,
         link: link_meta,
         metadata: metadata,
         exported_symbols: exported_symbols,
