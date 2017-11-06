@@ -1,0 +1,234 @@
+Description: Use local web resources instead of remote ones
+Author: Matthijs van Otterdijk <matthijs@wirevirt.net>
+Bug: https://github.com/azerupi/mdBook/issues/271
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/vendor/mdbook/src/theme/index.hbs
++++ b/src/vendor/mdbook/src/theme/index.hbs
+@@ -10,27 +10,19 @@
+         <base href="{{ path_to_root }}">
+ 
+         <link rel="stylesheet" href="book.css">
+-        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
+-        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
+ 
+         <link rel="shortcut icon" href="{{ favicon }}">
+ 
+         <!-- Font Awesome -->
+-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
++        <link rel="stylesheet" href="../font-awesome.min.css">
+ 
+-        <link rel="stylesheet" href="highlight.css">
++        <link rel="stylesheet" href="../highlight.css">
+         <link rel="stylesheet" href="tomorrow-night.css">
+ 
+         <!-- MathJax -->
+-        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+ 
+-        <!-- Fetch JQuery from CDN but have a local fallback -->
+-        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+-        <script>
+-            if (typeof jQuery == 'undefined') {
+-                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+-            }
+-        </script>
++        <script src="../jquery.min.js"></script>
+     </head>
+     <body class="light">
+         <!-- Set the theme before any content is loaded, prevents flash -->
+@@ -101,30 +93,10 @@
+         </div>
+ 
+ 
+-        <!-- Local fallback for Font Awesome -->
+-        <script>
+-            if ($(".fa").css("font-family") !== "FontAwesome") {
+-                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+-            }
+-        </script>
+-
+         <!-- Livereload script (if served using the cli tool) -->
+         {{{livereload}}}
+ 
+-        {{#if google_analytics}}
+-        <script>
+-        (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+-        (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+-        m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+-        })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
+-
+-        ga('create', '{{google_analytics}}', 'auto');
+-        ga('send', 'pageview');
+-        </script>
+-      {{/if}}
+-
+-
+-        <script src="highlight.js"></script>
++        <script src="../highlight.js"></script>
+         <script src="book.js"></script>
+     </body>
+ </html>
+--- a/src/vendor/mdbook/src/theme/mod.rs
++++ b/src/vendor/mdbook/src/theme/mod.rs
+@@ -7,17 +7,7 @@
+ pub static CSS: &'static [u8] = include_bytes!("book.css");
+ pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
+ pub static JS: &'static [u8] = include_bytes!("book.js");
+-pub static HIGHLIGHT_JS: &'static [u8] = include_bytes!("highlight.js");
+ pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
+-pub static HIGHLIGHT_CSS: &'static [u8] = include_bytes!("highlight.css");
+-pub static JQUERY: &'static [u8] = include_bytes!("jquery-2.1.4.min.js");
+-pub static FONT_AWESOME: &'static [u8] = include_bytes!("_FontAwesome/css/font-awesome.min.css");
+-pub static FONT_AWESOME_EOT: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.eot");
+-pub static FONT_AWESOME_SVG: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.svg");
+-pub static FONT_AWESOME_TTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.ttf");
+-pub static FONT_AWESOME_WOFF: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff");
+-pub static FONT_AWESOME_WOFF2: &'static [u8] = include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff2");
+-pub static FONT_AWESOME_OTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/FontAwesome.otf");
+ 
+ /// The `Theme` struct should be used instead of the static variables because
+ /// the `new()` method
+@@ -33,10 +23,7 @@
+     pub css: Vec<u8>,
+     pub favicon: Vec<u8>,
+     pub js: Vec<u8>,
+-    pub highlight_css: Vec<u8>,
+     pub tomorrow_night_css: Vec<u8>,
+-    pub highlight_js: Vec<u8>,
+-    pub jquery: Vec<u8>,
+ }
+ 
+ impl Theme {
+@@ -48,10 +35,7 @@
+             css: CSS.to_owned(),
+             favicon: FAVICON.to_owned(),
+             js: JS.to_owned(),
+-            highlight_css: HIGHLIGHT_CSS.to_owned(),
+             tomorrow_night_css: TOMORROW_NIGHT_CSS.to_owned(),
+-            highlight_js: HIGHLIGHT_JS.to_owned(),
+-            jquery: JQUERY.to_owned(),
+         };
+ 
+         // Check if the given path exists
+@@ -85,18 +69,6 @@
+             let _ = f.read_to_end(&mut theme.favicon);
+         }
+ 
+-        // highlight.js
+-        if let Ok(mut f) = File::open(&src.join("highlight.js")) {
+-            theme.highlight_js.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_js);
+-        }
+-
+-        // highlight.css
+-        if let Ok(mut f) = File::open(&src.join("highlight.css")) {
+-            theme.highlight_css.clear();
+-            let _ = f.read_to_end(&mut theme.highlight_css);
+-        }
+-
+         // tomorrow-night.css
+         if let Ok(mut f) = File::open(&src.join("tomorrow-night.css")) {
+             theme.tomorrow_night_css.clear();
+--- a/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
++++ b/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+@@ -167,17 +167,7 @@
+         book.write_file("book.js", &theme.js)?;
+         book.write_file("book.css", &theme.css)?;
+         book.write_file("favicon.png", &theme.favicon)?;
+-        book.write_file("jquery.js", &theme.jquery)?;
+-        book.write_file("highlight.css", &theme.highlight_css)?;
+         book.write_file("tomorrow-night.css", &theme.tomorrow_night_css)?;
+-        book.write_file("highlight.js", &theme.highlight_js)?;
+-        book.write_file("_FontAwesome/css/font-awesome.css", theme::FONT_AWESOME)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.eot", theme::FONT_AWESOME_EOT)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.svg", theme::FONT_AWESOME_SVG)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.ttf", theme::FONT_AWESOME_TTF)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff", theme::FONT_AWESOME_WOFF)?;
+-        book.write_file("_FontAwesome/fonts/fontawesome-webfont.woff2", theme::FONT_AWESOME_WOFF2)?;
+-        book.write_file("_FontAwesome/fonts/FontAwesome.ttf", theme::FONT_AWESOME_TTF)?;
+ 
+         // Copy all remaining files
+         utils::fs::copy_files_except_ext(book.get_src(), book.get_dest(), true, &["md"])?;
+--- a/src/tools/linkchecker/main.rs
++++ b/src/tools/linkchecker/main.rs
+@@ -149,6 +149,11 @@
+            url.starts_with("irc:") || url.starts_with("data:") {
+             return;
+         }
++        // Ignore parent URLs, so that the package installation process can
++        // provide a symbolic link later
++        if url.starts_with("../") {
++            return;
++        }
+         let mut parts = url.splitn(2, "#");
+         let url = parts.next().unwrap();
+         let fragment = parts.next();
+--- a/src/vendor/mdbook/src/book/mod.rs
++++ b/src/vendor/mdbook/src/book/mod.rs
+@@ -296,14 +296,6 @@
+         let mut js = File::create(&theme_dir.join("book.js"))?;
+         js.write_all(theme::JS)?;
+ 
+-        // highlight.css
+-        let mut highlight_css = File::create(&theme_dir.join("highlight.css"))?;
+-        highlight_css.write_all(theme::HIGHLIGHT_CSS)?;
+-
+-        // highlight.js
+-        let mut highlight_js = File::create(&theme_dir.join("highlight.js"))?;
+-        highlight_js.write_all(theme::HIGHLIGHT_JS)?;
+-
+         Ok(())
+     }
+ 
+--- a/src/doc/book/second-edition/theme/index.hbs
++++ b/src/doc/book/second-edition/theme/index.hbs
+@@ -10,14 +10,13 @@
+         <base href="{{ path_to_root }}">
+ 
+         <link rel="stylesheet" href="book.css">
+-        <link href='https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800' rel='stylesheet' type='text/css'>
+ 
+         <link rel="shortcut icon" href="{{ favicon }}">
+ 
+         <!-- Font Awesome -->
+-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
++        <link rel="stylesheet" href="../font-awesome.min.css">
+ 
+-        <link rel="stylesheet" href="highlight.css">
++        <link rel="stylesheet" href="../highlight.css">
+         <link rel="stylesheet" href="tomorrow-night.css">
+         <style>
+             .page-wrapper.has-warning > .nav-chapters {
+@@ -86,15 +85,9 @@
+         </style>
+ 
+         <!-- MathJax -->
+-        <script type="text/javascript" src="https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+ 
+-        <!-- Fetch JQuery from CDN but have a local fallback -->
+-        <script src="https://code.jquery.com/jquery-2.1.4.min.js"></script>
+-        <script>
+-            if (typeof jQuery == 'undefined') {
+-                document.write(unescape("%3Cscript src='jquery.js'%3E%3C/script%3E"));
+-            }
+-        </script>
++        <script src="../jquery.min.js"></script>
+     </head>
+     <body class="light">
+         <!-- Set the theme before any content is loaded, prevents flash -->
+@@ -167,13 +160,6 @@
+         </div>
+ 
+ 
+-        <!-- Local fallback for Font Awesome -->
+-        <script>
+-            if ($(".fa").css("font-family") !== "FontAwesome") {
+-                $('<link rel="stylesheet" type="text/css" href="_FontAwesome/css/font-awesome.css">').prependTo('head');
+-            }
+-        </script>
+-
+         <!-- Livereload script (if served using the cli tool) -->
+         {{{livereload}}}
+ 

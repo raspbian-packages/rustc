@@ -1,0 +1,14 @@
+Description: Prefer local CSS to remote
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/45331
+--- a/src/bootstrap/doc.rs
++++ b/src/bootstrap/doc.rs
+@@ -411,7 +411,7 @@
+             if filename == "not_found.md" {
+                 cmd.arg("--markdown-no-toc")
+                    .arg("--markdown-css")
+-                   .arg("https://doc.rust-lang.org/rust.css");
++                   .arg("rust.css");
+             } else {
+                 cmd.arg("--markdown-css").arg("rust.css");
+             }
