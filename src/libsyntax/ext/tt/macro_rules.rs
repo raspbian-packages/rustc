@@ -86,7 +86,7 @@ impl TTMacroExpander for MacroRulesMacroExpander {
 
 fn trace_macros_note(cx: &mut ExtCtxt, sp: Span, message: String) {
     let sp = sp.macro_backtrace().last().map(|trace| trace.call_site).unwrap_or(sp);
-    let mut values: &mut Vec<String> = cx.expansions.entry(sp).or_insert_with(Vec::new);
+    let values: &mut Vec<String> = cx.expansions.entry(sp).or_insert_with(Vec::new);
     values.push(message);
 }
 
@@ -119,8 +119,22 @@ fn generic_extension<'cx>(cx: &'cx mut ExtCtxt,
                     quoted::TokenTree::Delimited(_, ref delimed) => delimed.tts.clone(),
                     _ => cx.span_bug(sp, "malformed macro rhs"),
                 };
+
+                let rhs_spans = rhs.iter().map(|t| t.span()).collect::<Vec<_>>();
                 // rhs has holes ( `$id` and `$(...)` that need filled)
-                let tts = transcribe(cx, Some(named_matches), rhs);
+                let mut tts = transcribe(cx, Some(named_matches), rhs);
+
+                // Replace all the tokens for the corresponding positions in the macro, to maintain
+                // proper positions in error reporting, while maintaining the macro_backtrace.
+                if rhs_spans.len() == tts.len() {
+                    tts = tts.map_enumerated(|i, tt| {
+                        let mut tt = tt.clone();
+                        let mut sp = rhs_spans[i];
+                        sp.ctxt = tt.span().ctxt;
+                        tt.set_span(sp);
+                        tt
+                    });
+                }
 
                 if cx.trace_macros() {
                     trace_macros_note(cx, sp, format!("to `{}`", tts));
@@ -255,18 +269,24 @@ pub fn compile(sess: &ParseSess, features: &RefCell<Features>, def: &ast::Item) 
         valid &= check_lhs_no_empty_seq(sess, &[lhs.clone()])
     }
 
-    let exp: Box<_> = Box::new(MacroRulesMacroExpander {
+    let expander: Box<_> = Box::new(MacroRulesMacroExpander {
         name: def.ident,
-        lhses: lhses,
-        rhses: rhses,
-        valid: valid,
+        lhses,
+        rhses,
+        valid,
     });
 
     if body.legacy {
         let allow_internal_unstable = attr::contains_name(&def.attrs, "allow_internal_unstable");
-        NormalTT(exp, Some((def.id, def.span)), allow_internal_unstable)
+        let allow_internal_unsafe = attr::contains_name(&def.attrs, "allow_internal_unsafe");
+        NormalTT {
+            expander,
+            def_info: Some((def.id, def.span)),
+            allow_internal_unstable,
+            allow_internal_unsafe
+        }
     } else {
-        SyntaxExtension::DeclMacro(exp, Some((def.id, def.span)))
+        SyntaxExtension::DeclMacro(expander, Some((def.id, def.span)))
     }
 }
 

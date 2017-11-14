@@ -23,10 +23,7 @@
 //!
 //! See [the book](../book/first-edition/procedural-macros.html) for more.
 
-#![crate_name = "proc_macro"]
 #![stable(feature = "proc_macro_lib", since = "1.15.0")]
-#![crate_type = "rlib"]
-#![crate_type = "dylib"]
 #![deny(warnings)]
 #![deny(missing_docs)]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -111,7 +108,7 @@ impl fmt::Display for TokenStream {
 
 /// `quote!(..)` accepts arbitrary tokens and expands into a `TokenStream` describing the input.
 /// For example, `quote!(a + b)` will produce a expression, that, when evaluated, constructs
-/// constructs the `TokenStream` `[Word("a"), Op('+', Alone), Word("b")]`.
+/// the `TokenStream` `[Word("a"), Op('+', Alone), Word("b")]`.
 ///
 /// Unquoting is done with `$`, and works by taking the single next ident as the unquoted term.
 /// To quote `$` itself, use `$$`.
@@ -241,14 +238,14 @@ pub enum TokenNode {
 }
 
 /// Describes how a sequence of token trees is delimited.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[unstable(feature = "proc_macro", issue = "38356")]
 pub enum Delimiter {
     /// `( ... )`
     Parenthesis,
-    /// `[ ... ]`
-    Brace,
     /// `{ ... }`
+    Brace,
+    /// `[ ... ]`
     Bracket,
     /// An implicit delimiter, e.g. `$var`, where $var is  `...`.
     None,
@@ -274,7 +271,7 @@ impl Term {
 }
 
 /// Whether an `Op` is either followed immediately by another `Op` or followed by whitespace.
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[unstable(feature = "proc_macro", issue = "38356")]
 pub enum Spacing {
     /// e.g. `+` is `Alone` in `+ =`.
@@ -375,6 +372,7 @@ impl Literal {
 }
 
 /// An iterator over `TokenTree`s.
+#[derive(Clone)]
 #[unstable(feature = "proc_macro", issue = "38356")]
 pub struct TokenTreeIter {
     cursor: tokenstream::Cursor,
@@ -508,14 +506,49 @@ impl TokenTree {
             Ident(ident) | Lifetime(ident) => TokenNode::Term(Term(ident.name)),
             Literal(..) | DocComment(..) => TokenNode::Literal(self::Literal(token)),
 
-            Interpolated(ref nt) => __internal::with_sess(|(sess, _)| {
-                TokenNode::Group(Delimiter::None, TokenStream(nt.1.force(|| {
-                    // FIXME(jseyfried): Avoid this pretty-print + reparse hack
-                    let name = "<macro expansion>".to_owned();
-                    let source = pprust::token_to_string(&token);
-                    parse_stream_from_source_str(name, source, sess, Some(span))
-                })))
-            }),
+            Interpolated(ref nt) => {
+                // An `Interpolated` token means that we have a `Nonterminal`
+                // which is often a parsed AST item. At this point we now need
+                // to convert the parsed AST to an actual token stream, e.g.
+                // un-parse it basically.
+                //
+                // Unfortunately there's not really a great way to do that in a
+                // guaranteed lossless fashion right now. The fallback here is
+                // to just stringify the AST node and reparse it, but this loses
+                // all span information.
+                //
+                // As a result, some AST nodes are annotated with the token
+                // stream they came from. Attempt to extract these lossless
+                // token streams before we fall back to the stringification.
+                let mut tokens = None;
+
+                match nt.0 {
+                    Nonterminal::NtItem(ref item) => {
+                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
+                    }
+                    Nonterminal::NtTraitItem(ref item) => {
+                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
+                    }
+                    Nonterminal::NtImplItem(ref item) => {
+                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
+                    }
+                    _ => {}
+                }
+
+                tokens.map(|tokens| {
+                    TokenNode::Group(Delimiter::None,
+                                     TokenStream(tokens.clone()))
+                }).unwrap_or_else(|| {
+                    __internal::with_sess(|(sess, _)| {
+                        TokenNode::Group(Delimiter::None, TokenStream(nt.1.force(|| {
+                            // FIXME(jseyfried): Avoid this pretty-print + reparse hack
+                            let name = "<macro expansion>".to_owned();
+                            let source = pprust::token_to_string(&token);
+                            parse_stream_from_source_str(name, source, sess, Some(span))
+                        })))
+                    })
+                })
+            }
 
             OpenDelim(..) | CloseDelim(..) => unreachable!(),
             Whitespace | Comment | Shebang(..) | Eof => unreachable!(),
@@ -577,6 +610,34 @@ impl TokenTree {
             Spacing::Joint => tree.joint(),
         }
     }
+}
+
+fn prepend_attrs(attrs: &[ast::Attribute],
+                 tokens: Option<&tokenstream::TokenStream>,
+                 span: syntax_pos::Span)
+    -> Option<tokenstream::TokenStream>
+{
+    let tokens = match tokens {
+        Some(tokens) => tokens,
+        None => return None,
+    };
+    if attrs.len() == 0 {
+        return Some(tokens.clone())
+    }
+    let mut builder = tokenstream::TokenStreamBuilder::new();
+    for attr in attrs {
+        assert_eq!(attr.style, ast::AttrStyle::Outer,
+                   "inner attributes should prevent cached tokens from existing");
+        let stream = __internal::with_sess(|(sess, _)| {
+            // FIXME: Avoid this pretty-print + reparse hack as bove
+            let name = "<macro expansion>".to_owned();
+            let source = pprust::attr_to_string(attr);
+            parse_stream_from_source_str(name, source, sess, Some(span))
+        });
+        builder.push(stream);
+    }
+    builder.push(tokens.clone());
+    Some(builder.build())
 }
 
 /// Permanently unstable internal implementation details of this crate. This

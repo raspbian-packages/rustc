@@ -66,9 +66,11 @@ it. Let’s re-work our program by following this process.
 
 #### Extracting the Argument Parser
 
-First, we’ll extract the functionality for parsing arguments. Listing 12-5
-shows the new start of `main` that calls a new function `parse_config`, which
-we’re still going to define in *src/main.rs* for the moment:
+First, we’ll extract the functionality for parsing arguments into a function
+that `main` will call to prepare for moving the command line parsing logic to
+*src/lib.rs*. Listing 12-5 shows the new start of `main` that calls a new
+function `parse_config`, which we’re still going to define in *src/main.rs* for
+the moment:
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -371,7 +373,7 @@ We’ve made two changes in the body of the `new` function: instead of calling
 value, and we’ve wrapped the `Config` return value in an `Ok`. These changes
 make the function conform to its new type signature.
 
-By having `Config::new` return an `Err` value, it allows the `main` function to
+Returning an `Err` value from `Config::new` allows the `main` function to
 handle the `Result` value returned from the `new` function and exit the process
 more cleanly in the error case.
 
@@ -382,7 +384,7 @@ update `main` to handle the `Result` being returned by `Config::new`, as shown
 in Listing 12-10. We’re also going to take the responsibility of exiting the
 command line tool with a nonzero error code from `panic!` and implement it by
 hand. A nonzero exit status is a convention to signal to the process that
-called our program that our program ended with an error state.
+called our program that our program exited with an error state.
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -421,8 +423,8 @@ code in the closure that will get run in the error case is only two lines: we
 print out the `err` value, then call `process::exit`. The `process::exit`
 function will stop the program immediately and return the number that was
 passed as the exit status code. This is similar to the `panic!`-based handling
-we used in Listing 12-8, with the exception that we no longer get all the extra
-output. Let’s try it:
+we used in Listing 12-8, but we no longer get all the extra output. Let’s try
+it:
 
 ```text
 $ cargo run
@@ -486,9 +488,9 @@ With the remaining program logic separated into the `run` function, we can
 improve the error handling like we did with `Config::new` in Listing 12-9.
 Instead of allowing the program to panic by calling `expect`, the `run`
 function will return a `Result<T, E>` when something goes wrong. This will let
-us further consolidate the logic around handling errors in a user-friendly way
-into `main`. Listing 12-12 shows the changes you need to make to the signature
-and body of `run`:
+us further consolidate into `main` the logic around handling errors in a
+user-friendly way. Listing 12-12 shows the changes you need to make to the
+signature and body of `run`:
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -553,7 +555,7 @@ to have some error handling code here! Let’s rectify that now.
 
 #### Handling Errors Returned from `run` in `main`
 
-We’ll check for errors and handle them using a similar technique to the way we
+We’ll check for errors and handle them using a technique similar to the way we
 handled errors with `Config::new` in Listing 12-10, but with a slight
 difference:
 
@@ -590,7 +592,7 @@ This is looking pretty good so far! Now we’re going to split the *src/main.rs*
 file up and put some code into *src/lib.rs* so that we can test it and have a
 *src/main.rs* file with fewer responsibilities.
 
-Let’s move everything that isn't the `main` function from *src/main.rs* to a
+Let’s move everything that isn’t the `main` function from *src/main.rs* to a
 new file, *src/lib.rs*:
 
 * The `run` function definition
@@ -599,7 +601,7 @@ new file, *src/lib.rs*:
 * The `Config::new` function definition
 
 The contents of *src/lib.rs* should have the signatures shown in Listing 12-13
-(we've omitted the bodies of the functions for brevity):
+(we’ve omitted the bodies of the functions for brevity):
 
 <span class="filename">Filename: src/lib.rs</span>
 
@@ -657,9 +659,9 @@ fn main() {
 <span class="caption">Listing 12-14: Bringing the `minigrep` crate into the
 scope of *src/main.rs*</span>
 
-To bring the library crate into the binary crate, we use `extern crate`
-`minigrep`. Then we’ll add a `use` `minigrep``::Config` line to bring the
-`Config` type into scope, and we'll prefix the `run` function with our crate
+To bring the library crate into the binary crate, we use `extern crate
+minigrep`. Then we’ll add a `use minigrep::Config` line to bring the
+`Config` type into scope, and we’ll prefix the `run` function with our crate
 name. With that, all the functionality should be connected and should work.
 Give it a `cargo run` and make sure everything is wired up correctly.
 

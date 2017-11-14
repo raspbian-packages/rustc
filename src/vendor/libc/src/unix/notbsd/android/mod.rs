@@ -146,10 +146,30 @@ s! {
         #[cfg(target_pointer_width = "64")]
         __f_reserved: [u32; 6],
     }
+
+    pub struct signalfd_siginfo {
+        pub ssi_signo: ::uint32_t,
+        pub ssi_errno: ::int32_t,
+        pub ssi_code: ::int32_t,
+        pub ssi_pid: ::uint32_t,
+        pub ssi_uid: ::uint32_t,
+        pub ssi_fd: ::int32_t,
+        pub ssi_tid: ::uint32_t,
+        pub ssi_band: ::uint32_t,
+        pub ssi_overrun: ::uint32_t,
+        pub ssi_trapno: ::uint32_t,
+        pub ssi_status: ::int32_t,
+        pub ssi_int: ::int32_t,
+        pub ssi_ptr: ::c_ulonglong,
+        pub ssi_utime: ::c_ulonglong,
+        pub ssi_stime: ::c_ulonglong,
+        pub ssi_addr: ::c_ulonglong,
+        pub ssi_addr_lsb: ::uint16_t,
+        _pad: [::uint8_t; 46],
+    }
 }
 
 pub const O_TRUNC: ::c_int = 512;
-
 pub const O_CLOEXEC: ::c_int = 0x80000;
 
 pub const EBFONT: ::c_int = 59;
@@ -464,7 +484,6 @@ pub const SOCK_DGRAM: ::c_int = 2;
 pub const SOCK_SEQPACKET: ::c_int = 5;
 
 pub const SOL_SOCKET: ::c_int = 1;
-pub const SOL_UDP: ::c_int = 17;
 pub const SOL_SCTP: ::c_int = 132;
 pub const SOL_IPX: ::c_int = 256;
 pub const SOL_AX25: ::c_int = 257;
@@ -500,6 +519,7 @@ pub const SO_BINDTODEVICE: ::c_int = 25;
 pub const SO_TIMESTAMP: ::c_int = 29;
 pub const SO_ACCEPTCONN: ::c_int = 30;
 pub const SO_SNDBUFFORCE: ::c_int = 32;
+pub const SO_RCVBUFFORCE: ::c_int = 33;
 pub const SO_MARK: ::c_int = 36;
 pub const SO_PROTOCOL: ::c_int = 38;
 pub const SO_DOMAIN: ::c_int = 39;
@@ -792,7 +812,6 @@ pub const NLA_TYPE_MASK: ::c_int = !(NLA_F_NESTED | NLA_F_NET_BYTEORDER);
 
 pub const SIGEV_THREAD_ID: ::c_int = 4;
 
-pub const CMSPAR: ::tcflag_t = 0o10000000000;
 pub const CIBAUD: ::tcflag_t = 0o02003600000;
 pub const CBAUDEX: ::tcflag_t = 0o010000;
 
@@ -807,6 +826,12 @@ pub const TIOCM_RNG: ::c_int = 0x080;
 pub const TIOCM_DSR: ::c_int = 0x100;
 pub const TIOCM_CD: ::c_int = TIOCM_CAR;
 pub const TIOCM_RI: ::c_int = TIOCM_RNG;
+
+pub const POLLWRNORM: ::c_short = 0x100;
+pub const POLLWRBAND: ::c_short = 0x200;
+
+pub const SFD_CLOEXEC: ::c_int = O_CLOEXEC;
+pub const SFD_NONBLOCK: ::c_int = O_NONBLOCK;
 
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
@@ -887,6 +912,8 @@ extern {
 
     pub fn posix_fallocate(fd: ::c_int, offset: ::off_t,
                            len: ::off_t) -> ::c_int;
+    pub fn signalfd(fd: ::c_int, mask: *const ::sigset_t, flags: ::c_int)
+                    -> ::c_int;
 }
 
 cfg_if! {

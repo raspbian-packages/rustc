@@ -1,0 +1,24 @@
+Description: Fix cross-compile install
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/pull/45322
+----
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/bootstrap/install.rs
++++ b/src/bootstrap/install.rs
+@@ -175,10 +175,12 @@
+         install_docs(builder, self.stage, self.target);
+     };
+     Std, "src/libstd", true, only_hosts: true, {
+-        builder.ensure(dist::Std {
+-            compiler: builder.compiler(self.stage, self.host),
+-            target: self.target
+-        });
++        for target in &builder.build.targets {
++            builder.ensure(dist::Std {
++                compiler: builder.compiler(self.stage, self.host),
++                target: *target
++            });
++        }
+         install_std(builder, self.stage);
+     };
+     Cargo, "cargo", _config.extended, only_hosts: true, {

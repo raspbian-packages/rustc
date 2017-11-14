@@ -7,9 +7,11 @@ opts="\
 pgpsigurlmangle=s/$/.asc/,\
 uversionmangle=s/(\d)[_.+-]?((beta|alpha)\.?\d*)$/$1~$2/,\
 dversionmangle=s/\+dfsg\d*$//,\
+downloadurlmangle=s/\.[gx]z/.xz/,\
+filenamemangle=s/.*\/(.*)\.[gx]z(\..*)?/$1.xz$2/,\
 repack,\
 repacksuffix=+dfsg1,\
 compression=xz,\
 " \
  https://www.rust-lang.org/en-US/other-installers.html \
- (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.gz
+ (?:.*/)rustc?-(\d[\d.]*(?:-[\w.]+)?)-src\.tar\.[gx]z

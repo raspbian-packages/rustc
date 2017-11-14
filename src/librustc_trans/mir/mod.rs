@@ -135,7 +135,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             (scope, source_info.span)
         } else {
             // Walk up the macro expansion chain until we reach a non-expanded span.
-            // We also stop at the function body level because no line stepping can occurr
+            // We also stop at the function body level because no line stepping can occur
             // at the level above that.
             let mut span = source_info.span;
             while span.ctxt != NO_EXPANSION && span.ctxt != self.mir.span.ctxt {
@@ -228,19 +228,19 @@ pub fn trans_mir<'a, 'tcx: 'a>(
     let (landing_pads, funclets) = create_funclets(&bcx, &cleanup_kinds, &block_bcxs);
 
     let mut mircx = MirContext {
-        mir: mir,
-        llfn: llfn,
-        fn_ty: fn_ty,
-        ccx: ccx,
+        mir,
+        llfn,
+        fn_ty,
+        ccx,
         llpersonalityslot: None,
         blocks: block_bcxs,
         unreachable_block: None,
-        cleanup_kinds: cleanup_kinds,
-        landing_pads: landing_pads,
+        cleanup_kinds,
+        landing_pads,
         funclets: &funclets,
-        scopes: scopes,
+        scopes,
         locals: IndexVec::new(),
-        debug_context: debug_context,
+        debug_context,
         param_substs: {
             assert!(!instance.substs.needs_infer());
             instance.substs
@@ -486,7 +486,7 @@ fn arg_local_refs<'a, 'tcx>(bcx: &Builder<'a, 'tcx>,
                 OperandValue::Immediate(llarg)
             };
             let operand = OperandRef {
-                val: val,
+                val,
                 ty: arg_ty
             };
             return LocalRef::Operand(Some(operand.unpack_if_pair(bcx)));

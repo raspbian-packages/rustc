@@ -17,7 +17,7 @@ use rustc::hir::def_id::DefId;
 use rustc::middle::region::CodeExtent;
 use rustc::mir::*;
 use rustc::mir::transform::MirSource;
-use rustc::mir::visit::MutVisitor;
+use rustc::mir::visit::{MutVisitor, Lookup};
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::subst::Substs;
 use rustc::util::nodemap::NodeMap;
@@ -90,7 +90,8 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
         } else if let MirSource::Fn(id) = src {
             // fetch the fully liberated fn signature (that is, all bound
             // types/lifetimes replaced)
-            let fn_sig = cx.tables().liberated_fn_sigs[&id].clone();
+            let fn_hir_id = tcx.hir.node_to_hir_id(id);
+            let fn_sig = cx.tables().liberated_fn_sigs()[fn_hir_id].clone();
 
             let ty = tcx.type_of(tcx.hir.local_def_id(id));
             let mut abi = fn_sig.abi;
@@ -120,7 +121,7 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
 
         // Convert the Mir to global types.
         let mut globalizer = GlobalizeMir {
-            tcx: tcx,
+            tcx,
             span: mir.span
         };
         globalizer.visit_mir(&mut mir);
@@ -143,7 +144,7 @@ struct GlobalizeMir<'a, 'gcx: 'a> {
 }
 
 impl<'a, 'gcx: 'tcx, 'tcx> MutVisitor<'tcx> for GlobalizeMir<'a, 'gcx> {
-    fn visit_ty(&mut self, ty: &mut Ty<'tcx>) {
+    fn visit_ty(&mut self, ty: &mut Ty<'tcx>, _: Lookup) {
         if let Some(lifted) = self.tcx.lift(ty) {
             *ty = lifted;
         } else {
@@ -153,7 +154,7 @@ impl<'a, 'gcx: 'tcx, 'tcx> MutVisitor<'tcx> for GlobalizeMir<'a, 'gcx> {
         }
     }
 
-    fn visit_substs(&mut self, substs: &mut &'tcx Substs<'tcx>) {
+    fn visit_substs(&mut self, substs: &mut &'tcx Substs<'tcx>, _: Location) {
         if let Some(lifted) = self.tcx.lift(substs) {
             *substs = lifted;
         } else {
@@ -178,7 +179,7 @@ fn create_constructor_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             // Convert the Mir to global types.
             let tcx = infcx.tcx.global_tcx();
             let mut globalizer = GlobalizeMir {
-                tcx: tcx,
+                tcx,
                 span: mir.span
             };
             globalizer.visit_mir(&mut mir);
@@ -202,7 +203,8 @@ fn closure_self_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              closure_expr_id: ast::NodeId,
                              body_id: hir::BodyId)
                              -> Ty<'tcx> {
-    let closure_ty = tcx.body_tables(body_id).node_id_to_type(closure_expr_id);
+    let closure_expr_hir_id = tcx.hir.node_to_hir_id(closure_expr_id);
+    let closure_ty = tcx.body_tables(body_id).node_id_to_type(closure_expr_hir_id);
 
     let closure_def_id = tcx.hir.local_def_id(closure_expr_id);
     let region = ty::ReFree(ty::FreeRegion {
@@ -365,10 +367,12 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
     // Gather the upvars of a closure, if any.
     let upvar_decls: Vec<_> = tcx.with_freevars(fn_id, |freevars| {
         freevars.iter().map(|fv| {
-            let var_id = tcx.hir.as_local_node_id(fv.def.def_id()).unwrap();
+            let var_def_id = fv.def.def_id();
+            let var_node_id = tcx.hir.as_local_node_id(var_def_id).unwrap();
+            let closure_expr_id = tcx.hir.local_def_id(fn_id).index;
             let capture = hir.tables().upvar_capture(ty::UpvarId {
-                var_id: var_id,
-                closure_expr_id: fn_id
+                var_id: var_def_id.index,
+                closure_expr_id,
             });
             let by_ref = match capture {
                 ty::UpvarCapture::ByValue => false,
@@ -376,9 +380,9 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
             };
             let mut decl = UpvarDecl {
                 debug_name: keywords::Invalid.name(),
-                by_ref: by_ref
+                by_ref,
             };
-            if let Some(hir::map::NodeLocal(pat)) = tcx.hir.find(var_id) {
+            if let Some(hir::map::NodeBinding(pat)) = tcx.hir.find(var_node_id) {
                 if let hir::PatKind::Binding(_, _, ref ident, _) = pat.node {
                     decl.debug_name = ident.node;
                 }
@@ -433,10 +437,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
            return_ty: Ty<'tcx>)
            -> Builder<'a, 'gcx, 'tcx> {
         let mut builder = Builder {
-            hir: hir,
+            hir,
             cfg: CFG { basic_blocks: IndexVec::new() },
             fn_span: span,
-            arg_count: arg_count,
+            arg_count,
             scopes: vec![],
             visibility_scopes: IndexVec::new(),
             visibility_scope: ARGUMENT_VISIBILITY_SCOPE,
@@ -496,12 +500,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
             self.local_decls.push(LocalDecl {
                 mutability: Mutability::Not,
-                ty: ty,
+                ty,
                 source_info: SourceInfo {
                     scope: ARGUMENT_VISIBILITY_SCOPE,
                     span: pattern.map_or(self.fn_span, |pat| pat.span)
                 },
-                name: name,
+                name,
                 is_user_variable: false,
             });
         }
@@ -513,7 +517,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             let lvalue = Lvalue::Local(Local::new(index + 1));
 
             if let Some(pattern) = pattern {
-                let pattern = Pattern::from_hir(self.hir.tcx(), self.hir.tables(), pattern);
+                let pattern = Pattern::from_hir(self.hir.tcx().global_tcx(),
+                                                self.hir.param_env.and(self.hir.identity_substs),
+                                                self.hir.tables(),
+                                                pattern);
                 scope = self.declare_bindings(scope, ast_body.span, &pattern);
                 unpack!(block = self.lvalue_into_pattern(block, pattern, &lvalue));
             }

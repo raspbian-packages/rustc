@@ -12,7 +12,7 @@
 
 [package]
 name = "serde"
-version = "1.0.10"
+version = "1.0.11"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "A generic serialization/deserialization framework"
@@ -30,15 +30,15 @@ optional = true
 version = "1.0"
 
 [features]
-derive = ["serde_derive"]
-unstable = []
-rc = []
-default = ["std"]
 std = []
-alloc = ["unstable"]
+default = ["std"]
+derive = ["serde_derive"]
 playground = ["serde_derive"]
-[badges.travis-ci]
+alloc = ["unstable"]
+rc = []
+unstable = []
+[badges.appveyor]
 repository = "serde-rs/serde"
 
-[badges.appveyor]
+[badges.travis-ci]
 repository = "serde-rs/serde"

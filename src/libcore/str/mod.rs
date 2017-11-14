@@ -369,7 +369,7 @@ unsafe fn from_raw_parts_mut<'a>(p: *mut u8, len: usize) -> &'a mut str {
 ///
 /// assert_eq!("💖", sparkle_heart);
 /// ```
-#[inline(always)]
+#[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_utf8_unchecked(v: &[u8]) -> &str {
     mem::transmute(v)
@@ -847,7 +847,7 @@ macro_rules! generate_pattern_iterators {
         internal:
             $internal_iterator:ident yielding ($iterty:ty);
 
-        // Kind of delgation - either single ended or double ended
+        // Kind of delegation - either single ended or double ended
         delegate $($t:tt)*
     } => {
         $(#[$forward_iterator_attribute])*
@@ -1380,7 +1380,7 @@ fn contains_nonascii(x: usize) -> bool {
 /// returning `true` in that case, or, if it is invalid, `false` with
 /// `iter` reset such that it is pointing at the first byte in the
 /// invalid sequence.
-#[inline(always)]
+#[inline]
 fn run_utf8_validation(v: &[u8]) -> Result<(), Utf8Error> {
     let mut index = 0;
     let len = v.len();
@@ -2233,7 +2233,7 @@ impl StrExt for str {
     fn splitn<'a, P: Pattern<'a>>(&'a self, count: usize, pat: P) -> SplitN<'a, P> {
         SplitN(SplitNInternal {
             iter: self.split(pat).0,
-            count: count,
+            count,
         })
     }
 

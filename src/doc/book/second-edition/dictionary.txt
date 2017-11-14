@@ -94,6 +94,7 @@ DraftPost
 DSTs
 ebooks
 Edsger
+egular
 else's
 emoji
 encodings
@@ -179,6 +180,7 @@ librarys
 libreoffice
 libstd
 lifecycle
+lobally
 locators
 login
 lookup
@@ -260,6 +262,7 @@ pushups
 QuitMessage
 RAII
 randcrate
+README
 READMEs
 rect
 recurse
@@ -278,6 +281,7 @@ request's
 resizes
 resizing
 retweet
+rint
 ripgrep
 runtime
 runtimes
@@ -287,6 +291,7 @@ rUsT
 rustc
 rustdoc
 rustup
+screenshot
 searchstring
 SecondaryColor
 SelectBox
@@ -368,6 +373,7 @@ unsafety
 unsized
 unsynchronized
 URIs
+UsefulType
 username
 USERPROFILE
 usize
@@ -393,5 +399,6 @@ Workspaces
 wouldn
 writeln
 WriteMessage
+xpression
 yyyy
 ZipImpl

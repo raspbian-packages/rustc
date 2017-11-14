@@ -37,7 +37,7 @@ use memchr;
 /// use std::fs::File;
 ///
 /// # fn foo() -> std::io::Result<()> {
-/// let mut f = File::open("log.txt")?;
+/// let f = File::open("log.txt")?;
 /// let mut reader = BufReader::new(f);
 ///
 /// let mut line = String::new();
@@ -64,8 +64,8 @@ impl<R: Read> BufReader<R> {
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f = File::open("log.txt")?;
-    /// let mut reader = BufReader::new(f);
+    /// let f = File::open("log.txt")?;
+    /// let reader = BufReader::new(f);
     /// # Ok(())
     /// # }
     /// ```
@@ -85,8 +85,8 @@ impl<R: Read> BufReader<R> {
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f = File::open("log.txt")?;
-    /// let mut reader = BufReader::with_capacity(10, f);
+    /// let f = File::open("log.txt")?;
+    /// let reader = BufReader::with_capacity(10, f);
     /// # Ok(())
     /// # }
     /// ```
@@ -97,7 +97,7 @@ impl<R: Read> BufReader<R> {
             buffer.set_len(cap);
             inner.initializer().initialize(&mut buffer);
             BufReader {
-                inner: inner,
+                inner,
                 buf: buffer.into_boxed_slice(),
                 pos: 0,
                 cap: 0,
@@ -116,8 +116,8 @@ impl<R: Read> BufReader<R> {
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f1 = File::open("log.txt")?;
-    /// let mut reader = BufReader::new(f1);
+    /// let f1 = File::open("log.txt")?;
+    /// let reader = BufReader::new(f1);
     ///
     /// let f2 = reader.get_ref();
     /// # Ok(())
@@ -137,7 +137,7 @@ impl<R: Read> BufReader<R> {
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f1 = File::open("log.txt")?;
+    /// let f1 = File::open("log.txt")?;
     /// let mut reader = BufReader::new(f1);
     ///
     /// let f2 = reader.get_mut();
@@ -158,8 +158,8 @@ impl<R: Read> BufReader<R> {
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f1 = File::open("log.txt")?;
-    /// let mut reader = BufReader::new(f1);
+    /// let f1 = File::open("log.txt")?;
+    /// let reader = BufReader::new(f1);
     ///
     /// let f2 = reader.into_inner();
     /// # Ok(())

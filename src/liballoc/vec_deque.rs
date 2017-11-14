@@ -556,7 +556,7 @@ impl<T> VecDeque<T> {
             .and_then(|needed_cap| needed_cap.checked_next_power_of_two())
             .expect("capacity overflow");
 
-        if new_cap > self.capacity() {
+        if new_cap > old_cap {
             self.buf.reserve_exact(used_cap, new_cap - used_cap);
             unsafe {
                 self.handle_cap_increase(old_cap);
@@ -893,7 +893,7 @@ impl<T> VecDeque<T> {
         self.head = drain_tail;
 
         Drain {
-            deque: unsafe { Shared::new(self as *mut _) },
+            deque: Shared::from(&mut *self),
             after_tail: drain_head,
             after_head: head,
             iter: Iter {
@@ -2394,7 +2394,7 @@ impl<'a, T> IntoIterator for &'a mut VecDeque<T> {
     type Item = &'a mut T;
     type IntoIter = IterMut<'a, T>;
 
-    fn into_iter(mut self) -> IterMut<'a, T> {
+    fn into_iter(self) -> IterMut<'a, T> {
         self.iter_mut()
     }
 }
@@ -2442,7 +2442,7 @@ impl<T> From<Vec<T>> for VecDeque<T> {
             VecDeque {
                 tail: 0,
                 head: len,
-                buf: buf,
+                buf,
             }
         }
     }
@@ -2558,7 +2558,7 @@ impl<'a, T> Place<T> for PlaceBack<'a, T> {
 impl<'a, T> InPlace<T> for PlaceBack<'a, T> {
     type Owner = &'a mut T;
 
-    unsafe fn finalize(mut self) -> &'a mut T {
+    unsafe fn finalize(self) -> &'a mut T {
         let head = self.vec_deque.head;
         self.vec_deque.head = self.vec_deque.wrap_add(head, 1);
         &mut *(self.vec_deque.ptr().offset(head as isize))
@@ -2605,7 +2605,7 @@ impl<'a, T> Place<T> for PlaceFront<'a, T> {
 impl<'a, T> InPlace<T> for PlaceFront<'a, T> {
     type Owner = &'a mut T;
 
-    unsafe fn finalize(mut self) -> &'a mut T {
+    unsafe fn finalize(self) -> &'a mut T {
         self.vec_deque.tail = self.vec_deque.wrap_sub(self.vec_deque.tail, 1);
         &mut *(self.vec_deque.ptr().offset(self.vec_deque.tail as isize))
     }

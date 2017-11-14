@@ -137,7 +137,7 @@ impl<'a, 'tcx> Lift<'tcx> for ty::ProjectionTy<'a> {
         tcx.lift(&self.substs).map(|substs| {
             ty::ProjectionTy {
                 item_def_id: self.item_def_id,
-                substs: substs,
+                substs,
             }
         })
     }
@@ -398,7 +398,7 @@ macro_rules! CopyImpls {
     }
 }
 
-CopyImpls! { (), hir::Unsafety, abi::Abi }
+CopyImpls! { (), hir::Unsafety, abi::Abi, hir::def_id::DefId }
 
 impl<'tcx, T:TypeFoldable<'tcx>, U:TypeFoldable<'tcx>> TypeFoldable<'tcx> for (T, U) {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> (T, U) {

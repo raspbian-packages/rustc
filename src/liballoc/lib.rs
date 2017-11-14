@@ -60,8 +60,6 @@
 //! The [`heap`](heap/index.html) module defines the low-level interface to the
 //! default global allocator. It is not compatible with the libc allocator API.
 
-#![crate_name = "alloc"]
-#![crate_type = "rlib"]
 #![allow(unused_attributes)]
 #![unstable(feature = "alloc",
             reason = "this library is unlikely to be stabilized in its current \
@@ -83,7 +81,6 @@
 #![cfg_attr(not(test), feature(exact_size_is_empty))]
 #![cfg_attr(not(test), feature(slice_rotate))]
 #![cfg_attr(test, feature(rand, test))]
-#![cfg_attr(stage0, feature(allocator))]
 #![feature(allow_internal_unstable)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
@@ -108,6 +105,7 @@
 #![feature(pattern)]
 #![feature(placement_in_syntax)]
 #![feature(placement_new_protocol)]
+#![feature(rustc_attrs)]
 #![feature(shared)]
 #![feature(slice_get_slice)]
 #![feature(slice_patterns)]
@@ -120,9 +118,9 @@
 #![feature(unicode)]
 #![feature(unique)]
 #![feature(unsize)]
-#![cfg_attr(not(stage0), feature(allocator_internals))]
+#![feature(allocator_internals)]
 
-#![cfg_attr(not(test), feature(fused, fn_traits, placement_new_protocol))]
+#![cfg_attr(not(test), feature(fused, fn_traits, placement_new_protocol, swap_with_slice))]
 #![cfg_attr(test, feature(test, box_heap))]
 
 // Allow testing this library
@@ -240,10 +238,10 @@ mod std {
 pub enum Bound<T> {
     /// An inclusive bound.
     #[stable(feature = "collections_bound", since = "1.17.0")]
-    Included(T),
+    Included(#[stable(feature = "collections_bound", since = "1.17.0")] T),
     /// An exclusive bound.
     #[stable(feature = "collections_bound", since = "1.17.0")]
-    Excluded(T),
+    Excluded(#[stable(feature = "collections_bound", since = "1.17.0")] T),
     /// An infinite endpoint. Indicates that there is no bound in this direction.
     #[stable(feature = "collections_bound", since = "1.17.0")]
     Unbounded,

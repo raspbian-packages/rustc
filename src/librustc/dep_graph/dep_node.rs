@@ -66,7 +66,6 @@ use hir::map::DefPathHash;
 use ich::Fingerprint;
 use ty::{TyCtxt, Instance, InstanceDef};
 use ty::fast_reject::SimplifiedType;
-use ty::subst::Substs;
 use rustc_data_structures::stable_hasher::{StableHasher, HashStable};
 use ich::StableHashingContext;
 use std::fmt;
@@ -104,6 +103,8 @@ macro_rules! define_dep_nodes {
                 match *self {
                     $(
                         DepKind :: $variant => {
+                            $(return !anon_attr_to_bool!($anon);)*
+
                             // tuple args
                             $({
                                 return <( $($tuple_arg,)* ) as DepNodeParams>
@@ -112,6 +113,7 @@ macro_rules! define_dep_nodes {
 
                             // struct args
                             $({
+
                                 return <( $($struct_arg_ty,)* ) as DepNodeParams>
                                     ::CAN_RECONSTRUCT_QUERY_KEY;
                             })*
@@ -394,6 +396,7 @@ define_dep_nodes!( <'tcx>
     // Represents different phases in the compiler.
     [] RegionMaps(DefId),
     [] Coherence,
+    [] CoherenceInherentImplOverlapCheck,
     [] Resolve,
     [] CoherenceCheckTrait(DefId),
     [] PrivacyAccessLevels(CrateNum),
@@ -408,6 +411,8 @@ define_dep_nodes!( <'tcx>
 
     [] BorrowCheckKrate,
     [] BorrowCheck(DefId),
+    [] MirBorrowCheck(DefId),
+
     [] RvalueCheck(DefId),
     [] Reachability,
     [] MirKeys,
@@ -444,17 +449,17 @@ define_dep_nodes!( <'tcx>
     [] TypeckBodiesKrate,
     [] TypeckTables(DefId),
     [] HasTypeckTables(DefId),
-    [] ConstEval { def_id: DefId, substs: &'tcx Substs<'tcx> },
+    [anon] ConstEval,
     [] SymbolName(DefId),
     [] InstanceSymbolName { instance: Instance<'tcx> },
     [] SpecializationGraph(DefId),
     [] ObjectSafety(DefId),
 
-    [anon] IsCopy(DefId),
-    [anon] IsSized(DefId),
-    [anon] IsFreeze(DefId),
-    [anon] NeedsDrop(DefId),
-    [anon] Layout(DefId),
+    [anon] IsCopy,
+    [anon] IsSized,
+    [anon] IsFreeze,
+    [anon] NeedsDrop,
+    [anon] Layout,
 
     // The set of impls for a given trait.
     [] TraitImpls(DefId),
@@ -495,7 +500,7 @@ define_dep_nodes!( <'tcx>
     // imprecision in our dep-graph tracking.  The important thing is
     // that for any given trait-ref, we always map to the **same**
     // trait-select node.
-    [] TraitSelect { trait_def_id: DefId, input_def_id: DefId },
+    [anon] TraitSelect,
 
     // For proj. cache, we just keep a list of all def-ids, since it is
     // not a hotspot.
@@ -517,7 +522,10 @@ define_dep_nodes!( <'tcx>
     [] DylibDepFormats(DefId),
     [] IsAllocator(DefId),
     [] IsPanicRuntime(DefId),
+    [] IsCompilerBuiltins(DefId),
+    [] HasGlobalAllocator(DefId),
     [] ExternCrate(DefId),
+    [] LintLevels,
 );
 
 trait DepNodeParams<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> : fmt::Debug {

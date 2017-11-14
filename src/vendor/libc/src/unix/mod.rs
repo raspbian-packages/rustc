@@ -217,6 +217,18 @@ pub const PRIO_USER: ::c_int = 2;
 pub const PRIO_MIN: ::c_int = -20;
 pub const PRIO_MAX: ::c_int = 20;
 
+pub const IPPROTO_ICMP: ::c_int = 1;
+pub const IPPROTO_ICMPV6: ::c_int = 58;
+pub const IPPROTO_TCP: ::c_int = 6;
+pub const IPPROTO_UDP: ::c_int = 17;
+pub const IPPROTO_IP: ::c_int = 0;
+pub const IPPROTO_IPV6: ::c_int = 41;
+
+pub const INADDR_LOOPBACK: in_addr_t = 2130706433;
+pub const INADDR_ANY: in_addr_t = 0;
+pub const INADDR_BROADCAST: in_addr_t = 4294967295;
+pub const INADDR_NONE: in_addr_t = 4294967295;
+
 cfg_if! {
     if #[cfg(dox)] {
         // on dox builds don't pull in anything
@@ -442,6 +454,9 @@ extern {
                   -> ::c_int;
     pub fn execvp(c: *const c_char,
                   argv: *const *const c_char) -> ::c_int;
+    pub fn fexecve(fd: ::c_int, argv: *const *const c_char,
+                   envp: *const *const c_char)
+                   -> ::c_int;
     pub fn fork() -> pid_t;
     pub fn fpathconf(filedes: ::c_int, name: ::c_int) -> c_long;
     pub fn getcwd(buf: *mut c_char, size: ::size_t) -> *mut c_char;

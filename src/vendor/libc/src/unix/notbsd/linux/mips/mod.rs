@@ -33,7 +33,9 @@ pub const NCCS: usize = 32;
 
 pub const O_TRUNC: ::c_int = 512;
 
+pub const O_NOATIME: ::c_int = 0o1000000;
 pub const O_CLOEXEC: ::c_int = 0x80000;
+pub const O_PATH: ::c_int = 0o10000000;
 
 pub const EBFONT: ::c_int = 59;
 pub const ENOSTR: ::c_int = 60;
@@ -328,7 +330,6 @@ pub const SO_DETACH_FILTER: ::c_int = 27;
 pub const SO_GET_FILTER: ::c_int = SO_ATTACH_FILTER;
 pub const SO_PEERNAME: ::c_int = 28;
 pub const SO_TIMESTAMP: ::c_int = 29;
-pub const SCM_TIMESTAMP: ::c_int = SO_TIMESTAMP;
 pub const SO_PEERSEC: ::c_int = 30;
 pub const SO_SNDBUFFORCE: ::c_int = 31;
 pub const SO_RCVBUFFORCE: ::c_int = 33;
@@ -382,9 +383,7 @@ pub const SIG_SETMASK: ::c_int = 3;
 pub const SIG_BLOCK: ::c_int = 0x1;
 pub const SIG_UNBLOCK: ::c_int = 0x2;
 
-pub const POLLRDNORM: ::c_short = 0x040;
 pub const POLLWRNORM: ::c_short = 0x004;
-pub const POLLRDBAND: ::c_short = 0x080;
 pub const POLLWRBAND: ::c_short = 0x100;
 
 pub const PTHREAD_STACK_MIN: ::size_t = 131072;
@@ -619,6 +618,10 @@ pub const TIOCM_CD: ::c_int = TIOCM_CAR;
 pub const TIOCM_RNG: ::c_int = 0x200;
 pub const TIOCM_RI: ::c_int = TIOCM_RNG;
 pub const TIOCM_DSR: ::c_int = 0x400;
+
+pub const EHWPOISON: ::c_int = 168;
+pub const SIGEV_THREAD_ID: ::c_int = 4;
+pub const EPOLLWAKEUP: ::c_int = 0x20000000;
 
 #[link(name = "util")]
 extern {

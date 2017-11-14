@@ -5,11 +5,9 @@ Description: Support gperf 3.1
  `string.h` which includes `stddef.h`.
 Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/hoedown/hoedown/pull/215
-diff --git a/src/rt/hoedown/Makefile b/src/rt/hoedown/Makefile
-index 2b16b887b..378682768 100644
 --- a/src/rt/hoedown/Makefile
 +++ b/src/rt/hoedown/Makefile
-@@ -51,7 +51,7 @@ smartypants: bin/smartypants.o $(HOEDOWN_SRC)
+@@ -51,7 +51,7 @@
  # Perfect hashing
  
  src/html_blocks.c: html_block_names.gperf

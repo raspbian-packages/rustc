@@ -7,6 +7,8 @@ build = "DEB_BUILD_RUST_TYPE"
 host = ["DEB_HOST_RUST_TYPE"]
 target = ["DEB_TARGET_RUST_TYPE"]
 
+full-bootstrap = true # work around https://github.com/rust-lang/rust/issues/45317
+
 docs = false
 
 [install]
@@ -26,10 +28,9 @@ llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
 
 )dnl
 [llvm]
-link-shared = true
 
 [rust]
-dist-src = false
+use-jemalloc = false
 
 channel = "RELEASE_CHANNEL"
 

@@ -60,7 +60,7 @@ Trust me.";
 <span class="caption">Listing 12-20: Adding a new failing test for the case
 insensitive function we’re about to add</span>
 
-Note that we’ve edited the old test’s `contents` too. We've added a new line
+Note that we’ve edited the old test’s `contents` too. We’ve added a new line
 with the text “Duct tape”, with a capital D, that shouldn’t match the query
 “duct” when we’re searching in a case sensitive manner. Changing the old test
 in this way helps ensure that we don’t accidentally break the case sensitive
@@ -287,9 +287,10 @@ variables!
 Some programs allow both arguments *and* environment variables for the same
 configuration. In those cases, the programs decide that one or the other takes
 precedence. For another exercise on your own, try controlling case
-insensitivity through a command line argument as well as through the
-environment variable, and decide which should take precedence if the program is
-run with contradictory values.
+insensitivity through either a command line argument or an environment
+variable. Decide whether the command line argument or the environment variable
+should take precedence if the program is run with one set to case sensitive and
+one set to case insensitive.
 
 The `std::env` module contains many more useful features for dealing with
 environment variables; check out its documentation to see what’s available.

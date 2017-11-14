@@ -24,7 +24,7 @@
 //! a span, but also more information so that we can generate a meaningful
 //! error message.
 //!
-//! Having a catalogue of all the different reasons an error can arise is
+//! Having a catalog of all the different reasons an error can arise is
 //! also useful for other reasons, like cross-referencing FAQs etc, though
 //! we are not really taking advantage of this yet.
 //!
@@ -76,7 +76,11 @@ use errors::{DiagnosticBuilder, DiagnosticStyledString};
 mod note;
 
 mod need_type_info;
+
 mod named_anon_conflict;
+#[macro_use]
+mod util;
+mod anon_anon_conflict;
 
 impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn note_and_explain_region(self,
@@ -270,29 +274,34 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         for error in errors {
             debug!("report_region_errors: error = {:?}", error);
 
-            if !self.try_report_named_anon_conflict(&error) {
-                match error.clone() {
-                    // These errors could indicate all manner of different
-                    // problems with many different solutions. Rather
-                    // than generate a "one size fits all" error, what we
-                    // attempt to do is go through a number of specific
-                    // scenarios and try to find the best way to present
-                    // the error. If all of these fails, we fall back to a rather
-                    // general bit of code that displays the error information
-                    ConcreteFailure(origin, sub, sup) => {
-                        self.report_concrete_failure(origin, sub, sup).emit();
-                    }
-                    GenericBoundFailure(kind, param_ty, sub) => {
-                        self.report_generic_bound_failure(kind, param_ty, sub);
-                    }
-                    SubSupConflict(var_origin,
-                                 sub_origin, sub_r,
-                                 sup_origin, sup_r) => {
+            if !self.try_report_named_anon_conflict(&error) &&
+               !self.try_report_anon_anon_conflict(&error) {
+
+               match error.clone() {
+                  // These errors could indicate all manner of different
+                  // problems with many different solutions. Rather
+                  // than generate a "one size fits all" error, what we
+                  // attempt to do is go through a number of specific
+                  // scenarios and try to find the best way to present
+                  // the error. If all of these fails, we fall back to a rather
+                  // general bit of code that displays the error information
+                  ConcreteFailure(origin, sub, sup) => {
+
+                      self.report_concrete_failure(origin, sub, sup).emit();
+                  }
+
+                  GenericBoundFailure(kind, param_ty, sub) => {
+                      self.report_generic_bound_failure(kind, param_ty, sub);
+                  }
+
+                  SubSupConflict(var_origin, sub_origin, sub_r, sup_origin, sup_r) => {
                         self.report_sub_sup_conflict(var_origin,
-                                                     sub_origin, sub_r,
-                                                     sup_origin, sup_r);
-                    }
-                }
+                                                     sub_origin,
+                                                     sub_r,
+                                                     sup_origin,
+                                                     sup_r);
+                  }
+               }
             }
         }
     }
@@ -409,8 +418,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     /// -------- this type is the same as a type argument in the other type, not highlighted
     /// ```
     fn highlight_outer(&self,
-                       mut value: &mut DiagnosticStyledString,
-                       mut other_value: &mut DiagnosticStyledString,
+                       value: &mut DiagnosticStyledString,
+                       other_value: &mut DiagnosticStyledString,
                        name: String,
                        sub: &ty::subst::Substs<'tcx>,
                        pos: usize,
@@ -923,9 +932,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             infer::LateBoundRegion(_, br, infer::HigherRankedType) => {
                 format!(" for lifetime parameter {}in generic type", br_string(br))
             }
-            infer::LateBoundRegion(_, br, infer::AssocTypeProjection(type_name)) => {
+            infer::LateBoundRegion(_, br, infer::AssocTypeProjection(def_id)) => {
                 format!(" for lifetime parameter {}in trait containing associated type `{}`",
-                        br_string(br), type_name)
+                        br_string(br), self.tcx.associated_item(def_id).name)
             }
             infer::EarlyBoundRegion(_, name, _) => {
                 format!(" for lifetime parameter `{}`",
@@ -937,7 +946,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
             infer::UpvarRegion(ref upvar_id, _) => {
                 format!(" for capture of `{}` by closure",
-                        self.tcx.local_var_name_str(upvar_id.var_id).to_string())
+                        self.tcx.local_var_name_str_def_index(upvar_id.var_id))
             }
         };
 

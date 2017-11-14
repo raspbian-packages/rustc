@@ -38,33 +38,15 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          delete_if_present(temp_path, verbose)
  
  
-@@ -185,7 +186,7 @@
-                 rustc_channel, self.build)
-             url = self._download_url + "/dist/" + self.stage0_date()
-             tarball = os.path.join(rustc_cache, filename)
--            if not os.path.exists(tarball):
-+            if True:
-                 get("{}/{}".format(url, filename),
-                     tarball, verbose=self.verbose)
-             unpack(tarball, self.bin_root(),
-@@ -195,7 +196,7 @@
-             filename = "rustc-{}-{}.tar.gz".format(rustc_channel, self.build)
-             url = self._download_url + "/dist/" + self.stage0_date()
-             tarball = os.path.join(rustc_cache, filename)
--            if not os.path.exists(tarball):
-+            if True:
-                 get("{}/{}".format(url, filename),
-                     tarball, verbose=self.verbose)
-             unpack(tarball, self.bin_root(),
-@@ -222,7 +223,7 @@
-             filename = "cargo-{}-{}.tar.gz".format(cargo_channel, self.build)
-             url = self._download_url + "/dist/" + self.stage0_date()
-             tarball = os.path.join(rustc_cache, filename)
--            if not os.path.exists(tarball):
-+            if True:
-                 get("{}/{}".format(url, filename),
-                     tarball, verbose=self.verbose)
-             unpack(tarball, self.bin_root(),
+@@ -239,7 +240,7 @@
+ 
+         url = "{}/dist/{}".format(self._download_url, self.date)
+         tarball = os.path.join(rustc_cache, filename)
+-        if not os.path.exists(tarball):
++        if True:
+             get("{}/{}".format(url, filename), tarball, verbose=self.verbose)
+         unpack(tarball, self.bin_root(), match=pattern, verbose=self.verbose)
+ 
 --- a/configure
 +++ b/configure
 @@ -614,7 +614,6 @@

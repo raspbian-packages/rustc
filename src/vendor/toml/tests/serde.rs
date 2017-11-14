@@ -509,3 +509,70 @@ fn extra_keys() {
     assert!(toml.clone().try_into::<Foo>().is_ok());
     assert!(toml::from_str::<Foo>(&toml.to_string()).is_ok());
 }
+
+#[test]
+fn newtypes() {
+    #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+    struct A {
+        b: B
+    }
+
+    #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+    struct B(u32);
+
+    equivalent! {
+        A { b: B(2) },
+        Table(map! { b: Integer(2) }),
+    }
+}
+
+#[test]
+fn newtypes2() {
+    #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+	struct A {
+		b: B
+	}
+
+    #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+	struct B(Option<C>);
+
+    #[derive(Deserialize, Serialize, PartialEq, Debug, Clone)]
+	struct C {
+		x: u32,
+		y: u32,
+		z: u32
+	}
+
+    equivalent! {
+        A { b: B(Some(C { x: 0, y: 1, z: 2 })) },
+        Table(map! {
+            b: Table(map! {
+                x: Integer(0),
+                y: Integer(1),
+                z: Integer(2)
+            })
+        }),
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
+struct CanBeEmpty {
+    a: Option<String>,
+    b: Option<String>,
+}
+
+#[test]
+fn table_structs_empty() {
+    let text = "[bar]\n\n[baz]\n\n[bazv]\na = \"foo\"\n\n[foo]\n";
+    let value: BTreeMap<String, CanBeEmpty> = toml::from_str(text).unwrap();
+    let mut expected: BTreeMap<String, CanBeEmpty> = BTreeMap::new();
+    expected.insert("bar".to_string(), CanBeEmpty::default());
+    expected.insert("baz".to_string(), CanBeEmpty::default());
+    expected.insert(
+        "bazv".to_string(), 
+        CanBeEmpty {a: Some("foo".to_string()), b: None},
+    );
+    expected.insert("foo".to_string(), CanBeEmpty::default());
+    assert_eq!(value, expected);
+    assert_eq!(toml::to_string(&value).unwrap(), text);
+}

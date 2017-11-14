@@ -20,7 +20,7 @@ use hir::def_id::DefId;
 use middle::region::RegionMaps;
 use middle::free_region::FreeRegionMap;
 use ty::subst::Substs;
-use ty::{self, Ty, TyCtxt, TypeFoldable, ToPredicate};
+use ty::{self, AdtKind, Ty, TyCtxt, TypeFoldable, ToPredicate};
 use ty::error::{ExpectedFound, TypeError};
 use infer::{InferCtxt};
 
@@ -31,7 +31,7 @@ use syntax_pos::{Span, DUMMY_SP};
 pub use self::coherence::orphan_check;
 pub use self::coherence::overlapping_impls;
 pub use self::coherence::OrphanCheckErr;
-pub use self::fulfill::{FulfillmentContext, GlobalFulfilledPredicates, RegionObligation};
+pub use self::fulfill::{FulfillmentContext, RegionObligation};
 pub use self::project::MismatchedProjectionTypes;
 pub use self::project::{normalize, normalize_projection_type, Normalized};
 pub use self::project::{ProjectionCache, ProjectionCacheSnapshot, Reveal};
@@ -133,7 +133,7 @@ pub enum ObligationCauseCode<'tcx> {
     RepeatVec,
 
     /// Types of fields (other than the last) in a struct must be sized.
-    FieldSized,
+    FieldSized(AdtKind),
 
     /// Constant expressions must be sized.
     ConstSized,
@@ -560,7 +560,7 @@ pub fn fully_normalize<'a, 'gcx, 'tcx, T>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
 {
     debug!("fully_normalize(value={:?})", value);
 
-    let mut selcx = &mut SelectionContext::new(infcx);
+    let selcx = &mut SelectionContext::new(infcx);
     // FIXME (@jroesch) ISSUE 26721
     // I'm not sure if this is a bug or not, needs further investigation.
     // It appears that by reusing the fulfillment_cx here we incur more

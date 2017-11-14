@@ -19,11 +19,14 @@ use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::PathBuf;
 use std::process;
+use std::cmp;
 
 use num_cpus;
-use rustc_serialize::Decodable;
-use toml::{Parser, Decoder, Value};
+use toml;
 use util::{exe, push_exe_path};
+use cache::{INTERNER, Interned};
+use flags::Flags;
+pub use flags::Subcommand;
 
 /// Global configuration for the entire build and/or bootstrap.
 ///
@@ -35,7 +38,7 @@ use util::{exe, push_exe_path};
 /// Note that this structure is not decoded directly into, but rather it is
 /// filled out from the decoded forms of the structs below. For documentation
 /// each field, see the corresponding fields in
-/// `src/bootstrap/config.toml.example`.
+/// `config.toml.example`.
 #[derive(Default)]
 pub struct Config {
     pub ccache: Option<String>,
@@ -46,13 +49,25 @@ pub struct Config {
     pub docs: bool,
     pub locked_deps: bool,
     pub vendor: bool,
-    pub target_config: HashMap<String, Target>,
+    pub target_config: HashMap<Interned<String>, Target>,
     pub full_bootstrap: bool,
     pub extended: bool,
     pub sanitizers: bool,
     pub profiler: bool,
+    pub ignore_git: bool,
+
+    pub run_host_only: bool,
+
+    pub on_fail: Option<String>,
+    pub stage: Option<u32>,
+    pub keep_stage: Option<u32>,
+    pub src: PathBuf,
+    pub jobs: Option<u32>,
+    pub cmd: Subcommand,
+    pub incremental: bool,
 
     // llvm codegen options
+    pub llvm_enabled: bool,
     pub llvm_assertions: bool,
     pub llvm_optimize: bool,
     pub llvm_release_debuginfo: bool,
@@ -62,7 +77,6 @@ pub struct Config {
     pub llvm_targets: Option<String>,
     pub llvm_experimental_targets: Option<String>,
     pub llvm_link_jobs: Option<u32>,
-    pub llvm_clean_rebuild: bool,
 
     // rust codegen options
     pub rust_optimize: bool,
@@ -78,9 +92,9 @@ pub struct Config {
     pub rust_debuginfo_tests: bool,
     pub rust_dist_src: bool,
 
-    pub build: String,
-    pub host: Vec<String>,
-    pub target: Vec<String>,
+    pub build: Interned<String>,
+    pub hosts: Vec<Interned<String>>,
+    pub targets: Vec<Interned<String>>,
     pub local_rebuild: bool,
 
     // dist misc
@@ -129,6 +143,7 @@ pub struct Target {
     pub cc: Option<PathBuf>,
     pub cxx: Option<PathBuf>,
     pub ndk: Option<PathBuf>,
+    pub crt_static: Option<bool>,
     pub musl_root: Option<PathBuf>,
     pub qemu_rootfs: Option<PathBuf>,
 }
@@ -138,7 +153,8 @@ pub struct Target {
 /// This structure uses `Decodable` to automatically decode a TOML configuration
 /// file into this format, and then this is traversed and written into the above
 /// `Config` structure.
-#[derive(RustcDecodable, Default)]
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct TomlConfig {
     build: Option<Build>,
     install: Option<Install>,
@@ -149,10 +165,13 @@ struct TomlConfig {
 }
 
 /// TOML representation of various global build decisions.
-#[derive(RustcDecodable, Default, Clone)]
+#[derive(Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Build {
     build: Option<String>,
+    #[serde(default)]
     host: Vec<String>,
+    #[serde(default)]
     target: Vec<String>,
     cargo: Option<String>,
     rustc: Option<String>,
@@ -174,7 +193,8 @@ struct Build {
 }
 
 /// TOML representation of various global install decisions.
-#[derive(RustcDecodable, Default, Clone)]
+#[derive(Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Install {
     prefix: Option<String>,
     sysconfdir: Option<String>,
@@ -185,8 +205,10 @@ struct Install {
 }
 
 /// TOML representation of how the LLVM build is configured.
-#[derive(RustcDecodable, Default)]
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Llvm {
+    enabled: Option<bool>,
     ccache: Option<StringOrBool>,
     ninja: Option<bool>,
     assertions: Option<bool>,
@@ -197,10 +219,10 @@ struct Llvm {
     targets: Option<String>,
     experimental_targets: Option<String>,
     link_jobs: Option<u32>,
-    clean_rebuild: Option<bool>,
 }
 
-#[derive(RustcDecodable, Default, Clone)]
+#[derive(Deserialize, Default, Clone)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Dist {
     sign_folder: Option<String>,
     gpg_password_file: Option<String>,
@@ -208,7 +230,8 @@ struct Dist {
     src_tarball: Option<bool>,
 }
 
-#[derive(RustcDecodable)]
+#[derive(Deserialize)]
+#[serde(untagged)]
 enum StringOrBool {
     String(String),
     Bool(bool),
@@ -221,7 +244,8 @@ impl Default for StringOrBool {
 }
 
 /// TOML representation of how the Rust build is configured.
-#[derive(RustcDecodable, Default)]
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct Rust {
     optimize: Option<bool>,
     codegen_units: Option<u32>,
@@ -240,23 +264,29 @@ struct Rust {
     optimize_tests: Option<bool>,
     debuginfo_tests: Option<bool>,
     codegen_tests: Option<bool>,
+    ignore_git: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
-#[derive(RustcDecodable, Default)]
+#[derive(Deserialize, Default)]
+#[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct TomlTarget {
     llvm_config: Option<String>,
     jemalloc: Option<String>,
     cc: Option<String>,
     cxx: Option<String>,
     android_ndk: Option<String>,
+    crt_static: Option<bool>,
     musl_root: Option<String>,
     qemu_rootfs: Option<String>,
 }
 
 impl Config {
-    pub fn parse(build: &str, file: Option<PathBuf>) -> Config {
+    pub fn parse(args: &[String]) -> Config {
+        let flags = Flags::parse(&args);
+        let file = flags.config.clone();
         let mut config = Config::default();
+        config.llvm_enabled = true;
         config.llvm_optimize = true;
         config.use_jemalloc = true;
         config.backtrace = true;
@@ -266,52 +296,69 @@ impl Config {
         config.docs = true;
         config.rust_rpath = true;
         config.rust_codegen_units = 1;
-        config.build = build.to_string();
         config.channel = "dev".to_string();
         config.codegen_tests = true;
+        config.ignore_git = false;
         config.rust_dist_src = true;
+
+        config.on_fail = flags.on_fail;
+        config.stage = flags.stage;
+        config.src = flags.src;
+        config.jobs = flags.jobs;
+        config.cmd = flags.cmd;
+        config.incremental = flags.incremental;
+        config.keep_stage = flags.keep_stage;
+
+        // If --target was specified but --host wasn't specified, don't run any host-only tests.
+        config.run_host_only = flags.host.is_empty() && !flags.target.is_empty();
 
         let toml = file.map(|file| {
             let mut f = t!(File::open(&file));
-            let mut toml = String::new();
-            t!(f.read_to_string(&mut toml));
-            let mut p = Parser::new(&toml);
-            let table = match p.parse() {
-                Some(table) => table,
-                None => {
-                    println!("failed to parse TOML configuration '{}':", file.to_str().unwrap());
-                    for err in p.errors.iter() {
-                        let (loline, locol) = p.to_linecol(err.lo);
-                        let (hiline, hicol) = p.to_linecol(err.hi);
-                        println!("{}:{}-{}:{}: {}", loline, locol, hiline,
-                                 hicol, err.desc);
-                    }
-                    process::exit(2);
-                }
-            };
-            let mut d = Decoder::new(Value::Table(table));
-            match Decodable::decode(&mut d) {
-                Ok(cfg) => cfg,
-                Err(e) => {
-                    println!("failed to decode TOML: {}", e);
+            let mut contents = String::new();
+            t!(f.read_to_string(&mut contents));
+            match toml::from_str(&contents) {
+                Ok(table) => table,
+                Err(err) => {
+                    println!("failed to parse TOML configuration '{}': {}",
+                        file.display(), err);
                     process::exit(2);
                 }
             }
         }).unwrap_or_else(|| TomlConfig::default());
 
         let build = toml.build.clone().unwrap_or(Build::default());
-        set(&mut config.build, build.build.clone());
-        config.host.push(config.build.clone());
+        set(&mut config.build, build.build.clone().map(|x| INTERNER.intern_string(x)));
+        set(&mut config.build, flags.build);
+        if config.build.is_empty() {
+            // set by bootstrap.py
+            config.build = INTERNER.intern_str(&env::var("BUILD").unwrap());
+        }
+        config.hosts.push(config.build.clone());
         for host in build.host.iter() {
-            if !config.host.contains(host) {
-                config.host.push(host.clone());
+            let host = INTERNER.intern_str(host);
+            if !config.hosts.contains(&host) {
+                config.hosts.push(host);
             }
         }
-        for target in config.host.iter().chain(&build.target) {
-            if !config.target.contains(target) {
-                config.target.push(target.clone());
+        for target in config.hosts.iter().cloned()
+            .chain(build.target.iter().map(|s| INTERNER.intern_str(s)))
+        {
+            if !config.targets.contains(&target) {
+                config.targets.push(target);
             }
         }
+        config.hosts = if !flags.host.is_empty() {
+            flags.host
+        } else {
+            config.hosts
+        };
+        config.targets = if !flags.target.is_empty() {
+            flags.target
+        } else {
+            config.targets
+        };
+
+
         config.nodejs = build.nodejs.map(PathBuf::from);
         config.gdb = build.gdb.map(PathBuf::from);
         config.python = build.python.map(PathBuf::from);
@@ -327,6 +374,7 @@ impl Config {
         set(&mut config.sanitizers, build.sanitizers);
         set(&mut config.profiler, build.profiler);
         set(&mut config.openssl_static, build.openssl_static);
+        config.verbose = cmp::max(config.verbose, flags.verbose);
 
         if let Some(ref install) = toml.install {
             config.prefix = install.prefix.clone().map(PathBuf::from);
@@ -348,12 +396,12 @@ impl Config {
                 Some(StringOrBool::Bool(false)) | None => {}
             }
             set(&mut config.ninja, llvm.ninja);
+            set(&mut config.llvm_enabled, llvm.enabled);
             set(&mut config.llvm_assertions, llvm.assertions);
             set(&mut config.llvm_optimize, llvm.optimize);
             set(&mut config.llvm_release_debuginfo, llvm.release_debuginfo);
             set(&mut config.llvm_version_check, llvm.version_check);
             set(&mut config.llvm_static_stdcpp, llvm.static_libstdcpp);
-            set(&mut config.llvm_clean_rebuild, llvm.clean_rebuild);
             config.llvm_targets = llvm.targets.clone();
             config.llvm_experimental_targets = llvm.experimental_targets.clone();
             config.llvm_link_jobs = llvm.link_jobs;
@@ -373,6 +421,7 @@ impl Config {
             set(&mut config.use_jemalloc, rust.use_jemalloc);
             set(&mut config.backtrace, rust.backtrace);
             set(&mut config.channel, rust.channel.clone());
+            set(&mut config.ignore_git, rust.ignore_git);
             config.rustc_default_linker = rust.default_linker.clone();
             config.rustc_default_ar = rust.default_ar.clone();
             config.musl_root = rust.musl_root.clone().map(PathBuf::from);
@@ -399,10 +448,11 @@ impl Config {
                 }
                 target.cxx = cfg.cxx.clone().map(PathBuf::from);
                 target.cc = cfg.cc.clone().map(PathBuf::from);
+                target.crt_static = cfg.crt_static.clone();
                 target.musl_root = cfg.musl_root.clone().map(PathBuf::from);
                 target.qemu_rootfs = cfg.qemu_rootfs.clone().map(PathBuf::from);
 
-                config.target_config.insert(triple.clone(), target);
+                config.target_config.insert(INTERNER.intern_string(triple.clone()), target);
             }
         }
 
@@ -478,7 +528,6 @@ impl Config {
                 ("LLVM_VERSION_CHECK", self.llvm_version_check),
                 ("LLVM_STATIC_STDCPP", self.llvm_static_stdcpp),
                 ("LLVM_LINK_SHARED", self.llvm_link_shared),
-                ("LLVM_CLEAN_REBUILD", self.llvm_clean_rebuild),
                 ("OPTIMIZE", self.rust_optimize),
                 ("DEBUG_ASSERTIONS", self.rust_debug_assertions),
                 ("DEBUGINFO", self.rust_debuginfo),
@@ -504,13 +553,13 @@ impl Config {
             }
 
             match key {
-                "CFG_BUILD" if value.len() > 0 => self.build = value.to_string(),
+                "CFG_BUILD" if value.len() > 0 => self.build = INTERNER.intern_str(value),
                 "CFG_HOST" if value.len() > 0 => {
-                    self.host.extend(value.split(" ").map(|s| s.to_string()));
+                    self.hosts.extend(value.split(" ").map(|s| INTERNER.intern_str(s)));
 
                 }
                 "CFG_TARGET" if value.len() > 0 => {
-                    self.target.extend(value.split(" ").map(|s| s.to_string()));
+                    self.targets.extend(value.split(" ").map(|s| INTERNER.intern_str(s)));
                 }
                 "CFG_EXPERIMENTAL_TARGETS" if value.len() > 0 => {
                     self.llvm_experimental_targets = Some(value.to_string());
@@ -519,33 +568,28 @@ impl Config {
                     self.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_MUSL_ROOT_X86_64" if value.len() > 0 => {
-                    let target = "x86_64-unknown-linux-musl".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("x86_64-unknown-linux-musl");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_MUSL_ROOT_I686" if value.len() > 0 => {
-                    let target = "i686-unknown-linux-musl".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("i686-unknown-linux-musl");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_MUSL_ROOT_ARM" if value.len() > 0 => {
-                    let target = "arm-unknown-linux-musleabi".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("arm-unknown-linux-musleabi");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_MUSL_ROOT_ARMHF" if value.len() > 0 => {
-                    let target = "arm-unknown-linux-musleabihf".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("arm-unknown-linux-musleabihf");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_MUSL_ROOT_ARMV7" if value.len() > 0 => {
-                    let target = "armv7-unknown-linux-musleabihf".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("armv7-unknown-linux-musleabihf");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.musl_root = Some(parse_configure_path(value));
                 }
                 "CFG_DEFAULT_AR" if value.len() > 0 => {
@@ -593,33 +637,28 @@ impl Config {
                     target.jemalloc = Some(parse_configure_path(value).join("libjemalloc_pic.a"));
                 }
                 "CFG_ARM_LINUX_ANDROIDEABI_NDK" if value.len() > 0 => {
-                    let target = "arm-linux-androideabi".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("arm-linux-androideabi");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.ndk = Some(parse_configure_path(value));
                 }
                 "CFG_ARMV7_LINUX_ANDROIDEABI_NDK" if value.len() > 0 => {
-                    let target = "armv7-linux-androideabi".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("armv7-linux-androideabi");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.ndk = Some(parse_configure_path(value));
                 }
                 "CFG_I686_LINUX_ANDROID_NDK" if value.len() > 0 => {
-                    let target = "i686-linux-android".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("i686-linux-android");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.ndk = Some(parse_configure_path(value));
                 }
                 "CFG_AARCH64_LINUX_ANDROID_NDK" if value.len() > 0 => {
-                    let target = "aarch64-linux-android".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("aarch64-linux-android");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.ndk = Some(parse_configure_path(value));
                 }
                 "CFG_X86_64_LINUX_ANDROID_NDK" if value.len() > 0 => {
-                    let target = "x86_64-linux-android".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("x86_64-linux-android");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.ndk = Some(parse_configure_path(value));
                 }
                 "CFG_LOCAL_RUST_ROOT" if value.len() > 0 => {
@@ -643,9 +682,13 @@ impl Config {
                                                .collect();
                 }
                 "CFG_QEMU_ARMHF_ROOTFS" if value.len() > 0 => {
-                    let target = "arm-unknown-linux-gnueabihf".to_string();
-                    let target = self.target_config.entry(target)
-                                     .or_insert(Target::default());
+                    let target = INTERNER.intern_str("arm-unknown-linux-gnueabihf");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
+                    target.qemu_rootfs = Some(parse_configure_path(value));
+                }
+                "CFG_QEMU_AARCH64_ROOTFS" if value.len() > 0 => {
+                    let target = INTERNER.intern_str("aarch64-unknown-linux-gnu");
+                    let target = self.target_config.entry(target).or_insert(Target::default());
                     target.qemu_rootfs = Some(parse_configure_path(value));
                 }
                 _ => {}

@@ -323,6 +323,11 @@ unsafe fn u8_slice_as_os_str(s: &[u8]) -> &OsStr {
     mem::transmute(s)
 }
 
+// Detect scheme on Redox
+fn has_redox_scheme(s: &[u8]) -> bool {
+    cfg!(target_os = "redox") && s.split(|b| *b == b'/').next().unwrap_or(b"").contains(&b':')
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Cross-platform, iterator-independent parsing
 ////////////////////////////////////////////////////////////////////////////////
@@ -476,7 +481,7 @@ impl<'a> Hash for PrefixComponent<'a> {
 
 /// A single component of a path.
 ///
-/// A `Component` roughtly corresponds to a substring between path separators
+/// A `Component` roughly corresponds to a substring between path separators
 /// (`/` or `\`).
 ///
 /// This `enum` is created by iterating over [`Components`], which in turn is
@@ -571,7 +576,7 @@ impl<'a> AsRef<OsStr> for Component<'a> {
     }
 }
 
-/// An interator over the [`Component`]s of a [`Path`].
+/// An iterator over the [`Component`]s of a [`Path`].
 ///
 /// This `struct` is created by the [`components`] method on [`Path`].
 /// See its documentation for more.
@@ -1685,8 +1690,12 @@ impl Path {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[allow(deprecated)]
     pub fn is_absolute(&self) -> bool {
-        // FIXME: Remove target_os = "redox" and allow Redox prefixes
-        self.has_root() && (cfg!(unix) || cfg!(target_os = "redox") || self.prefix().is_some())
+        if !cfg!(target_os = "redox") {
+            self.has_root() && (cfg!(unix) || self.prefix().is_some())
+        } else {
+            // FIXME: Allow Redox prefixes
+            has_redox_scheme(self.as_u8_slice())
+        }
     }
 
     /// Returns `true` if the `Path` is relative, i.e. not absolute.
@@ -2019,7 +2028,7 @@ impl Path {
     /// * Repeated separators are ignored, so `a/b` and `a//b` both have
     ///   `a` and `b` as components.
     ///
-    /// * Occurences of `.` are normalized away, except if they are at the
+    /// * Occurrences of `.` are normalized away, except if they are at the
     ///   beginning of the path. For example, `a/./b`, `a/b/`, `a/b/.` and
     ///   `a/b` all have `a` and `b` as components, but `./a/b` starts with
     ///   an additional [`CurDir`] component.
@@ -2049,8 +2058,9 @@ impl Path {
         let prefix = parse_prefix(self.as_os_str());
         Components {
             path: self.as_u8_slice(),
-            prefix: prefix,
-            has_physical_root: has_physical_root(self.as_u8_slice(), prefix),
+            prefix,
+            has_physical_root: has_physical_root(self.as_u8_slice(), prefix) ||
+                               has_redox_scheme(self.as_u8_slice()),
             front: State::Prefix,
             back: State::Body,
         }
@@ -2237,7 +2247,7 @@ impl Path {
         fs::metadata(self).is_ok()
     }
 
-    /// Returns whether the path is pointing at a regular file.
+    /// Returns whether the path exists on disk and is pointing at a regular file.
     ///
     /// This function will traverse symbolic links to query information about the
     /// destination file. In case of broken symbolic links this will return `false`.
@@ -2266,7 +2276,7 @@ impl Path {
         fs::metadata(self).map(|m| m.is_file()).unwrap_or(false)
     }
 
-    /// Returns whether the path is pointing at a directory.
+    /// Returns whether the path exists on disk and is pointing at a directory.
     ///
     /// This function will traverse symbolic links to query information about the
     /// destination file. In case of broken symbolic links this will return `false`.

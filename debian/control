@@ -1,6 +1,6 @@
 Source: rustc
 Section: devel
-Priority: extra
+Priority: optional
 Maintainer: Rust Maintainers <pkg-rust-maintainers@lists.alioth.debian.org>
 Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
  Luca Bruno <lucab@debian.org>,
@@ -12,11 +12,11 @@ Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
                cargo:native (>= 0.19.0)      <!pkg.rustc.dlstage0>,
-               rustc:native (>= 1.19.0+dfsg) <!pkg.rustc.dlstage0>,
-               rustc:native (<= 1.20.0++)    <!pkg.rustc.dlstage0>,
-               llvm-4.0-dev:native   (>= 1:4.0.1-6),
-               llvm-4.0-tools:native (>= 1:4.0.1-6),
-               libllvm4.0            (>= 1:4.0.1-6),
+               rustc:native (>= 1.20.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc:native (<= 1.21.0++)    <!pkg.rustc.dlstage0>,
+               llvm-4.0-dev:native   (>= 1:4.0.1-8),
+               llvm-4.0-tools:native (>= 1:4.0.1-8),
+               libllvm4.0            (>= 1:4.0.1-8),
                autotools-dev,
                cmake (>= 3.0) | cmake3,
                gperf,
@@ -27,21 +27,15 @@ Build-Depends: debhelper (>= 9),
                liblzma-dev:native,
 # test dependencies:
                binutils (>= 2.26) <!nocheck> | binutils-2.26 <!nocheck>,
-               nodejs <!nocheck>,
-               valgrind <!nocheck>,
                git <!nocheck>,
                procps <!nocheck>,
 # below are optional tools even for 'make check'
-               antlr4 <!nocheck> | antlr <!nocheck>,
-               bison <!nocheck>,
-               flex <!nocheck>,
                gdb (>= 7.12) <!nocheck>,
-               default-jdk-headless <!nocheck> | default-jdk <!nocheck>,
 # Work around #864741. The version constraint for gdb above should already do
 # that, but this will keep things covered even in the case that they change
 # gdb-minimal to do a versioned Provides: gdb.
 Build-Conflicts: gdb-minimal <!nocheck>
-Standards-Version: 4.0.0
+Standards-Version: 4.1.1
 Homepage: http://www.rust-lang.org/
 Vcs-Git: https://anonscm.debian.org/git/pkg-rust/rust.git
 Vcs-Browser: https://anonscm.debian.org/cgit/pkg-rust/rust.git
@@ -67,7 +61,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.20
+Package: libstd-rust-1.21
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -92,7 +86,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${misc:Depends}, libstd-rust-1.20 (= ${binary:Version})
+Depends: ${misc:Depends}, libstd-rust-1.21 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

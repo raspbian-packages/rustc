@@ -9,7 +9,9 @@
 // except according to those terms.
 
 extern crate toml;
-extern crate rustc_serialize;
+#[macro_use]
+extern crate serde_derive;
+extern crate serde;
 
 use std::collections::BTreeMap;
 use std::env;
@@ -92,6 +94,7 @@ static TARGETS: &'static [&'static str] = &[
     "x86_64-unknown-linux-gnu",
     "x86_64-unknown-linux-musl",
     "x86_64-unknown-netbsd",
+    "x86_64-unknown-redox",
 ];
 
 static MINGW: &'static [&'static str] = &[
@@ -99,19 +102,21 @@ static MINGW: &'static [&'static str] = &[
     "x86_64-pc-windows-gnu",
 ];
 
+#[derive(Serialize)]
+#[serde(rename_all = "kebab-case")]
 struct Manifest {
     manifest_version: String,
     date: String,
     pkg: BTreeMap<String, Package>,
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 struct Package {
     version: String,
     target: BTreeMap<String, Target>,
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 struct Target {
     available: bool,
     url: Option<String>,
@@ -136,7 +141,7 @@ impl Target {
     }
 }
 
-#[derive(RustcEncodable)]
+#[derive(Serialize)]
 struct Component {
     pkg: String,
     target: String,
@@ -152,6 +157,7 @@ macro_rules! t {
 struct Builder {
     rust_release: String,
     cargo_release: String,
+    rls_release: String,
     input: PathBuf,
     output: PathBuf,
     gpg_passphrase: String,
@@ -160,6 +166,7 @@ struct Builder {
     date: String,
     rust_version: String,
     cargo_version: String,
+    rls_version: String,
 }
 
 fn main() {
@@ -169,21 +176,24 @@ fn main() {
     let date = args.next().unwrap();
     let rust_release = args.next().unwrap();
     let cargo_release = args.next().unwrap();
+    let rls_release = args.next().unwrap();
     let s3_address = args.next().unwrap();
     let mut passphrase = String::new();
     t!(io::stdin().read_to_string(&mut passphrase));
 
     Builder {
-        rust_release: rust_release,
-        cargo_release: cargo_release,
-        input: input,
-        output: output,
+        rust_release,
+        cargo_release,
+        rls_release,
+        input,
+        output,
         gpg_passphrase: passphrase,
         digests: BTreeMap::new(),
-        s3_address: s3_address,
-        date: date,
+        s3_address,
+        date,
         rust_version: String::new(),
         cargo_version: String::new(),
+        rls_version: String::new(),
     }.build();
 }
 
@@ -191,30 +201,19 @@ impl Builder {
     fn build(&mut self) {
         self.rust_version = self.version("rust", "x86_64-unknown-linux-gnu");
         self.cargo_version = self.version("cargo", "x86_64-unknown-linux-gnu");
+        self.rls_version = self.version("rls", "x86_64-unknown-linux-gnu");
 
         self.digest_and_sign();
-        let Manifest { manifest_version, date, pkg } = self.build_manifest();
-
-        // Unfortunately we can't use derive(RustcEncodable) here because the
-        // version field is called `manifest-version`, not `manifest_version`.
-        // In lieu of that just create the table directly here with a `BTreeMap`
-        // and wrap it up in a `Value::Table`.
-        let mut manifest = BTreeMap::new();
-        manifest.insert("manifest-version".to_string(),
-                        toml::Value::String(manifest_version));
-        manifest.insert("date".to_string(), toml::Value::String(date.clone()));
-        manifest.insert("pkg".to_string(), toml::encode(&pkg));
-        let manifest = toml::Value::Table(manifest).to_string();
-
+        let manifest = self.build_manifest();
         let filename = format!("channel-rust-{}.toml", self.rust_release);
-        self.write_manifest(&manifest, &filename);
+        self.write_manifest(&toml::to_string(&manifest).unwrap(), &filename);
 
         let filename = format!("channel-rust-{}-date.txt", self.rust_release);
-        self.write_date_stamp(&date, &filename);
+        self.write_date_stamp(&manifest.date, &filename);
 
         if self.rust_release != "beta" && self.rust_release != "nightly" {
-            self.write_manifest(&manifest, "channel-rust-stable.toml");
-            self.write_date_stamp(&date, "channel-rust-stable-date.txt");
+            self.write_manifest(&toml::to_string(&manifest).unwrap(), "channel-rust-stable.toml");
+            self.write_date_stamp(&manifest.date, "channel-rust-stable-date.txt");
         }
     }
 
@@ -240,7 +239,12 @@ impl Builder {
         self.package("rust-std", &mut manifest.pkg, TARGETS);
         self.package("rust-docs", &mut manifest.pkg, TARGETS);
         self.package("rust-src", &mut manifest.pkg, &["*"]);
-        self.package("rls", &mut manifest.pkg, HOSTS);
+        let rls_package_name = if self.rust_release == "nightly" {
+            "rls"
+        } else {
+            "rls-preview"
+        };
+        self.package(rls_package_name, &mut manifest.pkg, HOSTS);
         self.package("rust-analysis", &mut manifest.pkg, TARGETS);
 
         let mut pkg = Package {
@@ -277,7 +281,7 @@ impl Builder {
             }
 
             extensions.push(Component {
-                pkg: "rls".to_string(),
+                pkg: rls_package_name.to_string(),
                 target: host.to_string(),
             });
             extensions.push(Component {
@@ -354,6 +358,8 @@ impl Builder {
             format!("rust-src-{}.tar.gz", self.rust_release)
         } else if component == "cargo" {
             format!("cargo-{}-{}.tar.gz", self.cargo_release, target)
+        } else if component == "rls" || component == "rls-preview" {
+            format!("rls-{}-{}.tar.gz", self.rls_release, target)
         } else {
             format!("{}-{}-{}.tar.gz", component, self.rust_release, target)
         }
@@ -362,6 +368,8 @@ impl Builder {
     fn cached_version(&self, component: &str) -> &str {
         if component == "cargo" {
             &self.cargo_version
+        } else if component == "rls" || component == "rls-preview" {
+            &self.rls_version
         } else {
             &self.rust_version
         }

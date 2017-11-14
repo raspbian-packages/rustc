@@ -45,14 +45,15 @@ DEB_DESTDIR := $(CURDIR)/debian/tmp
 # but at the current version not all of these flags are available in that file.
 # Certain flags also need to be kept here *as well as* debian/config.toml.in
 # because of https://github.com/rust-lang/rust/issues/43295
-DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-debuginfo-only-std
+DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-jemalloc --disable-debuginfo-only-std
 
 # Use system LLVM (comment out to use vendored LLVM)
 LLVM_VERSION = 4.0
 OLD_LLVM_VERSION = 3.9
 # Make it easier to test against a custom LLVM
 ifneq (,$(LLVM_DESTDIR))
-LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH),$(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH))
+LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
+LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_LIBRARY_PATH),$(LLVM_LIBRARY_PATH))
 export LD_LIBRARY_PATH
 endif
 DEB_CONFIGURE_FLAGS += --llvm-root=$(LLVM_DESTDIR)/usr/lib/llvm-$(LLVM_VERSION)
@@ -95,7 +96,13 @@ ifeq (0,$(HAVE_BINARY_TARBALL))
     # Case A-1: the builder did not select the "pkg.rustc.dlstage0" build profile.
     # In this case, we use the distro's rustc - either the previous or current version.
     ifeq (,$(findstring pkg.rustc.dlstage0,$(DEB_BUILD_PROFILES)))
-        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=/usr
+        # Make it easier to test against a custom rustc
+        ifneq (,$(RUST_DESTDIR))
+        RUST_LIBRARY_PATH := $(RUST_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(RUST_DESTDIR)/usr/lib
+        LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(RUST_LIBRARY_PATH),$(RUST_LIBRARY_PATH))
+        export LD_LIBRARY_PATH
+        endif
+        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=$(RUST_DESTDIR)/usr
     endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.
@@ -158,7 +165,7 @@ debian/configure-upstream: debian/config.toml debian/rules
 	echo 'cat > config.toml <<EOF' >> "$@"
 	cat debian/config.toml >> "$@"
 	echo 'EOF' >> "$@"
-	echo "./configure $(DEB_CONFIGURE_FLAGS)" >> "$@"
+	echo "./configure $(DEB_CONFIGURE_FLAGS) \"\$$@\"" >> "$@"
 	chmod +x "$@"
 
 debian/config.toml: debian/config.toml.in
@@ -183,21 +190,20 @@ override_dh_auto_configure: debian/config.toml
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
 	# We patched mdbook so have to rm the checksums
-	debian/empty-cargo-checksum.py src/vendor/mdbook/.cargo-checksum.json
+	debian/prune-checksums src/vendor/mdbook/.cargo-checksum.json
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
 	# compile it again for rust-installer, see #43449
 	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
-	debian/empty-cargo-checksum.py src/vendor/backtrace-sys/.cargo-checksum.json
+	debian/prune-checksums src/vendor/backtrace-sys/.cargo-checksum.json
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
-	debian/empty-cargo-checksum.py src/vendor/lzma-sys/.cargo-checksum.json
+	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
 	# We excluded some embedded libraries in d/copyright
-	debian/empty-cargo-checksum.py src/vendor/dbghelp-sys/.cargo-checksum.json
-	# TODO: work-around for slightly buggy prune-unused-deps, can rm in 1.20.0
-	rmdir src/vendor/* 2>/dev/null || true
+	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
+	# We patched this for sparc64 support
+	debian/prune-checksums src/vendor/gcc/.cargo-checksum.json
 	# Do the actual configure
-	PATH="$$PWD/debian/bin:$$PATH" \
-	    ./configure $(DEB_CONFIGURE_FLAGS)
+	./configure $(DEB_CONFIGURE_FLAGS)
 
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
@@ -220,19 +226,9 @@ ifneq (,$(BUILD_DOCS))
 	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
 endif
 
-RUN_TESTS = \
-	if $(1); then \
-	  : ; \
-	elif [ $(DEB_VENDOR) = "Debian" -a $(DEB_DISTRIBUTION) != "experimental" ]; then \
-	  false; \
-	elif [ $(DEB_VENDOR) = "Ubuntu" -a $(DEB_HOST_ARCH) != "s390x" ]; then \
-	  false ; \
-	else \
-	  echo "====================================================="; \
-	  echo "WARNING: Ignoring test failures in the rust testsuite"; \
-	  echo "====================================================="; \
-	fi
-
+TEST_LOG = debian/rustc-tests.log
+FAILURES_ALLOWED = 5
+FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
@@ -243,7 +239,20 @@ override_dh_auto_test-arch:
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS))
+	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
+	test -f $(TEST_LOG)
+	echo "Summary of specific test failures:"; \
+	$(FAILED_TESTS); \
+	num_failures=$$($(FAILED_TESTS) | wc -l); \
+	echo -n "$${num_failures} tests failed, $(FAILURES_ALLOWED) maximum allowed. "; \
+	if test "$${num_failures}" -le $(FAILURES_ALLOWED); then \
+	  echo "Continuing..."; \
+	else \
+	  echo "Aborting the build."; \
+	  echo "Check the logs further above for details."; \
+	  false; \
+	fi
+>>>>>>> debpsuedomerge
 # don't continue if RUSTBUILD_TEST_FLAGS is non-empty
 	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif
@@ -254,10 +263,13 @@ ifneq (,$(BUILD_DOCS))
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
-	$(call RUN_TESTS,$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS))
+	$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS)
 endif
 endif
 endif
+
+run_rustbuild:
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) $(X_CMD) $(RUSTBUILD_FLAGS) $(X_FLAGS)
 
 override_dh_auto_install:
 	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) install $(RUSTBUILD_FLAGS)
@@ -292,6 +304,7 @@ endif
 override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
+	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/
 
 override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	dh_install
@@ -309,6 +322,7 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		\) -delete
 
 override_dh_installchangelogs:
+	dh_missing --list-missing || true
 	dh_installchangelogs RELEASES.md
 
 override_dh_installdocs:
@@ -350,3 +364,11 @@ source_orig-stage0:
 	debian/make_orig-stage0_tarball.sh
 	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	rm -rf .pc
+
+debian/watch-beta: debian/watch-beta.in debian/rules
+	oldver=$(shell echo $(RUST_LONG_VERSION) | sed -e 's/\./\\./g'); \
+	newver=$(shell echo $(RUST_VERSION) | perl -lpe 's/(\d+)\.(\d+)/$$1 . "." . ($$2+1)/e'); \
+	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
+
+source_orig-beta: debian/watch-beta
+	uscan $(USCAN_OPTS) --watchfile "$<"

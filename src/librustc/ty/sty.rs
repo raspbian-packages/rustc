@@ -583,7 +583,7 @@ impl<'a, 'tcx> ProjectionTy<'tcx> {
     pub fn trait_ref(&self, tcx: TyCtxt) -> ty::TraitRef<'tcx> {
         let def_id = tcx.associated_item(self.item_def_id).container.id();
         ty::TraitRef {
-            def_id: def_id,
+            def_id,
             substs: self.substs,
         }
     }
@@ -753,7 +753,7 @@ pub type Region<'tcx> = &'tcx RegionKind;
 ///
 /// The process of doing that is called "skolemization". The bound regions
 /// are replaced by skolemized markers, which don't satisfy any relation
-/// not explicity provided.
+/// not explicitly provided.
 ///
 /// There are 2 kinds of skolemized regions in rustc: `ReFree` and
 /// `ReSkolemized`. When checking an item's body, `ReFree` is supposed
@@ -888,7 +888,7 @@ impl<'a, 'tcx, 'gcx> ExistentialProjection<'tcx> {
     pub fn trait_ref(&self, tcx: TyCtxt) -> ty::ExistentialTraitRef<'tcx> {
         let def_id = tcx.associated_item(self.item_def_id).container.id();
         ty::ExistentialTraitRef{
-            def_id: def_id,
+            def_id,
             substs: self.substs,
         }
     }

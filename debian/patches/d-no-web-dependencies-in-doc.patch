@@ -200,7 +200,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <link rel="stylesheet" href="tomorrow-night.css">
          <style>
              .page-wrapper.has-warning > .nav-chapters {
-@@ -67,15 +66,9 @@
+@@ -86,15 +85,9 @@
          </style>
  
          <!-- MathJax -->
@@ -218,7 +218,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
      </head>
      <body class="light">
          <!-- Set the theme before any content is loaded, prevents flash -->
-@@ -148,13 +141,6 @@
+@@ -167,13 +160,6 @@
          </div>
  
  

@@ -9,7 +9,7 @@
 //! ```toml
 //! [package]
 //! name = "toml"
-//! version = "0.2.1"
+//! version = "0.4.2"
 //! authors = ["Alex Crichton <alex@alexcrichton.com>"]
 //!
 //! [dependencies]
@@ -161,7 +161,7 @@ mod datetime;
 
 pub mod ser;
 #[doc(no_inline)]
-pub use ser::{to_string, to_vec, Serializer};
+pub use ser::{to_string, to_string_pretty, to_vec, Serializer};
 pub mod de;
 #[doc(no_inline)]
 pub use de::{from_slice, from_str, Deserializer};

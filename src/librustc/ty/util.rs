@@ -214,6 +214,11 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
         let mut hasher = StableHasher::new();
         let mut hcx = StableHashingContext::new(self);
 
+        // We want the type_id be independent of the types free regions, so we
+        // erase them. The erase_regions() call will also anonymize bound
+        // regions, which is desirable too.
+        let ty = self.erase_regions(&ty);
+
         hcx.while_hashing_spans(false, |hcx| {
             hcx.with_node_id_hashing_mode(NodeIdHashingMode::HashDefPath, |hcx| {
                 ty.hash_stable(hcx, &mut hasher);
@@ -1064,11 +1069,15 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let needs_drop = |ty: Ty<'tcx>| -> bool {
         match ty::queries::needs_drop_raw::try_get(tcx, DUMMY_SP, param_env.and(ty)) {
             Ok(v) => v,
-            Err(_) => {
+            Err(mut bug) => {
                 // Cycles should be reported as an error by `check_representable`.
                 //
-                // Consider the type as not needing drop in the meanwhile to avoid
-                // further errors.
+                // Consider the type as not needing drop in the meanwhile to
+                // avoid further errors.
+                //
+                // In case we forgot to emit a bug elsewhere, delay our
+                // diagnostic to get emitted as a compiler bug.
+                bug.delay_as_bug();
                 false
             }
         }

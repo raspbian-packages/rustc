@@ -177,7 +177,7 @@ pub struct Funclet {
 impl Funclet {
     pub fn new(cleanuppad: ValueRef) -> Funclet {
         Funclet {
-            cleanuppad: cleanuppad,
+            cleanuppad,
             operand: OperandBundleDef::new("funclet", &[cleanuppad]),
         }
     }
@@ -220,12 +220,6 @@ pub fn C_big_integral(t: Type, u: u128) -> ValueRef {
     unsafe {
         let words = [u as u64, u.wrapping_shr(64) as u64];
         llvm::LLVMConstIntOfArbitraryPrecision(t.to_ref(), 2, words.as_ptr())
-    }
-}
-
-pub fn C_floating_f64(f: f64, t: Type) -> ValueRef {
-    unsafe {
-        llvm::LLVMConstReal(t.to_ref(), f)
     }
 }
 
@@ -372,7 +366,7 @@ pub fn const_to_uint(v: ValueRef) -> u64 {
     }
 }
 
-fn is_const_integral(v: ValueRef) -> bool {
+pub fn is_const_integral(v: ValueRef) -> bool {
     unsafe {
         !llvm::LLVMIsAConstantInt(v).is_null()
     }

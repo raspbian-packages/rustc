@@ -318,6 +318,10 @@ extern {
                                 filter: *const lzma_filter) -> lzma_ret;
     pub fn lzma_properties_encode(filter: *const lzma_filter,
                                   props: *mut u8) -> lzma_ret;
+    pub fn lzma_properties_decode(filter: *mut lzma_filter,
+                                  allocator: *const lzma_allocator,
+                                  props: *const u8,
+                                  props_size: size_t) -> lzma_ret;
     pub fn lzma_physmem() -> u64;
     pub fn lzma_cputhreads() -> u32;
 

@@ -13,28 +13,24 @@
 extern crate rustc_serialize;
 extern crate rls_span as span;
 
+#[cfg(feature = "serialize-serde")]
+extern crate serde;
+#[cfg(feature = "serialize-serde")]
+#[macro_use]
+extern crate serde_derive;
+
+pub mod config;
+
 use std::path::PathBuf;
 
-#[derive(Clone, Copy, Debug, RustcDecodable, RustcEncodable, PartialEq, Eq)]
-pub enum Format {
-    Csv,
-    Json,
-    JsonApi,
-}
+use config::Config;
 
-impl Format {
-    pub fn extension(&self) -> &'static str {
-        match *self {
-            Format::Csv => ".csv",
-            Format::Json | Format::JsonApi => ".json",
-        }
-    }
-}
 
 #[derive(Debug, Clone, RustcDecodable, RustcEncodable)]
 #[repr(C)]
 pub struct Analysis {
-    pub kind: Format,
+    /// The Config used to generate this analysis data.
+    pub config: Config,
     pub prelude: Option<CratePreludeData>,
     pub imports: Vec<Import>,
     pub defs: Vec<Def>,
@@ -48,9 +44,9 @@ pub struct Analysis {
 
 impl Analysis {
     #[cfg(not(feature = "borrows"))]
-    pub fn new() -> Analysis {
+    pub fn new(config: Config) -> Analysis {
         Analysis {
-            kind: Format::Json,
+            config,
             prelude: None,
             imports: vec![],
             defs: vec![],
@@ -62,9 +58,9 @@ impl Analysis {
     }
 
     #[cfg(feature = "borrows")]
-    pub fn new() -> Analysis {
+    pub fn new(config: Config) -> Analysis {
         Analysis {
-            kind: Format::Json,
+            config,
             prelude: None,
             imports: vec![],
             defs: vec![],
@@ -79,7 +75,7 @@ impl Analysis {
 
 // DefId::index is a newtype and so the JSON serialisation is ugly. Therefore
 // we use our own Id which is the same, but without the newtype.
-#[derive(Clone, Copy, Debug, RustcDecodable, RustcEncodable, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, RustcDecodable, RustcEncodable, PartialEq, Eq, Hash)]
 pub struct Id {
     pub krate: u32,
     pub index: u32,
@@ -268,6 +264,7 @@ pub struct BorrowData {
     pub scopes: Vec<Scope>,
     pub loans: Vec<Loan>,
     pub moves: Vec<Move>,
+    pub span: Option<SpanData>,
 }
 
 #[cfg(feature = "borrows")]

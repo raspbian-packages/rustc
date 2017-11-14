@@ -5,4 +5,4 @@ libstd-rust-dev binary: arch-dependent-file-not-in-arch-specific-directory
 # See debhelper bug #875780. This override is commented out because it's not
 # always needed, but we want it here for documentation purposes. Basically,
 # if you see it then you probably don't need to worry about it.
-#libstd-rust-dev: unstripped-static-library usr/lib/rustlib/x86_64-unknown-linux-gnu/lib/lib*.rlib(*)
+#libstd-rust-dev binary: unstripped-static-library usr/lib/rustlib/x86_64-unknown-linux-gnu/lib/lib*.rlib(*)

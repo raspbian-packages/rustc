@@ -498,8 +498,6 @@ pub trait Iterator {
     /// Basic usage:
     ///
     /// ```
-    /// #![feature(iterator_for_each)]
-    ///
     /// use std::sync::mpsc::channel;
     ///
     /// let (tx, rx) = channel();
@@ -514,15 +512,13 @@ pub trait Iterator {
     /// might be preferable to keep a functional style with longer iterators:
     ///
     /// ```
-    /// #![feature(iterator_for_each)]
-    ///
     /// (0..5).flat_map(|x| x * 100 .. x * 110)
     ///       .enumerate()
     ///       .filter(|&(i, x)| (i + x) % 3 == 0)
     ///       .for_each(|(i, x)| println!("{}:{}", i, x));
     /// ```
     #[inline]
-    #[unstable(feature = "iterator_for_each", issue = "42986")]
+    #[stable(feature = "iterator_for_each", since = "1.21.0")]
     fn for_each<F>(self, mut f: F) where
         Self: Sized, F: FnMut(Self::Item),
     {
@@ -605,7 +601,7 @@ pub trait Iterator {
     /// closure returns [`None`], it will try again, and call the closure on the
     /// next element, seeing if it will return [`Some`].
     ///
-    /// Why `filter_map` and not just [`filter`].[`map`]? The key is in this
+    /// Why `filter_map` and not just [`filter`] and [`map`]? The key is in this
     /// part:
     ///
     /// [`filter`]: #method.filter
@@ -637,15 +633,14 @@ pub trait Iterator {
     /// let a = ["1", "2", "lol"];
     ///
     /// let mut iter = a.iter()
-    ///                 .map(|s| s.parse().ok())
-    ///                 .filter(|s| s.is_some());
+    ///                 .map(|s| s.parse())
+    ///                 .filter(|s| s.is_ok())
+    ///                 .map(|s| s.unwrap());
     ///
-    /// assert_eq!(iter.next(), Some(Some(1)));
-    /// assert_eq!(iter.next(), Some(Some(2)));
+    /// assert_eq!(iter.next(), Some(1));
+    /// assert_eq!(iter.next(), Some(2));
     /// assert_eq!(iter.next(), None);
     /// ```
-    ///
-    /// There's an extra layer of [`Some`] in there.
     ///
     /// [`Option<T>`]: ../../std/option/enum.Option.html
     /// [`Some`]: ../../std/option/enum.Option.html#variant.Some
@@ -1248,7 +1243,7 @@ pub trait Iterator {
     /// assert_eq!(vec![2, 4, 6], doubled);
     /// ```
     ///
-    /// Because `collect()` cares about what you're collecting into, you can
+    /// Because `collect()` only cares about what you're collecting into, you can
     /// still use a partial type hint, `_`, with the turbofish:
     ///
     /// ```

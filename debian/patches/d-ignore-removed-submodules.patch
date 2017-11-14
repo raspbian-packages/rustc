@@ -3,17 +3,38 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/Cargo.toml
 +++ b/src/Cargo.toml
-@@ -15,7 +15,6 @@
+@@ -15,28 +15,7 @@
    "tools/remote-test-client",
    "tools/remote-test-server",
    "tools/rust-installer",
 -  "tools/cargo",
+   "tools/rustdoc",
+-  "tools/rls",
+-  # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
+-  "tools/rls/test_data/borrow_error",
+-  "tools/rls/test_data/completion",
+-  "tools/rls/test_data/find_all_refs",
+-  "tools/rls/test_data/find_all_refs_no_cfg_test",
+-  "tools/rls/test_data/goto_def",
+-  "tools/rls/test_data/highlight",
+-  "tools/rls/test_data/hover",
+-  "tools/rls/test_data/rename",
+-  "tools/rls/test_data/reformat",
+-  "tools/rls/test_data/bin_lib_no_cfg_test",
+-  "tools/rls/test_data/multiple_bins",
+-  "tools/rls/test_data/bin_lib",
+-  "tools/rls/test_data/reformat_with_range",
+-  "tools/rls/test_data/find_impls",
+-  "tools/rls/test_data/infer_bin",
+-  "tools/rls/test_data/infer_custom_bin",
+-  "tools/rls/test_data/infer_lib",
+-  "tools/rls/test_data/omit_init_build",
  ]
  
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -417,10 +417,6 @@
+@@ -510,10 +510,6 @@
              args.append("--verbose")
              if self.verbose > 1:
                  args.append("--verbose")
@@ -24,9 +45,9 @@ Forwarded: not-needed
          run(args, env=env, verbose=self.verbose)
  
      def build_triple(self):
---- a/src/bootstrap/lib.rs
-+++ b/src/bootstrap/lib.rs
-@@ -513,10 +513,7 @@
+--- a/src/bootstrap/builder.rs
++++ b/src/bootstrap/builder.rs
+@@ -579,10 +579,7 @@
          if self.config.rust_optimize && cmd != "bench" {
              cargo.arg("--release");
          }

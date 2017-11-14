@@ -110,11 +110,13 @@ use self::Ordering::*;
 pub trait PartialEq<Rhs: ?Sized = Self> {
     /// This method tests for `self` and `other` values to be equal, and is used
     /// by `==`.
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn eq(&self, other: &Rhs) -> bool;
 
     /// This method tests for `!=`.
     #[inline]
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn ne(&self, other: &Rhs) -> bool { !self.eq(other) }
 }
@@ -168,7 +170,7 @@ pub trait Eq: PartialEq<Self> {
     //
     // This should never be implemented by hand.
     #[doc(hidden)]
-    #[inline(always)]
+    #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn assert_receiver_is_total_eq(&self) {}
 }
@@ -451,12 +453,10 @@ pub trait Ord: Eq + PartialOrd<Self> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(ord_max_min)]
-    ///
     /// assert_eq!(2, 1.max(2));
     /// assert_eq!(2, 2.max(2));
     /// ```
-    #[unstable(feature = "ord_max_min", issue = "25663")]
+    #[stable(feature = "ord_max_min", since = "1.21.0")]
     fn max(self, other: Self) -> Self
     where Self: Sized {
         if other >= self { other } else { self }
@@ -469,12 +469,10 @@ pub trait Ord: Eq + PartialOrd<Self> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(ord_max_min)]
-    ///
     /// assert_eq!(1, 1.min(2));
     /// assert_eq!(2, 2.min(2));
     /// ```
-    #[unstable(feature = "ord_max_min", issue = "25663")]
+    #[stable(feature = "ord_max_min", since = "1.21.0")]
     fn min(self, other: Self) -> Self
     where Self: Sized {
         if self <= other { self } else { other }
@@ -625,6 +623,7 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// let result = std::f64::NAN.partial_cmp(&1.0);
     /// assert_eq!(result, None);
     /// ```
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn partial_cmp(&self, other: &Rhs) -> Option<Ordering>;
 
@@ -640,6 +639,7 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, false);
     /// ```
     #[inline]
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn lt(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
@@ -661,6 +661,7 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, true);
     /// ```
     #[inline]
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn le(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
@@ -681,6 +682,7 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, false);
     /// ```
     #[inline]
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn gt(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
@@ -702,6 +704,7 @@ pub trait PartialOrd<Rhs: ?Sized = Self>: PartialEq<Rhs> {
     /// assert_eq!(result, true);
     /// ```
     #[inline]
+    #[must_use]
     #[stable(feature = "rust1", since = "1.0.0")]
     fn ge(&self, other: &Rhs) -> bool {
         match self.partial_cmp(other) {
