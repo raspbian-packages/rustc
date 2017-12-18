@@ -1,0 +1,16 @@
+Description: Disable failing debuginfo-gdb test on armhf
+ Last checked this still affects 1.17
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/issues/42673
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/test/debuginfo/macro-stepping.rs
++++ b/src/test/debuginfo/macro-stepping.rs
+@@ -11,6 +11,7 @@
+ // ignore-windows
+ // ignore-android
+ // ignore-aarch64
++// ignore-arm
+ // min-lldb-version: 310
+ 
+ // aux-build:macro-stepping.rs
