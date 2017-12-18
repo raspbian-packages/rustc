@@ -140,6 +140,11 @@ fn main() {
     let mut cfg = cc::Build::new();
     cfg.warnings(false);
     for flag in cxxflags.split_whitespace() {
+        // Split-dwarf gives unreproducible DW_AT_GNU_dwo_id so don't do it
+        if flag == "-gsplit-dwarf" {
+            continue;
+        }
+
         // Ignore flags like `-m64` when we're doing a cross build
         if is_crossed && flag.starts_with("-m") {
             continue;
