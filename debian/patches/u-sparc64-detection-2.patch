@@ -1,0 +1,17 @@
+commit d7dec7c8d71b30fea6e4c5aca40adce1724ba87d
+Author: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Date:   Sun Oct 29 23:51:14 2017 +0100
+
+    bootstrap: Add missing cputype matching for sparc64
+
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -294,7 +294,7 @@
+             raise ValueError('unknown byteorder: {}'.format(sys.byteorder))
+         # only the n64 ABI is supported, indicate it
+         ostype += 'abi64'
+-    elif cputype == 'sparcv9':
++    elif cputype == 'sparcv9' or cputype == 'sparc64':
+         pass
+     else:
+         err = "unknown cpu type: {}".format(cputype)
