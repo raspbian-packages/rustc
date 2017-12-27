@@ -1120,7 +1120,7 @@ pub trait Visitor<'de>: Sized {
         self.visit_i64(v as i64)
     }
 
-    /// The input contains an `i32`.
+    /// The input contains an `i64`.
     ///
     /// The default implementation fails with a type error.
     fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E>
@@ -1424,7 +1424,7 @@ pub trait SeqAccess<'de> {
     /// `Ok(None)` if there are no more remaining items.
     ///
     /// `Deserialize` implementations should typically use
-    /// `SeqAcccess::next_element` instead.
+    /// `SeqAccess::next_element` instead.
     fn next_element_seed<T>(&mut self, seed: T) -> Result<Option<T::Value>, Self::Error>
     where
         T: DeserializeSeed<'de>;

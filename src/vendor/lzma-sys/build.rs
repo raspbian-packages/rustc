@@ -1,5 +1,6 @@
-extern crate gcc;
+extern crate cc;
 extern crate filetime;
+extern crate pkg_config;
 
 use std::env;
 use std::ffi::OsString;
@@ -20,6 +21,12 @@ fn main() {
     let target = env::var("TARGET").unwrap();
     let host = env::var("HOST").unwrap();
     let dst = PathBuf::from(env::var_os("OUT_DIR").unwrap());
+
+    println!("cargo:rerun-if-env-changed=LZMA_API_STATIC");
+    let want_static = env::var("LZMA_API_STATIC").is_ok();
+    if !want_static && pkg_config::probe_library("liblzma").is_ok() {
+        return;
+    }
 
     println!("cargo:rustc-link-search={}/lib", dst.display());
     println!("cargo:root={}", dst.display());
@@ -43,7 +50,7 @@ fn main() {
 
         let mut build_succeeded = false;
         for platform_toolset in &["v141", "v140", "v120", "v110"] {
-            let mut msbuild = gcc::windows_registry::find(&target, "msbuild")
+            let mut msbuild = cc::windows_registry::find(&target, "msbuild")
                     .expect("needs msbuild installed");
             if try_run(msbuild.current_dir(build.join("windows"))
                     .arg("liblzma.vcxproj")
@@ -81,7 +88,7 @@ fn main() {
         set_all_mtime(&src, &now);
 
         println!("cargo:rustc-link-lib=static=lzma");
-        let cfg = gcc::Config::new();
+        let cfg = cc::Build::new();
         let compiler = cfg.get_compiler();
 
         let _ = fs::create_dir(&dst.join("build"));

@@ -16,6 +16,9 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
+// FIXME: after next stage0, change RangeInclusive { ... } back to ..=
+use ops::RangeInclusive;
+
 // How this module is organized.
 //
 // The library infrastructure for slices is fairly messy. There's
@@ -35,7 +38,6 @@
 // * The `raw` and `bytes` submodules.
 // * Boilerplate trait implementations.
 
-use borrow::Borrow;
 use cmp::Ordering::{self, Less, Equal, Greater};
 use cmp;
 use fmt;
@@ -122,19 +124,17 @@ pub trait SliceExt {
     fn as_ptr(&self) -> *const Self::Item;
 
     #[stable(feature = "core", since = "1.6.0")]
-    fn binary_search<Q: ?Sized>(&self, x: &Q) -> Result<usize, usize>
-        where Self::Item: Borrow<Q>,
-              Q: Ord;
+    fn binary_search(&self, x: &Self::Item) -> Result<usize, usize>
+        where Self::Item: Ord;
 
     #[stable(feature = "core", since = "1.6.0")]
     fn binary_search_by<'a, F>(&'a self, f: F) -> Result<usize, usize>
         where F: FnMut(&'a Self::Item) -> Ordering;
 
     #[stable(feature = "slice_binary_search_by_key", since = "1.10.0")]
-    fn binary_search_by_key<'a, B, F, Q: ?Sized>(&'a self, b: &Q, f: F) -> Result<usize, usize>
+    fn binary_search_by_key<'a, B, F>(&'a self, b: &B, f: F) -> Result<usize, usize>
         where F: FnMut(&'a Self::Item) -> B,
-              B: Borrow<Q>,
-              Q: Ord;
+              B: Ord;
 
     #[stable(feature = "core", since = "1.6.0")]
     fn len(&self) -> usize;
@@ -635,11 +635,10 @@ impl<T> SliceExt for [T] {
         m >= n && needle == &self[m-n..]
     }
 
-    fn binary_search<Q: ?Sized>(&self, x: &Q) -> Result<usize, usize>
-        where T: Borrow<Q>,
-              Q: Ord
+    fn binary_search(&self, x: &T) -> Result<usize, usize>
+        where T: Ord
     {
-        self.binary_search_by(|p| p.borrow().cmp(x))
+        self.binary_search_by(|p| p.cmp(x))
     }
 
     fn rotate(&mut self, mid: usize) {
@@ -687,12 +686,11 @@ impl<T> SliceExt for [T] {
     }
 
     #[inline]
-    fn binary_search_by_key<'a, B, F, Q: ?Sized>(&'a self, b: &Q, mut f: F) -> Result<usize, usize>
+    fn binary_search_by_key<'a, B, F>(&'a self, b: &B, mut f: F) -> Result<usize, usize>
         where F: FnMut(&'a Self::Item) -> B,
-              B: Borrow<Q>,
-              Q: Ord
+              B: Ord
     {
-        self.binary_search_by(|k| f(k).borrow().cmp(b))
+        self.binary_search_by(|k| f(k).cmp(b))
     }
 
     #[inline]
@@ -1049,32 +1047,32 @@ impl<T> SliceIndex<[T]> for ops::RangeToInclusive<usize> {
 
     #[inline]
     fn get(self, slice: &[T]) -> Option<&[T]> {
-        (0...self.end).get(slice)
+        (RangeInclusive { start: 0, end: self.end }).get(slice)
     }
 
     #[inline]
     fn get_mut(self, slice: &mut [T]) -> Option<&mut [T]> {
-        (0...self.end).get_mut(slice)
+        (RangeInclusive { start: 0, end: self.end }).get_mut(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &[T] {
-        (0...self.end).get_unchecked(slice)
+        (RangeInclusive { start: 0, end: self.end }).get_unchecked(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut [T] {
-        (0...self.end).get_unchecked_mut(slice)
+        (RangeInclusive { start: 0, end: self.end }).get_unchecked_mut(slice)
     }
 
     #[inline]
     fn index(self, slice: &[T]) -> &[T] {
-        (0...self.end).index(slice)
+        (RangeInclusive { start: 0, end: self.end }).index(slice)
     }
 
     #[inline]
     fn index_mut(self, slice: &mut [T]) -> &mut [T] {
-        (0...self.end).index_mut(slice)
+        (RangeInclusive { start: 0, end: self.end }).index_mut(slice)
     }
 }
 
@@ -1656,7 +1654,7 @@ impl<'a, T: 'a + fmt::Debug, P> fmt::Debug for Split<'a, T, P> where P: FnMut(&T
     }
 }
 
-// FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+// FIXME(#26925) Remove in favor of `#[derive(Clone)]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T, P> Clone for Split<'a, T, P> where P: Clone + FnMut(&T) -> bool {
     fn clone(&self) -> Split<'a, T, P> {
@@ -2095,7 +2093,7 @@ pub struct Windows<'a, T:'a> {
     size: usize
 }
 
-// FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+// FIXME(#26925) Remove in favor of `#[derive(Clone)]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Windows<'a, T> {
     fn clone(&self) -> Windows<'a, T> {
@@ -2197,7 +2195,7 @@ pub struct Chunks<'a, T:'a> {
     size: usize
 }
 
-// FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+// FIXME(#26925) Remove in favor of `#[derive(Clone)]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Chunks<'a, T> {
     fn clone(&self) -> Chunks<'a, T> {

@@ -3,15 +3,17 @@ use std::collections::BTreeMap;
 use helpers::HelperDef;
 use registry::Registry;
 use context::{JsonTruthy, to_json};
-use render::{Renderable, RenderContext, RenderError, Helper};
+use render::{Renderable, RenderContext, Helper};
+use error::RenderError;
 
 #[derive(Clone, Copy)]
 pub struct WithHelper;
 
 impl HelperDef for WithHelper {
     fn call(&self, h: &Helper, r: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
-        let param =
-            try!(h.param(0).ok_or_else(|| RenderError::new("Param not found for helper \"with\"")));
+        let param = try!(h.param(0).ok_or_else(|| {
+            RenderError::new("Param not found for helper \"with\"")
+        }));
 
         rc.promote_local_vars();
 
@@ -34,7 +36,7 @@ impl HelperDef for WithHelper {
                 if let Some(block_param) = h.block_param() {
                     let mut map = BTreeMap::new();
                     map.insert(block_param.to_string(), to_json(param.value()));
-                    local_rc.push_block_context(&map);
+                    local_rc.push_block_context(&map)?;
                 }
             }
 
@@ -95,14 +97,21 @@ mod test {
         };
 
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0", "{{#with addr}}{{city}}{{/with}}")
-                    .is_ok());
-        assert!(handlebars.register_template_string("t1",
-                                                    "{{#with notfound}}hello{{else}}world{{/with}}")
-                    .is_ok());
-        assert!(handlebars.register_template_string("t2",
-                                                    "{{#with addr/country}}{{this}}{{/with}}")
-                    .is_ok());
+        assert!(
+            handlebars
+                .register_template_string("t0", "{{#with addr}}{{city}}{{/with}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t1", "{{#with notfound}}hello{{else}}world{{/with}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t2", "{{#with addr/country}}{{this}}{{/with}}")
+                .is_ok()
+        );
 
         let r0 = handlebars.render("t0", &person);
         assert_eq!(r0.ok().unwrap(), "Beijing".to_string());
@@ -129,13 +138,24 @@ mod test {
         };
 
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0",
-                                                    "{{#with addr as |a|}}{{a.city}}{{/with}}")
-                    .is_ok());
-        assert!(handlebars.register_template_string("t1", "{{#with notfound as |c|}}hello{{else}}world{{/with}}").is_ok());
-        assert!(handlebars.register_template_string("t2",
-                                                    "{{#with addr/country as |t|}}{{t}}{{/with}}")
-                    .is_ok());
+        assert!(
+            handlebars
+                .register_template_string("t0", "{{#with addr as |a|}}{{a.city}}{{/with}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string(
+                    "t1",
+                    "{{#with notfound as |c|}}hello{{else}}world{{/with}}",
+                )
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t2", "{{#with addr/country as |t|}}{{t}}{{/with}}")
+                .is_ok()
+        );
 
         let r0 = handlebars.render("t0", &person);
         assert_eq!(r0.ok().unwrap(), "Beijing".to_string());
@@ -176,9 +196,30 @@ mod test {
         let people = vec![person, person2];
 
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0", "{{#each this}}{{#with addr}}{{city}}{{/with}}{{/each}}").is_ok());
-        assert!(handlebars.register_template_string("t1", "{{#each this}}{{#with addr}}{{../age}}{{/with}}{{/each}}").is_ok());
-        assert!(handlebars.register_template_string("t2", "{{#each this}}{{#with addr}}{{@../index}}{{/with}}{{/each}}").is_ok());
+        assert!(
+            handlebars
+                .register_template_string(
+                    "t0",
+                    "{{#each this}}{{#with addr}}{{city}}{{/with}}{{/each}}",
+                )
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string(
+                    "t1",
+                    "{{#each this}}{{#with addr}}{{../age}}{{/with}}{{/each}}",
+                )
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string(
+                    "t2",
+                    "{{#each this}}{{#with addr}}{{@../index}}{{/with}}{{/each}}",
+                )
+                .is_ok()
+        );
 
         let r0 = handlebars.render("t0", &people);
         assert_eq!(r0.ok().unwrap(), "BeijingBeijing".to_string());
@@ -193,10 +234,16 @@ mod test {
     #[test]
     fn test_path_up() {
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0",
-                                                    "{{#with a}}{{#with b}}{{../../d}}{{/with}}{{/with}}")
-                          .is_ok());
-        let data = btreemap! {
+        assert!(
+            handlebars
+                .register_template_string(
+                    "t0",
+                    "{{#with a}}{{#with b}}{{../../d}}{{/with}}{{/with}}",
+                )
+                .is_ok()
+        );
+        let data =
+            btreemap! {
             "a".to_string() => to_json(&btreemap! {
                 "b".to_string() => vec![btreemap!{"c".to_string() => vec![1]}]
             }),

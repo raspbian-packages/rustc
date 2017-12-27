@@ -10,7 +10,7 @@ upstream_version="$(dpkg-parsechangelog -SVersion | sed -e 's/\(.*\)-.*/\1/g')"
 upstream_bootstrap_arch="${upstream_bootstrap_arch:-amd64 arm64 armel armhf i386 powerpc ppc64el s390x}"
 
 rm -f stage0/*/*.sha256
-mkdir build && ln -sf ../stage0 build/cache
+mkdir -p stage0 build && ln -sf ../stage0 build/cache
 for deb_host_arch in $upstream_bootstrap_arch; do
 	make -s --no-print-directory -f debian/architecture-test.mk "rust-for-deb_${deb_host_arch}" | {
 	read deb_host_arch rust_triplet

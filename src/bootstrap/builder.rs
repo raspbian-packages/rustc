@@ -8,15 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::fmt::Debug;
-use std::hash::Hash;
+use std::any::Any;
 use std::cell::RefCell;
+use std::collections::BTreeSet;
+use std::env;
+use std::fmt::Debug;
+use std::fs;
+use std::hash::Hash;
+use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::fs;
-use std::ops::Deref;
-use std::any::Any;
-use std::collections::BTreeSet;
 
 use compile;
 use install;
@@ -248,19 +249,19 @@ impl<'a> Builder<'a> {
                 compile::StartupObjects, tool::BuildManifest, tool::Rustbook, tool::ErrorIndex,
                 tool::UnstableBookGen, tool::Tidy, tool::Linkchecker, tool::CargoTest,
                 tool::Compiletest, tool::RemoteTestServer, tool::RemoteTestClient,
-                tool::RustInstaller, tool::Cargo, tool::Rls, tool::Rustdoc,
-                native::Llvm),
+                tool::RustInstaller, tool::Cargo, tool::Rls, tool::Rustdoc, tool::Clippy,
+                native::Llvm, tool::Rustfmt, tool::Miri),
             Kind::Test => describe!(check::Tidy, check::Bootstrap, check::DefaultCompiletest,
-                check::HostCompiletest, check::Crate, check::CrateLibrustc, check::Linkcheck,
-                check::Cargotest, check::Cargo, check::Rls, check::Docs, check::ErrorIndex,
-                check::Distcheck),
+                check::HostCompiletest, check::Crate, check::CrateLibrustc, check::Rustdoc,
+                check::Linkcheck, check::Cargotest, check::Cargo, check::Rls, check::Docs,
+                check::ErrorIndex, check::Distcheck, check::Rustfmt, check::Miri, check::Clippy),
             Kind::Bench => describe!(check::Crate, check::CrateLibrustc),
             Kind::Doc => describe!(doc::UnstableBook, doc::UnstableBookGen, doc::TheBook,
                 doc::Standalone, doc::Std, doc::Test, doc::Rustc, doc::ErrorIndex, doc::Nomicon,
                 doc::Reference, doc::Rustdoc, doc::CargoBook),
             Kind::Dist => describe!(dist::Docs, dist::Mingw, dist::Rustc, dist::DebuggerScripts,
                 dist::Std, dist::Analysis, dist::Src, dist::PlainSourceTarball, dist::Cargo,
-                dist::Rls, dist::Extended, dist::HashSign),
+                dist::Rls, dist::Extended, dist::HashSign, dist::DontDistWithMiriEnabled),
             Kind::Install => describe!(install::Docs, install::Std, install::Cargo, install::Rls,
                 install::Analysis, install::Src, install::Rustc),
         }
@@ -305,7 +306,7 @@ impl<'a> Builder<'a> {
             Subcommand::Bench { ref paths, .. } => (Kind::Bench, &paths[..]),
             Subcommand::Dist { ref paths } => (Kind::Dist, &paths[..]),
             Subcommand::Install { ref paths } => (Kind::Install, &paths[..]),
-            Subcommand::Clean => panic!(),
+            Subcommand::Clean { .. } => panic!(),
         };
 
         let builder = Builder {
@@ -437,8 +438,13 @@ impl<'a> Builder<'a> {
         let out_dir = self.stage_out(compiler, mode);
         cargo.env("CARGO_TARGET_DIR", out_dir)
              .arg(cmd)
-             .arg("-j").arg(self.jobs().to_string())
              .arg("--target").arg(target);
+
+        // If we were invoked from `make` then that's already got a jobserver
+        // set up for us so no need to tell Cargo about jobs all over again.
+        if env::var_os("MAKEFLAGS").is_none() && env::var_os("MFLAGS").is_none() {
+             cargo.arg("-j").arg(self.jobs().to_string());
+        }
 
         // FIXME: Temporary fix for https://github.com/rust-lang/cargo/issues/3005
         // Force cargo to output binaries with disambiguating hashes in the name
@@ -475,6 +481,7 @@ impl<'a> Builder<'a> {
              } else {
                  PathBuf::from("/path/to/nowhere/rustdoc/not/required")
              })
+             .env("TEST_MIRI", self.config.test_miri.to_string())
              .env("RUSTC_FLAGS", self.rustc_flags(target).join(" "));
 
         if mode != Mode::Tool {
@@ -524,7 +531,10 @@ impl<'a> Builder<'a> {
         // For other crates, however, we know that we've already got a standard
         // library up and running, so we can use the normal compiler to compile
         // build scripts in that situation.
-        if mode == Mode::Libstd {
+        //
+        // If LLVM support is disabled we need to use the snapshot compiler to compile
+        // build scripts, as the new compiler doesnt support executables.
+        if mode == Mode::Libstd || !self.build.config.llvm_enabled {
             cargo.env("RUSTC_SNAPSHOT", &self.initial_rustc)
                  .env("RUSTC_SNAPSHOT_LIBDIR", self.rustc_snapshot_libdir());
         } else {

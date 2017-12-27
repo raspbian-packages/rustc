@@ -106,15 +106,18 @@ use sys_common::{AsInner, AsInnerMut, FromInner, IntoInner};
 pub struct Child {
     handle: imp::Process,
 
-    /// The handle for writing to the child's stdin, if it has been captured
+    /// The handle for writing to the child's standard input (stdin), if it has
+    /// been captured.
     #[stable(feature = "process", since = "1.0.0")]
     pub stdin: Option<ChildStdin>,
 
-    /// The handle for reading from the child's stdout, if it has been captured
+    /// The handle for reading from the child's standard output (stdout), if it
+    /// has been captured.
     #[stable(feature = "process", since = "1.0.0")]
     pub stdout: Option<ChildStdout>,
 
-    /// The handle for reading from the child's stderr, if it has been captured
+    /// The handle for reading from the child's standard error (stderr), if it
+    /// has been captured.
     #[stable(feature = "process", since = "1.0.0")]
     pub stderr: Option<ChildStderr>,
 }
@@ -149,12 +152,17 @@ impl fmt::Debug for Child {
     }
 }
 
-/// A handle to a child process's stdin.
+/// A handle to a child process's standard input (stdin).
 ///
 /// This struct is used in the [`stdin`] field on [`Child`].
 ///
+/// When an instance of `ChildStdin` is [dropped], the `ChildStdin`'s underlying
+/// file handle will be closed. If the child process was blocked on input prior
+/// to being dropped, it will become unblocked after dropping.
+///
 /// [`Child`]: struct.Child.html
 /// [`stdin`]: struct.Child.html#structfield.stdin
+/// [dropped]: ../ops/trait.Drop.html
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStdin {
     inner: AnonPipe
@@ -192,12 +200,16 @@ impl fmt::Debug for ChildStdin {
     }
 }
 
-/// A handle to a child process's stdout.
+/// A handle to a child process's standard output (stdout).
 ///
 /// This struct is used in the [`stdout`] field on [`Child`].
 ///
+/// When an instance of `ChildStdout` is [dropped], the `ChildStdout`'s
+/// underlying file handle will be closed.
+///
 /// [`Child`]: struct.Child.html
 /// [`stdout`]: struct.Child.html#structfield.stdout
+/// [dropped]: ../ops/trait.Drop.html
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStdout {
     inner: AnonPipe
@@ -239,8 +251,12 @@ impl fmt::Debug for ChildStdout {
 ///
 /// This struct is used in the [`stderr`] field on [`Child`].
 ///
+/// When an instance of `ChildStderr` is [dropped], the `ChildStderr`'s
+/// underlying file handle will be closed.
+///
 /// [`Child`]: struct.Child.html
 /// [`stderr`]: struct.Child.html#structfield.stderr
+/// [dropped]: ../ops/trait.Drop.html
 #[stable(feature = "process", since = "1.0.0")]
 pub struct ChildStderr {
     inner: AnonPipe
@@ -534,7 +550,7 @@ impl Command {
         self
     }
 
-    /// Configuration for the child process's stdin handle (file descriptor 0).
+    /// Configuration for the child process's standard input (stdin) handle.
     ///
     /// # Examples
     ///
@@ -554,7 +570,7 @@ impl Command {
         self
     }
 
-    /// Configuration for the child process's stdout handle (file descriptor 1).
+    /// Configuration for the child process's standard output (stdout) handle.
     ///
     /// # Examples
     ///
@@ -574,7 +590,7 @@ impl Command {
         self
     }
 
-    /// Configuration for the child process's stderr handle (file descriptor 2).
+    /// Configuration for the child process's standard error (stderr) handle.
     ///
     /// # Examples
     ///
@@ -1108,7 +1124,15 @@ pub fn exit(code: i32) -> ! {
 ///
 /// Note that because this function never returns, and that it terminates the
 /// process, no destructors on the current stack or any other thread's stack
-/// will be run. If a clean shutdown is needed it is recommended to only call
+/// will be run.
+///
+/// This is in contrast to the default behaviour of [`panic!`] which unwinds
+/// the current thread's stack and calls all destructors.
+/// When `panic="abort"` is set, either as an argument to `rustc` or in a
+/// crate's Cargo.toml, [`panic!`] and `abort` are similar. However,
+/// [`panic!`] will still call the [panic hook] while `abort` will not.
+///
+/// If a clean shutdown is needed it is recommended to only call
 /// this function at a known point where there are no more destructors left
 /// to run.
 ///
@@ -1126,7 +1150,7 @@ pub fn exit(code: i32) -> ! {
 /// }
 /// ```
 ///
-/// The [`abort`] function terminates the process, so the destructor will not
+/// The `abort` function terminates the process, so the destructor will not
 /// get run on the example below:
 ///
 /// ```no_run
@@ -1146,6 +1170,9 @@ pub fn exit(code: i32) -> ! {
 ///     // the destructor implemented for HasDrop will never get run
 /// }
 /// ```
+///
+/// [`panic!`]: ../../std/macro.panic.html
+/// [panic hook]: ../../std/panic/fn.set_hook.html
 #[stable(feature = "process_abort", since = "1.17.0")]
 pub fn abort() -> ! {
     unsafe { ::sys::abort_internal() };

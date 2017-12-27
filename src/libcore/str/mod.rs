@@ -18,9 +18,9 @@ use self::pattern::Pattern;
 use self::pattern::{Searcher, ReverseSearcher, DoubleEndedSearcher};
 
 use char;
-use convert::TryFrom;
 use fmt;
-use iter::{Map, Cloned, FusedIterator};
+use iter::{Map, Cloned, FusedIterator, TrustedLen};
+use iter_private::TrustedRandomAccess;
 use slice::{self, SliceIndex};
 use mem;
 
@@ -301,6 +301,37 @@ pub fn from_utf8(v: &[u8]) -> Result<&str, Utf8Error> {
 }
 
 /// Converts a mutable slice of bytes to a mutable string slice.
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// use std::str;
+///
+/// // "Hello, Rust!" as a mutable vector
+/// let mut hellorust = vec![72, 101, 108, 108, 111, 44, 32, 82, 117, 115, 116, 33];
+///
+/// // As we know these bytes are valid, we can use `unwrap()`
+/// let outstr = str::from_utf8_mut(&mut hellorust).unwrap();
+///
+/// assert_eq!("Hello, Rust!", outstr);
+/// ```
+///
+/// Incorrect bytes:
+///
+/// ```
+/// use std::str;
+///
+/// // Some invalid bytes in a mutable vector
+/// let mut invalid = vec![128, 223];
+///
+/// assert!(str::from_utf8_mut(&mut invalid).is_err());
+/// ```
+/// See the docs for [`Utf8Error`][error] for more details on the kinds of
+/// errors that can be returned.
+///
+/// [error]: struct.Utf8Error.html
 #[stable(feature = "str_mut_extras", since = "1.20.0")]
 pub fn from_utf8_mut(v: &mut [u8]) -> Result<&mut str, Utf8Error> {
     run_utf8_validation(v)?;
@@ -372,7 +403,7 @@ unsafe fn from_raw_parts_mut<'a>(p: *mut u8, len: usize) -> &'a mut str {
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_utf8_unchecked(v: &[u8]) -> &str {
-    mem::transmute(v)
+    &*(v as *const [u8] as *const str)
 }
 
 /// Converts a slice of bytes to a string slice without checking
@@ -381,10 +412,23 @@ pub unsafe fn from_utf8_unchecked(v: &[u8]) -> &str {
 /// See the immutable version, [`from_utf8_unchecked()`][fromutf8], for more information.
 ///
 /// [fromutf8]: fn.from_utf8_unchecked.html
+///
+/// # Examples
+///
+/// Basic usage:
+///
+/// ```
+/// use std::str;
+///
+/// let mut heart = vec![240, 159, 146, 150];
+/// let heart = unsafe { str::from_utf8_unchecked_mut(&mut heart) };
+///
+/// assert_eq!("💖", heart);
+/// ```
 #[inline]
 #[stable(feature = "str_mut_extras", since = "1.20.0")]
 pub unsafe fn from_utf8_unchecked_mut(v: &mut [u8]) -> &mut str {
-    mem::transmute(v)
+    &mut *(v as *mut [u8] as *mut str)
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -773,6 +817,17 @@ impl<'a> ExactSizeIterator for Bytes<'a> {
 
 #[unstable(feature = "fused", issue = "35602")]
 impl<'a> FusedIterator for Bytes<'a> {}
+
+#[unstable(feature = "trusted_len", issue = "37572")]
+unsafe impl<'a> TrustedLen for Bytes<'a> {}
+
+#[doc(hidden)]
+unsafe impl<'a> TrustedRandomAccess for Bytes<'a> {
+    unsafe fn get_unchecked(&mut self, i: usize) -> u8 {
+        self.0.get_unchecked(i)
+    }
+    fn may_have_side_effect() -> bool { false }
+}
 
 /// This macro generates a Clone impl for string pattern API
 /// wrapper types of the form X<'a, P>
@@ -1355,9 +1410,6 @@ Section: Comparing strings
 */
 
 /// Bytewise slice equality
-/// NOTE: This function is (ab)used in rustc::middle::trans::_match
-/// to compare &[u8] byte slices that are not necessarily valid UTF-8.
-#[lang = "str_eq"]
 #[inline]
 fn eq_slice(a: &str, b: &str) -> bool {
     a.as_bytes() == b.as_bytes()
@@ -1468,7 +1520,10 @@ fn run_utf8_validation(v: &[u8]) -> Result<(), Utf8Error> {
             // When the pointer is aligned, read 2 words of data per iteration
             // until we find a word containing a non-ascii byte.
             let ptr = v.as_ptr();
-            let align = (ptr as usize + index) & (usize_bytes - 1);
+            let align = unsafe {
+                // the offset is safe, because `index` is guaranteed inbounds
+                ptr.offset(index as isize).align_offset(usize_bytes)
+            };
             if align == 0 {
                 while index < blocks_end {
                     unsafe {
@@ -2142,7 +2197,7 @@ pub trait StrExt {
     #[stable(feature = "core", since = "1.6.0")]
     fn is_empty(&self) -> bool;
     #[stable(feature = "core", since = "1.6.0")]
-    fn parse<'a, T: TryFrom<&'a str>>(&'a self) -> Result<T, T::Error>;
+    fn parse<T: FromStr>(&self) -> Result<T, T::Err>;
 }
 
 // truncate `&str` to length at most equal to `max`
@@ -2399,12 +2454,12 @@ impl StrExt for str {
 
     #[inline]
     fn as_bytes(&self) -> &[u8] {
-        unsafe { mem::transmute(self) }
+        unsafe { &*(self as *const str as *const [u8]) }
     }
 
     #[inline]
     unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
-        mem::transmute(self)
+        &mut *(self as *mut str as *mut [u8])
     }
 
     fn find<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize> {
@@ -2462,9 +2517,7 @@ impl StrExt for str {
     fn is_empty(&self) -> bool { self.len() == 0 }
 
     #[inline]
-    fn parse<'a, T>(&'a self) -> Result<T, T::Error> where T: TryFrom<&'a str> {
-        T::try_from(self)
-    }
+    fn parse<T: FromStr>(&self) -> Result<T, T::Err> { FromStr::from_str(self) }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]

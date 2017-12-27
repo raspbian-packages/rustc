@@ -22,6 +22,7 @@ use hash;
 use intrinsics;
 use marker::{Copy, PhantomData, Sized};
 use ptr;
+use ops::{Deref, DerefMut};
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use intrinsics::transmute;
@@ -176,38 +177,141 @@ pub fn forget<T>(t: T) {
 
 /// Returns the size of a type in bytes.
 ///
-/// More specifically, this is the offset in bytes between successive
-/// items of the same type, including alignment padding.
+/// More specifically, this is the offset in bytes between successive elements
+/// in an array with that item type including alignment padding. Thus, for any
+/// type `T` and length `n`, `[T; n]` has a size of `n * size_of::<T>()`.
+///
+/// In general, the size of a type is not stable across compilations, but
+/// specific types such as primitives are.
+///
+/// The following table gives the size for primitives.
+///
+/// Type | size_of::\<Type>()
+/// ---- | ---------------
+/// () | 0
+/// u8 | 1
+/// u16 | 2
+/// u32 | 4
+/// u64 | 8
+/// i8 | 1
+/// i16 | 2
+/// i32 | 4
+/// i64 | 8
+/// f32 | 4
+/// f64 | 8
+/// char | 4
+///
+/// Furthermore, `usize` and `isize` have the same size.
+///
+/// The types `*const T`, `&T`, `Box<T>`, `Option<&T>`, and `Option<Box<T>>` all have
+/// the same size. If `T` is Sized, all of those types have the same size as `usize`.
+///
+/// The mutability of a pointer does not change its size. As such, `&T` and `&mut T`
+/// have the same size. Likewise for `*const T` and `*mut T`.
+///
+/// # Size of `#[repr(C)]` items
+///
+/// The `C` representation for items has a defined layout. With this layout,
+/// the size of items is also stable as long as all fields have a stable size.
+///
+/// ## Size of Structs
+///
+/// For `structs`, the size is determined by the following algorithm.
+///
+/// For each field in the struct ordered by declaration order:
+///
+/// 1. Add the size of the field.
+/// 2. Round up the current size to the nearest multiple of the next field's [alignment].
+///
+/// Finally, round the size of the struct to the nearest multiple of its [alignment].
+///
+/// Unlike `C`, zero sized structs are not rounded up to one byte in size.
+///
+/// ## Size of Enums
+///
+/// Enums that carry no data other than the descriminant have the same size as C enums
+/// on the platform they are compiled for.
+///
+/// ## Size of Unions
+///
+/// The size of a union is the size of its largest field.
+///
+/// Unlike `C`, zero sized unions are not rounded up to one byte in size.
 ///
 /// # Examples
 ///
 /// ```
 /// use std::mem;
 ///
+/// // Some primitives
 /// assert_eq!(4, mem::size_of::<i32>());
+/// assert_eq!(8, mem::size_of::<f64>());
+/// assert_eq!(0, mem::size_of::<()>());
+///
+/// // Some arrays
+/// assert_eq!(8, mem::size_of::<[i32; 2]>());
+/// assert_eq!(12, mem::size_of::<[i32; 3]>());
+/// assert_eq!(0, mem::size_of::<[i32; 0]>());
+///
+///
+/// // Pointer size equality
+/// assert_eq!(mem::size_of::<&i32>(), mem::size_of::<*const i32>());
+/// assert_eq!(mem::size_of::<&i32>(), mem::size_of::<Box<i32>>());
+/// assert_eq!(mem::size_of::<&i32>(), mem::size_of::<Option<&i32>>());
+/// assert_eq!(mem::size_of::<Box<i32>>(), mem::size_of::<Option<Box<i32>>>());
 /// ```
-#[inline]
-#[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(stage0)]
-pub fn size_of<T>() -> usize {
-    unsafe { intrinsics::size_of::<T>() }
-}
-
-/// Returns the size of a type in bytes.
 ///
-/// More specifically, this is the offset in bytes between successive
-/// items of the same type, including alignment padding.
-///
-/// # Examples
+/// Using `#[repr(C)]`.
 ///
 /// ```
 /// use std::mem;
 ///
-/// assert_eq!(4, mem::size_of::<i32>());
+/// #[repr(C)]
+/// struct FieldStruct {
+///     first: u8,
+///     second: u16,
+///     third: u8
+/// }
+///
+/// // The size of the first field is 1, so add 1 to the size. Size is 1.
+/// // The alignment of the second field is 2, so add 1 to the size for padding. Size is 2.
+/// // The size of the second field is 2, so add 2 to the size. Size is 4.
+/// // The alignment of the third field is 1, so add 0 to the size for padding. Size is 4.
+/// // The size of the third field is 1, so add 1 to the size. Size is 5.
+/// // Finally, the alignment of the struct is 2, so add 1 to the size for padding. Size is 6.
+/// assert_eq!(6, mem::size_of::<FieldStruct>());
+///
+/// #[repr(C)]
+/// struct TupleStruct(u8, u16, u8);
+///
+/// // Tuple structs follow the same rules.
+/// assert_eq!(6, mem::size_of::<TupleStruct>());
+///
+/// // Note that reordering the fields can lower the size. We can remove both padding bytes
+/// // by putting `third` before `second`.
+/// #[repr(C)]
+/// struct FieldStructOptimized {
+///     first: u8,
+///     third: u8,
+///     second: u16
+/// }
+///
+/// assert_eq!(4, mem::size_of::<FieldStructOptimized>());
+///
+/// // Union size is the size of the largest field.
+/// #[repr(C)]
+/// union ExampleUnion {
+///     smaller: u8,
+///     larger: u16
+/// }
+///
+/// assert_eq!(2, mem::size_of::<ExampleUnion>());
 /// ```
+///
+/// [alignment]: ./fn.align_of.html
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(not(stage0))]
+#[cfg_attr(not(stage0), rustc_const_unstable(feature = "const_size_of"))]
 pub const fn size_of<T>() -> usize {
     unsafe { intrinsics::size_of::<T>() }
 }
@@ -299,29 +403,7 @@ pub fn min_align_of_val<T: ?Sized>(val: &T) -> usize {
 /// ```
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(stage0)]
-pub fn align_of<T>() -> usize {
-    unsafe { intrinsics::min_align_of::<T>() }
-}
-
-/// Returns the [ABI]-required minimum alignment of a type.
-///
-/// Every reference to a value of the type `T` must be a multiple of this number.
-///
-/// This is the alignment used for struct fields. It may be smaller than the preferred alignment.
-///
-/// [ABI]: https://en.wikipedia.org/wiki/Application_binary_interface
-///
-/// # Examples
-///
-/// ```
-/// use std::mem;
-///
-/// assert_eq!(4, mem::align_of::<i32>());
-/// ```
-#[inline]
-#[stable(feature = "rust1", since = "1.0.0")]
-#[cfg(not(stage0))]
+#[cfg_attr(not(stage0), rustc_const_unstable(feature = "const_align_of"))]
 pub const fn align_of<T>() -> usize {
     unsafe { intrinsics::min_align_of::<T>() }
 }
@@ -863,6 +945,7 @@ pub fn discriminant<T>(v: &T) -> Discriminant<T> {
 /// ```
 #[stable(feature = "manually_drop", since = "1.20.0")]
 #[allow(unions_with_drop_fields)]
+#[derive(Copy)]
 pub union ManuallyDrop<T>{ value: T }
 
 impl<T> ManuallyDrop<T> {
@@ -912,7 +995,7 @@ impl<T> ManuallyDrop<T> {
 }
 
 #[stable(feature = "manually_drop", since = "1.20.0")]
-impl<T> ::ops::Deref for ManuallyDrop<T> {
+impl<T> Deref for ManuallyDrop<T> {
     type Target = T;
     #[inline]
     fn deref(&self) -> &Self::Target {
@@ -923,7 +1006,7 @@ impl<T> ::ops::Deref for ManuallyDrop<T> {
 }
 
 #[stable(feature = "manually_drop", since = "1.20.0")]
-impl<T> ::ops::DerefMut for ManuallyDrop<T> {
+impl<T> DerefMut for ManuallyDrop<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
@@ -938,6 +1021,75 @@ impl<T: ::fmt::Debug> ::fmt::Debug for ManuallyDrop<T> {
         unsafe {
             fmt.debug_tuple("ManuallyDrop").field(&self.value).finish()
         }
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: Clone> Clone for ManuallyDrop<T> {
+    fn clone(&self) -> Self {
+        ManuallyDrop::new(self.deref().clone())
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.deref_mut().clone_from(source);
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: Default> Default for ManuallyDrop<T> {
+    fn default() -> Self {
+        ManuallyDrop::new(Default::default())
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: PartialEq> PartialEq for ManuallyDrop<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.deref().eq(other)
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.deref().ne(other)
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: Eq> Eq for ManuallyDrop<T> {}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: PartialOrd> PartialOrd for ManuallyDrop<T> {
+    fn partial_cmp(&self, other: &Self) -> Option<::cmp::Ordering> {
+        self.deref().partial_cmp(other)
+    }
+
+    fn lt(&self, other: &Self) -> bool {
+        self.deref().lt(other)
+    }
+
+    fn le(&self, other: &Self) -> bool {
+        self.deref().le(other)
+    }
+
+    fn gt(&self, other: &Self) -> bool {
+        self.deref().gt(other)
+    }
+
+    fn ge(&self, other: &Self) -> bool {
+        self.deref().ge(other)
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: Ord> Ord for ManuallyDrop<T> {
+    fn cmp(&self, other: &Self) -> ::cmp::Ordering {
+        self.deref().cmp(other)
+    }
+}
+
+#[stable(feature = "manually_drop", since = "1.20.0")]
+impl<T: ::hash::Hash> ::hash::Hash for ManuallyDrop<T> {
+    fn hash<H: ::hash::Hasher>(&self, state: &mut H) {
+        self.deref().hash(state);
     }
 }
 

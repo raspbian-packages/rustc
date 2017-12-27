@@ -34,7 +34,10 @@ fn mirbug(tcx: TyCtxt, span: Span, msg: &str) {
 macro_rules! span_mirbug {
     ($context:expr, $elem:expr, $($message:tt)*) => ({
         mirbug($context.tcx(), $context.last_span,
-               &format!("broken MIR ({:?}): {}", $elem, format!($($message)*)))
+               &format!("broken MIR in {:?} ({:?}): {}",
+                        $context.body_id,
+                        $elem,
+                        format_args!($($message)*)))
     })
 }
 
@@ -60,6 +63,7 @@ struct TypeVerifier<'a, 'b: 'a, 'gcx: 'b+'tcx, 'tcx: 'b> {
     cx: &'a mut TypeChecker<'b, 'gcx, 'tcx>,
     mir: &'a Mir<'tcx>,
     last_span: Span,
+    body_id: ast::NodeId,
     errors_reported: bool
 }
 
@@ -108,8 +112,9 @@ impl<'a, 'b, 'gcx, 'tcx> Visitor<'tcx> for TypeVerifier<'a, 'b, 'gcx, 'tcx> {
 impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
     fn new(cx: &'a mut TypeChecker<'b, 'gcx, 'tcx>, mir: &'a Mir<'tcx>) -> Self {
         TypeVerifier {
-            cx,
             mir,
+            body_id: cx.body_id,
+            cx,
             last_span: mir.span,
             errors_reported: false
         }
@@ -160,7 +165,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                            base: LvalueTy<'tcx>,
                            pi: &LvalueElem<'tcx>,
                            lvalue: &Lvalue<'tcx>,
-                           location: Location)
+                           _: Location)
                            -> LvalueTy<'tcx> {
         debug!("sanitize_projection: {:?} {:?} {:?}", base, pi, lvalue);
         let tcx = self.tcx();
@@ -176,9 +181,8 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                     })
                 }
             }
-            ProjectionElem::Index(ref i) => {
-                self.visit_operand(i, location);
-                let index_ty = i.ty(self.mir, tcx);
+            ProjectionElem::Index(i) => {
+                let index_ty = Lvalue::Local(i).ty(self.mir, tcx).to_ty(tcx);
                 if index_ty != tcx.types.usize {
                     LvalueTy::Ty {
                         ty: span_mirbug_and_err!(self, i, "index by non-usize {:?}", i)
@@ -205,7 +209,8 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                 LvalueTy::Ty {
                     ty: match base_ty.sty {
                         ty::TyArray(inner, size) => {
-                            let min_size = (from as usize) + (to as usize);
+                            let size = size.val.to_const_int().unwrap().to_u64().unwrap();
+                            let min_size = (from as u64) + (to as u64);
                             if let Some(rest_size) = size.checked_sub(min_size) {
                                 tcx.mk_array(inner, rest_size)
                             } else {
@@ -294,6 +299,19 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                         Some(ty) => Ok(ty),
                         None => Err(FieldAccessError::OutOfRange {
                             field_count: substs.upvar_tys(def_id, tcx).count()
+                        })
+                    }
+                }
+                ty::TyGenerator(def_id, substs, _) => {
+                    // Try upvars first. `field_tys` requires final optimized MIR.
+                    if let Some(ty) = substs.upvar_tys(def_id, tcx).nth(field.index()) {
+                        return Ok(ty);
+                    }
+
+                    return match substs.field_tys(def_id, tcx).nth(field.index()) {
+                        Some(ty) => Ok(ty),
+                        None => Err(FieldAccessError::OutOfRange {
+                            field_count: substs.field_tys(def_id, tcx).count() + 1
                         })
                     }
                 }
@@ -403,15 +421,8 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                                variant_index);
                 };
             }
-            StatementKind::StorageLive(ref lv) |
-            StatementKind::StorageDead(ref lv) => {
-                match *lv {
-                    Lvalue::Local(_) => {}
-                    _ => {
-                        span_mirbug!(self, stmt, "bad lvalue: expected local");
-                    }
-                }
-            }
+            StatementKind::StorageLive(_) |
+            StatementKind::StorageDead(_) |
             StatementKind::InlineAsm { .. } |
             StatementKind::EndRegion(_) |
             StatementKind::Validate(..) |
@@ -428,6 +439,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
             TerminatorKind::Goto { .. } |
             TerminatorKind::Resume |
             TerminatorKind::Return |
+            TerminatorKind::GeneratorDrop |
             TerminatorKind::Unreachable |
             TerminatorKind::Drop { .. } => {
                 // no checks needed for these
@@ -494,6 +506,22 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                     }
                 }
             }
+            TerminatorKind::Yield { ref value, .. } => {
+                let value_ty = value.ty(mir, tcx);
+                match mir.yield_ty {
+                    None => span_mirbug!(self, term, "yield in non-generator"),
+                    Some(ty) => {
+                        if let Err(terr) = self.sub_types(value_ty, ty) {
+                            span_mirbug!(self,
+                                term,
+                                "type of yield value is {:?}, but the yield type is {:?}: {:?}",
+                                value_ty,
+                                ty,
+                                terr);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -545,10 +573,10 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
         match operand {
             &Operand::Constant(box Constant {
                 literal: Literal::Value {
-                    value: ConstVal::Function(def_id, _), ..
+                    value: &ty::Const { val: ConstVal::Function(def_id, _), .. }, ..
                 }, ..
             }) => {
-                Some(def_id) == self.tcx().lang_items.box_free_fn()
+                Some(def_id) == self.tcx().lang_items().box_free_fn()
             }
             _ => false,
         }
@@ -618,6 +646,20 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
             TerminatorKind::Return => {
                 if is_cleanup {
                     span_mirbug!(self, block, "return on cleanup block")
+                }
+            }
+            TerminatorKind::GeneratorDrop { .. } => {
+                if is_cleanup {
+                    span_mirbug!(self, block, "generator_drop in cleanup block")
+                }
+            }
+            TerminatorKind::Yield { resume, drop, .. } => {
+                if is_cleanup {
+                    span_mirbug!(self, block, "yield in cleanup block")
+                }
+                self.assert_iscleanup(mir, block, resume, is_cleanup);
+                if let Some(drop) = drop {
+                    self.assert_iscleanup(mir, block, drop, is_cleanup);
                 }
             }
             TerminatorKind::Unreachable => {}

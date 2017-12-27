@@ -13,7 +13,6 @@
 // completely accurate (some things might be counted twice, others missed).
 
 use rustc_const_math::{ConstUsize};
-use rustc::middle::const_val::{ConstVal};
 use rustc::mir::{AggregateKind, AssertMessage, BasicBlock, BasicBlockData};
 use rustc::mir::{Constant, Literal, Location, LocalDecl};
 use rustc::mir::{Lvalue, LvalueElem, LvalueProjection};
@@ -21,7 +20,7 @@ use rustc::mir::{Mir, Operand, ProjectionElem};
 use rustc::mir::{Rvalue, SourceInfo, Statement, StatementKind};
 use rustc::mir::{Terminator, TerminatorKind, VisibilityScope, VisibilityScopeData};
 use rustc::mir::visit as mir_visit;
-use rustc::ty::{ClosureSubsts, TyCtxt};
+use rustc::ty::{self, ClosureSubsts, TyCtxt};
 use rustc::util::nodemap::{FxHashMap};
 
 struct NodeData {
@@ -120,6 +119,8 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
             TerminatorKind::DropAndReplace { .. } => "TerminatorKind::DropAndReplace",
             TerminatorKind::Call { .. } => "TerminatorKind::Call",
             TerminatorKind::Assert { .. } => "TerminatorKind::Assert",
+            TerminatorKind::GeneratorDrop => "TerminatorKind::GeneratorDrop",
+            TerminatorKind::Yield { .. } => "TerminatorKind::Yield",
         }, kind);
         self.super_terminator_kind(block, kind, location);
     }
@@ -131,6 +132,12 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
         self.record(match *msg {
             AssertMessage::BoundsCheck { .. } => "AssertMessage::BoundsCheck",
             AssertMessage::Math(..) => "AssertMessage::Math",
+            AssertMessage::GeneratorResumedAfterReturn => {
+                "AssertMessage::GeneratorResumedAfterReturn"
+            }
+            AssertMessage::GeneratorResumedAfterPanic => {
+                "AssertMessage::GeneratorResumedAfterPanic"
+            }
         }, msg);
         self.super_assert_message(msg, location);
     }
@@ -158,6 +165,7 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
                     AggregateKind::Tuple => "AggregateKind::Tuple",
                     AggregateKind::Adt(..) => "AggregateKind::Adt",
                     AggregateKind::Closure(..) => "AggregateKind::Closure",
+                    AggregateKind::Generator(..) => "AggregateKind::Generator",
                 }, kind);
 
                 "Rvalue::Aggregate"
@@ -227,7 +235,6 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
                      location: Location) {
         self.record("Literal", literal);
         self.record(match *literal {
-            Literal::Item { .. } => "Literal::Item",
             Literal::Value { .. } => "Literal::Value",
             Literal::Promoted { .. } => "Literal::Promoted",
         }, literal);
@@ -247,11 +254,11 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
         self.super_closure_substs(substs);
     }
 
-    fn visit_const_val(&mut self,
-                       const_val: &ConstVal,
-                       _: Location) {
-        self.record("ConstVal", const_val);
-        self.super_const_val(const_val);
+    fn visit_const(&mut self,
+                   constant: &&'tcx ty::Const<'tcx>,
+                   _: Location) {
+        self.record("Const", constant);
+        self.super_const(constant);
     }
 
     fn visit_const_usize(&mut self,

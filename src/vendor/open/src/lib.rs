@@ -2,22 +2,41 @@
 //!
 //! # Usage
 //!
+//! The following should open the given URL in a web browser
+//!
 //! ```test_harness,no_run
 //! extern crate open;
 //!
 //! # #[test]
 //! # fn doit() {
-//! open::that("/path/to/file/with.fancy-extension");
-//! if open::that("https://rust-lang.org").is_ok() {
-//!     println!("Look at your browser !");
-//! }
+//! open::that("http://rust-lang.org").unwrap();
 //! # }
 //! ```
 //!
 //! # Notes
+//!
 //! As an operating system program is used, chances are that the open operation fails.
-//! Therfore, you are advised to at least check the result with `.is_err()` and
+//! Therefore, you are advised to at least check the result with `.is_err()` and
 //! behave accordingly, e.g. by letting the user know what you tried to open, and failed.
+//!
+//! ```
+//! # fn doit() {
+//! match open::that("http://rust-lang.org") {
+//!     Ok(exit_status) => {
+//!         if exit_status.success() {
+//!             println!("Look at your browser !");
+//!         } else {
+//!             if let Some(code) = exit_status.code() {
+//!                 println!("Command returned non-zero exit status {}!", code);
+//!             } else {
+//!                 println!("Command returned with unknown exit status!");
+//!             }
+//!         }
+//!     }
+//!     Err(why) => println!("Failure to execute command: {}", why),
+//! }
+//! # }
+//! ```
 use std::io;
 use std::process::{Command, ExitStatus};
 use std::ffi::OsStr;
@@ -40,7 +59,7 @@ pub fn that<T:AsRef<OsStr>+Sized>(path: T) -> io::Result<ExitStatus> {
 #[cfg(target_os = "windows")]
 pub fn that<T:AsRef<OsStr>+Sized>(path: T) -> io::Result<ExitStatus> {
     let mut cmd = Command::new("cmd");
-    cmd.arg("/C").arg("start");
+    cmd.arg("/C").arg("start").arg("");
     if let Some(s) = path.as_ref().to_str() {
         cmd.arg(s.replace("&", "^&"));
     } else {

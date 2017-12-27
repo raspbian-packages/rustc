@@ -22,11 +22,13 @@ pub fn target() -> TargetResult {
     base.max_atomic_width = Some(64);
     // see #36994
     base.exe_allocation_crate = None;
+    base.min_global_align = Some(16);
 
     Ok(Target {
         llvm_target: "s390x-unknown-linux-gnu".to_string(),
         target_endian: "big".to_string(),
         target_pointer_width: "64".to_string(),
+        target_c_int_width: "32".to_string(),
         data_layout: "E-m:e-i1:8:16-i8:8:16-i64:64-f128:64-a:8:16-n32:64".to_string(),
         arch: "s390x".to_string(),
         target_os: "linux".to_string(),

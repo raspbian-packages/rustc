@@ -29,7 +29,6 @@ use syntax::ast;
 use syntax_pos::Span;
 
 use std::fmt;
-use std::u32;
 
 pub struct ElaborateDrops;
 
@@ -46,7 +45,7 @@ impl MirPass for ElaborateDrops {
         }
         let id = src.item_id();
         let param_env = tcx.param_env(tcx.hir.local_def_id(id));
-        let move_data = MoveData::gather_moves(mir, tcx, param_env);
+        let move_data = MoveData::gather_moves(mir, tcx, param_env).unwrap();
         let elaborate_patch = {
             let mir = &*mir;
             let env = MoveDataParamEnv {
@@ -96,42 +95,42 @@ fn find_dead_unwinds<'a, 'tcx>(
                            MaybeInitializedLvals::new(tcx, mir, &env),
                            |bd, p| &bd.move_data().move_paths[p]);
     for (bb, bb_data) in mir.basic_blocks().iter_enumerated() {
-        match bb_data.terminator().kind {
+        let location = match bb_data.terminator().kind {
             TerminatorKind::Drop { ref location, unwind: Some(_), .. } |
-            TerminatorKind::DropAndReplace { ref location, unwind: Some(_), .. } => {
-                let mut init_data = InitializationData {
-                    live: flow_inits.sets().on_entry_set_for(bb.index()).to_owned(),
-                    dead: IdxSetBuf::new_empty(env.move_data.move_paths.len()),
-                };
-                debug!("find_dead_unwinds @ {:?}: {:?}; init_data={:?}",
-                       bb, bb_data, init_data.live);
-                for stmt in 0..bb_data.statements.len() {
-                    let loc = Location { block: bb, statement_index: stmt };
-                    init_data.apply_location(tcx, mir, env, loc);
-                }
+            TerminatorKind::DropAndReplace { ref location, unwind: Some(_), .. } => location,
+            _ => continue,
+        };
 
-                let path = match env.move_data.rev_lookup.find(location) {
-                    LookupResult::Exact(e) => e,
-                    LookupResult::Parent(..) => {
-                        debug!("find_dead_unwinds: has parent; skipping");
-                        continue
-                    }
-                };
+        let mut init_data = InitializationData {
+            live: flow_inits.sets().on_entry_set_for(bb.index()).to_owned(),
+            dead: IdxSetBuf::new_empty(env.move_data.move_paths.len()),
+        };
+        debug!("find_dead_unwinds @ {:?}: {:?}; init_data={:?}",
+               bb, bb_data, init_data.live);
+        for stmt in 0..bb_data.statements.len() {
+            let loc = Location { block: bb, statement_index: stmt };
+            init_data.apply_location(tcx, mir, env, loc);
+        }
 
-                debug!("find_dead_unwinds @ {:?}: path({:?})={:?}", bb, location, path);
-
-                let mut maybe_live = false;
-                on_all_drop_children_bits(tcx, mir, &env, path, |child| {
-                    let (child_maybe_live, _) = init_data.state(child);
-                    maybe_live |= child_maybe_live;
-                });
-
-                debug!("find_dead_unwinds @ {:?}: maybe_live={}", bb, maybe_live);
-                if !maybe_live {
-                    dead_unwinds.add(&bb);
-                }
+        let path = match env.move_data.rev_lookup.find(location) {
+            LookupResult::Exact(e) => e,
+            LookupResult::Parent(..) => {
+                debug!("find_dead_unwinds: has parent; skipping");
+                continue
             }
-            _ => {}
+        };
+
+        debug!("find_dead_unwinds @ {:?}: path({:?})={:?}", bb, location, path);
+
+        let mut maybe_live = false;
+        on_all_drop_children_bits(tcx, mir, &env, path, |child| {
+            let (child_maybe_live, _) = init_data.state(child);
+            maybe_live |= child_maybe_live;
+        });
+
+        debug!("find_dead_unwinds @ {:?}: maybe_live={}", bb, maybe_live);
+        if !maybe_live {
+            dead_unwinds.add(&bb);
         }
     }
 
@@ -193,7 +192,7 @@ impl<'a, 'b, 'tcx> DropElaborator<'a, 'tcx> for Elaborator<'a, 'b, 'tcx> {
         self.ctxt.mir
     }
 
-    fn tcx(&self) -> ty::TyCtxt<'a, 'tcx, 'tcx> {
+    fn tcx(&self) -> TyCtxt<'a, 'tcx, 'tcx> {
         self.ctxt.tcx
     }
 
@@ -314,7 +313,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         let patch = &mut self.patch;
         debug!("create_drop_flag({:?})", self.mir.span);
         self.drop_flags.entry(index).or_insert_with(|| {
-            patch.new_temp(tcx.types.bool, span)
+            patch.new_internal(tcx.types.bool, span)
         });
     }
 
@@ -521,7 +520,12 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         Rvalue::Use(Operand::Constant(Box::new(Constant {
             span,
             ty: self.tcx.types.bool,
-            literal: Literal::Value { value: ConstVal::Bool(val) }
+            literal: Literal::Value {
+                value: self.tcx.mk_const(ty::Const {
+                    val: ConstVal::Bool(val),
+                    ty: self.tcx.types.bool
+                })
+            }
         })))
     }
 

@@ -116,7 +116,9 @@ impl Parameter {
     pub fn parse(s: &str) -> Result<Parameter, TemplateError> {
         let mut parser = Rdp::new(StringInput::new(s));
         if !parser.parameter() {
-            return Err(TemplateError::of(TemplateErrorReason::InvalidParam(s.to_owned())));
+            return Err(TemplateError::of(
+                TemplateErrorReason::InvalidParam(s.to_owned()),
+            ));
         }
 
         let mut it = parser.queue().iter().peekable();
@@ -133,6 +135,10 @@ impl Template {
         }
     }
 
+    fn unescape_tags(txt: &str) -> String {
+        txt.replace(r"\\{{", "{{")
+    }
+
     fn push_element(&mut self, e: TemplateElement, line: usize, col: usize) {
         self.elements.push(e);
         if let Some(ref mut maps) = self.mapping {
@@ -145,17 +151,18 @@ impl Template {
     }
 
     #[inline]
-    fn parse_subexpression<'a>(source: &'a str,
-                               it: &mut Peekable<Iter<Token<Rule>>>,
-                               limit: usize)
-                               -> Result<Parameter, TemplateError> {
+    fn parse_subexpression<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        limit: usize,
+    ) -> Result<Parameter, TemplateError> {
         let espec = try!(Template::parse_expression(source, it.by_ref(), limit));
         if let Parameter::Name(name) = espec.name {
             Ok(Parameter::Subexpression(Subexpression {
-                                            name: name,
-                                            params: espec.params,
-                                            hash: espec.hash,
-                                        }))
+                name: name,
+                params: espec.params,
+                hash: espec.hash,
+            }))
         } else {
             // line/col no
             Err(TemplateError::of(TemplateErrorReason::NestedSubexpression))
@@ -163,16 +170,19 @@ impl Template {
     }
 
     #[inline]
-    fn parse_name<'a>(source: &'a str,
-                      it: &mut Peekable<Iter<Token<Rule>>>,
-                      _: usize)
-                      -> Result<Parameter, TemplateError> {
+    fn parse_name<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        _: usize,
+    ) -> Result<Parameter, TemplateError> {
         let name_node = it.next().unwrap();
         match name_node.rule {
             Rule::identifier |
             Rule::reference |
             Rule::invert_tag_item => {
-                Ok(Parameter::Name(source[name_node.start..name_node.end].to_owned()))
+                Ok(Parameter::Name(
+                    source[name_node.start..name_node.end].to_owned(),
+                ))
             }
             Rule::subexpression => {
                 Template::parse_subexpression(source, it.by_ref(), name_node.end)
@@ -182,10 +192,11 @@ impl Template {
     }
 
     #[inline]
-    fn parse_param<'a>(source: &'a str,
-                       it: &mut Peekable<Iter<Token<Rule>>>,
-                       _: usize)
-                       -> Result<Parameter, TemplateError> {
+    fn parse_param<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        _: usize,
+    ) -> Result<Parameter, TemplateError> {
         let mut param = it.next().unwrap();
         if param.rule == Rule::param {
             param = it.next().unwrap();
@@ -201,7 +212,11 @@ impl Template {
                 }
             }
             Rule::subexpression => {
-                try!(Template::parse_subexpression(source, it.by_ref(), param.end))
+                try!(Template::parse_subexpression(
+                    source,
+                    it.by_ref(),
+                    param.end,
+                ))
             }
             _ => unreachable!(),
         };
@@ -222,10 +237,11 @@ impl Template {
     }
 
     #[inline]
-    fn parse_hash<'a>(source: &'a str,
-                      it: &mut Peekable<Iter<Token<Rule>>>,
-                      limit: usize)
-                      -> Result<(String, Parameter), TemplateError> {
+    fn parse_hash<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        limit: usize,
+    ) -> Result<(String, Parameter), TemplateError> {
         let name = it.next().unwrap();
         // identifier
         let key = source[name.start..name.end].to_owned();
@@ -235,33 +251,37 @@ impl Template {
     }
 
     #[inline]
-    fn parse_block_param<'a>(source: &'a str,
-                             it: &mut Peekable<Iter<Token<Rule>>>,
-                             limit: usize)
-                             -> Result<BlockParam, TemplateError> {
+    fn parse_block_param<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        limit: usize,
+    ) -> Result<BlockParam, TemplateError> {
         let p1_name = it.next().unwrap();
         // identifier
         let p1 = source[p1_name.start..p1_name.end].to_owned();
 
         let p2 = it.peek().and_then(|p2_name| if p2_name.end <= limit {
-                                        Some(source[p2_name.start..p2_name.end].to_owned())
-                                    } else {
-                                        None
-                                    });
+            Some(source[p2_name.start..p2_name.end].to_owned())
+        } else {
+            None
+        });
 
         if p2.is_some() {
             it.next();
-            Ok(BlockParam::Pair((Parameter::Name(p1), Parameter::Name(p2.unwrap()))))
+            Ok(BlockParam::Pair(
+                (Parameter::Name(p1), Parameter::Name(p2.unwrap())),
+            ))
         } else {
             Ok(BlockParam::Single(Parameter::Name(p1)))
         }
     }
 
     #[inline]
-    fn parse_expression<'a>(source: &'a str,
-                            it: &mut Peekable<Iter<Token<Rule>>>,
-                            limit: usize)
-                            -> Result<ExpressionSpec, TemplateError> {
+    fn parse_expression<'a>(
+        source: &'a str,
+        it: &mut Peekable<Iter<Token<Rule>>>,
+        limit: usize,
+    ) -> Result<ExpressionSpec, TemplateError> {
         let mut params: Vec<Parameter> = Vec::new();
         let mut hashes: BTreeMap<String, Parameter> = BTreeMap::new();
         let mut omit_pre_ws = false;
@@ -309,13 +329,13 @@ impl Template {
             }
         }
         Ok(ExpressionSpec {
-               name: name,
-               params: params,
-               hash: hashes,
-               block_param: block_param,
-               omit_pre_ws: omit_pre_ws,
-               omit_pro_ws: omit_pro_ws,
-           })
+            name: name,
+            params: params,
+            hash: hashes,
+            block_param: block_param,
+            omit_pre_ws: omit_pre_ws,
+            omit_pro_ws: omit_pro_ws,
+        })
     }
 
     #[inline]
@@ -344,7 +364,10 @@ impl Template {
         if !parser.handlebars() {
             let (_, pos) = parser.expected();
             let (line_no, col_no) = parser.input().line_col(pos);
-            return Err(TemplateError::of(TemplateErrorReason::InvalidSyntax).at(line_no, col_no));
+            return Err(TemplateError::of(TemplateErrorReason::InvalidSyntax).at(
+                line_no,
+                col_no,
+            ));
         }
 
         let mut it = parser.queue().iter().peekable();
@@ -354,17 +377,26 @@ impl Template {
 
                 if token.rule != Rule::template {
                     if token.start != prev_end && !omit_pro_ws && token.rule != Rule::raw_text &&
-                       token.rule != Rule::raw_block_text {
+                        token.rule != Rule::raw_block_text
+                    {
                         let (line_no, col_no) = parser.input().line_col(prev_end);
                         if token.rule == Rule::raw_block_end {
                             let text = &source[prev_end..token.start];
                             let mut t = Template::new(mapping);
-                            t.push_element(RawString(text.to_owned()), line_no, col_no);
+                            t.push_element(
+                                RawString(Template::unescape_tags(text)),
+                                line_no,
+                                col_no,
+                            );
                             template_stack.push_front(t);
                         } else {
                             let text = &source[prev_end..token.start];
                             let mut t = template_stack.front_mut().unwrap();
-                            t.push_element(RawString(text.to_owned()), line_no, col_no);
+                            t.push_element(
+                                RawString(Template::unescape_tags(text)),
+                                line_no,
+                                col_no,
+                            );
                         }
                     }
                 }
@@ -380,7 +412,7 @@ impl Template {
                             text = text.trim_left();
                         }
                         let mut t = template_stack.front_mut().unwrap();
-                        t.push_element(RawString(text.to_owned()), line_no, col_no);
+                        t.push_element(RawString(Template::unescape_tags(text)), line_no, col_no);
                     }
                     Rule::helper_block_start |
                     Rule::raw_block_start |
@@ -445,7 +477,7 @@ impl Template {
                             text = text.trim_left();
                         }
                         let mut t = Template::new(mapping);
-                        t.push_element(RawString(text.to_owned()), line_no, col_no);
+                        t.push_element(RawString(Template::unescape_tags(text)), line_no, col_no);
                         template_stack.push_front(t);
                     }
                     Rule::expression |
@@ -519,9 +551,14 @@ impl Template {
                                     let t = template_stack.front_mut().unwrap();
                                     t.elements.push(HelperBlock(h));
                                 } else {
-                                    return Err(TemplateError::of(
-                                        TemplateErrorReason::MismatchingClosedHelper(
-                                            h.name, close_tag_name)).at(line_no, col_no));
+                                    return Err(
+                                        TemplateError::of(
+                                            TemplateErrorReason::MismatchingClosedHelper(
+                                                h.name,
+                                                close_tag_name,
+                                            ),
+                                        ).at(line_no, col_no),
+                                    );
                                 }
                             }
                             Rule::directive_block_end |
@@ -538,9 +575,14 @@ impl Template {
                                         t.elements.push(PartialBlock(d));
                                     }
                                 } else {
-                                    return Err(TemplateError::of(
-                                        TemplateErrorReason::MismatchingClosedDirective(
-                                            d.name, close_tag_name)).at(line_no, col_no));
+                                    return Err(
+                                        TemplateError::of(
+                                            TemplateErrorReason::MismatchingClosedDirective(
+                                                d.name,
+                                                close_tag_name,
+                                            ),
+                                        ).at(line_no, col_no),
+                                    );
                                 }
                             }
                             _ => unreachable!(),
@@ -569,10 +611,11 @@ impl Template {
         }
     }
 
-    pub fn compile_with_name<S: AsRef<str>>(source: S,
-                                            name: String,
-                                            mapping: bool)
-                                            -> Result<Template, TemplateError> {
+    pub fn compile_with_name<S: AsRef<str>>(
+        source: S,
+        name: String,
+        mapping: bool,
+    ) -> Result<Template, TemplateError> {
         match Template::compile2(source, mapping) {
             Ok(mut t) => {
                 t.name = Some(name);
@@ -598,6 +641,28 @@ pub enum TemplateElement {
 }
 
 #[test]
+fn test_parse_escaped_tag_raw_string() {
+    let source = r"foo \\{{bar}}";
+    let t = Template::compile(source.to_string()).ok().unwrap();
+    assert_eq!(t.elements.len(), 1);
+    assert_eq!(
+        *t.elements.get(0).unwrap(),
+        RawString("foo {{bar}}".to_string())
+    );
+}
+
+#[test]
+fn test_parse_escaped_block_raw_string() {
+    let source = r"\\{{{{foo}}}} bar";
+    let t = Template::compile(source.to_string()).ok().unwrap();
+    assert_eq!(t.elements.len(), 1);
+    assert_eq!(
+        *t.elements.get(0).unwrap(),
+        RawString("{{{{foo}}}} bar".to_string())
+    );
+}
+
+#[test]
 fn test_parse_template() {
     let source = "<h1>{{title}} 你好</h1> {{{content}}}
 {{#if date}}<p>good</p>{{else}}<p>bad</p>{{/if}}<img>{{foo bar}}中文你好
@@ -607,22 +672,21 @@ fn test_parse_template() {
     assert_eq!(t.elements.len(), 10);
 
     assert_eq!(*t.elements.get(0).unwrap(), RawString("<h1>".to_string()));
-    assert_eq!(*t.elements.get(1).unwrap(),
-               Expression(Parameter::Name("title".to_string())));
+    assert_eq!(
+        *t.elements.get(1).unwrap(),
+        Expression(Parameter::Name("title".to_string()))
+    );
 
-    assert_eq!(*t.elements.get(3).unwrap(),
-               HTMLExpression(Parameter::Name("content".to_string())));
+    assert_eq!(
+        *t.elements.get(3).unwrap(),
+        HTMLExpression(Parameter::Name("content".to_string()))
+    );
 
     match *t.elements.get(5).unwrap() {
         HelperBlock(ref h) => {
             assert_eq!(h.name, "if".to_string());
             assert_eq!(h.params.len(), 1);
-            assert_eq!(h.template
-                           .as_ref()
-                           .unwrap()
-                           .elements
-                           .len(),
-                       1);
+            assert_eq!(h.template.as_ref().unwrap().elements.len(), 1);
         }
         _ => {
             panic!("Helper expected here.");
@@ -644,12 +708,7 @@ fn test_parse_template() {
         HelperBlock(ref h) => {
             assert_eq!(h.name, "unless".to_string());
             assert_eq!(h.params.len(), 1);
-            assert_eq!(h.inverse
-                           .as_ref()
-                           .unwrap()
-                           .elements
-                           .len(),
-                       1);
+            assert_eq!(h.inverse.as_ref().unwrap().elements.len(), 1);
         }
         _ => {
             panic!("Helper expression here");
@@ -664,8 +723,10 @@ fn test_parse_error() {
 
     let t = Template::compile(source.to_string());
 
-    assert_eq!(t.unwrap_err(),
-               TemplateError::of(TemplateErrorReason::InvalidSyntax).at(4, 5));
+    assert_eq!(
+        t.unwrap_err(),
+        TemplateError::of(TemplateErrorReason::InvalidSyntax).at(4, 5)
+    );
 }
 
 #[test]
@@ -750,22 +811,20 @@ fn test_white_space_omitter() {
     assert_eq!(t.elements[1], Expression(Parameter::Name("world".into())));
     assert_eq!(t.elements[2], RawString("!".to_string()));
 
-    let t2 = Template::compile("{{#if true}}1  {{~ else ~}} 2 {{~/if}}".to_string()).ok().unwrap();
+    let t2 = Template::compile("{{#if true}}1  {{~ else ~}} 2 {{~/if}}".to_string())
+        .ok()
+        .unwrap();
     assert_eq!(t2.elements.len(), 1);
     match t2.elements[0] {
         HelperBlock(ref h) => {
-            assert_eq!(h.template
-                           .as_ref()
-                           .unwrap()
-                           .elements
-                           [0],
-                       RawString("1".to_string()));
-            assert_eq!(h.inverse
-                           .as_ref()
-                           .unwrap()
-                           .elements
-                           [0],
-                       RawString("2".to_string()));
+            assert_eq!(
+                h.template.as_ref().unwrap().elements[0],
+                RawString("1".to_string())
+            );
+            assert_eq!(
+                h.inverse.as_ref().unwrap().elements[0],
+                RawString("2".to_string())
+            );
         }
         _ => unreachable!(),
     }
@@ -802,8 +861,10 @@ fn test_raw_helper() {
                     assert_eq!(h.name, "raw".to_owned());
                     if let Some(ref ht) = h.template {
                         assert_eq!(ht.elements.len(), 1);
-                        assert_eq!(*ht.elements.get(0).unwrap(),
-                                   RawString("good{{night}}".to_owned()));
+                        assert_eq!(
+                            *ht.elements.get(0).unwrap(),
+                            RawString("good{{night}}".to_owned())
+                        );
                     } else {
                         panic!("helper template not found");
                     }
@@ -827,8 +888,10 @@ fn test_literal_parameter_parser() {
         Ok(t) => {
             if let HelperExpression(ref ht) = t.elements[0] {
                 assert_eq!(ht.params[0], Parameter::Literal(Json::U64(1)));
-                assert_eq!(ht.hash["name"],
-                           Parameter::Literal(Json::String("value".to_owned())));
+                assert_eq!(
+                    ht.hash["name"],
+                    Parameter::Literal(Json::String("value".to_owned()))
+                );
                 assert_eq!(ht.hash["valid"], Parameter::Literal(Json::Boolean(false)));
                 assert_eq!(ht.hash["ref"], Parameter::Name("someref".to_owned()));
             }
@@ -844,8 +907,10 @@ fn test_literal_parameter_parser() {
         Ok(t) => {
             if let HelperExpression(ref ht) = t.elements[0] {
                 assert_eq!(ht.params[0], Parameter::Literal(Json::U64(1)));
-                assert_eq!(ht.hash["name"],
-                           Parameter::Literal(Json::String("value".to_owned())));
+                assert_eq!(
+                    ht.hash["name"],
+                    Parameter::Literal(Json::String("value".to_owned()))
+                );
                 assert_eq!(ht.hash["valid"], Parameter::Literal(Json::Bool(false)));
                 assert_eq!(ht.hash["ref"], Parameter::Name("someref".to_owned()));
             }
@@ -873,13 +938,11 @@ fn test_template_mapping() {
 
 #[test]
 fn test_whitespace_elements() {
-    let c = Template::compile("  {{elem}}\n\t{{#if true}} \
-                               {{/if}}\n{{{{raw}}}} {{{{/raw}}}}\n{{{{raw}}}}{{{{/raw}}}}\n");
-    assert_eq!(c.ok()
-                   .unwrap()
-                   .elements
-                   .len(),
-               9);
+    let c = Template::compile(
+        "  {{elem}}\n\t{{#if true}} \
+                               {{/if}}\n{{{{raw}}}} {{{{/raw}}}}\n{{{{raw}}}}{{{{/raw}}}}\n",
+    );
+    assert_eq!(c.ok().unwrap().elements.len(), 9);
 }
 
 #[test]
@@ -903,7 +966,8 @@ fn test_block_param() {
         Ok(t) => {
             if let HelperBlock(ref ht) = t.elements[0] {
                 if let Some(BlockParam::Pair((Parameter::Name(ref n1),
-                                              Parameter::Name(ref n2)))) = ht.block_param {
+                                              Parameter::Name(ref n2)))) = ht.block_param
+                {
                     assert_eq!(n1, "key");
                     assert_eq!(n2, "val");
                 } else {
@@ -918,7 +982,6 @@ fn test_block_param() {
 }
 
 #[test]
-#[cfg(not(feature="partial_legacy"))]
 fn test_directive() {
     match Template::compile("hello {{* ssh}} world") {
         Err(e) => panic!("{}", e),
@@ -940,36 +1003,40 @@ fn test_directive() {
         }
     }
 
-    match Template::compile("{{#*inline \"hello\"}}expand to hello{{/inline}}{{> hello}}") {
+    match Template::compile(
+        "{{#*inline \"hello\"}}expand to hello{{/inline}}{{> hello}}",
+    ) {
         Err(e) => panic!("{}", e),
         Ok(t) => {
             if let DirectiveBlock(ref db) = t.elements[0] {
                 assert_eq!(db.name, Parameter::Name("inline".to_owned()));
-                assert_eq!(db.params[0],
-                           Parameter::Literal(Json::String("hello".to_owned())));
-                assert_eq!(db.template
-                               .as_ref()
-                               .unwrap()
-                               .elements
-                               [0],
-                           TemplateElement::RawString("expand to hello".to_owned()));
+                assert_eq!(
+                    db.params[0],
+                    Parameter::Literal(Json::String("hello".to_owned()))
+                );
+                assert_eq!(
+                    db.template.as_ref().unwrap().elements[0],
+                    TemplateElement::RawString("expand to hello".to_owned())
+                );
             }
         }
     }
 
-    match Template::compile("{{#> layout \"hello\"}}expand to hello{{/layout}}{{> hello}}") {
+    match Template::compile(
+        "{{#> layout \"hello\"}}expand to hello{{/layout}}{{> hello}}",
+    ) {
         Err(e) => panic!("{}", e),
         Ok(t) => {
             if let PartialBlock(ref db) = t.elements[0] {
                 assert_eq!(db.name, Parameter::Name("layout".to_owned()));
-                assert_eq!(db.params[0],
-                           Parameter::Literal(Json::String("hello".to_owned())));
-                assert_eq!(db.template
-                               .as_ref()
-                               .unwrap()
-                               .elements
-                               [0],
-                           TemplateElement::RawString("expand to hello".to_owned()));
+                assert_eq!(
+                    db.params[0],
+                    Parameter::Literal(Json::String("hello".to_owned()))
+                );
+                assert_eq!(
+                    db.template.as_ref().unwrap().elements[0],
+                    TemplateElement::RawString("expand to hello".to_owned())
+                );
             }
         }
     }

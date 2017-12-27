@@ -53,8 +53,10 @@
 
 use alloc::allocator;
 use any::TypeId;
+use borrow::Cow;
 use cell;
 use char;
+use convert;
 use fmt::{self, Debug, Display};
 use mem::transmute;
 use num;
@@ -217,6 +219,20 @@ impl<'a> From<&'a str> for Box<Error> {
     }
 }
 
+#[stable(feature = "cow_box_error", since = "1.22.0")]
+impl<'a, 'b> From<Cow<'b, str>> for Box<Error + Send + Sync + 'a> {
+    fn from(err: Cow<'b, str>) -> Box<Error + Send + Sync + 'a> {
+        From::from(String::from(err))
+    }
+}
+
+#[stable(feature = "cow_box_error", since = "1.22.0")]
+impl<'a> From<Cow<'a, str>> for Box<Error> {
+    fn from(err: Cow<'a, str>) -> Box<Error> {
+        From::from(String::from(err))
+    }
+}
+
 #[unstable(feature = "never_type_impls", issue = "35121")]
 impl Error for ! {
     fn description(&self) -> &str { *self }
@@ -347,6 +363,13 @@ impl Error for char::ParseCharError {
     }
 }
 
+#[unstable(feature = "try_from", issue = "33417")]
+impl Error for convert::Infallible {
+    fn description(&self) -> &str {
+        match *self {
+        }
+    }
+}
 
 // copied from any.rs
 impl Error + 'static {

@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use serde::Serialize;
 use serde_json::value::{Value as Json, Map, to_value};
 
@@ -5,6 +7,7 @@ use pest::prelude::*;
 use std::collections::{VecDeque, BTreeMap};
 
 use grammar::{Rdp, Rule};
+use error::RenderError;
 
 static DEFAULT_VALUE: Json = Json::Null;
 
@@ -14,11 +17,14 @@ pub type Object = BTreeMap<String, Json>;
 ///
 #[derive(Debug, Clone)]
 pub struct Context {
-    data: Json,
+    data: Arc<Json>,
 }
 
 #[inline]
-fn parse_json_visitor_inner<'a>(path_stack: &mut VecDeque<&'a str>, path: &'a str) {
+fn parse_json_visitor_inner<'a>(
+    path_stack: &mut VecDeque<&'a str>,
+    path: &'a str,
+) -> Result<(), RenderError> {
     let path_in = StringInput::new(path);
     let mut parser = Rdp::new(path_in);
 
@@ -26,7 +32,6 @@ fn parse_json_visitor_inner<'a>(path_stack: &mut VecDeque<&'a str>, path: &'a st
     if parser.path() {
         for seg in parser.queue().iter() {
             match seg.rule {
-                Rule::path_var | Rule::path_idx | Rule::path_key => {}
                 Rule::path_up => {
                     path_stack.pop_back();
                     if let Some(p) = seg_stack.pop_back() {
@@ -37,8 +42,7 @@ fn parse_json_visitor_inner<'a>(path_stack: &mut VecDeque<&'a str>, path: &'a st
                     }
                 }
                 Rule::path_id |
-                Rule::path_raw_id |
-                Rule::path_num_id => {
+                Rule::path_raw_id => {
                     seg_stack.push_back(seg);
                 }
                 _ => {}
@@ -49,14 +53,19 @@ fn parse_json_visitor_inner<'a>(path_stack: &mut VecDeque<&'a str>, path: &'a st
             let id = &path[i.start..i.end];
             path_stack.push_back(id);
         }
+        Ok(())
+    } else {
+        Err(RenderError::new("Invalid JSON path"))
     }
 }
 
 #[inline]
-fn parse_json_visitor<'a>(path_stack: &mut VecDeque<&'a str>,
-                          base_path: &'a str,
-                          path_context: &'a VecDeque<String>,
-                          relative_path: &'a str) {
+fn parse_json_visitor<'a>(
+    path_stack: &mut VecDeque<&'a str>,
+    base_path: &'a str,
+    path_context: &'a VecDeque<String>,
+    relative_path: &'a str,
+) -> Result<(), RenderError> {
     let path_in = StringInput::new(relative_path);
     let mut parser = Rdp::new(path_in);
 
@@ -78,27 +87,26 @@ fn parse_json_visitor<'a>(path_stack: &mut VecDeque<&'a str>,
 
         if path_context_depth >= 0 {
             if let Some(context_base_path) = path_context.get(path_context_depth as usize) {
-                parse_json_visitor_inner(path_stack, context_base_path);
+                parse_json_visitor_inner(path_stack, context_base_path)?;
             } else {
-                parse_json_visitor_inner(path_stack, base_path);
+                parse_json_visitor_inner(path_stack, base_path)?;
             }
         } else {
-            parse_json_visitor_inner(path_stack, base_path);
+            parse_json_visitor_inner(path_stack, base_path)?;
         }
 
-        parse_json_visitor_inner(path_stack, relative_path);
+        parse_json_visitor_inner(path_stack, relative_path)?;
+        Ok(())
+    } else {
+        Err(RenderError::new("Invalid JSON path."))
     }
-    // TODO: report invalid path
+
 }
 
-fn merge_json(base: &Json, addition: &Object) -> Json {
+pub fn merge_json(base: &Json, addition: &Object) -> Json {
     let mut base_map = match base {
         &Json::Object(ref m) => m.clone(),
-        _ => {
-            let mut map = Map::new();
-            map.insert("this".to_owned(), base.clone());
-            map
-        }
+        _ => Map::new(),
     };
 
     for (k, v) in addition.iter() {
@@ -111,21 +119,14 @@ fn merge_json(base: &Json, addition: &Object) -> Json {
 impl Context {
     /// Create a context with null data
     pub fn null() -> Context {
-        Context { data: Json::Null }
+        Context { data: Arc::new(Json::Null) }
     }
 
     /// Create a context with given data
-    pub fn wraps<T: Serialize>(e: &T) -> Context {
-        Context { data: to_json(e) }
-    }
-
-    /// Extend current context with another JSON object
-    /// If current context is a JSON object, it's identical to a normal merge
-    /// Otherwise, the current value will be stored in new JSON object with key `this`, and merged
-    /// keys are also available.
-    pub fn extend(&self, hash: &Object) -> Context {
-        let new_data = merge_json(&self.data, hash);
-        Context { data: new_data }
+    pub fn wraps<T: Serialize>(e: &T) -> Result<Context, RenderError> {
+        to_value(e).map_err(RenderError::from).map(|d| {
+            Context { data: Arc::new(d) }
+        })
     }
 
     /// Navigate the context with base path and relative path
@@ -133,18 +134,19 @@ impl Context {
     /// and set relative path to helper argument or so.
     ///
     /// If you want to navigate from top level, set the base path to `"."`
-    pub fn navigate(&self,
-                    base_path: &str,
-                    path_context: &VecDeque<String>,
-                    relative_path: &str)
-                    -> &Json {
+    pub fn navigate(
+        &self,
+        base_path: &str,
+        path_context: &VecDeque<String>,
+        relative_path: &str,
+    ) -> Result<&Json, RenderError> {
         let mut path_stack: VecDeque<&str> = VecDeque::new();
-        parse_json_visitor(&mut path_stack, base_path, path_context, relative_path);
+        parse_json_visitor(&mut path_stack, base_path, path_context, relative_path)?;
 
         let paths: Vec<&str> = path_stack.iter().map(|x| *x).collect();
-        let mut data: &Json = &self.data;
+        let mut data: &Json = self.data.as_ref();
         for p in paths.iter() {
-            if *p == "this" && data.as_object().and_then(|m| m.get("this")).is_none() {
+            if *p == "this" {
                 continue;
             }
             data = match *data {
@@ -157,15 +159,15 @@ impl Context {
                 _ => &DEFAULT_VALUE,
             }
         }
-        data
+        Ok(data)
     }
 
     pub fn data(&self) -> &Json {
-        &self.data
+        self.data.as_ref()
     }
 
     pub fn data_mut(&mut self) -> &mut Json {
-        &mut self.data
+        Arc::make_mut(&mut self.data)
     }
 }
 
@@ -201,9 +203,10 @@ impl JsonRender for Json {
 }
 
 pub fn to_json<T>(src: &T) -> Json
-    where T: Serialize
+where
+    T: Serialize,
 {
-    to_value(src).unwrap_or(Json::Null)
+    to_value(src).unwrap_or_default()
 }
 
 pub fn as_string(src: &Json) -> Option<&str> {
@@ -226,7 +229,7 @@ impl JsonTruthy for Json {
 #[cfg(test)]
 mod test {
     use context::{self, JsonRender, Context};
-    use std::collections::{VecDeque, BTreeMap};
+    use std::collections::VecDeque;
     use serde_json::value::{Value as Json, Map};
 
     #[test]
@@ -254,9 +257,13 @@ mod test {
     #[test]
     fn test_render() {
         let v = "hello";
-        let ctx = Context::wraps(&v.to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "this").render(),
-                   v.to_string());
+        let ctx = Context::wraps(&v.to_string()).unwrap();
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "this")
+                .unwrap()
+                .render(),
+            v.to_string()
+        );
     }
 
     #[test]
@@ -273,30 +280,48 @@ mod test {
             titles: vec!["programmer".to_string(), "cartographier".to_string()],
         };
 
-        let ctx = Context::wraps(&person);
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "./name/../addr/country").render(),
-                   "China".to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "addr.[country]").render(),
-                   "China".to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "addr.[\"country\"]").render(),
-                   "China".to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "addr.['country']").render(),
-                   "China".to_string());
+        let ctx = Context::wraps(&person).unwrap();
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "./name/../addr/country")
+                .unwrap()
+                .render(),
+            "China".to_string()
+        );
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "addr.[country]")
+                .unwrap()
+                .render(),
+            "China".to_string()
+        );
 
         let v = true;
-        let ctx2 = Context::wraps(&v);
-        assert_eq!(ctx2.navigate(".", &VecDeque::new(), "this").render(),
-                   "true".to_string());
+        let ctx2 = Context::wraps(&v).unwrap();
+        assert_eq!(
+            ctx2.navigate(".", &VecDeque::new(), "this")
+                .unwrap()
+                .render(),
+            "true".to_string()
+        );
 
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "titles[0]").render(),
-                   "programmer".to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "titles.[0]").render(),
-                   "programmer".to_string());
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "titles.[0]")
+                .unwrap()
+                .render(),
+            "programmer".to_string()
+        );
 
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "titles[0]/../../age").render(),
-                   "27".to_string());
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "this.titles[0]/../../age").render(),
-                   "27".to_string());
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "titles.[0]/../../age")
+                .unwrap()
+                .render(),
+            "27".to_string()
+        );
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "this.titles.[0]/../../age")
+                .unwrap()
+                .render(),
+            "27".to_string()
+        );
 
     }
 
@@ -305,50 +330,90 @@ mod test {
         let mut map_with_this = Map::new();
         map_with_this.insert("this".to_string(), context::to_json(&"hello"));
         map_with_this.insert("age".to_string(), context::to_json(&5usize));
-        let ctx1 = Context::wraps(&map_with_this);
+        let ctx1 = Context::wraps(&map_with_this).unwrap();
 
         let mut map_without_this = Map::new();
         map_without_this.insert("age".to_string(), context::to_json(&4usize));
-        let ctx2 = Context::wraps(&map_without_this);
+        let ctx2 = Context::wraps(&map_without_this).unwrap();
 
-        assert_eq!(ctx1.navigate(".", &VecDeque::new(), "this").render(),
-                   "hello".to_owned());
-        assert_eq!(ctx2.navigate(".", &VecDeque::new(), "age").render(),
-                   "4".to_owned());
+        assert_eq!(
+            ctx1.navigate(".", &VecDeque::new(), "this")
+                .unwrap()
+                .render(),
+            "[object]".to_owned()
+        );
+        assert_eq!(
+            ctx2.navigate(".", &VecDeque::new(), "age")
+                .unwrap()
+                .render(),
+            "4".to_owned()
+        );
     }
 
     #[test]
-    fn test_extend() {
-        let mut map = Map::new();
-        map.insert("age".to_string(), context::to_json(&4usize));
-        let ctx1 = Context::wraps(&map);
-
+    fn test_merge_json() {
+        let map = json!({ "age": 4 });
         let s = "hello".to_owned();
-        let ctx2 = Context::wraps(&s);
+        let hash =
+            btreemap!{
+            "tag".to_owned() => context::to_json(&"h1")
+        };
 
-        let mut hash = BTreeMap::new();
-        hash.insert("tag".to_owned(), context::to_json(&"h1"));
-
-        let ctx_a1 = ctx1.extend(&hash);
-        assert_eq!(ctx_a1.navigate(".", &VecDeque::new(), "age").render(),
+        let ctx_a1 = Context::wraps(&context::merge_json(&map, &hash)).unwrap();
+        assert_eq!(ctx_a1
+                       .navigate(".", &VecDeque::new(), "age")
+                       .unwrap()
+                       .render(),
                    "4".to_owned());
-        assert_eq!(ctx_a1.navigate(".", &VecDeque::new(), "tag").render(),
+        assert_eq!(ctx_a1
+                       .navigate(".", &VecDeque::new(), "tag")
+                       .unwrap()
+                       .render(),
                    "h1".to_owned());
 
-        let ctx_a2 = ctx2.extend(&hash);
-        assert_eq!(ctx_a2.navigate(".", &VecDeque::new(), "this").render(),
-                   "hello".to_owned());
-        assert_eq!(ctx_a2.navigate(".", &VecDeque::new(), "tag").render(),
+        let ctx_a2 = Context::wraps(&context::merge_json(&context::to_json(&s), &hash)).unwrap();
+        assert_eq!(ctx_a2
+                       .navigate(".", &VecDeque::new(), "this")
+                       .unwrap()
+                       .render(),
+                   "[object]".to_owned());
+        assert_eq!(ctx_a2
+                       .navigate(".", &VecDeque::new(), "tag")
+                       .unwrap()
+                       .render(),
                    "h1".to_owned());
     }
 
     #[test]
     fn test_key_name_with_this() {
-        let m = btreemap!{
+        let m =
+            btreemap!{
             "this_name".to_string() => "the_value".to_string()
         };
-        let ctx = Context::wraps(&m);
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "this_name").render(),
+        let ctx = Context::wraps(&m).unwrap();
+        assert_eq!(ctx.navigate(".", &VecDeque::new(), "this_name")
+                       .unwrap()
+                       .render(),
                    "the_value".to_string());
+    }
+
+    use serde::{Serialize, Serializer};
+    use serde::ser::Error as SerdeError;
+
+    struct UnserializableType {}
+
+    impl Serialize for UnserializableType {
+        fn serialize<S>(&self, _: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            Err(SerdeError::custom("test"))
+        }
+    }
+
+    #[test]
+    fn test_serialize_error() {
+        let d = UnserializableType {};
+        assert!(Context::wraps(&d).is_err());
     }
 }

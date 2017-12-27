@@ -8,12 +8,12 @@ use serde::Serialize;
 use regex::{Regex, Captures};
 
 use template::Template;
-use render::{Renderable, RenderError, RenderContext};
+use render::{Renderable, RenderContext};
 use context::Context;
 use helpers::{self, HelperDef};
 use directives::{self, DirectiveDef};
 use support::str::StringWriter;
-use error::{TemplateError, TemplateFileError, TemplateRenderError};
+use error::{RenderError, TemplateError, TemplateFileError, TemplateRenderError};
 
 
 lazy_static!{
@@ -30,15 +30,15 @@ pub type EscapeFn = Box<Fn(&str) -> String + Send + Sync>;
 /// The default *escape fn* replaces the characters `&"<>`
 /// with the equivalent html / xml entities.
 pub fn html_escape(data: &str) -> String {
-    DEFAULT_REPLACE.replace_all(data, |cap: &Captures| {
+    DEFAULT_REPLACE
+        .replace_all(data, |cap: &Captures| {
             match cap.get(0).map(|m| m.as_str()) {
-                    Some("<") => "&lt;",
-                    Some(">") => "&gt;",
-                    Some("\"") => "&quot;",
-                    Some("&") => "&amp;",
-                    _ => unreachable!(),
-                }
-                .to_owned()
+                Some("<") => "&lt;",
+                Some(">") => "&gt;",
+                Some("\"") => "&quot;",
+                Some("&") => "&amp;",
+                _ => unreachable!(),
+            }.to_owned()
         })
         .into_owned()
 }
@@ -73,24 +73,6 @@ impl Registry {
         r.setup_builtins()
     }
 
-    #[cfg(feature="partial_legacy")]
-    fn setup_builtins(mut self) -> Registry {
-        self.register_helper("if", Box::new(helpers::IF_HELPER));
-        self.register_helper("unless", Box::new(helpers::UNLESS_HELPER));
-        self.register_helper("each", Box::new(helpers::EACH_HELPER));
-        self.register_helper("with", Box::new(helpers::WITH_HELPER));
-        self.register_helper("lookup", Box::new(helpers::LOOKUP_HELPER));
-        self.register_helper("raw", Box::new(helpers::RAW_HELPER));
-        self.register_helper(">", Box::new(helpers::INCLUDE_HELPER));
-        self.register_helper("block", Box::new(helpers::BLOCK_HELPER));
-        self.register_helper("partial", Box::new(helpers::PARTIAL_HELPER));
-        self.register_helper("log", Box::new(helpers::LOG_HELPER));
-
-        self.register_decorator("inline", Box::new(directives::INLINE_DIRECTIVE));
-        self
-    }
-
-    #[cfg(not(feature = "partial_legacy"))]
     fn setup_builtins(mut self) -> Registry {
         self.register_helper("if", Box::new(helpers::IF_HELPER));
         self.register_helper("unless", Box::new(helpers::UNLESS_HELPER));
@@ -117,14 +99,18 @@ impl Registry {
     /// Register a template string
     ///
     /// Returns `TemplateError` if there is syntax error on parsing template.
-    pub fn register_template_string<S>(&mut self,
-                                       name: &str,
-                                       tpl_str: S)
-                                       -> Result<(), TemplateError>
-        where S: AsRef<str>
+    pub fn register_template_string<S>(
+        &mut self,
+        name: &str,
+        tpl_str: S,
+    ) -> Result<(), TemplateError>
+    where
+        S: AsRef<str>,
     {
-        try!(Template::compile_with_name(tpl_str, name.to_owned(), self.source_map)
-                 .and_then(|t| Ok(self.templates.insert(name.to_string(), t))));
+        try!(
+            Template::compile_with_name(tpl_str, name.to_owned(), self.source_map)
+                .and_then(|t| Ok(self.templates.insert(name.to_string(), t)))
+        );
         Ok(())
     }
 
@@ -133,31 +119,37 @@ impl Registry {
     /// A named partial will be added to the registry. It will overwrite template with
     /// same name. Currently registered partial is just identical to template.
     pub fn register_partial<S>(&mut self, name: &str, partial_str: S) -> Result<(), TemplateError>
-        where S: AsRef<str>
+    where
+        S: AsRef<str>,
     {
         self.register_template_string(name, partial_str)
     }
 
     /// Register a template from a path
-    pub fn register_template_file<P>(&mut self,
-                                     name: &str,
-                                     tpl_path: P)
-                                     -> Result<(), TemplateFileError>
-        where P: AsRef<Path>
+    pub fn register_template_file<P>(
+        &mut self,
+        name: &str,
+        tpl_path: P,
+    ) -> Result<(), TemplateFileError>
+    where
+        P: AsRef<Path>,
     {
-        let mut file =
-            try!(File::open(tpl_path).map_err(|e| TemplateFileError::IOError(e, name.to_owned())));
+        let mut file = try!(File::open(tpl_path).map_err(|e| {
+            TemplateFileError::IOError(e, name.to_owned())
+        }));
         self.register_template_source(name, &mut file)
     }
 
     /// Register a template from `std::io::Read` source
-    pub fn register_template_source(&mut self,
-                                    name: &str,
-                                    tpl_source: &mut Read)
-                                    -> Result<(), TemplateFileError> {
+    pub fn register_template_source(
+        &mut self,
+        name: &str,
+        tpl_source: &mut Read,
+    ) -> Result<(), TemplateFileError> {
         let mut buf = String::new();
-        try!(tpl_source.read_to_string(&mut buf)
-                       .map_err(|e| TemplateFileError::IOError(e, name.to_owned())));
+        try!(tpl_source.read_to_string(&mut buf).map_err(|e| {
+            TemplateFileError::IOError(e, name.to_owned())
+        }));
         try!(self.register_template_string(name, buf));
         Ok(())
     }
@@ -168,24 +160,28 @@ impl Registry {
     }
 
     /// register a helper
-    pub fn register_helper(&mut self,
-                           name: &str,
-                           def: Box<HelperDef + 'static>)
-                           -> Option<Box<HelperDef + 'static>> {
+    pub fn register_helper(
+        &mut self,
+        name: &str,
+        def: Box<HelperDef + 'static>,
+    ) -> Option<Box<HelperDef + 'static>> {
         self.helpers.insert(name.to_string(), def)
     }
 
     /// register a decorator
-    pub fn register_decorator(&mut self,
-                              name: &str,
-                              def: Box<DirectiveDef + 'static>)
-                              -> Option<Box<DirectiveDef + 'static>> {
+    pub fn register_decorator(
+        &mut self,
+        name: &str,
+        def: Box<DirectiveDef + 'static>,
+    ) -> Option<Box<DirectiveDef + 'static>> {
         self.directives.insert(name.to_string(), def)
     }
 
     /// Register a new *escape fn* to be used from now on by this registry.
-    pub fn register_escape_fn<F: 'static + Fn(&str) -> String + Send + Sync>(&mut self,
-                                                                             escape_fn: F) {
+    pub fn register_escape_fn<F: 'static + Fn(&str) -> String + Send + Sync>(
+        &mut self,
+        escape_fn: F,
+    ) {
         self.escape_fn = Box::new(escape_fn);
     }
 
@@ -232,7 +228,8 @@ impl Registry {
     ///
     /// Returns rendered string or an struct with error information
     pub fn render<T>(&self, name: &str, data: &T) -> Result<String, RenderError>
-        where T: Serialize
+    where
+        T: Serialize,
     {
         let mut writer = StringWriter::new();
         {
@@ -244,25 +241,28 @@ impl Registry {
 
     /// Render a registered template and write some data to the `std::io::Write`
     pub fn renderw<T>(&self, name: &str, data: &T, writer: &mut Write) -> Result<(), RenderError>
-        where T: Serialize
+    where
+        T: Serialize,
     {
         self.get_template(&name.to_string())
             .ok_or(RenderError::new(format!("Template not found: {}", name)))
             .and_then(|t| {
-                let mut ctx = Context::wraps(data);
+                let ctx = try!(Context::wraps(data));
                 let mut local_helpers = HashMap::new();
-                let mut render_context = RenderContext::new(&mut ctx, &mut local_helpers, writer);
+                let mut render_context = RenderContext::new(ctx, &mut local_helpers, writer);
                 render_context.root_template = t.name.clone();
                 t.render(self, &mut render_context)
             })
     }
 
     /// render a template string using current registry without register it
-    pub fn template_render<T>(&self,
-                              template_string: &str,
-                              data: &T)
-                              -> Result<String, TemplateRenderError>
-        where T: Serialize
+    pub fn template_render<T>(
+        &self,
+        template_string: &str,
+        data: &T,
+    ) -> Result<String, TemplateRenderError>
+    where
+        T: Serialize,
     {
         let mut writer = StringWriter::new();
         {
@@ -272,27 +272,33 @@ impl Registry {
     }
 
     /// render a template string using current registry without register it
-    pub fn template_renderw<T>(&self,
-                               template_string: &str,
-                               data: &T,
-                               writer: &mut Write)
-                               -> Result<(), TemplateRenderError>
-        where T: Serialize
+    pub fn template_renderw<T>(
+        &self,
+        template_string: &str,
+        data: &T,
+        writer: &mut Write,
+    ) -> Result<(), TemplateRenderError>
+    where
+        T: Serialize,
     {
         let tpl = try!(Template::compile(template_string));
-        let mut ctx = Context::wraps(data);
+        let ctx = try!(Context::wraps(data));
         let mut local_helpers = HashMap::new();
-        let mut render_context = RenderContext::new(&mut ctx, &mut local_helpers, writer);
-        tpl.render(self, &mut render_context).map_err(TemplateRenderError::from)
+        let mut render_context = RenderContext::new(ctx, &mut local_helpers, writer);
+        tpl.render(self, &mut render_context).map_err(
+            TemplateRenderError::from,
+        )
     }
 
     /// render a template source using current registry without register it
-    pub fn template_renderw2<T>(&self,
-                                template_source: &mut Read,
-                                data: &T,
-                                writer: &mut Write)
-                                -> Result<(), TemplateRenderError>
-        where T: Serialize
+    pub fn template_renderw2<T>(
+        &self,
+        template_source: &mut Read,
+        data: &T,
+        writer: &mut Write,
+    ) -> Result<(), TemplateRenderError>
+    where
+        T: Serialize,
     {
         let mut tpl_str = String::new();
         try!(template_source.read_to_string(&mut tpl_str).map_err(|e| {
@@ -305,21 +311,21 @@ impl Registry {
 #[cfg(test)]
 mod test {
     use registry::Registry;
-    use render::{RenderContext, Renderable, RenderError, Helper};
+    use render::{RenderContext, Renderable, Helper};
     use helpers::HelperDef;
     use support::str::StringWriter;
-    #[cfg(feature = "partial_legacy")]
-    use error::TemplateRenderError;
+    use error::RenderError;
 
     #[derive(Clone, Copy)]
     struct DummyHelper;
 
     impl HelperDef for DummyHelper {
-        fn call(&self,
-                h: &Helper,
-                r: &Registry,
-                rc: &mut RenderContext)
-                -> Result<(), RenderError> {
+        fn call(
+            &self,
+            h: &Helper,
+            r: &Registry,
+            rc: &mut RenderContext,
+        ) -> Result<(), RenderError> {
             try!(h.template().unwrap().render(r, rc));
             Ok(())
         }
@@ -345,10 +351,6 @@ mod test {
         r.register_helper("dummy", Box::new(DUMMY_HELPER));
 
         // built-in helpers plus 1
-        #[cfg(feature = "partial_legacy")]
-        assert_eq!(r.helpers.len(), 10 + 1);
-
-        #[cfg(not(feature = "partial_legacy"))]
         assert_eq!(r.helpers.len(), 7 + 1);
     }
 
@@ -373,7 +375,8 @@ mod test {
 
         let input = String::from("\"<>&");
 
-        r.register_template_string("test", String::from("{{this}}")).unwrap();
+        r.register_template_string("test", String::from("{{this}}"))
+            .unwrap();
 
         assert_eq!("&quot;&lt;&gt;&amp;", r.render("test", &input).unwrap());
 
@@ -387,40 +390,12 @@ mod test {
     }
 
     #[test]
-    #[cfg(feature="partial_legacy")]
-    fn test_template_render() {
-        let mut r = Registry::new();
+    fn test_escape() {
+        let r = Registry::new();
+        let data = json!({
+            "hello": "world"
+        });
 
-        assert!(r.register_template_string("index", "<h1></h1>").is_ok());
-
-        assert_eq!("<h1></h1>".to_string(),
-                   r.template_render("{{> index}}", &{}).unwrap());
-
-        assert_eq!("hello world".to_string(),
-                   r.template_render("hello {{this}}", &"world".to_string()).unwrap());
-
-        let mut sw = StringWriter::new();
-
-        {
-            r.template_renderw("{{> index}}", &{}, &mut sw).unwrap();
-        }
-
-        assert_eq!("<h1></h1>".to_string(), sw.to_string());
-
-        // fail for template error
-        match r.template_render("{{ hello", &{}).unwrap_err() {
-            TemplateRenderError::TemplateError(_) => {}
-            _ => {
-                panic!();
-            }
-        }
-
-        // fail to render error
-        match r.template_render("{{> notfound}}", &{}).unwrap_err() {
-            TemplateRenderError::RenderError(_) => {}
-            _ => {
-                panic!();
-            }
-        }
+        assert_eq!("{{hello}}", r.template_render(r"\\{{hello}}", &data).unwrap());
     }
 }

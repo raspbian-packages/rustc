@@ -2,79 +2,145 @@ use std::path::Path;
 use std::fs::File;
 use std::io::Read;
 
+use errors::*;
 
 pub static INDEX: &'static [u8] = include_bytes!("index.hbs");
 pub static CSS: &'static [u8] = include_bytes!("book.css");
 pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
 pub static JS: &'static [u8] = include_bytes!("book.js");
 pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
+pub static AYU_HIGHLIGHT_CSS: &'static [u8] = include_bytes!("ayu-highlight.css");
+
 
 /// The `Theme` struct should be used instead of the static variables because
-/// the `new()` method
-/// will look if the user has a theme directory in his source folder and use
-/// the users theme instead
-/// of the default.
+/// the `new()` method will look if the user has a theme directory in his
+/// source folder and use the users theme instead of the default.
 ///
-/// You should exceptionnaly use the static variables only if you need the
-/// default theme even if the
-/// user has specified another theme.
+/// You should only ever use the static variables directly if you want to
+/// override the user's theme with the defaults.
+#[derive(Debug, PartialEq)]
 pub struct Theme {
     pub index: Vec<u8>,
     pub css: Vec<u8>,
     pub favicon: Vec<u8>,
     pub js: Vec<u8>,
     pub tomorrow_night_css: Vec<u8>,
+    pub ayu_highlight_css: Vec<u8>,
 }
 
 impl Theme {
-    pub fn new(src: &Path) -> Self {
+    pub fn new<P: AsRef<Path>>(theme_dir: P) -> Self {
+        let theme_dir = theme_dir.as_ref();
+        let mut theme = Theme::default();
 
-        // Default theme
-        let mut theme = Theme {
+        // If the theme directory doesn't exist there's no point continuing...
+        if !theme_dir.exists() || !theme_dir.is_dir() {
+            return theme;
+        }
+
+        // Check for individual files, if they exist copy them across
+        {
+            let files = vec![
+                (theme_dir.join("index.hbs"), &mut theme.index),
+                (theme_dir.join("book.js"), &mut theme.js),
+                (theme_dir.join("book.css"), &mut theme.css),
+                (theme_dir.join("favicon.png"), &mut theme.favicon),
+                (theme_dir.join("tomorrow-night.css"), &mut theme.tomorrow_night_css),
+                (theme_dir.join("ayu-highlight.css"), &mut theme.ayu_highlight_css),
+            ];
+
+            for (filename, dest) in files {
+                if !filename.exists() {
+                    continue;
+                }
+
+                if let Err(e) = load_file_contents(&filename, dest) {
+                    warn!("Couldn't load custom file, {}: {}", filename.display(), e);
+                }
+            }
+        }
+
+        theme
+    }
+}
+
+impl Default for Theme {
+    fn default() -> Theme {
+        Theme {
             index: INDEX.to_owned(),
             css: CSS.to_owned(),
             favicon: FAVICON.to_owned(),
             js: JS.to_owned(),
             tomorrow_night_css: TOMORROW_NIGHT_CSS.to_owned(),
+            ayu_highlight_css: AYU_HIGHLIGHT_CSS.to_owned(),
+        }
+    }
+}
+
+/// Checks if a file exists, if so, the destination buffer will be filled with
+/// its contents.
+fn load_file_contents<P: AsRef<Path>>(filename: P, dest: &mut Vec<u8>) -> Result<()> {
+    let filename = filename.as_ref();
+
+    let mut buffer = Vec::new();
+    File::open(filename)?.read_to_end(&mut buffer)?;
+
+    // We needed the buffer so we'd only overwrite the existing content if we
+    // could successfully load the file into memory.
+    dest.clear();
+    dest.append(&mut buffer);
+
+    Ok(())
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempdir::TempDir;
+    use std::path::PathBuf;
+
+    #[test]
+    fn theme_uses_defaults_with_nonexistent_src_dir() {
+        let non_existent = PathBuf::from("/non/existent/directory/");
+        assert!(!non_existent.exists());
+
+        let should_be = Theme::default();
+        let got = Theme::new(&non_existent);
+
+        assert_eq!(got, should_be);
+    }
+
+    #[test]
+    fn theme_dir_overrides_defaults() {
+        // Get all the non-Rust files in the theme directory
+        let special_files = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("src/theme")
+            .read_dir()
+            .unwrap()
+            .filter_map(|f| f.ok())
+            .map(|f| f.path())
+            .filter(|p| p.is_file() && !p.ends_with(".rs"));
+
+        let temp = TempDir::new("mdbook").unwrap();
+
+        // "touch" all of the special files so we have empty copies
+        for special_file in special_files {
+            let filename = temp.path().join(special_file.file_name().unwrap());
+            let _ = File::create(&filename);
+        }
+
+        let got = Theme::new(temp.path());
+
+        let empty = Theme {
+            index: Vec::new(),
+            css: Vec::new(),
+            favicon: Vec::new(),
+            js: Vec::new(),
+            tomorrow_night_css: Vec::new(),
+            ayu_highlight_css: Vec::new(),
         };
 
-        // Check if the given path exists
-        if !src.exists() || !src.is_dir() {
-            return theme;
-        }
-
-        // Check for individual files if they exist
-
-        // index.hbs
-        if let Ok(mut f) = File::open(&src.join("index.hbs")) {
-            theme.index.clear(); // Reset the value, because read_to_string appends...
-            let _ = f.read_to_end(&mut theme.index);
-        }
-
-        // book.js
-        if let Ok(mut f) = File::open(&src.join("book.js")) {
-            theme.js.clear();
-            let _ = f.read_to_end(&mut theme.js);
-        }
-
-        // book.css
-        if let Ok(mut f) = File::open(&src.join("book.css")) {
-            theme.css.clear();
-            let _ = f.read_to_end(&mut theme.css);
-        }
-
-        // favicon.png
-        if let Ok(mut f) = File::open(&src.join("favicon.png")) {
-            theme.favicon.clear();
-            let _ = f.read_to_end(&mut theme.favicon);
-        }
-
-        // tomorrow-night.css
-        if let Ok(mut f) = File::open(&src.join("tomorrow-night.css")) {
-            theme.tomorrow_night_css.clear();
-            let _ = f.read_to_end(&mut theme.tomorrow_night_css);
-        }
-
-        theme
+        assert_eq!(got, empty);
     }
 }

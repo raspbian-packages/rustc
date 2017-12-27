@@ -34,3 +34,4 @@ debug-assertions = false
 [profile.test]
 debug = false
 debug-assertions = false
+

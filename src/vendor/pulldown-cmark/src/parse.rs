@@ -126,10 +126,10 @@ pub enum Alignment {
 }
 
 bitflags! {
-    pub flags Options: u32 {
-        const OPTION_FIRST_PASS = 1 << 0,
-        const OPTION_ENABLE_TABLES = 1 << 1,
-        const OPTION_ENABLE_FOOTNOTES = 1 << 2,
+    pub struct Options: u32 {
+        const OPTION_FIRST_PASS = 1 << 0;
+        const OPTION_ENABLE_TABLES = 1 << 1;
+        const OPTION_ENABLE_FOOTNOTES = 1 << 2;
     }
 }
 
@@ -356,28 +356,23 @@ impl<'a> RawParser<'a> {
             if at_eol {
                 self.off += n;
                 self.state = State::StartBlock;
-                // two empty lines closes lists and footnotes
+                // two empty lines closes lists, one empty line closes a footnote
                 let (n, empty_lines) = self.scan_empty_lines(&self.text[self.off ..]);
-                //println!("{} empty lines (n = {})", empty_lines, n);
-                let mut closed = false;
-                if empty_lines >= 1 {
-                    let mut close_tags: Vec<&mut (Tag<'a>, usize, usize)> = self.stack.iter_mut().skip_while(|tag| {
-                        match tag.0 {
-                            Tag::List(_) | Tag::FootnoteDefinition(_) => false,
-                            _ => true,
-                        }
-                    }).collect();
-                    if !close_tags.is_empty() {
-                        for tag in &mut close_tags {
+                for i in (0..self.stack.len()).rev() {
+                    let is_break = match self.stack[i].0 {
+                        Tag::List(_) => empty_lines >= 1,
+                        Tag::Item => false,
+                        Tag::FootnoteDefinition(_) => true,
+                        _ => break,
+                    };
+                    if is_break {
+                        for tag in &mut self.stack[i..] {
                             tag.1 = self.off; // limit
                             tag.2 = self.off; // next
                         }
-                        close_tags[0].2 = self.off + n; // next
-                        closed = true;
+                        self.stack[i].2 = self.off + n; // next
+                        return Some(self.end());
                     }
-                }
-                if closed {
-                    return Some(self.end());
                 }
                 self.off += n;
                 if let Some(_) = self.at_list(2) {
@@ -700,10 +695,6 @@ impl<'a> RawParser<'a> {
                     self.state = State::CodeLineStart;
                     break;
                 }
-                b'\t' => {
-                    if i > beg { break; }
-                    return self.char_tab();
-                }
                 b'\r' => {
                     // just skip it (does not support '\r' only line break)
                     if i > beg { break; }
@@ -758,8 +749,8 @@ impl<'a> RawParser<'a> {
             if self.off + 1 + beg_tag.len() < self.text.len() &&
                self.text[self.off + 1..].starts_with(&beg_tag[..]) {
                 let pos = self.off + beg_tag.len() + 1;
-                let s = &self.text[pos..pos + 1];
-                if s == " " || s == "\n" || s == ">" {
+                let s = self.text.as_bytes()[pos];
+                if s == b' ' || s == b'\n' || s == b'>' {
                     return Some(end_tag);
                 }
             }
@@ -1367,7 +1358,14 @@ impl<'a> RawParser<'a> {
                 None
             } else {
                 let space = scan_whitespace_no_nl(&data[len + n_colon..]);
-                Some((name, len + n_colon + space))
+                // skip newline if definition is on a line by itself, as likely that
+                // means the footnote definition is a complex block.
+                let mut i = len + n_colon + space;
+                if let (n, true) = scan_eol(&data[i..]) {
+                    let (n_containers, _, _) = self.scan_containers(&data[i + n ..]);
+                    i += n + n_containers;
+                }
+                Some((name, i))
             }
         })
     }
@@ -1552,7 +1550,11 @@ impl<'a> RawParser<'a> {
         while i < data.len() {
             match data.as_bytes()[i] {
                 b'>' => return i + 1,
-                b'\n' => i += self.scan_whitespace_inline(&data[i..]),
+                b'\n' => {
+                    let n = self.scan_whitespace_inline(&data[i..]);
+                    if n == 0 { break; }
+                    i += n;
+                }
                 _ => i += 1
             }
         }

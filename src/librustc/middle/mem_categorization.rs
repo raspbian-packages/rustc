@@ -69,7 +69,7 @@ pub use self::Note::*;
 
 use self::Aliasability::*;
 
-use middle::region::RegionMaps;
+use middle::region;
 use hir::def_id::{DefId, DefIndex};
 use hir::map as hir_map;
 use infer::InferCtxt;
@@ -283,7 +283,7 @@ impl ast_node for hir::Pat {
 #[derive(Clone)]
 pub struct MemCategorizationContext<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     pub tcx: TyCtxt<'a, 'gcx, 'tcx>,
-    pub region_maps: &'a RegionMaps,
+    pub region_scope_tree: &'a region::ScopeTree,
     pub tables: &'a ty::TypeckTables<'tcx>,
     infcx: Option<&'a InferCtxt<'a, 'gcx, 'tcx>>,
 }
@@ -391,21 +391,21 @@ impl MutabilityCategory {
 
 impl<'a, 'tcx> MemCategorizationContext<'a, 'tcx, 'tcx> {
     pub fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-               region_maps: &'a RegionMaps,
+               region_scope_tree: &'a region::ScopeTree,
                tables: &'a ty::TypeckTables<'tcx>)
                -> MemCategorizationContext<'a, 'tcx, 'tcx> {
-        MemCategorizationContext { tcx, region_maps, tables, infcx: None }
+        MemCategorizationContext { tcx, region_scope_tree, tables, infcx: None }
     }
 }
 
 impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
     pub fn with_infer(infcx: &'a InferCtxt<'a, 'gcx, 'tcx>,
-                      region_maps: &'a RegionMaps,
+                      region_scope_tree: &'a region::ScopeTree,
                       tables: &'a ty::TypeckTables<'tcx>)
                       -> MemCategorizationContext<'a, 'gcx, 'tcx> {
         MemCategorizationContext {
             tcx: infcx.tcx,
-            region_maps,
+            region_scope_tree,
             tables,
             infcx: Some(infcx),
         }
@@ -625,7 +625,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
           hir::ExprAddrOf(..) | hir::ExprCall(..) |
           hir::ExprAssign(..) | hir::ExprAssignOp(..) |
           hir::ExprClosure(..) | hir::ExprRet(..) |
-          hir::ExprUnary(..) |
+          hir::ExprUnary(..) | hir::ExprYield(..) |
           hir::ExprMethodCall(..) | hir::ExprCast(..) |
           hir::ExprArray(..) | hir::ExprTup(..) | hir::ExprIf(..) |
           hir::ExprBinary(..) | hir::ExprWhile(..) |
@@ -670,13 +670,11 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
               }))
           }
 
-          Def::Upvar(def_id, _, fn_node_id) => {
-              let var_id = self.tcx.hir.as_local_node_id(def_id).unwrap();
+          Def::Upvar(var_id, _, fn_node_id) => {
               self.cat_upvar(id, span, var_id, fn_node_id)
           }
 
-          Def::Local(def_id) => {
-            let vid = self.tcx.hir.as_local_node_id(def_id).unwrap();
+          Def::Local(vid) => {
             Ok(Rc::new(cmt_ {
                 id,
                 span,
@@ -725,19 +723,23 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
         // FnMut          | copied -> &'env mut  | upvar -> &'env mut -> &'up bk
         // FnOnce         | copied               | upvar -> &'up bk
 
-        let kind = match self.tables.closure_kinds().get(fn_hir_id) {
-            Some(&(kind, _)) => kind,
-            None => span_bug!(span, "missing closure kind")
+        let kind = match self.node_ty(fn_hir_id)?.sty {
+            ty::TyGenerator(..) => ty::ClosureKind::FnOnce,
+            _ => {
+                match self.tables.closure_kinds().get(fn_hir_id) {
+                    Some(&(kind, _)) => kind,
+                    None => span_bug!(span, "missing closure kind"),
+                }
+            }
         };
 
         let closure_expr_def_index = self.tcx.hir.local_def_id(fn_node_id).index;
-        let var_def_index = self.tcx.hir.local_def_id(var_id).index;
-
+        let var_hir_id = self.tcx.hir.node_to_hir_id(var_id);
         let upvar_id = ty::UpvarId {
-            var_id: var_def_index,
+            var_id: var_hir_id,
             closure_expr_id: closure_expr_def_index
         };
-        let var_hir_id = self.tcx.hir.node_to_hir_id(var_id);
+
         let var_ty = self.node_ty(var_hir_id)?;
 
         // Mutability of original variable itself
@@ -856,9 +858,8 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
 
     /// Returns the lifetime of a temporary created by expr with id `id`.
     /// This could be `'static` if `id` is part of a constant expression.
-    pub fn temporary_scope(&self, id: ast::NodeId) -> ty::Region<'tcx>
-    {
-        let scope = self.region_maps.temporary_scope(id);
+    pub fn temporary_scope(&self, id: hir::ItemLocalId) -> ty::Region<'tcx> {
+        let scope = self.region_scope_tree.temporary_scope(id);
         self.tcx.mk_region(match scope {
             Some(scope) => ty::ReScope(scope),
             None => ty::ReStatic
@@ -875,7 +876,8 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
 
         // Always promote `[T; 0]` (even when e.g. borrowed mutably).
         let promotable = match expr_ty.sty {
-            ty::TyArray(_, 0) => true,
+            ty::TyArray(_, len) if
+                len.val.to_const_int().and_then(|i| i.to_u64()) == Some(0) => true,
             _ => promotable,
         };
 
@@ -885,7 +887,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
         let re = if promotable {
             self.tcx.types.re_static
         } else {
-            self.temporary_scope(id)
+            self.temporary_scope(self.tcx.hir.node_to_hir_id(id).local_id)
         };
         let ret = self.cat_rvalue(id, span, re, expr_ty);
         debug!("cat_rvalue_node ret {:?}", ret);
@@ -1092,7 +1094,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
     }
 
     // FIXME(#19596) This is a workaround, but there should be a better way to do this
-    fn cat_pattern_<F>(&self, cmt: cmt<'tcx>, pat: &hir::Pat, op: &mut F) -> McResult<()>
+    fn cat_pattern_<F>(&self, mut cmt: cmt<'tcx>, pat: &hir::Pat, op: &mut F) -> McResult<()>
         where F : FnMut(cmt<'tcx>, &hir::Pat)
     {
         // Here, `cmt` is the categorization for the value being
@@ -1142,6 +1144,56 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
 
         debug!("cat_pattern: {:?} cmt={:?}", pat, cmt);
 
+        // If (pattern) adjustments are active for this pattern, adjust the `cmt` correspondingly.
+        // `cmt`s are constructed differently from patterns. For example, in
+        //
+        // ```
+        // match foo {
+        //     &&Some(x, ) => { ... },
+        //     _ => { ... },
+        // }
+        // ```
+        //
+        // the pattern `&&Some(x,)` is represented as `Ref { Ref { TupleStruct }}`. To build the
+        // corresponding `cmt` we start with a `cmt` for `foo`, and then, by traversing the
+        // pattern, try to answer the question: given the address of `foo`, how is `x` reached?
+        //
+        // `&&Some(x,)` `cmt_foo`
+        //  `&Some(x,)` `deref { cmt_foo}`
+        //   `Some(x,)` `deref { deref { cmt_foo }}`
+        //        (x,)` `field0 { deref { deref { cmt_foo }}}` <- resulting cmt
+        //
+        // The above example has no adjustments. If the code were instead the (after adjustments,
+        // equivalent) version
+        //
+        // ```
+        // match foo {
+        //     Some(x, ) => { ... },
+        //     _ => { ... },
+        // }
+        // ```
+        //
+        // Then we see that to get the same result, we must start with `deref { deref { cmt_foo }}`
+        // instead of `cmt_foo` since the pattern is now `Some(x,)` and not `&&Some(x,)`, even
+        // though its assigned type is that of `&&Some(x,)`.
+        for _ in 0..self.tables
+                        .pat_adjustments()
+                        .get(pat.hir_id)
+                        .map(|v| v.len())
+                        .unwrap_or(0) {
+            cmt = self.cat_deref(pat, cmt, true /* implicit */)?;
+        }
+        let cmt = cmt; // lose mutability
+
+        // Invoke the callback, but only now, after the `cmt` has adjusted.
+        //
+        // To see that this makes sense, consider `match &Some(3) { Some(x) => { ... }}`. In that
+        // case, the initial `cmt` will be that for `&Some(3)` and the pattern is `Some(x)`. We
+        // don't want to call `op` with these incompatible values. As written, what happens instead
+        // is that `op` is called with the adjusted cmt (that for `*&Some(3)`) and the pattern
+        // `Some(x)` (which matches). Recursing once more, `*&Some(3)` and the pattern `Some(x)`
+        // result in the cmt `Downcast<Some>(*&Some(3)).0` associated to `x` and invoke `op` with
+        // that (where the `ref` on `x` is implied).
         op(cmt.clone(), pat);
 
         match pat.node {
@@ -1437,7 +1489,7 @@ impl<'tcx> fmt::Debug for Categorization<'tcx> {
             Categorization::StaticItem => write!(f, "static"),
             Categorization::Rvalue(r) => { write!(f, "rvalue({:?})", r) }
             Categorization::Local(id) => {
-               let name = ty::tls::with(|tcx| tcx.local_var_name_str(id));
+               let name = ty::tls::with(|tcx| tcx.hir.name(id));
                write!(f, "local({})", name)
             }
             Categorization::Upvar(upvar) => {

@@ -114,15 +114,12 @@
 //! unsupported file system and emit a warning in that case. This is not yet
 //! implemented.
 
-use rustc::hir::def_id::{CrateNum, LOCAL_CRATE};
 use rustc::hir::svh::Svh;
 use rustc::session::Session;
-use rustc::ty::TyCtxt;
 use rustc::util::fs as fs_util;
 use rustc_data_structures::{flock, base_n};
 use rustc_data_structures::fx::{FxHashSet, FxHashMap};
 
-use std::ffi::OsString;
 use std::fs as std_fs;
 use std::io;
 use std::mem;
@@ -151,10 +148,6 @@ pub fn work_products_path(sess: &Session) -> PathBuf {
 
 pub fn metadata_hash_export_path(sess: &Session) -> PathBuf {
     in_incr_comp_dir_sess(sess, METADATA_HASHES_FILENAME)
-}
-
-pub fn metadata_hash_import_path(import_session_dir: &Path) -> PathBuf {
-    import_session_dir.join(METADATA_HASHES_FILENAME)
 }
 
 pub fn lock_file_path(session_dir: &Path) -> PathBuf {
@@ -193,13 +186,21 @@ pub fn in_incr_comp_dir(incr_comp_session_dir: &Path, file_name: &str) -> PathBu
 /// a dep-graph and work products from a previous session.
 /// If the call fails, the fn may leave behind an invalid session directory.
 /// The garbage collection will take care of it.
-pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
+pub fn prepare_session_directory(sess: &Session,
+                                 crate_name: &str,
+                                 crate_disambiguator: &str) {
+    if sess.opts.incremental.is_none() {
+        return
+    }
+
     debug!("prepare_session_directory");
 
     // {incr-comp-dir}/{crate-name-and-disambiguator}
-    let crate_dir = crate_path_tcx(tcx, LOCAL_CRATE);
+    let crate_dir = crate_path(sess, crate_name, crate_disambiguator);
     debug!("crate-dir: {}", crate_dir.display());
-    try!(create_dir(tcx.sess, &crate_dir, "crate"));
+    if create_dir(sess, &crate_dir, "crate").is_err() {
+        return
+    }
 
     // Hack: canonicalize the path *after creating the directory*
     // because, on windows, long paths can cause problems;
@@ -208,9 +209,9 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
     let crate_dir = match crate_dir.canonicalize() {
         Ok(v) => v,
         Err(err) => {
-            tcx.sess.err(&format!("incremental compilation: error canonicalizing path `{}`: {}",
-                                  crate_dir.display(), err));
-            return Err(());
+            sess.err(&format!("incremental compilation: error canonicalizing path `{}`: {}",
+                              crate_dir.display(), err));
+            return
         }
     };
 
@@ -225,11 +226,16 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
 
         // Lock the new session directory. If this fails, return an
         // error without retrying
-        let (directory_lock, lock_file_path) = try!(lock_directory(tcx.sess, &session_dir));
+        let (directory_lock, lock_file_path) = match lock_directory(sess, &session_dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
 
         // Now that we have the lock, we can actually create the session
         // directory
-        try!(create_dir(tcx.sess, &session_dir, "session"));
+        if create_dir(sess, &session_dir, "session").is_err() {
+            return
+        }
 
         // Find a suitable source directory to copy from. Ignore those that we
         // have already tried before.
@@ -243,14 +249,14 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
             debug!("no source directory found. Continuing with empty session \
                     directory.");
 
-            tcx.sess.init_incr_comp_session(session_dir, directory_lock);
-            return Ok(false)
+            sess.init_incr_comp_session(session_dir, directory_lock, false);
+            return
         };
 
         debug!("attempting to copy data from source: {}",
                source_directory.display());
 
-        let print_file_copy_stats = tcx.sess.opts.debugging_opts.incremental_info;
+        let print_file_copy_stats = sess.opts.debugging_opts.incremental_info;
 
         // Try copying over all files from the source directory
         if let Ok(allows_links) = copy_files(&session_dir, &source_directory,
@@ -259,7 +265,7 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
                    source_directory.display());
 
             if !allows_links {
-                tcx.sess.warn(&format!("Hard linking files in the incremental \
+                sess.warn(&format!("Hard linking files in the incremental \
                                         compilation cache failed. Copying files \
                                         instead. Consider moving the cache \
                                         directory to a file system which supports \
@@ -268,8 +274,8 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
                     );
             }
 
-            tcx.sess.init_incr_comp_session(session_dir, directory_lock);
-            return Ok(true)
+            sess.init_incr_comp_session(session_dir, directory_lock, true);
+            return
         } else {
              debug!("copying failed - trying next directory");
 
@@ -280,13 +286,13 @@ pub fn prepare_session_directory(tcx: TyCtxt) -> Result<bool, ()> {
             // Try to remove the session directory we just allocated. We don't
             // know if there's any garbage in it from the failed copy action.
             if let Err(err) = safe_remove_dir_all(&session_dir) {
-                tcx.sess.warn(&format!("Failed to delete partly initialized \
-                                        session dir `{}`: {}",
-                                       session_dir.display(),
-                                       err));
+                sess.warn(&format!("Failed to delete partly initialized \
+                                    session dir `{}`: {}",
+                                   session_dir.display(),
+                                   err));
             }
 
-            delete_session_dir_lock_file(tcx.sess, &lock_file_path);
+            delete_session_dir_lock_file(sess, &lock_file_path);
             mem::drop(directory_lock);
         }
     }
@@ -601,70 +607,6 @@ fn string_to_timestamp(s: &str) -> Result<SystemTime, ()> {
     let duration = Duration::new(micros_since_unix_epoch / 1_000_000,
                                  1000 * (micros_since_unix_epoch % 1_000_000) as u32);
     Ok(UNIX_EPOCH + duration)
-}
-
-fn crate_path_tcx(tcx: TyCtxt, cnum: CrateNum) -> PathBuf {
-    crate_path(tcx.sess, &tcx.crate_name(cnum).as_str(), &tcx.crate_disambiguator(cnum).as_str())
-}
-
-/// Finds the session directory containing the correct metadata hashes file for
-/// the given crate. In order to do that it has to compute the crate directory
-/// of the given crate, and in there, look for the session directory with the
-/// correct SVH in it.
-/// Note that we have to match on the exact SVH here, not just the
-/// crate's (name, disambiguator) pair. The metadata hashes are only valid for
-/// the exact version of the binary we are reading from now (i.e. the hashes
-/// are part of the dependency graph of a specific compilation session).
-pub fn find_metadata_hashes_for(tcx: TyCtxt, cnum: CrateNum) -> Option<PathBuf> {
-    let crate_directory = crate_path_tcx(tcx, cnum);
-
-    if !crate_directory.exists() {
-        return None
-    }
-
-    let dir_entries = match crate_directory.read_dir() {
-        Ok(dir_entries) => dir_entries,
-        Err(e) => {
-            tcx.sess
-               .err(&format!("incremental compilation: Could not read crate directory `{}`: {}",
-                             crate_directory.display(), e));
-            return None
-        }
-    };
-
-    let target_svh = tcx.sess.cstore.crate_hash(cnum);
-    let target_svh = base_n::encode(target_svh.as_u64(), INT_ENCODE_BASE);
-
-    let sub_dir = find_metadata_hashes_iter(&target_svh, dir_entries.filter_map(|e| {
-        e.ok().map(|e| e.file_name().to_string_lossy().into_owned())
-    }));
-
-    sub_dir.map(|sub_dir_name| crate_directory.join(&sub_dir_name))
-}
-
-fn find_metadata_hashes_iter<'a, I>(target_svh: &str, iter: I) -> Option<OsString>
-    where I: Iterator<Item=String>
-{
-    for sub_dir_name in iter {
-        if !is_session_directory(&sub_dir_name) || !is_finalized(&sub_dir_name) {
-            // This is not a usable session directory
-            continue
-        }
-
-        let is_match = if let Some(last_dash_pos) = sub_dir_name.rfind("-") {
-            let candidate_svh = &sub_dir_name[last_dash_pos + 1 .. ];
-            target_svh == candidate_svh
-        } else {
-            // some kind of invalid directory name
-            continue
-        };
-
-        if is_match {
-            return Some(OsString::from(sub_dir_name))
-        }
-    }
-
-    None
 }
 
 fn crate_path(sess: &Session,
@@ -1005,53 +947,4 @@ fn test_find_source_directory_in_iter() {
              PathBuf::from("crate-dir/s-2234-0000-working"),
              PathBuf::from("crate-dir/s-1234-0000-working")].into_iter(), &already_visited),
         None);
-}
-
-#[test]
-fn test_find_metadata_hashes_iter()
-{
-    assert_eq!(find_metadata_hashes_iter("testsvh2",
-        vec![
-            String::from("s-timestamp1-testsvh1"),
-            String::from("s-timestamp2-testsvh2"),
-            String::from("s-timestamp3-testsvh3"),
-        ].into_iter()),
-        Some(OsString::from("s-timestamp2-testsvh2"))
-    );
-
-    assert_eq!(find_metadata_hashes_iter("testsvh2",
-        vec![
-            String::from("s-timestamp1-testsvh1"),
-            String::from("s-timestamp2-testsvh2"),
-            String::from("invalid-name"),
-        ].into_iter()),
-        Some(OsString::from("s-timestamp2-testsvh2"))
-    );
-
-    assert_eq!(find_metadata_hashes_iter("testsvh2",
-        vec![
-            String::from("s-timestamp1-testsvh1"),
-            String::from("s-timestamp2-testsvh2-working"),
-            String::from("s-timestamp3-testsvh3"),
-        ].into_iter()),
-        None
-    );
-
-    assert_eq!(find_metadata_hashes_iter("testsvh1",
-        vec![
-            String::from("s-timestamp1-random1-working"),
-            String::from("s-timestamp2-random2-working"),
-            String::from("s-timestamp3-random3-working"),
-        ].into_iter()),
-        None
-    );
-
-    assert_eq!(find_metadata_hashes_iter("testsvh2",
-        vec![
-            String::from("timestamp1-testsvh2"),
-            String::from("timestamp2-testsvh2"),
-            String::from("timestamp3-testsvh2"),
-        ].into_iter()),
-        None
-    );
 }

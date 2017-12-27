@@ -250,7 +250,7 @@ pub fn scan_hrule(data: &str) -> usize {
                 break;
             }
             c2 if c2 == c => n += 1,
-            b' ' => (),
+            b' '|b'\t' => (),
             _ => return 0
         }
         i += 1;
@@ -352,6 +352,9 @@ pub fn scan_table_head(data: &str) -> (usize, Vec<Alignment>) {
 
 // returns: number of bytes scanned, char
 pub fn scan_code_fence(data: &str) -> (usize, u8) {
+    if data.is_empty() {
+        return (0, 0);
+    }
     let c = data.as_bytes()[0];
     if !(c == b'`' || c == b'~') { return (0, 0); }
     let i = 1 + scan_ch_repeat(&data[1 ..], c);
@@ -517,11 +520,15 @@ pub fn scan_link_dest(data: &str) -> Option<(usize, &str)> {
         i += 1;
     }
     let dest_end = i;
+    if dest_end > data.len() {
+        return None;
+    }
     if pointy {
         let n = scan_ch(&data[i..], b'>');
         if n == 0 { return None; }
         i += n;
     }
+
     Some((i, &data[dest_beg..dest_end]))
 }
 

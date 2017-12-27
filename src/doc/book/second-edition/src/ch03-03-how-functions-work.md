@@ -24,8 +24,8 @@ fn another_function() {
 ```
 
 Function definitions in Rust start with `fn` and have a set of parentheses
-after the function name. The curly braces tell the compiler where the function
-body begins and ends.
+after the function name. The curly brackets tell the compiler where the
+function body begins and ends.
 
 We can call any function we’ve defined by entering its name followed by a set
 of parentheses. Because `another_function` is defined in the program, it can be
@@ -41,6 +41,7 @@ should see the following output:
 ```text
 $ cargo run
    Compiling functions v0.1.0 (file:///projects/functions)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.28 secs
      Running `target/debug/functions`
 Hello, world!
 Another function.
@@ -80,13 +81,14 @@ Try running this program; you should get the following output:
 ```text
 $ cargo run
    Compiling functions v0.1.0 (file:///projects/functions)
+    Finished dev [unoptimized + debuginfo] target(s) in 1.21 secs
      Running `target/debug/functions`
 The value of x is: 5
 ```
 
 The declaration of `another_function` has one parameter named `x`. The type of
 `x` is specified as `i32`. When `5` is passed to `another_function`, the
-`println!` macro puts `5` where the pair of curly braces were in the format
+`println!` macro puts `5` where the pair of curly brackets were in the format
 string.
 
 In function signatures, you *must* declare the type of each parameter. This is
@@ -122,6 +124,7 @@ project’s *src/main.rs* file with the preceding example, and run it using
 ```text
 $ cargo run
    Compiling functions v0.1.0 (file:///projects/functions)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.31 secs
      Running `target/debug/functions`
 The value of x is: 5
 The value of y is: 6
@@ -226,19 +229,21 @@ This expression:
 ```
 
 is a block that, in this case, evaluates to `4`. That value gets bound to `y`
-as part of the `let` statement. Note the line without a semicolon at the end,
-unlike most of the lines you’ve seen so far. Expressions do not include ending
-semicolons. If you add a semicolon to the end of an expression, you turn it
-into a statement, which will then not return a value. Keep this in mind as you
-explore function return values and expressions next.
+as part of the `let` statement. Note the `x + 1` line without a semicolon at
+the end, unlike most of the lines you’ve seen so far. Expressions do not
+include ending semicolons. If you add a semicolon to the end of an expression,
+you turn it into a statement, which will then not return a value. Keep this in
+mind as you explore function return values and expressions next.
 
 ### Functions with Return Values
 
 Functions can return values to the code that calls them. We don’t name return
 values, but we do declare their type after an arrow (`->`). In Rust, the return
 value of the function is synonymous with the value of the final expression in
-the block of the body of a function. Here’s an example of a function that
-returns a value:
+the block of the body of a function. You can return early from a function by
+using the `return` keyword and specifying a value, but most functions return
+the last expression implicitly. Here’s an example of a function that returns a
+value:
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -262,6 +267,7 @@ running this code; the output should look like this:
 ```text
 $ cargo run
    Compiling functions v0.1.0 (file:///projects/functions)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.30 secs
      Running `target/debug/functions`
 The value of x is: 5
 ```
@@ -322,16 +328,12 @@ error[E0308]: mismatched types
 7 |   fn plus_one(x: i32) -> i32 {
   |  ____________________________^
 8 | |     x + 1;
+  | |          - help: consider removing this semicolon
 9 | | }
   | |_^ expected i32, found ()
   |
   = note: expected type `i32`
              found type `()`
-help: consider removing this semicolon:
- --> src/main.rs:8:10
-  |
-8 |     x + 1;
-  |          ^
 ```
 
 The main error message, “mismatched types,” reveals the core issue with this

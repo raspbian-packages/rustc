@@ -1,3 +1,35 @@
+<a name="v2.26.2"></a>
+### v2.26.2 (2017-09-14)
+
+
+#### Improvements
+
+*   if all subcommands are hidden, the subcommands section of the help message is no longer displayed ([4ae7b046](https://github.com/kbknapp/clap-rs/commit/4ae7b0464750bc07ec80ece38e43f003fdd1b8ae), closes [#1046](https://github.com/kbknapp/clap-rs/issues/1046))
+
+#### Bug Fixes
+
+*   fixes a bug where default values are not applied if the option supports zero values ([9c248cbf](https://github.com/kbknapp/clap-rs/commit/9c248cbf7d8a825119bc387c23e9a1d1989682b0), closes [#1047](https://github.com/kbknapp/clap-rs/issues/1047))
+
+
+
+<a name="v2.26.1"></a>
+### v2.26.1 (2017-09-14)
+
+
+#### Bug Fixes
+
+*   fixes using require_equals(true) and min_values(0) together ([10ae208f](https://github.com/kbknapp/clap-rs/commit/10ae208f68518eff6e98166724065745f4083174), closes [#1044](https://github.com/kbknapp/clap-rs/issues/1044))
+*   escape special characters in zsh and fish completions ([87e019fc](https://github.com/kbknapp/clap-rs/commit/87e019fc84ba6193a8c4ddc26c61eb99efffcd25))
+*   avoid panic generating default help msg if term width set to 0 due to bug in textwrap 0.7.0 ([b3eadb0d](https://github.com/kbknapp/clap-rs/commit/b3eadb0de516106db4e08f078ad32e8f6d6e7a57))
+*   Change `who's` -> `whose` ([53c1ffe8](https://github.com/kbknapp/clap-rs/commit/53c1ffe87f38b05d8804a0f7832412a952845349))
+*   adds a debug assertion to ensure all args added to groups actually exist ([7ad123e2](https://github.com/kbknapp/clap-rs/commit/7ad123e2c02577e3ca30f7e205181e896b157d11), closes [#917](https://github.com/kbknapp/clap-rs/issues/917))
+*   fixes a bug where args that allow values to start with a hyphen couldnt contain a double hyphen -- as a value ([ab2f4c9e](https://github.com/kbknapp/clap-rs/commit/ab2f4c9e563e36ec739a4b55d5a5b76fdb9e9fa4), closes [#960](https://github.com/kbknapp/clap-rs/issues/960))
+*   fixes a bug where positional argument help text is misaligned ([54c16836](https://github.com/kbknapp/clap-rs/commit/54c16836dea4651806a2cfad53146a83fa3abf21))
+* **Help Message:**  fixes long_about not being usable ([a8257ea0](https://github.com/kbknapp/clap-rs/commit/a8257ea0ffb812e552aca256c4a3d2aebfd8065b), closes [#1043](https://github.com/kbknapp/clap-rs/issues/1043))
+* **Suggestions:**  output for flag after subcommand ([434ea5ba](https://github.com/kbknapp/clap-rs/commit/434ea5ba71395d8c1afcf88e69f0b0d8339b01a1))
+
+
+
 <a name="v2.26.0"></a>
 ## v2.26.0 (2017-07-29)
 

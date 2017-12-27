@@ -22,7 +22,6 @@ use std::sync::{Arc, Mutex};
 
 use testing;
 use rustc_lint;
-use rustc::dep_graph::DepGraph;
 use rustc::hir;
 use rustc::hir::intravisit;
 use rustc::session::{self, CompileIncomplete, config};
@@ -83,11 +82,9 @@ pub fn run(input: &str,
     let handler =
         errors::Handler::with_tty_emitter(ColorConfig::Auto, true, false, Some(codemap.clone()));
 
-    let dep_graph = DepGraph::new(false);
-    let _ignore = dep_graph.in_ignore();
-    let cstore = Rc::new(CStore::new(&dep_graph, box rustc_trans::LlvmMetadataLoader));
+    let cstore = Rc::new(CStore::new(box rustc_trans::LlvmMetadataLoader));
     let mut sess = session::build_session_(
-        sessopts, &dep_graph, Some(input_path.clone()), handler, codemap.clone(), cstore.clone(),
+        sessopts, Some(input_path.clone()), handler, codemap.clone(),
     );
     rustc_trans::init(&sess);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
@@ -100,7 +97,14 @@ pub fn run(input: &str,
     let krate = ReplaceBodyWithLoop::new().fold_crate(krate);
     let driver::ExpansionResult { defs, mut hir_forest, .. } = {
         phase_2_configure_and_expand(
-            &sess, &cstore, krate, None, "rustdoc-test", None, MakeGlobMap::No, |_| Ok(())
+            &sess,
+            &cstore,
+            krate,
+            None,
+            "rustdoc-test",
+            None,
+            MakeGlobMap::No,
+            |_| Ok(()),
         ).expect("phase_2_configure_and_expand aborted in rustdoc!")
     };
 
@@ -120,9 +124,7 @@ pub fn run(input: &str,
                                        render_type);
 
     {
-        let dep_graph = DepGraph::new(false);
-        let _ignore = dep_graph.in_ignore();
-        let map = hir::map::map_crate(&mut hir_forest, defs);
+        let map = hir::map::map_crate(&sess, &*cstore, &mut hir_forest, &defs);
         let krate = map.krate();
         let mut hir_collector = HirCollector {
             sess: &sess,
@@ -182,6 +184,8 @@ fn run_test(test: &str, cratename: &str, filename: &str, cfgs: Vec<String>, libs
     // the test harness wants its own `main` & top level functions, so
     // never wrap the test in `fn main() { ... }`
     let test = make_test(test, Some(cratename), as_test_harness, opts);
+    // FIXME(#44940): if doctests ever support path remapping, then this filename
+    // needs to be the result of CodeMap::span_to_unmapped_path
     let input = config::Input::Str {
         name: filename.to_owned(),
         input: test.to_owned(),
@@ -237,10 +241,9 @@ fn run_test(test: &str, cratename: &str, filename: &str, cfgs: Vec<String>, libs
     // Compile the code
     let diagnostic_handler = errors::Handler::with_emitter(true, false, box emitter);
 
-    let dep_graph = DepGraph::new(false);
-    let cstore = Rc::new(CStore::new(&dep_graph, box rustc_trans::LlvmMetadataLoader));
+    let cstore = Rc::new(CStore::new(box rustc_trans::LlvmMetadataLoader));
     let mut sess = session::build_session_(
-        sessopts, &dep_graph, None, diagnostic_handler, codemap, cstore.clone(),
+        sessopts, None, diagnostic_handler, codemap,
     );
     rustc_trans::init(&sess);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
@@ -347,7 +350,21 @@ pub fn make_test(s: &str,
             }
         }
     }
-    if dont_insert_main || s.contains("fn main") {
+
+    // FIXME (#21299): prefer libsyntax or some other actual parser over this
+    // best-effort ad hoc approach
+    let already_has_main = s.lines()
+        .map(|line| {
+            let comment = line.find("//");
+            if let Some(comment_begins) = comment {
+                &line[0..comment_begins]
+            } else {
+                line
+            }
+        })
+        .any(|code| code.contains("fn main"));
+
+    if dont_insert_main || already_has_main {
         prog.push_str(&everything_else);
     } else {
         prog.push_str("fn main() {\n");
@@ -532,7 +549,7 @@ impl Collector {
 
     pub fn get_line(&self) -> usize {
         if let Some(ref codemap) = self.codemap {
-            let line = self.position.lo.to_usize();
+            let line = self.position.lo().to_usize();
             let line = codemap.lookup_char_pos(BytePos(line as u32)).line;
             if line > 0 { line - 1 } else { line }
         } else {

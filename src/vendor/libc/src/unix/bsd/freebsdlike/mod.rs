@@ -264,6 +264,8 @@ pub const EOF: ::c_int = -1;
 pub const SEEK_SET: ::c_int = 0;
 pub const SEEK_CUR: ::c_int = 1;
 pub const SEEK_END: ::c_int = 2;
+pub const SEEK_DATA: ::c_int = 3;
+pub const SEEK_HOLE: ::c_int = 4;
 pub const _IOFBF: ::c_int = 0;
 pub const _IONBF: ::c_int = 2;
 pub const _IOLBF: ::c_int = 1;
@@ -334,6 +336,7 @@ pub const MAP_SHARED: ::c_int = 0x0001;
 pub const MAP_PRIVATE: ::c_int = 0x0002;
 pub const MAP_FIXED: ::c_int = 0x0010;
 pub const MAP_ANON: ::c_int = 0x1000;
+pub const MAP_ANONYMOUS: ::c_int = MAP_ANON;
 
 pub const MAP_FAILED: *mut ::c_void = !0 as *mut ::c_void;
 
@@ -438,6 +441,10 @@ pub const EBADMSG: ::c_int = 89;
 pub const EMULTIHOP: ::c_int = 90;
 pub const ENOLINK: ::c_int = 91;
 pub const EPROTO: ::c_int = 92;
+
+pub const POLLSTANDARD: ::c_short = ::POLLIN | ::POLLPRI | ::POLLOUT |
+    ::POLLRDNORM | ::POLLRDBAND | ::POLLWRBAND | ::POLLERR |
+    ::POLLHUP | ::POLLNVAL;
 
 pub const EAI_SYSTEM: ::c_int = 11;
 
@@ -955,6 +962,13 @@ extern {
     pub fn getutxline(ut: *const utmpx) -> *mut utmpx;
     pub fn pututxline(ut: *const utmpx) -> *mut utmpx;
     pub fn setutxent();
+    pub fn setresgid(rgid: ::gid_t, egid: ::gid_t, sgid: ::gid_t) -> ::c_int;
+    pub fn setresuid(ruid: ::uid_t, euid: ::uid_t, suid: ::uid_t) -> ::c_int;
+    pub fn getgrouplist(name: *const ::c_char,
+                        basegid: ::gid_t,
+                        groups: *mut ::gid_t,
+                        ngroups: *mut ::c_int) -> ::c_int;
+    pub fn initgroups(name: *const ::c_char, basegid: ::gid_t) -> ::c_int;
 }
 
 #[link(name = "util")]
@@ -1014,7 +1028,7 @@ extern {
                         -> ::c_int;
     pub fn sched_setscheduler(pid: ::pid_t,
                               policy: ::c_int,
-                              param: *const sched_param) -> ::c_int;
+                              param: *const ::sched_param) -> ::c_int;
     pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
     pub fn memrchr(cx: *const ::c_void,
                    c: ::c_int,
@@ -1081,7 +1095,7 @@ extern {
     pub fn pthread_condattr_getclock(attr: *const pthread_condattr_t,
                                      clock_id: *mut clockid_t) -> ::c_int;
     pub fn pthread_condattr_setclock(attr: *mut pthread_condattr_t,
-                                     clock_id: clockid_t) -> ::c_int;
+                                     clock_id: ::clockid_t) -> ::c_int;
     pub fn sethostname(name: *const ::c_char, len: ::c_int) -> ::c_int;
     pub fn sem_timedwait(sem: *mut sem_t,
                          abstime: *const ::timespec) -> ::c_int;
@@ -1093,6 +1107,9 @@ extern {
                  timeout: *const ::timespec,
                  sigmask: *const sigset_t) -> ::c_int;
     pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
+    pub fn fexecve(fd: ::c_int, argv: *const *const ::c_char,
+                   envp: *const *const ::c_char)
+                   -> ::c_int;
 }
 
 cfg_if! {

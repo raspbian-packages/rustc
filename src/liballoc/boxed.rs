@@ -62,11 +62,11 @@ use core::any::Any;
 use core::borrow;
 use core::cmp::Ordering;
 use core::fmt;
-use core::hash::{self, Hash};
+use core::hash::{self, Hash, Hasher};
 use core::iter::FusedIterator;
 use core::marker::{self, Unsize};
 use core::mem;
-use core::ops::{CoerceUnsized, Deref, DerefMut};
+use core::ops::{CoerceUnsized, Deref, DerefMut, Generator, GeneratorState};
 use core::ops::{BoxPlace, Boxed, InPlace, Place, Placer};
 use core::ptr::{self, Unique};
 use core::convert::From;
@@ -456,6 +456,52 @@ impl<T: ?Sized + Hash> Hash for Box<T> {
     }
 }
 
+#[stable(feature = "indirect_hasher_impl", since = "1.22.0")]
+impl<T: ?Sized + Hasher> Hasher for Box<T> {
+    fn finish(&self) -> u64 {
+        (**self).finish()
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        (**self).write(bytes)
+    }
+    fn write_u8(&mut self, i: u8) {
+        (**self).write_u8(i)
+    }
+    fn write_u16(&mut self, i: u16) {
+        (**self).write_u16(i)
+    }
+    fn write_u32(&mut self, i: u32) {
+        (**self).write_u32(i)
+    }
+    fn write_u64(&mut self, i: u64) {
+        (**self).write_u64(i)
+    }
+    fn write_u128(&mut self, i: u128) {
+        (**self).write_u128(i)
+    }
+    fn write_usize(&mut self, i: usize) {
+        (**self).write_usize(i)
+    }
+    fn write_i8(&mut self, i: i8) {
+        (**self).write_i8(i)
+    }
+    fn write_i16(&mut self, i: i16) {
+        (**self).write_i16(i)
+    }
+    fn write_i32(&mut self, i: i32) {
+        (**self).write_i32(i)
+    }
+    fn write_i64(&mut self, i: i64) {
+        (**self).write_i64(i)
+    }
+    fn write_i128(&mut self, i: i128) {
+        (**self).write_i128(i)
+    }
+    fn write_isize(&mut self, i: isize) {
+        (**self).write_isize(i)
+    }
+}
+
 #[stable(feature = "from_for_ptrs", since = "1.6.0")]
 impl<T> From<T> for Box<T> {
     fn from(t: T) -> Self {
@@ -482,9 +528,7 @@ impl<'a> From<&'a str> for Box<str> {
 #[stable(feature = "boxed_str_conv", since = "1.19.0")]
 impl From<Box<str>> for Box<[u8]> {
     fn from(s: Box<str>) -> Self {
-        unsafe {
-            mem::transmute(s)
-        }
+        unsafe { Box::from_raw(Box::into_raw(s) as *mut [u8]) }
     }
 }
 
@@ -782,5 +826,16 @@ impl<T: ?Sized> AsRef<T> for Box<T> {
 impl<T: ?Sized> AsMut<T> for Box<T> {
     fn as_mut(&mut self) -> &mut T {
         &mut **self
+    }
+}
+
+#[unstable(feature = "generator_trait", issue = "43122")]
+impl<T> Generator for Box<T>
+    where T: Generator + ?Sized
+{
+    type Yield = T::Yield;
+    type Return = T::Return;
+    fn resume(&mut self) -> GeneratorState<Self::Yield, Self::Return> {
+        (**self).resume()
     }
 }

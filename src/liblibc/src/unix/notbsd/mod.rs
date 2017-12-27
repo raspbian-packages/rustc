@@ -760,7 +760,6 @@ pub const SPLICE_F_MORE: ::c_uint = 0x04;
 pub const SPLICE_F_GIFT: ::c_uint = 0x08;
 
 pub const RTLD_LOCAL: ::c_int = 0;
-pub const RTLD_LAZY: ::c_int = 1;
 
 pub const POSIX_FADV_NORMAL: ::c_int = 0;
 pub const POSIX_FADV_RANDOM: ::c_int = 1;
@@ -794,12 +793,6 @@ pub const P_PGID: idtype_t = 2;
 pub const UTIME_OMIT: c_long = 1073741822;
 pub const UTIME_NOW: c_long = 1073741823;
 
-pub const POLLIN: ::c_short = 0x1;
-pub const POLLPRI: ::c_short = 0x2;
-pub const POLLOUT: ::c_short = 0x4;
-pub const POLLERR: ::c_short = 0x8;
-pub const POLLHUP: ::c_short = 0x10;
-pub const POLLNVAL: ::c_short = 0x20;
 pub const POLLRDNORM: ::c_short = 0x040;
 pub const POLLRDBAND: ::c_short = 0x080;
 
@@ -908,8 +901,6 @@ extern {
     pub fn uselocale(loc: ::locale_t) -> ::locale_t;
     pub fn creat64(path: *const c_char, mode: mode_t) -> ::c_int;
     pub fn fstat64(fildes: ::c_int, buf: *mut stat64) -> ::c_int;
-    pub fn fstatat64(dirfd: ::c_int, pathname: *const c_char,
-                     buf: *mut stat64, flags: ::c_int) -> ::c_int;
     pub fn ftruncate64(fd: ::c_int, length: off64_t) -> ::c_int;
     pub fn getrlimit64(resource: ::c_int, rlim: *mut rlimit64) -> ::c_int;
     pub fn lseek64(fd: ::c_int, offset: off64_t, whence: ::c_int) -> off64_t;
@@ -927,16 +918,8 @@ extern {
                     oflag: ::c_int, ...) -> ::c_int;
     pub fn pread64(fd: ::c_int, buf: *mut ::c_void, count: ::size_t,
                    offset: off64_t) -> ::ssize_t;
-    pub fn preadv64(fd: ::c_int,
-                    iov: *const ::iovec,
-                    iovcnt: ::c_int,
-                    offset: ::off64_t) -> ::ssize_t;
     pub fn pwrite64(fd: ::c_int, buf: *const ::c_void, count: ::size_t,
                     offset: off64_t) -> ::ssize_t;
-    pub fn pwritev64(fd: ::c_int,
-                     iov: *const ::iovec,
-                     iovcnt: ::c_int,
-                     offset: ::off64_t) -> ::ssize_t;
     pub fn readdir64(dirp: *mut ::DIR) -> *mut ::dirent64;
     pub fn readdir64_r(dirp: *mut ::DIR, entry: *mut ::dirent64,
                        result: *mut *mut ::dirent64) -> ::c_int;

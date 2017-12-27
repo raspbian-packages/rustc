@@ -3,7 +3,8 @@ use serde_json::value::Value as Json;
 use helpers::HelperDef;
 use registry::Registry;
 use context::JsonRender;
-use render::{RenderContext, RenderError, Helper};
+use render::{RenderContext, Helper};
+use error::RenderError;
 
 #[derive(Clone, Copy)]
 pub struct LookupHelper;
@@ -20,17 +21,17 @@ impl HelperDef for LookupHelper {
         let null = Json::Null;
         let value = match collection_value.value() {
             &Json::Array(ref v) => {
-                index.value()
+                index
+                    .value()
                     .as_u64()
                     .and_then(|u| Some(u as usize))
                     .and_then(|u| v.get(u))
                     .unwrap_or(&null)
             }
             &Json::Object(ref m) => {
-                index.value()
-                    .as_str()
-                    .and_then(|k| m.get(k))
-                    .unwrap_or(&null)
+                index.value().as_str().and_then(|k| m.get(k)).unwrap_or(
+                    &null,
+                )
             }
             _ => &null,
         };
@@ -51,17 +52,28 @@ mod test {
     #[test]
     fn test_lookup() {
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0", "{{#each v1}}{{lookup ../../v2 @index}}{{/each}}").is_ok());
-        assert!(handlebars.register_template_string("t1",
-                                                    "{{#each v1}}{{lookup ../../v2 1}}{{/each}}")
-                    .is_ok());
-        assert!(handlebars.register_template_string("t2", "{{lookup kk \"a\"}}").is_ok());
+        assert!(
+            handlebars
+                .register_template_string("t0", "{{#each v1}}{{lookup ../../v2 @index}}{{/each}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t1", "{{#each v1}}{{lookup ../../v2 1}}{{/each}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t2", "{{lookup kk \"a\"}}")
+                .is_ok()
+        );
 
         let mut m: BTreeMap<String, Vec<u16>> = BTreeMap::new();
         m.insert("v1".to_string(), vec![1u16, 2u16, 3u16]);
         m.insert("v2".to_string(), vec![9u16, 8u16, 7u16]);
 
-        let m2 = btreemap!{
+        let m2 =
+            btreemap!{
             "kk".to_string() => btreemap!{"a".to_string() => "world".to_string()}
         };
 

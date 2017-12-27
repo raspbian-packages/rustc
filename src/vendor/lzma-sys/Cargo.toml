@@ -12,7 +12,7 @@
 
 [package]
 name = "lzma-sys"
-version = "0.1.8"
+version = "0.1.9"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 build = "build.rs"
 links = "lzma"
@@ -27,5 +27,8 @@ version = "0.2"
 [build-dependencies.filetime]
 version = "0.1"
 
-[build-dependencies.gcc]
-version = "0.3.26"
+[build-dependencies.cc]
+version = "1.0"
+
+[build-dependencies.pkg-config]
+version = "0.3"

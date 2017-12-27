@@ -133,6 +133,11 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
           // fill it in *after* placing it into the type cache.
           adt::incomplete_type_of(cx, t, "closure")
       }
+      ty::TyGenerator(..) => {
+          // Only create the named struct, but don't fill it in. We
+          // fill it in *after* placing it into the type cache.
+          adt::incomplete_type_of(cx, t, "generator")
+      }
 
       ty::TyRef(_, ty::TypeAndMut{ty, ..}) |
       ty::TyRawPtr(ty::TypeAndMut{ty, ..}) => {
@@ -143,8 +148,8 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
       }
 
       ty::TyArray(ty, size) => {
-          let size = size as u64;
           let llty = in_memory_type_of(cx, ty);
+          let size = size.val.to_const_int().unwrap().to_u64().unwrap();
           Type::array(&llty, size)
       }
 
@@ -197,7 +202,7 @@ pub fn in_memory_type_of<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>) -> 
 
     // If this was an enum or struct, fill in the type now.
     match t.sty {
-        ty::TyAdt(..) | ty::TyClosure(..) if !t.is_simd() && !t.is_box() => {
+        ty::TyAdt(..) | ty::TyClosure(..) | ty::TyGenerator(..) if !t.is_simd() && !t.is_box() => {
             adt::finish_type_of(cx, t, &mut llty);
         }
         _ => ()

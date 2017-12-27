@@ -137,8 +137,8 @@ On an `extern` block, the following attributes are interpreted:
 - `link` - indicate that a native library should be linked to for the
   declarations in this block to be linked correctly. `link` supports an optional
   `kind` key with three possible values: `dylib`, `static`, and `framework`. See
-  [external blocks](items.html#external-blocks) for more about external blocks. Two
-  examples: `#[link(name = "readline")]` and
+  [external blocks](items/external-blocks.html) for more about external blocks.
+  Two examples: `#[link(name = "readline")]` and 
   `#[link(name = "CoreFoundation", kind = "framework")]`.
 - `linked_from` - indicates what native library this block of FFI items is
   coming from. This attribute is of the form `#[linked_from = "foo"]` where
@@ -408,20 +408,7 @@ pub mod m3 {
 Some primitive Rust operations are defined in Rust code, rather than being
 implemented directly in C or assembly language. The definitions of these
 operations have to be easy for the compiler to find. The `lang` attribute
-makes it possible to declare these operations. For example, the `str` module
-in the Rust standard library defines the string equality function:
-
-```rust,ignore
-#[lang = "str_eq"]
-pub fn eq_slice(a: &str, b: &str) -> bool {
-    // details elided
-}
-```
-
-The name `str_eq` has a special meaning to the Rust compiler, and the presence
-of this definition means that it will use this definition when generating calls
-to the string equality function.
-
+makes it possible to declare these operations.
 The set of language items is currently considered unstable. A complete
 list of the built-in language items will be added in the future.
 

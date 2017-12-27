@@ -46,6 +46,21 @@ The rational is the following:
  -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
 
 
+Architecture-specific notes
+===========================
+
+armhf
+-----
+
+We only ship debuginfo for libstd and not the compiler itself, otherwise builds
+run out of memory on the Debian buildds, with non-obvious and random errors.
+
+See https://github.com/rust-lang/rust/issues/45854 for details.
+
+If all your armhf build machines have ~8GB memory or more, you can experiment
+with disabling this work-around (i.e. revert to normal) in d/rules.
+
+
 Cross-compiling
 ===============
 

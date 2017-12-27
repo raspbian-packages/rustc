@@ -38,8 +38,10 @@ matrix:
     - env: TARGET=i686-unknown-linux-gnu
     - os: osx
       env: TARGET=x86_64-apple-darwin NO_ADD=1
+      osx_image: xcode8.3
     - os: osx
       env: TARGET=i686-apple-darwin
+      osx_image: xcode8.3
     - env: TARGET=arm-linux-androideabi
     - env: TARGET=aarch64-linux-android
     - env: TARGET=i686-linux-android
@@ -51,9 +53,17 @@ matrix:
     - os: osx
       osx_image: xcode8.2
       env: TARGET=i386-apple-ios
+           CARGO_TARGET_I386_APPLE_IOS_RUNNER=$HOME/runtest
+           RUSTFLAGS=-Clink-arg=-mios-simulator-version-min=7.0
+      before_install:
+        rustc ./ci/ios/deploy_and_run_on_ios_simulator.rs -o $HOME/runtest
     - os: osx
       osx_image: xcode8.2
       env: TARGET=x86_64-apple-ios
+           CARGO_TARGET_X86_64_APPLE_IOS_RUNNER=$HOME/runtest
+           RUSTFLAGS=-Clink-arg=-mios-simulator-version-min=7.0
+      before_install:
+        rustc ./ci/ios/deploy_and_run_on_ios_simulator.rs -o $HOME/runtest
     - env: TARGET=x86_64-rumprun-netbsd
     - env: TARGET=powerpc-unknown-linux-gnu
     - env: TARGET=powerpc64-unknown-linux-gnu
@@ -62,12 +72,15 @@ matrix:
     - env: TARGET=mips64-unknown-linux-gnuabi64
     - env: TARGET=mips-unknown-linux-gnu
     - env: TARGET=s390x-unknown-linux-gnu
+    - env: TARGET=asmjs-unknown-emscripten
+    - env: TARGET=wasm32-unknown-emscripten
 
     # beta
     - env: TARGET=x86_64-unknown-linux-gnu NO_ADD=1
       rust: beta
     - os: osx
       env: TARGET=x86_64-apple-darwin NO_ADD=1
+      osx_image: xcode8.3
       rust: beta
 
     # nightly
@@ -75,15 +88,11 @@ matrix:
       rust: nightly
     - os: osx
       env: TARGET=x86_64-apple-darwin NO_ADD=1
+      osx_image: xcode8.3
       rust: nightly
 
     # QEMU based targets that compile in an emulator
     - env: TARGET=x86_64-unknown-freebsd
-    - env: TARGET=x86_64-unknown-openbsd QEMU=openbsd.qcow2
-      script: sh ci/run-docker.sh $TARGET
-      install:
-
-cache: cargo
 
 notifications:
   email:

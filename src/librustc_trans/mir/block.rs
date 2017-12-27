@@ -11,8 +11,9 @@
 use llvm::{self, ValueRef, BasicBlockRef};
 use rustc::middle::lang_items;
 use rustc::middle::const_val::{ConstEvalErr, ConstInt, ErrKind};
-use rustc::ty::{self, TypeFoldable};
+use rustc::ty::{self, Ty, TypeFoldable};
 use rustc::ty::layout::{self, LayoutTyper};
+use rustc::traits;
 use rustc::mir;
 use abi::{Abi, FnType, ArgType};
 use adt;
@@ -119,7 +120,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             fn_ty: FnType<'tcx>,
             fn_ptr: ValueRef,
             llargs: &[ValueRef],
-            destination: Option<(ReturnDest, ty::Ty<'tcx>, mir::BasicBlock)>,
+            destination: Option<(ReturnDest, Ty<'tcx>, mir::BasicBlock)>,
             cleanup: Option<mir::BasicBlock>
         | {
             if let Some(cleanup) = cleanup {
@@ -265,7 +266,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
             mir::TerminatorKind::Drop { ref location, target, unwind } => {
                 let ty = location.ty(self.mir, bcx.tcx()).to_ty(bcx.tcx());
                 let ty = self.monomorphize(&ty);
-                let drop_fn = monomorphize::resolve_drop_in_place(bcx.ccx.shared(), ty);
+                let drop_fn = monomorphize::resolve_drop_in_place(bcx.ccx.tcx(), ty);
 
                 if let ty::InstanceDef::DropGlue(_, None) = drop_fn.def {
                     // we don't actually need to drop anything.
@@ -330,7 +331,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 self.set_debug_loc(&bcx, terminator.source_info);
 
                 // Get the location information.
-                let loc = bcx.sess().codemap().lookup_char_pos(span.lo);
+                let loc = bcx.sess().codemap().lookup_char_pos(span.lo());
                 let filename = Symbol::intern(&loc.file.name).as_str();
                 let filename = C_str_slice(bcx.ccx, filename);
                 let line = C_u32(bcx.ccx, loc.line as u32);
@@ -374,6 +375,27 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                          vec![msg_file_line_col],
                          Some(ErrKind::Math(err.clone())))
                     }
+                    mir::AssertMessage::GeneratorResumedAfterReturn |
+                    mir::AssertMessage::GeneratorResumedAfterPanic => {
+                        let str = if let mir::AssertMessage::GeneratorResumedAfterReturn = *msg {
+                            "generator resumed after completion"
+                        } else {
+                            "generator resumed after panicking"
+                        };
+                        let msg_str = Symbol::intern(str).as_str();
+                        let msg_str = C_str_slice(bcx.ccx, msg_str);
+                        let msg_file_line_col = C_struct(bcx.ccx,
+                                                     &[msg_str, filename, line, col],
+                                                     false);
+                        let align = llalign_of_min(bcx.ccx, common::val_ty(msg_file_line_col));
+                        let msg_file_line_col = consts::addr_of(bcx.ccx,
+                                                                msg_file_line_col,
+                                                                align,
+                                                                "panic_loc");
+                        (lang_items::PanicFnLangItem,
+                         vec![msg_file_line_col],
+                         None)
+                    }
                 };
 
                 // If we know we always panic, and the error message
@@ -408,7 +430,10 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
 
                 let (instance, mut llfn) = match callee.ty.sty {
                     ty::TyFnDef(def_id, substs) => {
-                        (Some(monomorphize::resolve(bcx.ccx.shared(), def_id, substs)),
+                        (Some(ty::Instance::resolve(bcx.ccx.tcx(),
+                                                    ty::ParamEnv::empty(traits::Reveal::All),
+                                                    def_id,
+                                                    substs).unwrap()),
                          None)
                     }
                     ty::TyFnPtr(_) => {
@@ -424,7 +449,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                 // Handle intrinsics old trans wants Expr's for, ourselves.
                 let intrinsic = match def {
                     Some(ty::InstanceDef::Intrinsic(def_id))
-                        => Some(bcx.tcx().item_name(def_id).as_str()),
+                        => Some(bcx.tcx().item_name(def_id)),
                     _ => None
                 };
                 let intrinsic = intrinsic.as_ref().map(|s| &s[..]);
@@ -525,7 +550,7 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                     };
 
                     let callee_ty = common::instance_ty(
-                        bcx.ccx.shared(), instance.as_ref().unwrap());
+                        bcx.ccx.tcx(), instance.as_ref().unwrap());
                     trans_intrinsic_call(&bcx, callee_ty, &fn_ty, &llargs, dest,
                                          terminator.source_info.span);
 
@@ -557,6 +582,8 @@ impl<'a, 'tcx> MirContext<'a, 'tcx> {
                         destination.as_ref().map(|&(_, target)| (ret_dest, sig.output(), target)),
                         cleanup);
             }
+            mir::TerminatorKind::GeneratorDrop |
+            mir::TerminatorKind::Yield { .. } => bug!("generator ops in trans"),
         }
     }
 

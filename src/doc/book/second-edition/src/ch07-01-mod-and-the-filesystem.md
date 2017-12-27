@@ -63,7 +63,7 @@ mod network {
 ```
 
 After the `mod` keyword, we put the name of the module, `network`, and then a
-block of code in curly braces. Everything inside this block is inside the
+block of code in curly brackets. Everything inside this block is inside the
 namespace `network`. In this case, we have a single function, `connect`. If we
 wanted to call this function from a script outside the `network` module, we
 would need to specify the module and use the namespace syntax `::`, like so:
@@ -383,7 +383,7 @@ previously, we can do what the note suggests:
 
 1. Make a new *directory* named *network*, the parent module’s name.
 2. Move the *src/network.rs* file into the new *network* directory, and
-   rename *src/network/mod.rs*.
+   rename it to *src/network/mod.rs*.
 3. Move the submodule file *src/server.rs* into the *network* directory.
 
 Here are commands to carry out these steps:

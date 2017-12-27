@@ -8,16 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use hir::BodyId;
 use hir::def_id::DefId;
 use hir::map::definitions::DefPathData;
-use middle::region::{CodeExtent, BlockRemainder};
+use middle::const_val::ConstVal;
+use middle::region::{self, BlockRemainder};
 use ty::subst::{self, Subst};
 use ty::{BrAnon, BrEnv, BrFresh, BrNamed};
 use ty::{TyBool, TyChar, TyAdt};
 use ty::{TyError, TyStr, TyArray, TySlice, TyFloat, TyFnDef, TyFnPtr};
 use ty::{TyParam, TyRawPtr, TyRef, TyNever, TyTuple};
-use ty::{TyClosure, TyProjection, TyAnon};
+use ty::{TyClosure, TyGenerator, TyProjection, TyAnon};
 use ty::{TyDynamic, TyInt, TyUint, TyInfer};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 
@@ -25,6 +25,8 @@ use std::cell::Cell;
 use std::fmt;
 use std::usize;
 
+use rustc_const_math::ConstInt;
+use rustc_data_structures::indexed_vec::Idx;
 use syntax::abi::Abi;
 use syntax::ast::CRATE_NODE_ID;
 use syntax::symbol::Symbol;
@@ -160,7 +162,7 @@ pub fn parameterized(f: &mut fmt::Formatter,
         }
 
         write!(f, "{}", tcx.item_path_str(path_def_id))?;
-        Ok(tcx.lang_items.fn_trait_kind(path_def_id))
+        Ok(tcx.lang_items().fn_trait_kind(path_def_id))
     })?;
 
     if !verbose && fn_trait_kind.is_some() && projections.len() == 1 {
@@ -429,6 +431,9 @@ impl<'tcx> fmt::Debug for ty::Predicate<'tcx> {
             ty::Predicate::ClosureKind(closure_def_id, kind) => {
                 write!(f, "ClosureKind({:?}, {:?})", closure_def_id, kind)
             }
+            ty::Predicate::ConstEvaluatable(def_id, substs) => {
+                write!(f, "ConstEvaluatable({:?}, {:?})", def_id, substs)
+            }
         }
     }
 }
@@ -525,18 +530,18 @@ impl fmt::Display for ty::RegionKind {
             ty::ReSkolemized(_, br) => {
                 write!(f, "{}", br)
             }
-            ty::ReScope(code_extent) if identify_regions() => {
-                match code_extent {
-                    CodeExtent::Misc(node_id) =>
-                        write!(f, "'{}mce", node_id.as_u32()),
-                    CodeExtent::CallSiteScope(BodyId { node_id }) =>
-                        write!(f, "'{}cce", node_id.as_u32()),
-                    CodeExtent::ParameterScope(BodyId { node_id }) =>
-                        write!(f, "'{}pce", node_id.as_u32()),
-                    CodeExtent::DestructionScope(node_id) =>
-                        write!(f, "'{}dce", node_id.as_u32()),
-                    CodeExtent::Remainder(BlockRemainder { block, first_statement_index }) =>
-                        write!(f, "'{}_{}rce", block, first_statement_index),
+            ty::ReScope(scope) if identify_regions() => {
+                match scope.data() {
+                    region::ScopeData::Node(id) =>
+                        write!(f, "'{}s", id.as_usize()),
+                    region::ScopeData::CallSite(id) =>
+                        write!(f, "'{}cs", id.as_usize()),
+                    region::ScopeData::Arguments(id) =>
+                        write!(f, "'{}as", id.as_usize()),
+                    region::ScopeData::Destruction(id) =>
+                        write!(f, "'{}ds", id.as_usize()),
+                    region::ScopeData::Remainder(BlockRemainder { block, first_statement_index }) =>
+                        write!(f, "'{}_{}rs", block.as_usize(), first_statement_index.index()),
                 }
             }
             ty::ReVar(region_vid) if identify_regions() => {
@@ -672,6 +677,12 @@ impl<'tcx> fmt::Display for ty::Binder<ty::TraitRef<'tcx>> {
     }
 }
 
+impl<'tcx> fmt::Display for ty::Binder<ty::FnSig<'tcx>> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        ty::tls::with(|tcx| in_binder(f, tcx, self, tcx.lift(self)))
+    }
+}
+
 impl<'tcx> fmt::Display for ty::Binder<ty::TraitPredicate<'tcx>> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         ty::tls::with(|tcx| in_binder(f, tcx, self, tcx.lift(self)))
@@ -712,6 +723,12 @@ impl<'tcx> fmt::Display for ty::Binder<ty::OutlivesPredicate<ty::Region<'tcx>,
 impl<'tcx> fmt::Display for ty::TraitRef<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         parameterized(f, self.substs, self.def_id, &[])
+    }
+}
+
+impl<'tcx> fmt::Display for ty::GeneratorInterior<'tcx> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.witness.fmt(f)
     }
 }
 
@@ -797,7 +814,7 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                     for predicate in bounds.predicates {
                         if let Some(trait_ref) = predicate.to_opt_poly_trait_ref() {
                             // Don't print +Sized, but rather +?Sized if absent.
-                            if Some(trait_ref.def_id()) == tcx.lang_items.sized_trait() {
+                            if Some(trait_ref.def_id()) == tcx.lang_items().sized_trait() {
                                 is_sized = true;
                                 continue;
                             }
@@ -813,6 +830,39 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                 })
             }
             TyStr => write!(f, "str"),
+            TyGenerator(did, substs, interior) => ty::tls::with(|tcx| {
+                let upvar_tys = substs.upvar_tys(did, tcx);
+                write!(f, "[generator")?;
+
+                if let Some(node_id) = tcx.hir.as_local_node_id(did) {
+                    write!(f, "@{:?}", tcx.hir.span(node_id))?;
+                    let mut sep = " ";
+                    tcx.with_freevars(node_id, |freevars| {
+                        for (freevar, upvar_ty) in freevars.iter().zip(upvar_tys) {
+                            write!(f,
+                                        "{}{}:{}",
+                                        sep,
+                                        tcx.hir.name(freevar.var_id()),
+                                        upvar_ty)?;
+                            sep = ", ";
+                        }
+                        Ok(())
+                    })?
+                } else {
+                    // cross-crate closure types should only be
+                    // visible in trans bug reports, I imagine.
+                    write!(f, "@{:?}", did)?;
+                    let mut sep = " ";
+                    for (index, upvar_ty) in upvar_tys.enumerate() {
+                        write!(f, "{}{}:{}", sep, index, upvar_ty)?;
+                        sep = ", ";
+                    }
+                }
+
+                write!(f, " {}", interior)?;
+
+                write!(f, "]")
+            }),
             TyClosure(did, substs) => ty::tls::with(|tcx| {
                 let upvar_tys = substs.upvar_tys(did, tcx);
                 write!(f, "[closure")?;
@@ -826,12 +876,10 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
                     let mut sep = " ";
                     tcx.with_freevars(node_id, |freevars| {
                         for (freevar, upvar_ty) in freevars.iter().zip(upvar_tys) {
-                            let def_id = freevar.def.def_id();
-                            let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
                             write!(f,
                                         "{}{}:{}",
                                         sep,
-                                        tcx.local_var_name_str(node_id),
+                                        tcx.hir.name(freevar.var_id()),
                                         upvar_ty)?;
                             sep = ", ";
                         }
@@ -850,7 +898,21 @@ impl<'tcx> fmt::Display for ty::TypeVariants<'tcx> {
 
                 write!(f, "]")
             }),
-            TyArray(ty, sz) => write!(f, "[{}; {}]",  ty, sz),
+            TyArray(ty, sz) => {
+                write!(f, "[{}; ", ty)?;
+                match sz.val {
+                    ConstVal::Integral(ConstInt::Usize(sz)) => {
+                        write!(f, "{}", sz)?;
+                    }
+                    ConstVal::Unevaluated(_def_id, substs) => {
+                        write!(f, "<unevaluated{:?}>", &substs[..])?;
+                    }
+                    _ => {
+                        write!(f, "{:?}", sz)?;
+                    }
+                }
+                write!(f, "]")
+            }
             TySlice(ty) => write!(f, "[{}]",  ty)
         }
     }
@@ -866,7 +928,7 @@ impl fmt::Debug for ty::UpvarId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "UpvarId({:?};`{}`;{:?})",
                self.var_id,
-               ty::tls::with(|tcx| tcx.local_var_name_str_def_index(self.var_id)),
+               ty::tls::with(|tcx| tcx.hir.name(tcx.hir.hir_to_node_id(self.var_id))),
                self.closure_expr_id)
     }
 }
@@ -999,6 +1061,11 @@ impl<'tcx> fmt::Display for ty::Predicate<'tcx> {
                     write!(f, "the closure `{}` implements the trait `{}`",
                            tcx.item_path_str(closure_def_id), kind)
                 }),
+            ty::Predicate::ConstEvaluatable(def_id, substs) => {
+                write!(f, "the constant `")?;
+                parameterized(f, substs, def_id, &[])?;
+                write!(f, "` can be evaluated")
+            }
         }
     }
 }

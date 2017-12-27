@@ -429,8 +429,7 @@ fn visit_expr<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, expr: &'tcx Expr) {
         let mut call_caps = Vec::new();
         ir.tcx.with_freevars(expr.id, |freevars| {
             for fv in freevars {
-                if let Def::Local(def_id) = fv.def {
-                    let rv = ir.tcx.hir.as_local_node_id(def_id).unwrap();
+                if let Def::Local(rv) = fv.def {
                     let fv_ln = ir.add_live_node(FreeVarNode(fv.span));
                     call_caps.push(CaptureInfo {ln: fv_ln,
                                                 var_nid: rv});
@@ -460,7 +459,7 @@ fn visit_expr<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, expr: &'tcx Expr) {
       hir::ExprAgain(_) | hir::ExprLit(_) | hir::ExprRet(..) |
       hir::ExprBlock(..) | hir::ExprAssign(..) | hir::ExprAssignOp(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
-      hir::ExprInlineAsm(..) | hir::ExprBox(..) |
+      hir::ExprInlineAsm(..) | hir::ExprBox(..) | hir::ExprYield(..) |
       hir::ExprType(..) | hir::ExprPath(hir::QPath::TypeRelative(..)) => {
           intravisit::walk_expr(ir, expr);
       }
@@ -881,7 +880,6 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
 
         match expr.node {
           // Interesting cases with control flow or which gen/kill
-
           hir::ExprPath(hir::QPath::Resolved(_, ref path)) => {
               self.access_path(expr.id, path, succ, ACC_READ | ACC_USE)
           }
@@ -894,7 +892,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
               self.propagate_through_expr(&e, succ)
           }
 
-          hir::ExprClosure(.., blk_id, _) => {
+          hir::ExprClosure(.., blk_id, _, _) => {
               debug!("{} is an ExprClosure", self.ir.tcx.hir.node_to_pretty_string(expr.id));
 
               /*
@@ -1116,6 +1114,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
           hir::ExprCast(ref e, _) |
           hir::ExprType(ref e, _) |
           hir::ExprUnary(_, ref e) |
+          hir::ExprYield(ref e) |
           hir::ExprRepeat(ref e, _) => {
             self.propagate_through_expr(&e, succ)
           }
@@ -1224,18 +1223,22 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         }
     }
 
+    fn access_var(&mut self, id: NodeId, nid: NodeId, succ: LiveNode, acc: u32, span: Span)
+                  -> LiveNode {
+        let ln = self.live_node(id, span);
+        if acc != 0 {
+            self.init_from_succ(ln, succ);
+            let var = self.variable(nid, span);
+            self.acc(ln, var, acc);
+        }
+        ln
+    }
+
     fn access_path(&mut self, id: NodeId, path: &hir::Path, succ: LiveNode, acc: u32)
                    -> LiveNode {
         match path.def {
-          Def::Local(def_id) => {
-            let nid = self.ir.tcx.hir.as_local_node_id(def_id).unwrap();
-            let ln = self.live_node(id, path.span);
-            if acc != 0 {
-                self.init_from_succ(ln, succ);
-                let var = self.variable(nid, path.span);
-                self.acc(ln, var, acc);
-            }
-            ln
+          Def::Local(nid) => {
+            self.access_var(id, nid, succ, acc, path.span)
           }
           _ => succ
         }
@@ -1398,7 +1401,7 @@ fn check_expr<'a, 'tcx>(this: &mut Liveness<'a, 'tcx>, expr: &'tcx Expr) {
       hir::ExprBreak(..) | hir::ExprAgain(..) | hir::ExprLit(_) |
       hir::ExprBlock(..) | hir::ExprAddrOf(..) |
       hir::ExprStruct(..) | hir::ExprRepeat(..) |
-      hir::ExprClosure(..) | hir::ExprPath(_) |
+      hir::ExprClosure(..) | hir::ExprPath(_) | hir::ExprYield(..) |
       hir::ExprBox(..) | hir::ExprType(..) => {
         intravisit::walk_expr(this, expr);
       }
@@ -1409,12 +1412,11 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn check_lvalue(&mut self, expr: &'tcx Expr) {
         match expr.node {
             hir::ExprPath(hir::QPath::Resolved(_, ref path)) => {
-                if let Def::Local(def_id) = path.def {
+                if let Def::Local(nid) = path.def {
                     // Assignment to an immutable variable or argument: only legal
                     // if there is no later assignment. If this local is actually
                     // mutable, then check for a reassignment to flag the mutability
                     // as being used.
-                    let nid = self.ir.tcx.hir.as_local_node_id(def_id).unwrap();
                     let ln = self.live_node(expr.id, expr.span);
                     let var = self.variable(nid, expr.span);
                     self.warn_about_dead_assign(expr.span, expr.id, ln, var);
@@ -1485,12 +1487,12 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                     self.ir.tcx.lint_node_note(lint::builtin::UNUSED_VARIABLES, id, sp,
                         &format!("variable `{}` is assigned to, but never used",
                                  name),
-                        &format!("to disable this warning, consider using `_{}` instead",
+                        &format!("to avoid this warning, consider using `_{}` instead",
                                  name));
                 } else if name != "self" {
                     self.ir.tcx.lint_node_note(lint::builtin::UNUSED_VARIABLES, id, sp,
                         &format!("unused variable: `{}`", name),
-                        &format!("to disable this warning, consider using `_{}` instead",
+                        &format!("to avoid this warning, consider using `_{}` instead",
                                  name));
                 }
             }

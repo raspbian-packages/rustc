@@ -11,11 +11,9 @@
 pub use self::code_stats::{CodeStats, DataTypeKind, FieldInfo};
 pub use self::code_stats::{SizeKind, TypeSizeInfo, VariantInfo};
 
-use dep_graph::DepGraph;
 use hir::def_id::{CrateNum, DefIndex};
 
 use lint;
-use middle::cstore::CrateStore;
 use middle::allocator::AllocatorKind;
 use middle::dependency_format;
 use session::search_paths::PathKind;
@@ -59,11 +57,9 @@ pub mod search_paths;
 // Represents the data associated with a compilation
 // session for a single crate.
 pub struct Session {
-    pub dep_graph: DepGraph,
     pub target: config::Config,
     pub host: Target,
     pub opts: config::Options,
-    pub cstore: Rc<CrateStore>,
     pub parse_sess: ParseSess,
     // For a library crate, this is always none
     pub entry_fn: RefCell<Option<(NodeId, Span)>>,
@@ -72,8 +68,7 @@ pub struct Session {
     pub derive_registrar_fn: Cell<Option<ast::NodeId>>,
     pub default_sysroot: Option<PathBuf>,
     // The name of the root source file of the crate, in the local file system.
-    // The path is always expected to be absolute. `None` means that there is no
-    // source file.
+    // `None` means that there is no source file.
     pub local_crate_source_file: Option<String>,
     // The directory the compiler has been executed in plus a flag indicating
     // if the value stored here has been affected by path remapping.
@@ -93,7 +88,7 @@ pub struct Session {
     // forms a unique global identifier for the crate. It is used to allow
     // multiple crates with the same name to coexist. See the
     // trans::back::symbol_names module for more information.
-    pub crate_disambiguator: RefCell<Symbol>,
+    pub crate_disambiguator: RefCell<Option<Symbol>>,
     pub features: RefCell<feature_gate::Features>,
 
     /// The maximum recursion limit for potentially infinitely recursive
@@ -171,7 +166,10 @@ enum DiagnosticBuilderMethod {
 
 impl Session {
     pub fn local_crate_disambiguator(&self) -> Symbol {
-        *self.crate_disambiguator.borrow()
+        match *self.crate_disambiguator.borrow() {
+            Some(sym) => sym,
+            None => bug!("accessing disambiguator before initialization"),
+        }
     }
     pub fn struct_span_warn<'a, S: Into<MultiSpan>>(&'a self,
                                                     sp: S,
@@ -410,6 +408,11 @@ impl Session {
     pub fn print_llvm_passes(&self) -> bool {
         self.opts.debugging_opts.print_llvm_passes
     }
+    pub fn emit_end_regions(&self) -> bool {
+        self.opts.debugging_opts.emit_end_regions ||
+            (self.opts.debugging_opts.mir_emit_validate > 0) ||
+            self.opts.debugging_opts.borrowck_mir
+    }
     pub fn lto(&self) -> bool {
         self.opts.cg.lto
     }
@@ -499,9 +502,29 @@ impl Session {
             kind)
     }
 
+    pub fn set_incr_session_load_dep_graph(&self, load: bool) {
+        let mut incr_comp_session = self.incr_comp_session.borrow_mut();
+
+        match *incr_comp_session {
+            IncrCompSession::Active { ref mut load_dep_graph, .. } => {
+                *load_dep_graph = load;
+            }
+            _ => {}
+        }
+    }
+
+    pub fn incr_session_load_dep_graph(&self) -> bool {
+        let incr_comp_session = self.incr_comp_session.borrow();
+        match *incr_comp_session {
+            IncrCompSession::Active { load_dep_graph, .. } => load_dep_graph,
+            _ => false,
+        }
+    }
+
     pub fn init_incr_comp_session(&self,
                                   session_dir: PathBuf,
-                                  lock_file: flock::Lock) {
+                                  lock_file: flock::Lock,
+                                  load_dep_graph: bool) {
         let mut incr_comp_session = self.incr_comp_session.borrow_mut();
 
         if let IncrCompSession::NotInitialized = *incr_comp_session { } else {
@@ -511,6 +534,7 @@ impl Session {
         *incr_comp_session = IncrCompSession::Active {
             session_directory: session_dir,
             lock_file,
+            load_dep_graph,
         };
     }
 
@@ -615,27 +639,21 @@ impl Session {
 }
 
 pub fn build_session(sopts: config::Options,
-                     dep_graph: &DepGraph,
                      local_crate_source_file: Option<PathBuf>,
-                     registry: errors::registry::Registry,
-                     cstore: Rc<CrateStore>)
+                     registry: errors::registry::Registry)
                      -> Session {
     let file_path_mapping = sopts.file_path_mapping();
 
     build_session_with_codemap(sopts,
-                               dep_graph,
                                local_crate_source_file,
                                registry,
-                               cstore,
                                Rc::new(codemap::CodeMap::new(file_path_mapping)),
                                None)
 }
 
 pub fn build_session_with_codemap(sopts: config::Options,
-                                  dep_graph: &DepGraph,
                                   local_crate_source_file: Option<PathBuf>,
                                   registry: errors::registry::Registry,
-                                  cstore: Rc<CrateStore>,
                                   codemap: Rc<codemap::CodeMap>,
                                   emitter_dest: Option<Box<Write + Send>>)
                                   -> Session {
@@ -677,19 +695,15 @@ pub fn build_session_with_codemap(sopts: config::Options,
                                       emitter);
 
     build_session_(sopts,
-                   dep_graph,
                    local_crate_source_file,
                    diagnostic_handler,
-                   codemap,
-                   cstore)
+                   codemap)
 }
 
 pub fn build_session_(sopts: config::Options,
-                      dep_graph: &DepGraph,
                       local_crate_source_file: Option<PathBuf>,
                       span_diagnostic: errors::Handler,
-                      codemap: Rc<codemap::CodeMap>,
-                      cstore: Rc<CrateStore>)
+                      codemap: Rc<codemap::CodeMap>)
                       -> Session {
     let host = match Target::search(config::host_triple()) {
         Ok(t) => t,
@@ -707,7 +721,6 @@ pub fn build_session_(sopts: config::Options,
 
     let file_path_mapping = sopts.file_path_mapping();
 
-    // Make the path absolute, if necessary
     let local_crate_source_file = local_crate_source_file.map(|path| {
         file_path_mapping.map_prefix(path.to_string_lossy().into_owned()).0
     });
@@ -722,11 +735,9 @@ pub fn build_session_(sopts: config::Options,
     let working_dir = file_path_mapping.map_prefix(working_dir);
 
     let sess = Session {
-        dep_graph: dep_graph.clone(),
         target: target_cfg,
         host,
         opts: sopts,
-        cstore,
         parse_sess: p_s,
         // For a library crate, this is always none
         entry_fn: RefCell::new(None),
@@ -743,7 +754,7 @@ pub fn build_session_(sopts: config::Options,
         plugin_attributes: RefCell::new(Vec::new()),
         crate_types: RefCell::new(Vec::new()),
         dependency_formats: RefCell::new(FxHashMap()),
-        crate_disambiguator: RefCell::new(Symbol::intern("")),
+        crate_disambiguator: RefCell::new(None),
         features: RefCell::new(feature_gate::Features::new()),
         recursion_limit: Cell::new(64),
         type_length_limit: Cell::new(1048576),
@@ -801,6 +812,7 @@ pub enum IncrCompSession {
     Active {
         session_directory: PathBuf,
         lock_file: flock::Lock,
+        load_dep_graph: bool,
     },
     // This is the state after the session directory has been finalized. In this
     // state, the contents of the directory must not be modified any more.

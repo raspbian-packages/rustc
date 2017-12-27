@@ -77,6 +77,12 @@ pub fn compute_fields<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>, t: Ty<'tcx>,
             if variant_index > 0 { bug!("{} is a closure, which only has one variant", t);}
             substs.upvar_tys(def_id, cx.tcx()).collect()
         },
+        ty::TyGenerator(def_id, substs, _) => {
+            if variant_index > 0 { bug!("{} is a generator, which only has one variant", t);}
+            substs.field_tys(def_id, cx.tcx()).map(|t| {
+                cx.tcx().normalize_associated_type(&t)
+            }).collect()
+        },
         _ => bug!("{} is not a type that can have fields.", t)
     }
 }
@@ -391,11 +397,11 @@ pub fn trans_set_discr<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, t: Ty<'tcx>, val: Valu
     match *l {
         layout::CEnum{ discr, min, max, .. } => {
             assert_discr_in_range(min, max, to);
-            bcx.store(C_integral(Type::from_integer(bcx.ccx, discr), to, true),
+            bcx.store(C_int(Type::from_integer(bcx.ccx, discr), to as i64),
                   val, None);
         }
         layout::General{ discr, .. } => {
-            bcx.store(C_integral(Type::from_integer(bcx.ccx, discr), to, true),
+            bcx.store(C_int(Type::from_integer(bcx.ccx, discr), to as i64),
                   bcx.struct_gep(val, 0), None);
         }
         layout::Univariant { .. }
@@ -417,7 +423,7 @@ pub fn trans_set_discr<'a, 'tcx>(bcx: &Builder<'a, 'tcx>, t: Ty<'tcx>, val: Valu
                     // than storing null to single target field.
                     let llptr = bcx.pointercast(val, Type::i8(bcx.ccx).ptr_to());
                     let fill_byte = C_u8(bcx.ccx, 0);
-                    let size = C_uint(bcx.ccx, nonnull.stride().bytes());
+                    let size = C_usize(bcx.ccx, nonnull.stride().bytes());
                     let align = C_i32(bcx.ccx, nonnull.align.abi() as i32);
                     base::call_memset(bcx, llptr, fill_byte, size, align, false);
                 } else {

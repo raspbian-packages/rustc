@@ -1,13 +1,12 @@
-use render::{RenderContext, RenderError, Helper};
+use render::{RenderContext, Helper};
 use registry::Registry;
+use error::RenderError;
 
 pub use self::helper_if::{IF_HELPER, UNLESS_HELPER};
 pub use self::helper_each::EACH_HELPER;
 pub use self::helper_with::WITH_HELPER;
 pub use self::helper_lookup::LOOKUP_HELPER;
 pub use self::helper_raw::RAW_HELPER;
-#[cfg(feature="partial_legacy")]
-pub use self::helper_partial::{INCLUDE_HELPER, BLOCK_HELPER, PARTIAL_HELPER};
 pub use self::helper_log::LOG_HELPER;
 
 /// Helper Definition
@@ -51,8 +50,13 @@ pub trait HelperDef: Send + Sync {
 }
 
 /// implement HelperDef for bare function so we can use function as helper
-impl<F: Send + Sync + for<'b, 'c, 'd, 'e> Fn(&'b Helper, &'c Registry, &'d mut RenderContext) -> Result<(), RenderError>> HelperDef for F {
-    fn call(&self, h: &Helper, r: &Registry, rc: &mut RenderContext) -> Result<(), RenderError>{
+impl<
+    F: Send
+        + Sync
+        + for<'b, 'c, 'd, 'e> Fn(&'b Helper, &'c Registry, &'d mut RenderContext)
+                           -> Result<(), RenderError>,
+> HelperDef for F {
+    fn call(&self, h: &Helper, r: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
         (*self)(h, r, rc)
     }
 }
@@ -62,8 +66,6 @@ mod helper_each;
 mod helper_with;
 mod helper_lookup;
 mod helper_raw;
-#[cfg(feature="partial_legacy")]
-mod helper_partial;
 mod helper_log;
 
 // pub type HelperDef = for <'a, 'b, 'c> Fn<(&'a Context, &'b Helper, &'b Registry, &'c mut RenderContext), Result<String, RenderError>>;
@@ -80,17 +82,19 @@ mod test {
     use context::JsonRender;
     use helpers::HelperDef;
     use registry::Registry;
-    use render::{RenderContext, RenderError, Renderable, Helper};
+    use render::{RenderContext, Renderable, Helper};
+    use error::RenderError;
 
     #[derive(Clone, Copy)]
     struct MetaHelper;
 
     impl HelperDef for MetaHelper {
-        fn call(&self,
-                h: &Helper,
-                r: &Registry,
-                rc: &mut RenderContext)
-                -> Result<(), RenderError> {
+        fn call(
+            &self,
+            h: &Helper,
+            r: &Registry,
+            rc: &mut RenderContext,
+        ) -> Result<(), RenderError> {
             let v = h.param(0).unwrap();
 
             if !h.is_block() {
@@ -109,8 +113,16 @@ mod test {
     #[test]
     fn test_meta_helper() {
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t0", "{{foo this}}").is_ok());
-        assert!(handlebars.register_template_string("t1", "{{#bar this}}nice{{/bar}}").is_ok());
+        assert!(
+            handlebars
+                .register_template_string("t0", "{{foo this}}")
+                .is_ok()
+        );
+        assert!(
+            handlebars
+                .register_template_string("t1", "{{#bar this}}nice{{/bar}}")
+                .is_ok()
+        );
 
         let meta_helper = MetaHelper;
         handlebars.register_helper("helperMissing", Box::new(meta_helper));
@@ -126,32 +138,34 @@ mod test {
     #[test]
     fn test_helper_for_subexpression() {
         let mut handlebars = Registry::new();
-        assert!(handlebars.register_template_string("t2", "{{foo value=(bar 0)}}").is_ok());
+        assert!(
+            handlebars
+                .register_template_string("t2", "{{foo value=(bar 0)}}")
+                .is_ok()
+        );
 
-        handlebars.register_helper("helperMissing",
-                                   Box::new(|h: &Helper,
-                                             _: &Registry,
-                                             rc: &mut RenderContext|
-                                             -> Result<(), RenderError> {
-                                       let output = format!("{}{}",
-                                                            h.name(),
-                                                            h.param(0).unwrap().value());
-                                       try!(rc.writer.write(output.into_bytes().as_ref()));
-                                       Ok(())
-                                   }));
-        handlebars.register_helper("foo",
-                                   Box::new(|h: &Helper,
-                                             _: &Registry,
-                                             rc: &mut RenderContext|
-                                             -> Result<(), RenderError> {
-            let output = format!("{}",
-                                 h.hash_get("value")
-                                     .unwrap()
-                                     .value()
-                                     .render());
-            try!(rc.writer.write(output.into_bytes().as_ref()));
-            Ok(())
-        }));
+        handlebars.register_helper(
+            "helperMissing",
+            Box::new(|h: &Helper,
+             _: &Registry,
+             rc: &mut RenderContext|
+             -> Result<(), RenderError> {
+                let output = format!("{}{}", h.name(), h.param(0).unwrap().value());
+                try!(rc.writer.write(output.into_bytes().as_ref()));
+                Ok(())
+            }),
+        );
+        handlebars.register_helper(
+            "foo",
+            Box::new(|h: &Helper,
+             _: &Registry,
+             rc: &mut RenderContext|
+             -> Result<(), RenderError> {
+                let output = format!("{}", h.hash_get("value").unwrap().value().render());
+                try!(rc.writer.write(output.into_bytes().as_ref()));
+                Ok(())
+            }),
+        );
 
         let mut data = BTreeMap::new();
         // handlebars should never try to lookup this value because

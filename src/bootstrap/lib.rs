@@ -126,7 +126,7 @@ extern crate lazy_static;
 extern crate serde_json;
 extern crate cmake;
 extern crate filetime;
-extern crate gcc;
+extern crate cc;
 extern crate getopts;
 extern crate num_cpus;
 extern crate toml;
@@ -143,11 +143,12 @@ use std::path::{PathBuf, Path};
 use std::process::{self, Command};
 use std::slice;
 
-use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime};
+use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime,
+                   BuildExpectation};
 
 use util::{exe, libdir, OutputFolder, CiEnv};
 
-mod cc;
+mod cc_detect;
 mod channel;
 mod check;
 mod clean;
@@ -164,6 +165,7 @@ pub mod util;
 mod builder;
 mod cache;
 mod tool;
+mod toolstate;
 
 #[cfg(windows)]
 mod job;
@@ -239,9 +241,9 @@ pub struct Build {
 
     // Runtime state filled in later on
     // target -> (cc, ar)
-    cc: HashMap<Interned<String>, (gcc::Tool, Option<PathBuf>)>,
+    cc: HashMap<Interned<String>, (cc::Tool, Option<PathBuf>)>,
     // host -> (cc, ar)
-    cxx: HashMap<Interned<String>, gcc::Tool>,
+    cxx: HashMap<Interned<String>, cc::Tool>,
     crates: HashMap<Interned<String>, Crate>,
     is_sudo: bool,
     ci_env: CiEnv,
@@ -343,12 +345,12 @@ impl Build {
             job::setup(self);
         }
 
-        if let Subcommand::Clean = self.config.cmd {
-            return clean::clean(self);
+        if let Subcommand::Clean { all } = self.config.cmd {
+            return clean::clean(self, all);
         }
 
         self.verbose("finding compilers");
-        cc::find(self);
+        cc_detect::find(self);
         self.verbose("running sanity check");
         sanity::check(self);
         // If local-rust is the same major.minor as the current version, then force a local-rebuild
@@ -552,24 +554,31 @@ impl Build {
             .join(libdir(&self.config.build))
     }
 
+    /// Runs a command, printing out nice contextual information if its build
+    /// status is not the expected one
+    fn run_expecting(&self, cmd: &mut Command, expect: BuildExpectation) {
+        self.verbose(&format!("running: {:?}", cmd));
+        run_silent(cmd, expect)
+    }
+
     /// Runs a command, printing out nice contextual information if it fails.
     fn run(&self, cmd: &mut Command) {
-        self.verbose(&format!("running: {:?}", cmd));
-        run_silent(cmd)
+        self.run_expecting(cmd, BuildExpectation::None)
     }
 
     /// Runs a command, printing out nice contextual information if it fails.
     fn run_quiet(&self, cmd: &mut Command) {
         self.verbose(&format!("running: {:?}", cmd));
-        run_suppressed(cmd)
+        run_suppressed(cmd, BuildExpectation::None)
     }
 
-    /// Runs a command, printing out nice contextual information if it fails.
-    /// Exits if the command failed to execute at all, otherwise returns its
-    /// `status.success()`.
-    fn try_run(&self, cmd: &mut Command) -> bool {
+    /// Runs a command, printing out nice contextual information if its build
+    /// status is not the expected one.
+    /// Exits if the command failed to execute at all, otherwise returns whether
+    /// the expectation was met
+    fn try_run(&self, cmd: &mut Command, expect: BuildExpectation) -> bool {
         self.verbose(&format!("running: {:?}", cmd));
-        try_run_silent(cmd)
+        try_run_silent(cmd, expect)
     }
 
     /// Runs a command, printing out nice contextual information if it fails.
@@ -577,7 +586,7 @@ impl Build {
     /// `status.success()`.
     fn try_run_quiet(&self, cmd: &mut Command) -> bool {
         self.verbose(&format!("running: {:?}", cmd));
-        try_run_suppressed(cmd)
+        try_run_suppressed(cmd, BuildExpectation::None)
     }
 
     pub fn is_verbose(&self) -> bool {
@@ -610,7 +619,7 @@ impl Build {
     /// specified.
     fn cflags(&self, target: Interned<String>) -> Vec<String> {
         // Filter out -O and /O (the optimization flags) that we picked up from
-        // gcc-rs because the build scripts will determine that for themselves.
+        // cc-rs because the build scripts will determine that for themselves.
         let mut base = self.cc[&target].0.args().iter()
                            .map(|s| s.to_string_lossy().into_owned())
                            .filter(|s| !s.starts_with("-O") && !s.starts_with("/O"))
@@ -727,7 +736,7 @@ impl Build {
     fn force_use_stage1(&self, compiler: Compiler, target: Interned<String>) -> bool {
         !self.config.full_bootstrap &&
             compiler.stage >= 2 &&
-            self.hosts.iter().any(|h| *h == target)
+            (self.hosts.iter().any(|h| *h == target) || target == self.build)
     }
 
     /// Returns the directory that OpenSSL artifacts are compiled into if
@@ -805,6 +814,11 @@ impl Build {
     /// sha, version, etc.
     fn rust_version(&self) -> String {
         self.rust_info.version(self, channel::CFG_RELEASE_NUM)
+    }
+
+    /// Return the full commit hash
+    fn rust_sha(&self) -> Option<&str> {
+        self.rust_info.sha()
     }
 
     /// Returns the `a.b.c` version that the given package is at.

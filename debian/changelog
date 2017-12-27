@@ -1,4 +1,4 @@
-rustc (1.21.0+dfsg1-3+rpi1) buster-staging; urgency=medium
+rustc (1.22.1+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Fix clean target.
@@ -6,7 +6,28 @@ rustc (1.21.0+dfsg1-3+rpi1) buster-staging; urgency=medium
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Peter Michael Green <plugwash@raspbian.org>  Mon, 13 Nov 2017 23:20:20 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Wed, 27 Dec 2017 23:41:13 +0000
+
+rustc (1.22.1+dfsg1-1) unstable; urgency=medium
+
+  [ Ximin Luo ]
+  * Remove unimportant files that autoload remote resources from rust-src.
+  * Fix more symlinks in rust-doc.
+  * On armhf, only generate debuginfo for libstd and not the compiler itself.
+    This works around buildds running out of memory, see upstream #45854.
+  * Update to latest Standards-Version; no changes required.
+
+  [ Chris Coulson ]
+  * Fix some test failures that occur because we build rust without an rpath.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 18 Dec 2017 19:46:25 +0100
+
+rustc (1.22.1+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Fix symlink target. (Closes: #877276)
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 25 Nov 2017 22:29:12 +0100
 
 rustc (1.21.0+dfsg1-3) unstable; urgency=medium
 

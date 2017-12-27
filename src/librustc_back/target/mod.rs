@@ -153,6 +153,7 @@ supported_targets! {
     ("armv7-unknown-linux-gnueabihf", armv7_unknown_linux_gnueabihf),
     ("armv7-unknown-linux-musleabihf", armv7_unknown_linux_musleabihf),
     ("aarch64-unknown-linux-gnu", aarch64_unknown_linux_gnu),
+    ("aarch64-unknown-linux-musl", aarch64_unknown_linux_musl),
     ("x86_64-unknown-linux-musl", x86_64_unknown_linux_musl),
     ("i686-unknown-linux-musl", i686_unknown_linux_musl),
     ("mips-unknown-linux-musl", mips_unknown_linux_musl),
@@ -214,7 +215,6 @@ supported_targets! {
     ("i686-pc-windows-msvc", i686_pc_windows_msvc),
     ("i586-pc-windows-msvc", i586_pc_windows_msvc),
 
-    ("le32-unknown-nacl", le32_unknown_nacl),
     ("asmjs-unknown-emscripten", asmjs_unknown_emscripten),
     ("wasm32-unknown-emscripten", wasm32_unknown_emscripten),
     ("wasm32-experimental-emscripten", wasm32_experimental_emscripten),
@@ -238,6 +238,8 @@ pub struct Target {
     pub target_endian: String,
     /// String to use as the `target_pointer_width` `cfg` variable.
     pub target_pointer_width: String,
+    /// Width of c_int type
+    pub target_c_int_width: String,
     /// OS name to use for conditional compilation.
     pub target_os: String,
     /// Environment name to use for conditional compilation.
@@ -425,6 +427,9 @@ pub struct TargetOptions {
 
     /// Whether or not stack probes (__rust_probestack) are enabled
     pub stack_probes: bool,
+
+    /// The minimum alignment for global symbols.
+    pub min_global_align: Option<u64>,
 }
 
 impl Default for TargetOptions {
@@ -486,6 +491,7 @@ impl Default for TargetOptions {
             crt_static_default: false,
             crt_static_respected: false,
             stack_probes: false,
+            min_global_align: None,
         }
     }
 }
@@ -551,6 +557,7 @@ impl Target {
             llvm_target: get_req_field("llvm-target")?,
             target_endian: get_req_field("target-endian")?,
             target_pointer_width: get_req_field("target-pointer-width")?,
+            target_c_int_width: get_req_field("target-c-int-width")?,
             data_layout: get_req_field("data-layout")?,
             arch: get_req_field("arch")?,
             target_os: get_req_field("os")?,
@@ -724,6 +731,7 @@ impl Target {
         key!(crt_static_default, bool);
         key!(crt_static_respected, bool);
         key!(stack_probes, bool);
+        key!(min_global_align, Option<u64>);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {
@@ -854,6 +862,7 @@ impl ToJson for Target {
         target_val!(llvm_target);
         target_val!(target_endian);
         target_val!(target_pointer_width);
+        target_val!(target_c_int_width);
         target_val!(arch);
         target_val!(target_os, "os");
         target_val!(target_env, "env");
@@ -914,6 +923,7 @@ impl ToJson for Target {
         target_option_val!(crt_static_default);
         target_option_val!(crt_static_respected);
         target_option_val!(stack_probes);
+        target_option_val!(min_global_align);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()

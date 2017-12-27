@@ -21,12 +21,23 @@ evaluated (primarily) at compile time.
 
 |                                              | Example         | `#` sets   | Characters  | Escapes             |
 |----------------------------------------------|-----------------|------------|-------------|---------------------|
-| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
-| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | [Quote](#quote-escapes) & [Byte](#byte-escapes) & [Unicode](#unicode-escapes) |
+| [Character](#character-literals)             | `'H'`           | `N/A`      | All Unicode | [Quote](#quote-escapes) & [ASCII](#ascii-escapes) & [Unicode](#unicode-escapes) |
+| [String](#string-literals)                   | `"hello"`       | `N/A`      | All Unicode | [Quote](#quote-escapes) & [ASCII](#ascii-escapes) & [Unicode](#unicode-escapes) |
 | [Raw](#raw-string-literals)                  | `r#"hello"#`    | `0...`     | All Unicode | `N/A`                                                      |
 | [Byte](#byte-literals)                       | `b'H'`          | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
 | [Byte string](#byte-string-literals)         | `b"hello"`      | `N/A`      | All ASCII   | [Quote](#quote-escapes) & [Byte](#byte-escapes)                               |
 | [Raw byte string](#raw-byte-string-literals) | `br#"hello"#`   | `0...`     | All ASCII   | `N/A`                                                      |
+
+#### ASCII escapes
+
+|   | Name |
+|---|------|
+| `\x41` | 7-bit character code (exactly 2 digits, up to 0x7F) |
+| `\n` | Newline |
+| `\r` | Carriage return |
+| `\t` | Tab |
+| `\\` | Backslash |
+| `\0` | Null |
 
 #### Byte escapes
 
@@ -74,11 +85,38 @@ evaluated (primarily) at compile time.
 
 #### Character literals
 
+> **<sup>Lexer</sup>**  
+> CHAR_LITERAL :  
+> &nbsp;&nbsp; `'` ( ~[`'` `\` \\n \\r \\t] | QUOTE_ESCAPE | ASCII_ESCAPE | UNICODE_ESCAPE ) `'`  
+>  
+> QUOTE_ESCAPE :  
+> &nbsp;&nbsp; `\'` | `\"`  
+>  
+> ASCII_ESCAPE :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `\x` OCT_DIGIT HEX_DIGIT  
+> &nbsp;&nbsp; | `\n` | `\r` | `\t` | `\\` | `\0`  
+>  
+> UNICODE_ESCAPE :  
+> &nbsp;&nbsp; `\u{` ( HEX_DIGIT `_`<sup>\*</sup> )<sup>1..6</sup> `}`  
+
 A _character literal_ is a single Unicode character enclosed within two
 `U+0027` (single-quote) characters, with the exception of `U+0027` itself,
 which must be _escaped_ by a preceding `U+005C` character (`\`).
 
 #### String literals
+
+> **<sup>Lexer</sup>**  
+> STRING_LITERAL :  
+> &nbsp;&nbsp; `"` (  
+> &nbsp;&nbsp; &nbsp;&nbsp; ~[`"` `\` _IsolatedCR_]  
+> &nbsp;&nbsp; &nbsp;&nbsp; | QUOTE_ESCAPE  
+> &nbsp;&nbsp; &nbsp;&nbsp; | ASCII_ESCAPE  
+> &nbsp;&nbsp; &nbsp;&nbsp; | UNICODE_ESCAPE  
+> &nbsp;&nbsp; &nbsp;&nbsp; | STRING_CONTINUE  
+> &nbsp;&nbsp; )<sup>\*</sup> `"`  
+>  
+> STRING_CONTINUE :  
+> &nbsp;&nbsp; `\` _followed by_ \\n  
 
 A _string literal_ is a sequence of any Unicode characters enclosed within two
 `U+0022` (double-quote) characters, with the exception of `U+0022` itself,
@@ -120,6 +158,14 @@ following forms:
 
 #### Raw string literals
 
+> **<sup>Lexer</sup>**  
+> RAW_STRING_LITERAL :  
+> &nbsp;&nbsp; `r` RAW_STRING_CONTENT  
+>  
+> RAW_STRING_CONTENT :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `"` ( ~ _IsolatedCR_ )<sup>* (non-greedy)</sup> `"`  
+> &nbsp;&nbsp; | `#` RAW_STRING_CONTENT `#`  
+
 Raw string literals do not process any escapes. They start with the character
 `U+0072` (`r`), followed by zero or more of the character `U+0023` (`#`) and a
 `U+0022` (double-quote) character. The _raw string body_ can contain any sequence
@@ -149,6 +195,17 @@ r##"foo #"# bar"##;                // foo #"# bar
 
 #### Byte literals
 
+> **<sup>Lexer</sup>**  
+> BYTE_LITERAL :  
+> &nbsp;&nbsp; `b'` ( ASCII_FOR_CHAR | BYTE_ESCAPE )  `'`  
+>  
+> ASCII_FOR_CHAR :  
+> &nbsp;&nbsp; _any ASCII (i.e. 0x00 to 0x7F), except_ `'`, `/`, \\n, \\r or \\t  
+>  
+> BYTE_ESCAPE :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `\x` HEX_DIGIT HEX_DIGIT  
+> &nbsp;&nbsp; | `\n` | `\r` | `\t` | `\\` | `\0`  
+
 A _byte literal_ is a single ASCII character (in the `U+0000` to `U+007F`
 range) or a single _escape_ preceded by the characters `U+0062` (`b`) and
 `U+0027` (single-quote), and followed by the character `U+0027`. If the character
@@ -157,6 +214,13 @@ range) or a single _escape_ preceded by the characters `U+0062` (`b`) and
 _number literal_.
 
 #### Byte string literals
+
+> **<sup>Lexer</sup>**  
+> BYTE_STRING_LITERAL :  
+> &nbsp;&nbsp; `b"` ( ASCII_FOR_STRING | BYTE_ESCAPE | STRING_CONTINUE )<sup>\*</sup> `"`  
+>  
+> ASCII_FOR_STRING :  
+> &nbsp;&nbsp; _any ASCII (i.e 0x00 to 0x7F), except_ `"`, `/` _and IsolatedCR_ 
 
 A non-raw _byte string literal_ is a sequence of ASCII characters and _escapes_,
 preceded by the characters `U+0062` (`b`) and `U+0022` (double-quote), and
@@ -182,6 +246,17 @@ following forms:
   escaped in order to denote its ASCII encoding `0x5C`.
 
 #### Raw byte string literals
+
+> **<sup>Lexer</sup>**  
+> RAW_BYTE_STRING_LITERAL :  
+> &nbsp;&nbsp; `br` RAW_BYTE_STRING_CONTENT  
+>  
+> RAW_BYTE_STRING_CONTENT :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `"` ASCII<sup>* (non-greedy)</sup> `"`  
+> &nbsp;&nbsp; | `#` RAW_STRING_CONTENT `#`  
+>  
+> ASCII :  
+> &nbsp;&nbsp; _any ASCII (i.e. 0x00 to 0x7F)_  
 
 Raw byte string literals do not process any escapes. They start with the
 character `U+0062` (`b`), followed by `U+0072` (`r`), followed by zero or more
@@ -216,16 +291,51 @@ literal_. The grammar for recognizing the two kinds of literals is mixed.
 
 #### Integer literals
 
+> **<sup>Lexer</sup>**  
+> INTEGER_LITERAL :  
+> &nbsp;&nbsp; ( DEC_LITERAL | BIN_LITERAL | OCT_LITERAL | HEX_LITERAL )
+>              INTEGER_SUFFIX<sup>?</sup>
+>   
+> DEC_LITERAL :  
+> &nbsp;&nbsp; DEC_DIGIT (DEC_DIGIT|`_`)<sup>\*</sup>  
+>  
+> BIN_LITERAL :  
+> &nbsp;&nbsp; `0b` (BIN_DIGIT|`_`)<sup>\*</sup> BIN_DIGIT (BIN_DIGIT|`_`)<sup>\*</sup>  
+>  
+> OCT_LITERAL :  
+> &nbsp;&nbsp; `0o` (OCT_DIGIT|`_`)<sup>\*</sup> OCT_DIGIT (OCT_DIGIT|`_`)<sup>\*</sup>  
+>  
+> HEX_LITERAL :  
+> &nbsp;&nbsp; `0x` (HEX_DIGIT|`_`)<sup>\*</sup> HEX_DIGIT (HEX_DIGIT|`_`)<sup>\*</sup>  
+>  
+> BIN_DIGIT : [`0`-`1`]  
+>  
+> OCT_DIGIT : [`0`-`7`]  
+>  
+> DEC_DIGIT : [`0`-`9`]  
+>  
+> HEX_DIGIT : [`0`-`9` `a`-`f` `A`-`F`]  
+>  
+> INTEGER_SUFFIX :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `u8` | `u16` | `u32` | `u64` | `usize`  
+> &nbsp;&nbsp; | `i8` | `u16` | `i32` | `i64` | `usize`
+
+<!-- FIXME: separate the DECIMAL_LITERAL with no prefix or suffix (used on tuple indexing and float_literal -->
+<!-- FIXME: u128 and i128 -->
+
 An _integer literal_ has one of four forms:
 
 * A _decimal literal_ starts with a *decimal digit* and continues with any
   mixture of *decimal digits* and _underscores_.
 * A _hex literal_ starts with the character sequence `U+0030` `U+0078`
-  (`0x`) and continues as any mixture of hex digits and underscores.
+  (`0x`) and continues as any mixture (with at least one digit) of hex digits
+  and underscores.
 * An _octal literal_ starts with the character sequence `U+0030` `U+006F`
-  (`0o`) and continues as any mixture of octal digits and underscores.
+  (`0o`) and continues as any mixture (with at least one digit) of octal digits
+  and underscores.
 * A _binary literal_ starts with the character sequence `U+0030` `U+0062`
-  (`0b`) and continues as any mixture of binary digits and underscores.
+  (`0b`) and continues as any mixture (with at least one digit) of binary digits
+  and underscores.
 
 Like any literal, an integer literal may be followed (immediately,
 without any spaces) by an _integer suffix_, which forcibly sets the
@@ -247,22 +357,72 @@ The type of an _unsuffixed_ integer literal is determined by type inference:
 Examples of integer literals of various forms:
 
 ```rust
+123;                               // type i32
 123i32;                            // type i32
 123u32;                            // type u32
 123_u32;                           // type u32
+let a: u64 = 123;                  // type u64
+
+0xff;                              // type i32
 0xff_u8;                           // type u8
+
+0o70;                              // type i32
 0o70_i16;                          // type i16
-0b1111_1111_1001_0000_i32;         // type i32
+
+0b1111_1111_1001_0000;             // type i32
+0b1111_1111_1001_0000i32;          // type i64
+0b________1;                       // type i32
+
 0usize;                            // type usize
+```
+
+Examples of invalid integer literals:
+
+```rust,ignore
+// invalid suffixes
+
+0invalidSuffix;
+
+// uses numbers of the wrong base
+
+123AFB43;
+0b0102;
+0o0581;
+
+// integers too big for their type (they overflow)
+
+128_i8;
+256_u8;
+
+// bin, hex and octal literals must have at least one digit
+
+0b_;
+0b____;
 ```
 
 Note that the Rust syntax considers `-1i8` as an application of the [unary minus
 operator] to an integer literal `1i8`, rather than
 a single integer literal.
 
-[unary minus operator]: expressions.html#negation-operators
+[unary minus operator]: expressions/operator-expr.html#negation-operators
 
 #### Floating-point literals
+
+> **<sup>Lexer</sup>**  
+> FLOAT_LITERAL :  
+> &nbsp;&nbsp; &nbsp;&nbsp; DEC_LITERAL `.`
+>   _(not immediately followed by `.`, `_` or an identifier_)  
+> &nbsp;&nbsp; | DEC_LITERAL FLOAT_EXPONENT  
+> &nbsp;&nbsp; | DEC_LITERAL `.` DEC_LITERAL FLOAT_EXPONENT<sup>?</sup>  
+> &nbsp;&nbsp; | DEC_LITERAL (`.` DEC_LITERAL)<sup>?</sup>
+>                    FLOAT_EXPONENT<sup>?</sup> FLOAT_SUFFIX  
+>  
+> FLOAT_EXPONENT :  
+> &nbsp;&nbsp; (`e`|`E`) (`+`|`-`)?
+>               (DEC_DIGIT|`_`)<sup>\*</sup> DEC_DIGIT (DEC_DIGIT|`_`)<sup>\*</sup>   
+>  
+> FLOAT_SUFFIX :  
+> &nbsp;&nbsp; `f32` | `f64`
 
 A _floating-point literal_ has one of two forms:
 
@@ -309,6 +469,11 @@ The representation semantics of floating-point numbers are described in
 
 ### Boolean literals
 
+> **<sup>Lexer</sup>**  
+> BOOLEAN_LITERAL :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `true`  
+> &nbsp;&nbsp; | `false`  
+
 The two values of the boolean type are written `true` and `false`.
 
 ## Symbols
@@ -320,8 +485,8 @@ otherwise appear as [unary operators], [binary
 operators], or [keywords].
 They are catalogued in [the Symbols section][symbols] of the Grammar document.
 
-[unary operators]: expressions.html#borrow-operators
-[binary operators]: expressions.html#arithmetic-and-logical-binary-operators
+[unary operators]: expressions/operator-expr.html#borrow-operators
+[binary operators]: expressions/operator-expr.html#arithmetic-and-logical-binary-operators
 [tokens]: #tokens
 [symbols]: ../grammar.html#symbols
-[keywords]: ../grammar.html#keywords
+[keywords]: keywords.html

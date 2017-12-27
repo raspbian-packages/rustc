@@ -93,9 +93,29 @@ impl serialize::UseSpecializedDecodable for CrateNum {
 ///
 /// Since the DefIndex is mostly treated as an opaque ID, you probably
 /// don't have to care about these ranges.
-#[derive(Clone, Debug, Eq, Ord, PartialOrd, PartialEq, RustcEncodable,
+#[derive(Clone, Eq, Ord, PartialOrd, PartialEq, RustcEncodable,
            RustcDecodable, Hash, Copy)]
 pub struct DefIndex(u32);
+
+impl Idx for DefIndex {
+    fn new(value: usize) -> Self {
+        assert!(value < (u32::MAX) as usize);
+        DefIndex(value as u32)
+    }
+
+    fn index(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl fmt::Debug for DefIndex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f,
+               "DefIndex({}:{})",
+               self.address_space().index(),
+               self.as_array_index())
+    }
+}
 
 impl DefIndex {
     #[inline]
@@ -177,12 +197,12 @@ pub struct DefId {
 
 impl fmt::Debug for DefId {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "DefId {{ krate: {:?}, node: {:?}",
+        write!(f, "DefId {{ krate: {:?}, index: {:?}",
                self.krate, self.index)?;
 
         ty::tls::with_opt(|opt_tcx| {
             if let Some(tcx) = opt_tcx {
-                write!(f, " => {}", tcx.def_path(*self).to_string(tcx))?;
+                write!(f, " => {}", tcx.def_path_debug_str(*self))?;
             }
             Ok(())
         })?;

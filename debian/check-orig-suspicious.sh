@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -ex
+set -e
 
 ver="$1"
 test -n "$ver" || exit 2
@@ -14,6 +14,7 @@ tar xf ../rustc_$ver+dfsg1.orig.tar.xz && cd rustc-${ver/*~*/beta}-src/
 # Remove tiny files 4 bytes or less
 find . -size -4c -delete
 # Remove non-suspicious files, warning on patterns that match nothing
+echo "Excluding (i.e. removing) whitelisted files..."
 grep -v '^#' ${SUS_WHITELIST} | xargs  -I% sh -c 'rm -r ./% || true'
 echo "Checking for suspicious files..."
 

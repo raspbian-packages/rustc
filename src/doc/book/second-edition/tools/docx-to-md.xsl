@@ -14,6 +14,7 @@
     <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'ChapterStart']" />
     <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'Normal']" />
     <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'Standard']" />
+    <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'AuthorQuery']" />
 
     <!-- Paragraph styles -->
 
@@ -85,7 +86,7 @@
         </xsl:if>
     </xsl:template>
 
-    <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'CodeA']">
+    <xsl:template match="w:p[w:pPr/w:pStyle[@w:val = 'CodeA' or @w:val = 'CodeAWingding']]">
         <xsl:text>```&#10;</xsl:text>
         <!-- Don't apply Emphasis/etc templates in code blocks -->
         <xsl:for-each select="w:r">
@@ -94,7 +95,7 @@
         <xsl:text>&#10;</xsl:text>
     </xsl:template>
 
-    <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'CodeB']">
+    <xsl:template match="w:p[w:pPr/w:pStyle[@w:val = 'CodeB' or @w:val = 'CodeBWingding']]">
         <!-- Don't apply Emphasis/etc templates in code blocks -->
         <xsl:for-each select="w:r">
             <xsl:value-of select="w:t" />
@@ -102,7 +103,7 @@
         <xsl:text>&#10;</xsl:text>
     </xsl:template>
 
-    <xsl:template match="w:p[w:pPr/w:pStyle/@w:val = 'CodeC']">
+    <xsl:template match="w:p[w:pPr/w:pStyle[@w:val = 'CodeC' or @w:val = 'CodeCWingding']]">
         <!-- Don't apply Emphasis/etc templates in code blocks -->
         <xsl:for-each select="w:r">
             <xsl:value-of select="w:t" />

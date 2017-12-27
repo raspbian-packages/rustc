@@ -26,17 +26,19 @@ use machine;
 use monomorphize;
 use type_::Type;
 use value::Value;
+use rustc::traits;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::layout::{Layout, LayoutTyper};
-use rustc::ty::subst::{Subst, Substs};
+use rustc::ty::subst::{Kind, Subst, Substs};
 use rustc::hir;
 
 use libc::{c_uint, c_char};
 use std::iter;
 
+use syntax::abi::Abi;
 use syntax::attr;
 use syntax::symbol::InternedString;
-use syntax_pos::Span;
+use syntax_pos::{Span, DUMMY_SP};
 
 pub use context::{CrateContext, SharedCrateContext};
 
@@ -91,6 +93,16 @@ pub fn type_pair_fields<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
                 }
             }))
         }
+        ty::TyGenerator(def_id, substs, _) => {
+            let mut tys = substs.field_tys(def_id, ccx.tcx());
+            tys.next().and_then(|first_ty| tys.next().and_then(|second_ty| {
+                if tys.next().is_some() {
+                    None
+                } else {
+                    Some([first_ty, second_ty])
+                }
+            }))
+        }
         ty::TyTuple(tys, _) => {
             if tys.len() != 2 {
                 return None;
@@ -127,6 +139,18 @@ pub fn type_is_imm_pair<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>)
 pub fn type_is_zero_size<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ty: Ty<'tcx>) -> bool {
     let layout = ccx.layout_of(ty);
     !layout.is_unsized() && layout.size(ccx).bytes() == 0
+}
+
+pub fn type_needs_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    ty.needs_drop(tcx, ty::ParamEnv::empty(traits::Reveal::All))
+}
+
+pub fn type_is_sized<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    ty.is_sized(tcx, ty::ParamEnv::empty(traits::Reveal::All), DUMMY_SP)
+}
+
+pub fn type_is_freeze<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, ty: Ty<'tcx>) -> bool {
+    ty.is_freeze(tcx, ty::ParamEnv::empty(traits::Reveal::All), DUMMY_SP)
 }
 
 /*
@@ -210,9 +234,15 @@ pub fn C_undef(t: Type) -> ValueRef {
     }
 }
 
-pub fn C_integral(t: Type, u: u64, sign_extend: bool) -> ValueRef {
+pub fn C_int(t: Type, i: i64) -> ValueRef {
     unsafe {
-        llvm::LLVMConstInt(t.to_ref(), u, sign_extend as Bool)
+        llvm::LLVMConstInt(t.to_ref(), i as u64, True)
+    }
+}
+
+pub fn C_uint(t: Type, i: u64) -> ValueRef {
+    unsafe {
+        llvm::LLVMConstInt(t.to_ref(), i, False)
     }
 }
 
@@ -228,49 +258,34 @@ pub fn C_nil(ccx: &CrateContext) -> ValueRef {
 }
 
 pub fn C_bool(ccx: &CrateContext, val: bool) -> ValueRef {
-    C_integral(Type::i1(ccx), val as u64, false)
+    C_uint(Type::i1(ccx), val as u64)
 }
 
 pub fn C_i32(ccx: &CrateContext, i: i32) -> ValueRef {
-    C_integral(Type::i32(ccx), i as u64, true)
+    C_int(Type::i32(ccx), i as i64)
 }
 
 pub fn C_u32(ccx: &CrateContext, i: u32) -> ValueRef {
-    C_integral(Type::i32(ccx), i as u64, false)
+    C_uint(Type::i32(ccx), i as u64)
 }
 
 pub fn C_u64(ccx: &CrateContext, i: u64) -> ValueRef {
-    C_integral(Type::i64(ccx), i, false)
+    C_uint(Type::i64(ccx), i)
 }
 
-pub fn C_uint<I: AsU64>(ccx: &CrateContext, i: I) -> ValueRef {
-    let v = i.as_u64();
-
-    let bit_size = machine::llbitsize_of_real(ccx, ccx.int_type());
+pub fn C_usize(ccx: &CrateContext, i: u64) -> ValueRef {
+    let bit_size = machine::llbitsize_of_real(ccx, ccx.isize_ty());
 
     if bit_size < 64 {
         // make sure it doesn't overflow
-        assert!(v < (1<<bit_size));
+        assert!(i < (1<<bit_size));
     }
 
-    C_integral(ccx.int_type(), v, false)
+    C_uint(ccx.isize_ty(), i)
 }
 
-pub trait AsI64 { fn as_i64(self) -> i64; }
-pub trait AsU64 { fn as_u64(self) -> u64; }
-
-// FIXME: remove the intptr conversions, because they
-// are host-architecture-dependent
-impl AsI64 for i64 { fn as_i64(self) -> i64 { self as i64 }}
-impl AsI64 for i32 { fn as_i64(self) -> i64 { self as i64 }}
-impl AsI64 for isize { fn as_i64(self) -> i64 { self as i64 }}
-
-impl AsU64 for u64  { fn as_u64(self) -> u64 { self as u64 }}
-impl AsU64 for u32  { fn as_u64(self) -> u64 { self as u64 }}
-impl AsU64 for usize { fn as_u64(self) -> u64 { self as u64 }}
-
 pub fn C_u8(ccx: &CrateContext, i: u8) -> ValueRef {
-    C_integral(Type::i8(ccx), i as u64, false)
+    C_uint(Type::i8(ccx), i as u64)
 }
 
 
@@ -304,7 +319,7 @@ pub fn C_cstr(cx: &CrateContext, s: InternedString, null_terminated: bool) -> Va
 pub fn C_str_slice(cx: &CrateContext, s: InternedString) -> ValueRef {
     let len = s.len();
     let cs = consts::ptrcast(C_cstr(cx, s, false), Type::i8p(cx));
-    C_named_struct(cx.str_slice_type(), &[cs, C_uint(cx, len)])
+    C_named_struct(cx.str_slice_type(), &[cs, C_usize(cx, len as u64)])
 }
 
 pub fn C_struct(cx: &CrateContext, elts: &[ValueRef], packed: bool) -> ValueRef {
@@ -412,7 +427,7 @@ pub fn langcall(tcx: TyCtxt,
                 msg: &str,
                 li: LangItem)
                 -> DefId {
-    match tcx.lang_items.require(li) {
+    match tcx.lang_items().require(li) {
         Ok(id) => id,
         Err(s) => {
             let msg = format!("{} {}", msg, s);
@@ -471,9 +486,9 @@ pub fn shift_mask_val<'a, 'tcx>(
             // i8/u8 can shift by at most 7, i16/u16 by at most 15, etc.
             let val = llty.int_width() - 1;
             if invert {
-                C_integral(mask_llty, !val, true)
+                C_int(mask_llty, !val as i64)
             } else {
-                C_integral(mask_llty, val, false)
+                C_uint(mask_llty, val)
             }
         },
         TypeKind::Vector => {
@@ -510,6 +525,28 @@ pub fn ty_fn_sig<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>,
                 sig.unsafety,
                 sig.abi
             ))
+        }
+        ty::TyGenerator(def_id, substs, _) => {
+            let tcx = ccx.tcx();
+            let sig = tcx.generator_sig(def_id).unwrap().subst(tcx, substs.substs);
+
+            let env_region = ty::ReLateBound(ty::DebruijnIndex::new(1), ty::BrEnv);
+            let env_ty = tcx.mk_mut_ref(tcx.mk_region(env_region), ty);
+
+            sig.map_bound(|sig| {
+                let state_did = tcx.lang_items().gen_state().unwrap();
+                let state_adt_ref = tcx.adt_def(state_did);
+                let state_substs = tcx.mk_substs([Kind::from(sig.yield_ty),
+                    Kind::from(sig.return_ty)].iter());
+                let ret_ty = tcx.mk_adt(state_adt_ref, state_substs);
+
+                tcx.mk_fn_sig(iter::once(env_ty),
+                    ret_ty,
+                    false,
+                    hir::Unsafety::Normal,
+                    Abi::Rust
+                )
+            })
         }
         _ => bug!("unexpected type {:?} to ty_fn_sig", ty)
     }
@@ -549,20 +586,20 @@ pub fn is_inline_instance<'a, 'tcx>(
 }
 
 /// Given a DefId and some Substs, produces the monomorphic item type.
-pub fn def_ty<'a, 'tcx>(shared: &SharedCrateContext<'a, 'tcx>,
+pub fn def_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                         def_id: DefId,
                         substs: &'tcx Substs<'tcx>)
                         -> Ty<'tcx>
 {
-    let ty = shared.tcx().type_of(def_id);
-    shared.tcx().trans_apply_param_substs(substs, &ty)
+    let ty = tcx.type_of(def_id);
+    tcx.trans_apply_param_substs(substs, &ty)
 }
 
 /// Return the substituted type of an instance.
-pub fn instance_ty<'a, 'tcx>(shared: &SharedCrateContext<'a, 'tcx>,
+pub fn instance_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                              instance: &ty::Instance<'tcx>)
                              -> Ty<'tcx>
 {
-    let ty = instance.def.def_ty(shared.tcx());
-    shared.tcx().trans_apply_param_substs(instance.substs, &ty)
+    let ty = instance.def.def_ty(tcx);
+    tcx.trans_apply_param_substs(instance.substs, &ty)
 }

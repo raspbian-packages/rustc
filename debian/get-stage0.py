@@ -1,4 +1,7 @@
 #!/usr/bin/python
+# Sometimes this might fail due to upstream changes.
+# In that case, you probably just need to override the failing step in our
+# DownloadOnlyRustBuild class below.
 
 import sys
 
@@ -13,6 +16,10 @@ class DownloadOnlyRustBuild(RustBuild):
         pass
     def build_triple(self):
         return self.triple
+    def update_submodules(self):
+        pass
+    def bootstrap_binary(self):
+        return "true"
 
 def main(argv):
     triple = argv.pop(1)

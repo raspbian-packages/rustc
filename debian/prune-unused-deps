@@ -5,10 +5,10 @@
 set -e
 
 scriptdir=$(dirname "$(dirname "$(readlink -f "$0")")")
-had_configure_upstream=$(if test -e "$scriptdir/debian/configure-upstream"; then echo true; else echo false; fi)
-( cd "$scriptdir" && debian/rules debian/configure-upstream )
+had_config_toml=$(if test -e "$scriptdir/debian/config.toml"; then echo true; else echo false; fi)
+( cd "$scriptdir" && debian/rules debian/config.toml )
 
-"$scriptdir/debian/configure-upstream"
+cp "$scriptdir/debian/config.toml" config.toml
 "$scriptdir/debian/ensure-patch" -N "$scriptdir/debian/patches/d-ignore-removed-submodules.patch"
 test -f src/Cargo.lock.orig || cp src/Cargo.lock src/Cargo.lock.orig
 ./x.py build nonexistent/path/to/trigger/cargo/metadata src/bootstrap
@@ -49,4 +49,4 @@ echo "$footer"
 cd $scriptdir/debian
 sed -i -e "/^$header/,/^$footer/d" -e '/^# unused dependencies/rcopyright.unused-deps' copyright
 rm copyright.unused-deps
-$had_configure_upstream || rm "$scriptdir/debian/configure-upstream"
+$had_config_toml || rm "$scriptdir/debian/config.toml"

@@ -26,7 +26,7 @@ use syntax_pos::Span;
 
 use hir::*;
 use hir::print::Nested;
-use util::nodemap::DefIdMap;
+use util::nodemap::{DefIdMap, FxHashMap};
 
 use arena::TypedArena;
 use std::cell::RefCell;
@@ -57,6 +57,7 @@ pub enum Node<'hir> {
     NodePat(&'hir Pat),
     NodeBlock(&'hir Block),
     NodeLocal(&'hir Local),
+    NodeMacroDef(&'hir MacroDef),
 
     /// NodeStructCtor represents a tuple struct.
     NodeStructCtor(&'hir VariantData),
@@ -93,6 +94,8 @@ enum MapEntry<'hir> {
     EntryVisibility(NodeId, DepNodeIndex, &'hir Visibility),
     EntryLocal(NodeId, DepNodeIndex, &'hir Local),
 
+    EntryMacroDef(DepNodeIndex, &'hir MacroDef),
+
     /// Roots for node trees. The DepNodeIndex is the dependency node of the
     /// crate's root module.
     RootCrate(DepNodeIndex),
@@ -127,6 +130,7 @@ impl<'hir> MapEntry<'hir> {
             EntryLocal(id, _, _) => id,
 
             NotPresent |
+            EntryMacroDef(..) |
             RootCrate(_) => return None,
         })
     }
@@ -151,7 +155,10 @@ impl<'hir> MapEntry<'hir> {
             EntryTyParam(_, _, n) => NodeTyParam(n),
             EntryVisibility(_, _, n) => NodeVisibility(n),
             EntryLocal(_, _, n) => NodeLocal(n),
-            _ => return None
+            EntryMacroDef(_, n) => NodeMacroDef(n),
+
+            NotPresent |
+            RootCrate(_) => return None
         })
     }
 
@@ -184,7 +191,7 @@ impl<'hir> MapEntry<'hir> {
 
             EntryExpr(_, _, expr) => {
                 match expr.node {
-                    ExprClosure(.., body, _) => Some(body),
+                    ExprClosure(.., body, _, _) => Some(body),
                     _ => None,
                 }
             }
@@ -245,10 +252,13 @@ pub struct Map<'hir> {
     /// plain old integers.
     map: Vec<MapEntry<'hir>>,
 
-    definitions: Definitions,
+    definitions: &'hir Definitions,
 
     /// Bodies inlined from other crates are cached here.
     inlined_bodies: RefCell<DefIdMap<&'hir Body>>,
+
+    /// The reverse mapping of `node_to_hir_id`.
+    hir_to_node_id: FxHashMap<HirId, NodeId>,
 }
 
 impl<'hir> Map<'hir> {
@@ -280,27 +290,19 @@ impl<'hir> Map<'hir> {
             EntryVisibility(_, dep_node_index, _) |
             EntryExpr(_, dep_node_index, _) |
             EntryLocal(_, dep_node_index, _) |
+            EntryMacroDef(dep_node_index, _) |
             RootCrate(dep_node_index) => {
                 self.dep_graph.read_index(dep_node_index);
             }
             NotPresent => {
-                // Some nodes, notably macro definitions, are not
-                // present in the map for whatever reason, but
-                // they *do* have def-ids. So if we encounter an
-                // empty hole, check for that case.
-                if let Some(def_index) = self.definitions.opt_def_index(id) {
-                    let def_path_hash = self.definitions.def_path_hash(def_index);
-                    self.dep_graph.read(def_path_hash.to_dep_node(DepKind::Hir));
-                } else {
-                    bug!("called HirMap::read() with invalid NodeId")
-                }
+                bug!("called HirMap::read() with invalid NodeId")
             }
         }
     }
 
     #[inline]
-    pub fn definitions(&self) -> &Definitions {
-        &self.definitions
+    pub fn definitions(&self) -> &'hir Definitions {
+        self.definitions
     }
 
     pub fn def_key(&self, def_id: DefId) -> DefKey {
@@ -335,6 +337,11 @@ impl<'hir> Map<'hir> {
     #[inline]
     pub fn as_local_node_id(&self, def_id: DefId) -> Option<NodeId> {
         self.definitions.as_local_node_id(def_id)
+    }
+
+    #[inline]
+    pub fn hir_to_node_id(&self, hir_id: HirId) -> NodeId {
+        self.hir_to_node_id[&hir_id]
     }
 
     #[inline]
@@ -795,7 +802,7 @@ impl<'hir> Map<'hir> {
             NodeTraitItem(ti) => ti.name,
             NodeVariant(v) => v.node.name,
             NodeField(f) => f.name,
-            NodeLifetime(lt) => lt.name,
+            NodeLifetime(lt) => lt.name.name(),
             NodeTyParam(tp) => tp.name,
             NodeBinding(&Pat { node: PatKind::Binding(_,_,l,_), .. }) => l.node,
             NodeStructCtor(_) => self.name(self.get_parent(id)),
@@ -865,6 +872,7 @@ impl<'hir> Map<'hir> {
             Some(EntryVisibility(_, _, &Visibility::Restricted { ref path, .. })) => path.span,
             Some(EntryVisibility(_, _, v)) => bug!("unexpected Visibility {:?}", v),
             Some(EntryLocal(_, _, local)) => local.span,
+            Some(EntryMacroDef(_, macro_def)) => macro_def.span,
 
             Some(RootCrate(_)) => self.forest.krate.span,
             Some(NotPresent) | None => {
@@ -992,15 +1000,22 @@ impl Named for StructField { fn name(&self) -> Name { self.name } }
 impl Named for TraitItem { fn name(&self) -> Name { self.name } }
 impl Named for ImplItem { fn name(&self) -> Name { self.name } }
 
-pub fn map_crate<'hir>(forest: &'hir mut Forest,
-                       definitions: Definitions)
+pub fn map_crate<'hir>(sess: &::session::Session,
+                       cstore: &::middle::cstore::CrateStore,
+                       forest: &'hir mut Forest,
+                       definitions: &'hir Definitions)
                        -> Map<'hir> {
     let map = {
+        let hcx = ::ich::StableHashingContext::new(sess, &forest.krate, definitions, cstore);
+
         let mut collector = NodeCollector::root(&forest.krate,
                                                 &forest.dep_graph,
-                                                &definitions);
+                                                &definitions,
+                                                hcx);
         intravisit::walk_crate(&mut collector, &forest.krate);
-        collector.into_map()
+
+        let crate_disambiguator = sess.local_crate_disambiguator().as_str();
+        collector.finalize_and_compute_crate_hash(&crate_disambiguator)
     };
 
     if log_enabled!(::log::LogLevel::Debug) {
@@ -1019,10 +1034,15 @@ pub fn map_crate<'hir>(forest: &'hir mut Forest,
               entries, vector_length, (entries as f64 / vector_length as f64) * 100.);
     }
 
+    // Build the reverse mapping of `node_to_hir_id`.
+    let hir_to_node_id = definitions.node_to_hir_id.iter_enumerated()
+        .map(|(node_id, &hir_id)| (hir_id, node_id)).collect();
+
     let map = Map {
         forest,
         dep_graph: forest.dep_graph.clone(),
         map,
+        hir_to_node_id,
         definitions,
         inlined_bodies: RefCell::new(DefIdMap()),
     };
@@ -1078,6 +1098,7 @@ impl<'a> print::State<'a> {
             // printing.
             NodeStructCtor(_)  => bug!("cannot print isolated StructCtor"),
             NodeLocal(a)       => self.print_local_decl(&a),
+            NodeMacroDef(_)    => bug!("cannot print MacroDef"),
         }
     }
 }
@@ -1193,6 +1214,9 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
         }
         Some(NodeVisibility(ref vis)) => {
             format!("visibility {:?}{}", vis, id_str)
+        }
+        Some(NodeMacroDef(_)) => {
+            format!("macro {}{}",  path_str(), id_str)
         }
         None => {
             format!("unknown node{}", id_str)

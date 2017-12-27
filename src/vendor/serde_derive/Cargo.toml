@@ -12,7 +12,7 @@
 
 [package]
 name = "serde_derive"
-version = "1.0.11"
+version = "1.0.15"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]"
@@ -30,11 +30,11 @@ proc-macro = true
 version = "0.11"
 features = ["visit"]
 
+[dependencies.serde_derive_internals]
+version = "=0.16.0"
+default-features = false
+
 [dependencies.quote]
 version = "0.3.8"
-
-[dependencies.serde_derive_internals]
-version = "=0.15.1"
-default-features = false
 [badges.travis-ci]
 repository = "serde-rs/serde"

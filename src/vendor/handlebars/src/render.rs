@@ -1,12 +1,10 @@
 use std::collections::{HashMap, BTreeMap, VecDeque};
-use std::error;
 use std::fmt;
 use std::rc::Rc;
 use std::io::Write;
-use std::io::Error as IOError;
 
 use serde::Serialize;
-use serde_json::value::{Value as Json};
+use serde_json::value::Value as Json;
 
 use template::{Template, TemplateElement, Parameter, HelperTemplate, TemplateMapping, BlockParam,
                Directive as DirectiveTemplate};
@@ -15,57 +13,8 @@ use registry::Registry;
 use context::{Context, JsonRender};
 use helpers::HelperDef;
 use support::str::StringWriter;
-#[cfg(not(feature="partial_legacy"))]
+use error::RenderError;
 use partial;
-
-/// Error when rendering data on template.
-#[derive(Debug, Clone)]
-pub struct RenderError {
-    pub desc: String,
-    pub template_name: Option<String>,
-    pub line_no: Option<usize>,
-    pub column_no: Option<usize>,
-}
-
-impl fmt::Display for RenderError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match (self.line_no, self.column_no) {
-            (Some(line), Some(col)) => {
-                write!(f,
-                       "Error rendering \"{}\" line {}, col {}: {}",
-                       self.template_name.as_ref().unwrap_or(&"Unnamed template".to_owned()),
-                       line,
-                       col,
-                       self.desc)
-            }
-            _ => write!(f, "{}", self.desc),
-        }
-
-    }
-}
-
-impl error::Error for RenderError {
-    fn description(&self) -> &str {
-        &self.desc[..]
-    }
-}
-
-impl From<IOError> for RenderError {
-    fn from(_: IOError) -> RenderError {
-        RenderError::new("IO Error")
-    }
-}
-
-impl RenderError {
-    pub fn new<T: AsRef<str>>(desc: T) -> RenderError {
-        RenderError {
-            desc: desc.as_ref().to_owned(),
-            template_name: None,
-            line_no: None,
-            column_no: None,
-        }
-    }
-}
 
 /// The context of a render call
 ///
@@ -81,7 +30,7 @@ pub struct RenderContext<'a> {
     default_var: Json,
     block_context: VecDeque<Context>,
     /// the context
-    context: &'a mut Context,
+    context: Context,
     /// the `Write` where page is generated
     pub writer: &'a mut Write,
     /// current template name
@@ -93,10 +42,11 @@ pub struct RenderContext<'a> {
 
 impl<'a> RenderContext<'a> {
     /// Create a render context from a `Write`
-    pub fn new(ctx: &'a mut Context,
-               local_helpers: &'a mut HashMap<String, Rc<Box<HelperDef + 'static>>>,
-               w: &'a mut Write)
-               -> RenderContext<'a> {
+    pub fn new(
+        ctx: Context,
+        local_helpers: &'a mut HashMap<String, Rc<Box<HelperDef + 'static>>>,
+        w: &'a mut Write,
+    ) -> RenderContext<'a> {
         RenderContext {
             partials: HashMap::new(),
             path: ".".to_string(),
@@ -126,7 +76,25 @@ impl<'a> RenderContext<'a> {
 
             disable_escape: self.disable_escape,
             local_helpers: self.local_helpers,
-            context: self.context,
+            context: self.context.clone(),
+            writer: self.writer,
+        }
+    }
+
+    pub fn with_context(&mut self, ctx: Context) -> RenderContext {
+        RenderContext {
+            partials: self.partials.clone(),
+            path: ".".to_owned(),
+            local_path_root: VecDeque::new(),
+            local_variables: self.local_variables.clone(),
+            current_template: self.current_template.clone(),
+            root_template: self.root_template.clone(),
+            default_var: self.default_var.clone(),
+            block_context: VecDeque::new(),
+
+            disable_escape: self.disable_escape,
+            local_helpers: self.local_helpers,
+            context: ctx,
             writer: self.writer,
         }
     }
@@ -174,10 +142,7 @@ impl<'a> RenderContext<'a> {
             new_key.push_str("@../");
             new_key.push_str(&key[1..]);
 
-            let v = self.local_variables
-                .get(key)
-                .unwrap()
-                .clone();
+            let v = self.local_variables.get(key).unwrap().clone();
             new_map.insert(new_key, v);
         }
         self.local_variables = new_map;
@@ -191,10 +156,7 @@ impl<'a> RenderContext<'a> {
                 new_key.push('@');
                 new_key.push_str(&key[4..]);
 
-                let v = self.local_variables
-                    .get(key)
-                    .unwrap()
-                    .clone();
+                let v = self.local_variables.get(key).unwrap().clone();
                 new_map.insert(new_key, v);
             }
         }
@@ -209,46 +171,51 @@ impl<'a> RenderContext<'a> {
         self.writer
     }
 
-    pub fn push_block_context<T>(&mut self, ctx: &T)
-        where T: Serialize
+    pub fn push_block_context<T>(&mut self, ctx: &T) -> Result<(), RenderError>
+    where
+        T: Serialize,
     {
-        self.block_context.push_front(Context::wraps(ctx));
+        let r = self.block_context.push_front(Context::wraps(ctx)?);
+        Ok(r)
     }
 
     pub fn pop_block_context(&mut self) {
         self.block_context.pop_front();
     }
 
-    pub fn evaluate_in_block_context(&self, local_path: &str) -> Option<&Json> {
+    pub fn evaluate_in_block_context(
+        &self,
+        local_path: &str,
+    ) -> Result<Option<&Json>, RenderError> {
         for bc in self.block_context.iter() {
-            let v = bc.navigate(".", &self.local_path_root, local_path);
+            let v = bc.navigate(".", &self.local_path_root, local_path)?;
             if !v.is_null() {
-                return Some(v);
+                return Ok(Some(v));
             }
         }
 
-        None
+        Ok(None)
     }
 
     pub fn is_current_template(&self, p: &str) -> bool {
-        self.current_template
-            .as_ref()
-            .map(|s| s == p)
-            .unwrap_or(false)
+        self.current_template.as_ref().map(|s| s == p).unwrap_or(
+            false,
+        )
     }
 
     pub fn context(&self) -> &Context {
-        self.context
+        &self.context
     }
 
     pub fn context_mut(&mut self) -> &mut Context {
-        self.context
+        &mut self.context
     }
 
-    pub fn register_local_helper(&mut self,
-                                 name: &str,
-                                 def: Box<HelperDef + 'static>)
-                                 -> Option<Rc<Box<HelperDef + 'static>>> {
+    pub fn register_local_helper(
+        &mut self,
+        name: &str,
+        def: Box<HelperDef + 'static>,
+    ) -> Option<Rc<Box<HelperDef + 'static>>> {
         self.local_helpers.insert(name.to_string(), Rc::new(def))
     }
 
@@ -259,20 +226,34 @@ impl<'a> RenderContext<'a> {
     pub fn get_local_helper(&self, name: &str) -> Option<Rc<Box<HelperDef + 'static>>> {
         self.local_helpers.get(name).map(|r| r.clone())
     }
+
+    pub fn evaluate(&self, path: &str) -> Result<&Json, RenderError> {
+        self.context.navigate(
+            self.get_path(),
+            self.get_local_path_root(),
+            path,
+        )
+    }
+
+    pub fn evaluate_absolute(&self, path: &str) -> Result<&Json, RenderError> {
+        self.context.navigate(".", &VecDeque::new(), path)
+    }
 }
 
 impl<'a> fmt::Debug for RenderContext<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f,
-               "partials: {:?}, path: {:?}, local_variables: {:?}, current_template: {:?}, \
+        write!(
+            f,
+            "partials: {:?}, path: {:?}, local_variables: {:?}, current_template: {:?}, \
                 root_template: {:?}, disable_escape: {:?}, local_path_root: {:?}",
-               self.partials,
-               self.path,
-               self.local_variables,
-               self.current_template,
-               self.root_template,
-               self.disable_escape,
-               self.local_path_root)
+            self.partials,
+            self.path,
+            self.local_variables,
+            self.current_template,
+            self.root_template,
+            self.disable_escape,
+            self.local_path_root
+        )
     }
 }
 
@@ -293,7 +274,9 @@ impl ContextJson {
 
     /// Return root level of this path if any
     pub fn path_root(&self) -> Option<&str> {
-        self.path.as_ref().and_then(|p| p.split(|c| c == '.' || c == '/').nth(0))
+        self.path.as_ref().and_then(|p| {
+            p.split(|c| c == '.' || c == '/').nth(0)
+        })
     }
 
     /// Returns the value
@@ -314,10 +297,11 @@ pub struct Helper<'a> {
 }
 
 impl<'a, 'b> Helper<'a> {
-    fn from_template(ht: &'a HelperTemplate,
-                     registry: &Registry,
-                     rc: &'b mut RenderContext)
-                     -> Result<Helper<'a>, RenderError> {
+    fn from_template(
+        ht: &'a HelperTemplate,
+        registry: &Registry,
+        rc: &'b mut RenderContext,
+    ) -> Result<Helper<'a>, RenderError> {
         let mut evaluated_params = Vec::new();
         for p in ht.params.iter() {
             let r = try!(p.expand(registry, rc));
@@ -331,14 +315,14 @@ impl<'a, 'b> Helper<'a> {
         }
 
         Ok(Helper {
-               name: &ht.name,
-               params: evaluated_params,
-               hash: evaluated_hash,
-               block_param: &ht.block_param,
-               template: &ht.template,
-               inverse: &ht.inverse,
-               block: ht.block,
-           })
+            name: &ht.name,
+            params: evaluated_params,
+            hash: evaluated_hash,
+            block_param: &ht.block_param,
+            template: &ht.template,
+            inverse: &ht.inverse,
+            block: ht.block,
+        })
     }
 
     /// Returns helper name
@@ -428,7 +412,8 @@ impl<'a, 'b> Helper<'a> {
     /// Return block param pair (for example |key, val|) if any
     pub fn block_param_pair(&self) -> Option<(&str, &str)> {
         if let Some(BlockParam::Pair((Parameter::Name(ref s1), Parameter::Name(ref s2)))) =
-            *self.block_param {
+            *self.block_param
+        {
             Some((s1, s2))
         } else {
             None
@@ -445,10 +430,11 @@ pub struct Directive<'a> {
 }
 
 impl<'a, 'b> Directive<'a> {
-    fn from_template(dt: &'a DirectiveTemplate,
-                     registry: &Registry,
-                     rc: &'b mut RenderContext)
-                     -> Result<Directive<'a>, RenderError> {
+    fn from_template(
+        dt: &'a DirectiveTemplate,
+        registry: &Registry,
+        rc: &'b mut RenderContext,
+    ) -> Result<Directive<'a>, RenderError> {
         let name = try!(dt.name.expand_as_name(registry, rc));
 
         let mut evaluated_params = Vec::new();
@@ -464,11 +450,11 @@ impl<'a, 'b> Directive<'a> {
         }
 
         Ok(Directive {
-               name: name,
-               params: evaluated_params,
-               hash: evaluated_hash,
-               template: &dt.template,
-           })
+            name: name,
+            params: evaluated_params,
+            hash: evaluated_hash,
+            template: &dt.template,
+        })
     }
 
     /// Returns helper name
@@ -528,10 +514,11 @@ pub trait Evaluable {
 
 
 impl Parameter {
-    pub fn expand_as_name(&self,
-                          registry: &Registry,
-                          rc: &mut RenderContext)
-                          -> Result<String, RenderError> {
+    pub fn expand_as_name(
+        &self,
+        registry: &Registry,
+        rc: &mut RenderContext,
+    ) -> Result<String, RenderError> {
         match self {
             &Parameter::Name(ref name) => Ok(name.to_owned()),
             &Parameter::Subexpression(ref t) => {
@@ -551,38 +538,44 @@ impl Parameter {
         }
     }
 
-    pub fn expand(&self,
-                  registry: &Registry,
-                  rc: &mut RenderContext)
-                  -> Result<ContextJson, RenderError> {
+    pub fn expand(
+        &self,
+        registry: &Registry,
+        rc: &mut RenderContext,
+    ) -> Result<ContextJson, RenderError> {
         match self {
             &Parameter::Name(ref name) => {
-                Ok(rc.get_local_var(&name).map_or_else(|| {
-                                                           ContextJson {
-                                                               path: Some(name.to_owned()),
-                                                               value: rc.evaluate_in_block_context(name).map_or_else(|| {rc.context().navigate(rc.get_path(), rc.get_local_path_root(), name).clone()}, |v| v.clone()),
-                                                           }
-
-                                                       },
-                                                       |v| {
-                                                           ContextJson {
-                                                               path: None,
-                                                               value: v.clone(),
-                                                           }
-                                                       }))
+                let local_value = rc.get_local_var(&name);
+                if let Some(value) = local_value {
+                    Ok(ContextJson {
+                        path: Some(name.to_owned()),
+                        value: value.clone(),
+                    })
+                } else {
+                    let block_context_value = rc.evaluate_in_block_context(name)?;
+                    let value = if block_context_value.is_none() {
+                        rc.evaluate(name)?
+                    } else {
+                        block_context_value.unwrap()
+                    };
+                    Ok(ContextJson {
+                        path: Some(name.to_owned()),
+                        value: value.clone(),
+                    })
+                }
             }
             &Parameter::Literal(ref j) => {
                 Ok(ContextJson {
-                       path: None,
-                       value: j.clone(),
-                   })
+                    path: None,
+                    value: j.clone(),
+                })
             }
             &Parameter::Subexpression(_) => {
                 let text_value = try!(self.expand_as_name(registry, rc));
                 Ok(ContextJson {
-                       path: None,
-                       value: Json::String(text_value),
-                   })
+                    path: None,
+                    value: Json::String(text_value),
+                })
             }
         }
     }
@@ -645,7 +638,6 @@ impl Evaluable for Template {
 
 impl Renderable for TemplateElement {
     fn render(&self, registry: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
-        debug!("rendering {:?}, {:?}", self, rc);
         match *self {
             RawString(ref v) => {
                 try!(rc.writer.write(v.clone().into_bytes().as_ref()));
@@ -675,22 +667,26 @@ impl Renderable for TemplateElement {
                 if let Some(ref d) = rc.get_local_helper(&ht.name) {
                     d.call(&helper, registry, rc)
                 } else {
-                    registry.get_helper(&ht.name)
+                    registry
+                        .get_helper(&ht.name)
                         .or(registry.get_helper(if ht.block {
-                                                    "blockHelperMissing"
-                                                } else {
-                                                    "helperMissing"
-                                                }))
-                        .ok_or(RenderError::new(format!("Helper not defined: {:?}", ht.name)))
+                            "blockHelperMissing"
+                        } else {
+                            "helperMissing"
+                        }))
+                        .ok_or(RenderError::new(
+                            format!("Helper not defined: {:?}", ht.name),
+                        ))
                         .and_then(|d| d.call(&helper, registry, rc))
                 }
             }
             DirectiveExpression(_) |
             DirectiveBlock(_) => self.eval(registry, rc),
-            #[cfg(not(feature="partial_legacy"))]
-            PartialExpression(ref dt) | PartialBlock(ref dt) => {
-                Directive::from_template(dt, registry, rc)
-                    .and_then(|di| partial::expand_partial(&di, registry, rc))
+            PartialExpression(ref dt) |
+            PartialBlock(ref dt) => {
+                Directive::from_template(dt, registry, rc).and_then(|di| {
+                    partial::expand_partial(&di, registry, rc)
+                })
             }
             _ => Ok(()),
         }
@@ -706,7 +702,9 @@ impl Evaluable for TemplateElement {
                     match registry.get_decorator(&di.name) {
                         Some(d) => (**d).call(&di, registry, rc),
                         None => {
-                            Err(RenderError::new(format!("Directive not defined: {:?}", dt.name)))
+                            Err(RenderError::new(
+                                format!("Directive not defined: {:?}", dt.name),
+                            ))
                         }
                     }
                 })
@@ -720,10 +718,10 @@ impl Evaluable for TemplateElement {
 fn test_raw_string() {
     let r = Registry::new();
     let mut sw = StringWriter::new();
-    let mut ctx = Context::null();
+    let ctx = Context::null();
     let mut hlps = HashMap::new();
     {
-        let mut rc = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
+        let mut rc = RenderContext::new(ctx, &mut hlps, &mut sw);
         let raw_string = RawString("<h1>hello world</h1>".to_string());
 
         raw_string.render(&r, &mut rc).ok().unwrap();
@@ -739,10 +737,10 @@ fn test_expression() {
     let mut m: HashMap<String, String> = HashMap::new();
     let value = "<p></p>".to_string();
     m.insert("hello".to_string(), value);
-    let mut ctx = Context::wraps(&m);
+    let ctx = Context::wraps(&m).unwrap();
     {
 
-        let mut rc = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
+        let mut rc = RenderContext::new(ctx, &mut hlps, &mut sw);
         let element = Expression(Parameter::Name("hello".into()));
 
         element.render(&r, &mut rc).ok().unwrap();
@@ -759,10 +757,10 @@ fn test_html_expression() {
     let mut m: HashMap<String, String> = HashMap::new();
     let value = "world";
     m.insert("hello".to_string(), value.to_string());
-    let mut ctx = Context::wraps(&m);
+    let ctx = Context::wraps(&m).unwrap();
     {
 
-        let mut rc = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
+        let mut rc = RenderContext::new(ctx, &mut hlps, &mut sw);
         let element = HTMLExpression(Parameter::Name("hello".into()));
         element.render(&r, &mut rc).ok().unwrap();
     }
@@ -778,12 +776,12 @@ fn test_template() {
     let mut m: HashMap<String, String> = HashMap::new();
     let value = "world".to_string();
     m.insert("hello".to_string(), value);
-    let mut ctx = Context::wraps(&m);
+    let ctx = Context::wraps(&m).unwrap();
 
     {
 
 
-        let mut rc = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
+        let mut rc = RenderContext::new(ctx, &mut hlps, &mut sw);
         let mut elements: Vec<TemplateElement> = Vec::new();
 
         let e1 = RawString("<h1>".to_string());
@@ -813,22 +811,28 @@ fn test_template() {
 fn test_render_context_promotion_and_demotion() {
     use context::to_json;
     let mut sw = StringWriter::new();
-    let mut ctx = Context::null();
+    let ctx = Context::null();
     let mut hlps = HashMap::new();
 
-    let mut render_context = RenderContext::new(&mut ctx, &mut hlps, &mut sw);
+    let mut render_context = RenderContext::new(ctx, &mut hlps, &mut sw);
 
     render_context.set_local_var("@index".to_string(), to_json(&0));
 
     render_context.promote_local_vars();
 
-    assert_eq!(render_context.get_local_var(&"@../index".to_string()).unwrap(),
-               &to_json(&0));
+    assert_eq!(
+        render_context
+            .get_local_var(&"@../index".to_string())
+            .unwrap(),
+        &to_json(&0)
+    );
 
     render_context.demote_local_vars();
 
-    assert_eq!(render_context.get_local_var(&"@index".to_string()).unwrap(),
-               &to_json(&0));
+    assert_eq!(
+        render_context.get_local_var(&"@index".to_string()).unwrap(),
+        &to_json(&0)
+    );
 }
 
 #[test]
@@ -842,9 +846,12 @@ fn test_render_subexpression() {
     m.insert("const".to_string(), "truthy".to_string());
 
     {
-        if let Err(e) = r.template_renderw("<h1>{{#if (const)}}{{(hello)}}{{/if}}</h1>",
-                                           &m,
-                                           &mut sw) {
+        if let Err(e) = r.template_renderw(
+            "<h1>{{#if (const)}}{{(hello)}}{{/if}}</h1>",
+            &m,
+            &mut sw,
+        )
+        {
             panic!("{}", e);
         }
     }
@@ -855,22 +862,22 @@ fn test_render_subexpression() {
 #[test]
 fn test_render_subexpression_issue_115() {
     let mut r = Registry::new();
-    r.register_helper("format",
-                      Box::new(|h: &Helper,
-                                _: &Registry,
-                                rc: &mut RenderContext|
-                                -> Result<(), RenderError> {
-        rc.writer
-            .write(format!("{}",
-                           h.param(0)
-                               .unwrap()
-                               .value()
-                               .render())
-                           .into_bytes()
-                           .as_ref())
-            .map(|_| ())
-            .map_err(RenderError::from)
-    }));
+    r.register_helper(
+        "format",
+        Box::new(|h: &Helper,
+         _: &Registry,
+         rc: &mut RenderContext|
+         -> Result<(), RenderError> {
+            rc.writer
+                .write(
+                    format!("{}", h.param(0).unwrap().value().render())
+                        .into_bytes()
+                        .as_ref(),
+                )
+                .map(|_| ())
+                .map_err(RenderError::from)
+        }),
+    );
 
     let mut sw = StringWriter::new();
     let mut m: HashMap<String, String> = HashMap::new();
@@ -891,8 +898,10 @@ fn test_render_error_line_no() {
     let m: HashMap<String, String> = HashMap::new();
 
     let name = "invalid_template";
-    assert!(r.register_template_string(name, "<h1>\n{{#if true}}\n  {{#each}}{{/each}}\n{{/if}}")
-                .is_ok());
+    assert!(
+        r.register_template_string(name, "<h1>\n{{#if true}}\n  {{#each}}{{/each}}\n{{/if}}")
+            .is_ok()
+    );
 
     if let Err(e) = r.render(name, &m) {
         assert_eq!(e.line_no.unwrap(), 3);
@@ -904,12 +913,19 @@ fn test_render_error_line_no() {
 }
 
 #[test]
-#[cfg(not(feature="partial_legacy"))]
 fn test_partial_failback_render() {
     let mut r = Registry::new();
 
-    assert!(r.register_template_string("parent", "<html>{{> layout}}</html>").is_ok());
-    assert!(r.register_template_string("child", "{{#*inline \"layout\"}}content{{/inline}}{{#> parent}}{{> seg}}{{/parent}}").is_ok());
+    assert!(
+        r.register_template_string("parent", "<html>{{> layout}}</html>")
+            .is_ok()
+    );
+    assert!(
+        r.register_template_string(
+            "child",
+            "{{#*inline \"layout\"}}content{{/inline}}{{#> parent}}{{> seg}}{{/parent}}",
+        ).is_ok()
+    );
     assert!(r.register_template_string("seg", "1234").is_ok());
 
     let r = r.render("child", &true).expect("should work");
@@ -920,11 +936,17 @@ fn test_partial_failback_render() {
 fn test_key_with_slash() {
     let mut r = Registry::new();
 
-    assert!(r.register_template_string("t", "{{#each .}}{{@key}}: {{this}}\n{{/each}}").is_ok());
+    assert!(
+        r.register_template_string("t", "{{#each .}}{{@key}}: {{this}}\n{{/each}}")
+            .is_ok()
+    );
 
-    let r = r.render("t", &json!({
+    let r = r.render(
+        "t",
+        &json!({
         "/foo": "bar"
-    })).expect("should work");
+    }),
+    ).expect("should work");
 
     assert_eq!(r, "/foo: bar\n");
 }

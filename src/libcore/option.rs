@@ -146,7 +146,7 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use iter::{FromIterator, FusedIterator, TrustedLen};
-use mem;
+use {mem, ops};
 
 // Note that this is not a lang item per se, but it has a hidden dependency on
 // `Iterator`, which is one. The compiler assumes that the `next` method of
@@ -774,6 +774,26 @@ impl<'a, T: Clone> Option<&'a T> {
     }
 }
 
+impl<'a, T: Clone> Option<&'a mut T> {
+    /// Maps an `Option<&mut T>` to an `Option<T>` by cloning the contents of the
+    /// option.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(option_ref_mut_cloned)]
+    /// let mut x = 12;
+    /// let opt_x = Some(&mut x);
+    /// assert_eq!(opt_x, Some(&mut 12));
+    /// let cloned = opt_x.cloned();
+    /// assert_eq!(cloned, Some(12));
+    /// ```
+    #[unstable(feature = "option_ref_mut_cloned", issue = "43738")]
+    pub fn cloned(self) -> Option<T> {
+        self.map(|t| t.clone())
+    }
+}
+
 impl<T: Default> Option<T> {
     /// Returns the contained value or a default
     ///
@@ -1101,5 +1121,31 @@ impl<A, V: FromIterator<A>> FromIterator<Option<A>> for Option<V> {
         } else {
             Some(v)
         }
+    }
+}
+
+/// The error type that results from applying the try operator (`?`) to a `None` value. If you wish
+/// to allow `x?` (where `x` is an `Option<T>`) to be converted into your error type, you can
+/// implement `impl From<NoneError>` for `YourErrorType`. In that case, `x?` within a function that
+/// returns `Result<_, YourErrorType>` will translate a `None` value into an `Err` result.
+#[unstable(feature = "try_trait", issue = "42327")]
+#[derive(Clone, Copy, PartialEq, PartialOrd, Eq, Ord, Debug, Hash)]
+pub struct NoneError;
+
+#[unstable(feature = "try_trait", issue = "42327")]
+impl<T> ops::Try for Option<T> {
+    type Ok = T;
+    type Error = NoneError;
+
+    fn into_result(self) -> Result<T, NoneError> {
+        self.ok_or(NoneError)
+    }
+
+    fn from_ok(v: T) -> Self {
+        Some(v)
+    }
+
+    fn from_error(_: NoneError) -> Self {
+        None
     }
 }

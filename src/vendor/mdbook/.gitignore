@@ -1,5 +1,10 @@
 Cargo.lock
 target
 
+# MacOS temp file
+.DS_Store
+
 book-test
 book-example/book
+
+.vscode

@@ -11,16 +11,16 @@
 #![deny(warnings)]
 
 extern crate build_helper;
-extern crate gcc;
+extern crate cc;
 
 use std::env;
 use std::process::Command;
-use build_helper::{run, native_lib_boilerplate};
+use build_helper::{run, native_lib_boilerplate, BuildExpectation};
 
 fn main() {
     let target = env::var("TARGET").expect("TARGET was not set");
     let host = env::var("HOST").expect("HOST was not set");
-    if cfg!(feature = "backtrace") && !target.contains("apple") && !target.contains("msvc") &&
+    if cfg!(feature = "backtrace") && !target.contains("msvc") &&
         !target.contains("emscripten") && !target.contains("fuchsia") {
         let _ = build_libbacktrace(&host, &target);
     }
@@ -68,8 +68,8 @@ fn main() {
         if cfg!(feature = "backtrace") {
             println!("cargo:rustc-link-lib=backtrace");
         }
-        println!("cargo:rustc-link-lib=magenta");
-        println!("cargo:rustc-link-lib=mxio");
+        println!("cargo:rustc-link-lib=zircon");
+        println!("cargo:rustc-link-lib=fdio");
         println!("cargo:rustc-link-lib=launchpad"); // for std::process
     }
 }
@@ -77,7 +77,7 @@ fn main() {
 fn build_libbacktrace(host: &str, target: &str) -> Result<(), ()> {
     let native = native_lib_boilerplate("libbacktrace", "libbacktrace", "backtrace", ".libs")?;
 
-    let compiler = gcc::Config::new().get_compiler();
+    let compiler = cc::Build::new().get_compiler();
     // only msvc returns None for ar so unwrap is okay
     let ar = build_helper::cc2ar(compiler.path(), target).unwrap();
     let mut cflags = compiler.args().iter().map(|s| s.to_str().unwrap())
@@ -97,11 +97,14 @@ fn build_libbacktrace(host: &str, target: &str) -> Result<(), ()> {
                 .env("CC", compiler.path())
                 .env("AR", &ar)
                 .env("RANLIB", format!("{} s", ar.display()))
-                .env("CFLAGS", cflags));
+                .env("CFLAGS", cflags),
+        BuildExpectation::None);
 
     run(Command::new(build_helper::make(host))
                 .current_dir(&native.out_dir)
                 .arg(format!("INCDIR={}", native.src_dir.display()))
-                .arg("-j").arg(env::var("NUM_JOBS").expect("NUM_JOBS was not set")));
+                .arg("-j").arg(env::var("NUM_JOBS").expect("NUM_JOBS was not set")),
+        BuildExpectation::None);
+
     Ok(())
 }

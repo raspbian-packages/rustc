@@ -24,10 +24,13 @@
 #![feature(link_args)]
 #![feature(static_nobundle)]
 
-extern crate libc;
+// See librustc_cratesio_shim/Cargo.toml for a comment explaining this.
+#[allow(unused_extern_crates)]
+extern crate rustc_cratesio_shim;
+
 #[macro_use]
-#[no_link]
-extern crate rustc_bitflags;
+extern crate bitflags;
+extern crate libc;
 
 pub use self::IntPredicate::*;
 pub use self::RealPredicate::*;
@@ -343,10 +346,6 @@ pub fn initialize_available_targets() {
                  LLVMInitializePowerPCTargetMC,
                  LLVMInitializePowerPCAsmPrinter,
                  LLVMInitializePowerPCAsmParser);
-    init_target!(llvm_component = "pnacl",
-                 LLVMInitializePNaClTargetInfo,
-                 LLVMInitializePNaClTarget,
-                 LLVMInitializePNaClTargetMC);
     init_target!(llvm_component = "systemz",
                  LLVMInitializeSystemZTargetInfo,
                  LLVMInitializeSystemZTarget,

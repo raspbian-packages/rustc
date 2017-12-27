@@ -36,7 +36,7 @@ pub fn expand_line(cx: &mut ExtCtxt, sp: Span, tts: &[tokenstream::TokenTree])
     base::check_zero_tts(cx, sp, tts, "line!");
 
     let topmost = cx.expansion_cause().unwrap_or(sp);
-    let loc = cx.codemap().lookup_char_pos(topmost.lo);
+    let loc = cx.codemap().lookup_char_pos(topmost.lo());
 
     base::MacEager::expr(cx.expr_u32(topmost, loc.line as u32))
 }
@@ -47,7 +47,7 @@ pub fn expand_column(cx: &mut ExtCtxt, sp: Span, tts: &[tokenstream::TokenTree])
     base::check_zero_tts(cx, sp, tts, "column!");
 
     let topmost = cx.expansion_cause().unwrap_or(sp);
-    let loc = cx.codemap().lookup_char_pos(topmost.lo);
+    let loc = cx.codemap().lookup_char_pos(topmost.lo());
 
     base::MacEager::expr(cx.expr_u32(topmost, loc.col.to_usize() as u32))
 }
@@ -70,7 +70,7 @@ pub fn expand_file(cx: &mut ExtCtxt, sp: Span, tts: &[tokenstream::TokenTree])
     base::check_zero_tts(cx, sp, tts, "file!");
 
     let topmost = cx.expansion_cause().unwrap_or(sp);
-    let loc = cx.codemap().lookup_char_pos(topmost.lo);
+    let loc = cx.codemap().lookup_char_pos(topmost.lo());
     base::MacEager::expr(cx.expr_str(topmost, Symbol::intern(&loc.file.name)))
 }
 
@@ -197,7 +197,7 @@ fn res_rel_file(cx: &mut ExtCtxt, sp: syntax_pos::Span, arg: &Path) -> PathBuf {
     // after macro expansion (that is, they are unhygienic).
     if !arg.is_absolute() {
         let callsite = sp.source_callsite();
-        let mut path = PathBuf::from(&cx.codemap().span_to_filename(callsite));
+        let mut path = cx.codemap().span_to_unmapped_path(callsite);
         path.pop();
         path.push(arg);
         path

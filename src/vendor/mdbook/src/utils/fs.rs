@@ -1,16 +1,16 @@
-use std::path::{Path, Component};
-use std::error::Error;
-use std::io::{self, Read};
+use std::path::{Path, PathBuf, Component};
+use errors::*;
+use std::io::Read;
 use std::fs::{self, File};
 
 /// Takes a path to a file and try to read the file into a String
-
-pub fn file_to_string(path: &Path) -> Result<String, Box<Error>> {
+pub fn file_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
+    let path = path.as_ref();
     let mut file = match File::open(path) {
         Ok(f) => f,
         Err(e) => {
             debug!("[*]: Failed to open {:?}", path);
-            return Err(Box::new(e));
+            bail!(e);
         },
     };
 
@@ -18,7 +18,7 @@ pub fn file_to_string(path: &Path) -> Result<String, Box<Error>> {
 
     if let Err(e) = file.read_to_string(&mut content) {
         debug!("[*]: Failed to read {:?}", path);
-        return Err(Box::new(e));
+        bail!(e);
     }
 
     Ok(content)
@@ -30,16 +30,16 @@ pub fn file_to_string(path: &Path) -> Result<String, Box<Error>> {
 /// This is mostly interesting for a relative path to point back to the
 /// directory from where the path starts.
 ///
-/// ```ignore
-/// let mut path = Path::new("some/relative/path");
-///
-/// println!("{}", path_to_root(&path));
-/// ```
-///
-/// **Outputs**
-///
-/// ```text
-/// "../../"
+/// ```rust
+/// # extern crate mdbook;
+/// #
+/// # use std::path::Path;
+/// # use mdbook::utils::fs::path_to_root;
+/// #
+/// # fn main() {
+/// let path = Path::new("some/relative/path");
+/// assert_eq!(path_to_root(path), "../../");
+/// # }
 /// ```
 ///
 /// **note:** it's not very fool-proof, if you find a situation where
@@ -47,11 +47,11 @@ pub fn file_to_string(path: &Path) -> Result<String, Box<Error>> {
 /// Consider [submitting a new issue](https://github.com/azerupi/mdBook/issues)
 /// or a [pull-request](https://github.com/azerupi/mdBook/pulls) to improve it.
 
-pub fn path_to_root(path: &Path) -> String {
+pub fn path_to_root<P: Into<PathBuf>>(path: P) -> String {
     debug!("[fn]: path_to_root");
     // Remove filename and add "../" for every directory
 
-    path.to_path_buf()
+    path.into()
         .parent()
         .expect("")
         .components()
@@ -72,7 +72,7 @@ pub fn path_to_root(path: &Path) -> String {
 /// it checks every directory in the path to see if it exists,
 /// and if it does not it will be created.
 
-pub fn create_file(path: &Path) -> io::Result<File> {
+pub fn create_file(path: &Path) -> Result<File> {
     debug!("[fn]: create_file");
 
     // Construct path
@@ -83,12 +83,12 @@ pub fn create_file(path: &Path) -> io::Result<File> {
     }
 
     debug!("[*]: Create file: {:?}", path);
-    File::create(path)
+    File::create(path).map_err(|e| e.into())
 }
 
 /// Removes all the content of a directory but not the directory itself
 
-pub fn remove_dir_content(dir: &Path) -> Result<(), Box<Error>> {
+pub fn remove_dir_content(dir: &Path) -> Result<()> {
     for item in fs::read_dir(dir)? {
         if let Ok(item) = item {
             let item = item.path();
@@ -108,7 +108,7 @@ pub fn remove_dir_content(dir: &Path) -> Result<(), Box<Error>> {
 /// with the extensions given in the `ext_blacklist` array
 
 pub fn copy_files_except_ext(from: &Path, to: &Path, recursive: bool, ext_blacklist: &[&str])
-                             -> Result<(), Box<Error>> {
+                             -> Result<()> {
     debug!("[fn] copy_files_except_ext");
     // Check that from and to are different
     if from == to {

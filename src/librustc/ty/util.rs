@@ -12,7 +12,8 @@
 
 use hir::def_id::{DefId, LOCAL_CRATE};
 use hir::map::DefPathData;
-use ich::{StableHashingContext, NodeIdHashingMode};
+use ich::NodeIdHashingMode;
+use middle::const_val::ConstVal;
 use traits::{self, Reveal};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::fold::TypeVisitor;
@@ -27,6 +28,7 @@ use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
                                            HashStable};
 use rustc_data_structures::fx::FxHashMap;
 use std::cmp;
+use std::iter;
 use std::hash::Hash;
 use std::intrinsics;
 use syntax::ast::{self, Name};
@@ -52,7 +54,7 @@ macro_rules! typed_literal {
             SignedInt(ast::IntTy::I32)   => ConstInt::I32($lit),
             SignedInt(ast::IntTy::I64)   => ConstInt::I64($lit),
             SignedInt(ast::IntTy::I128)   => ConstInt::I128($lit),
-            SignedInt(ast::IntTy::Is) => match $tcx.sess.target.int_type {
+            SignedInt(ast::IntTy::Is) => match $tcx.sess.target.isize_ty {
                 ast::IntTy::I16 => ConstInt::Isize(ConstIsize::Is16($lit)),
                 ast::IntTy::I32 => ConstInt::Isize(ConstIsize::Is32($lit)),
                 ast::IntTy::I64 => ConstInt::Isize(ConstIsize::Is64($lit)),
@@ -63,7 +65,7 @@ macro_rules! typed_literal {
             UnsignedInt(ast::UintTy::U32) => ConstInt::U32($lit),
             UnsignedInt(ast::UintTy::U64) => ConstInt::U64($lit),
             UnsignedInt(ast::UintTy::U128) => ConstInt::U128($lit),
-            UnsignedInt(ast::UintTy::Us) => match $tcx.sess.target.uint_type {
+            UnsignedInt(ast::UintTy::Us) => match $tcx.sess.target.usize_ty {
                 ast::UintTy::U16 => ConstInt::Usize(ConstUsize::Us16($lit)),
                 ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32($lit)),
                 ast::UintTy::U64 => ConstInt::Usize(ConstUsize::Us64($lit)),
@@ -212,7 +214,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
     /// context it's calculated within. This is used by the `type_id` intrinsic.
     pub fn type_id_hash(self, ty: Ty<'tcx>) -> u64 {
         let mut hasher = StableHasher::new();
-        let mut hcx = StableHashingContext::new(self);
+        let mut hcx = self.create_stable_hashing_context();
 
         // We want the type_id be independent of the types free regions, so we
         // erase them. The erase_regions() call will also anonymize bound
@@ -387,7 +389,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     ty::Predicate::WellFormed(..) |
                     ty::Predicate::ObjectSafe(..) |
                     ty::Predicate::ClosureKind(..) |
-                    ty::Predicate::RegionOutlives(..) => {
+                    ty::Predicate::RegionOutlives(..) |
+                    ty::Predicate::ConstEvaluatable(..) => {
                         None
                     }
                     ty::Predicate::TypeOutlives(ty::Binder(ty::OutlivesPredicate(t, r))) => {
@@ -417,7 +420,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         adt_did: DefId,
         validate: &mut FnMut(Self, DefId) -> Result<(), ErrorReported>
     ) -> Option<ty::Destructor> {
-        let drop_trait = if let Some(def_id) = self.lang_items.drop_trait() {
+        let drop_trait = if let Some(def_id) = self.lang_items().drop_trait() {
             def_id
         } else {
             return None;
@@ -512,11 +515,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let result = item_substs.iter().zip(impl_substs.iter())
             .filter(|&(_, &k)| {
                 if let Some(&ty::RegionKind::ReEarlyBound(ref ebr)) = k.as_region() {
-                    !impl_generics.region_param(ebr).pure_wrt_drop
+                    !impl_generics.region_param(ebr, self).pure_wrt_drop
                 } else if let Some(&ty::TyS {
                     sty: ty::TypeVariants::TyParam(ref pt), ..
                 }) = k.as_type() {
-                    !impl_generics.type_param(pt).pure_wrt_drop
+                    !impl_generics.type_param(pt, self).pure_wrt_drop
                 } else {
                     // not a type or region param - this should be reported
                     // as an error.
@@ -569,6 +572,12 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             ty::TyClosure(def_id, substs) => {
                 substs.upvar_tys(def_id, self).map(|ty| {
+                    self.dtorck_constraint_for_ty(span, for_ty, depth+1, ty)
+                }).collect()
+            }
+
+            ty::TyGenerator(def_id, substs, interior) => {
+                substs.upvar_tys(def_id, self).chain(iter::once(interior.witness)).map(|ty| {
                     self.dtorck_constraint_for_ty(span, for_ty, depth+1, ty)
                 }).collect()
             }
@@ -631,7 +640,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     pub fn const_usize(&self, val: u16) -> ConstInt {
-        match self.sess.target.uint_type {
+        match self.sess.target.usize_ty {
             ast::UintTy::U16 => ConstInt::Usize(ConstUsize::Us16(val as u16)),
             ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32(val as u32)),
             ast::UintTy::U64 => ConstInt::Usize(ConstUsize::Us64(val as u64)),
@@ -690,10 +699,18 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             TyInt(i) => self.hash(i),
             TyUint(u) => self.hash(u),
             TyFloat(f) => self.hash(f),
-            TyArray(_, n) => self.hash(n),
+            TyArray(_, n) => {
+                self.hash_discriminant_u8(&n.val);
+                match n.val {
+                    ConstVal::Integral(x) => self.hash(x.to_u64().unwrap()),
+                    ConstVal::Unevaluated(def_id, _) => self.def_id(def_id),
+                    _ => bug!("arrays should not have {:?} as length", n)
+                }
+            }
             TyRawPtr(m) |
             TyRef(_, m) => self.hash(m.mutbl),
             TyClosure(def_id, _) |
+            TyGenerator(def_id, _, _) |
             TyAnon(def_id, _) |
             TyFnDef(def_id, _) => self.def_id(def_id),
             TyAdt(d, _) => self.def_id(d.did),
@@ -1119,6 +1136,11 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ty::TyArray(ty, _) | ty::TySlice(ty) => needs_drop(ty),
 
         ty::TyClosure(def_id, ref substs) => substs.upvar_tys(def_id, tcx).any(needs_drop),
+
+        // Pessimistically assume that all generators will require destructors
+        // as we don't know if a destructor is a noop or not until after the MIR
+        // state transformation pass
+        ty::TyGenerator(..) => true,
 
         ty::TyTuple(ref tys, _) => tys.iter().cloned().any(needs_drop),
 

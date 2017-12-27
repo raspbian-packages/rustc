@@ -18,7 +18,7 @@ use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc::mir::*;
 use rustc::mir::transform::{MirPass, MirSource};
 use rustc::mir::visit::*;
-use rustc::ty::{self, Ty, TyCtxt};
+use rustc::ty::{self, Ty, TyCtxt, Instance};
 use rustc::ty::subst::{Subst,Substs};
 
 use std::collections::VecDeque;
@@ -78,7 +78,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
         let mut callsites = VecDeque::new();
 
         // Only do inlining into fn bodies.
-        if let MirSource::Fn(_) = self.source {
+        if let MirSource::Fn(caller_id) = self.source {
             for (bb, bb_data) in caller_mir.basic_blocks().iter_enumerated() {
                 // Don't inline calls that are in cleanup blocks.
                 if bb_data.is_cleanup { continue; }
@@ -87,15 +87,23 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                 let terminator = bb_data.terminator();
                 if let TerminatorKind::Call {
                     func: Operand::Constant(ref f), .. } = terminator.kind {
-                    if let ty::TyFnDef(callee_def_id, substs) = f.ty.sty {
-                        callsites.push_back(CallSite {
-                            callee: callee_def_id,
-                            substs,
-                            bb,
-                            location: terminator.source_info
-                        });
+                        if let ty::TyFnDef(callee_def_id, substs) = f.ty.sty {
+                            let caller_def_id = self.tcx.hir.local_def_id(caller_id);
+                            let param_env = self.tcx.param_env(caller_def_id);
+
+                            if let Some(instance) = Instance::resolve(self.tcx,
+                                                                      param_env,
+                                                                      callee_def_id,
+                                                                      substs) {
+                                callsites.push_back(CallSite {
+                                    callee: instance.def_id(),
+                                    substs: instance.substs,
+                                    bb,
+                                    location: terminator.source_info
+                                });
+                            }
+                        }
                     }
-                }
             }
         }
 
@@ -180,6 +188,10 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             return false;
         }
 
+        // Cannot inline generators which haven't been transformed yet
+        if callee_mir.yield_ty.is_some() {
+            return false;
+        }
 
         let attrs = tcx.get_attrs(callsite.callee);
         let hint = attr::find_inline_attr(None, &attrs[..]);
@@ -334,7 +346,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             TerminatorKind::Call { args, destination: Some(destination), cleanup, .. } => {
                 debug!("Inlined {:?} into {:?}", callsite.callee, self.source);
 
-                let is_box_free = Some(callsite.callee) == self.tcx.lang_items.box_free_fn();
+                let is_box_free = Some(callsite.callee) == self.tcx.lang_items().box_free_fn();
 
                 let mut local_map = IndexVec::with_capacity(callee_mir.local_decls.len());
                 let mut scope_map = IndexVec::with_capacity(callee_mir.visibility_scopes.len());
@@ -585,16 +597,6 @@ impl<'a, 'tcx> Integrator<'a, 'tcx> {
         new
     }
 
-    fn update_local(&self, local: Local) -> Option<Local> {
-        let idx = local.index();
-        if idx < (self.args.len() + 1) {
-            return None;
-        }
-        let idx = idx - (self.args.len() + 1);
-        let local = Local::new(idx);
-        self.local_map.get(local).cloned()
-    }
-
     fn arg_index(&self, arg: Local) -> Option<usize> {
         let idx = arg.index();
         if idx > 0 && idx <= self.args.len() {
@@ -606,32 +608,41 @@ impl<'a, 'tcx> Integrator<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
+    fn visit_local(&mut self,
+                   local: &mut Local,
+                   _ctxt: LvalueContext<'tcx>,
+                   _location: Location) {
+        if *local == RETURN_POINTER {
+            match self.destination {
+                Lvalue::Local(l) => {
+                    *local = l;
+                    return;
+                },
+                ref lval => bug!("Return lvalue is {:?}, not local", lval)
+            }
+        }
+        let idx = local.index() - 1;
+        if idx < self.args.len() {
+            match self.args[idx] {
+                Operand::Consume(Lvalue::Local(l)) => {
+                    *local = l;
+                    return;
+                },
+                ref op => bug!("Arg operand `{:?}` is {:?}, not local", idx, op)
+            }
+        }
+        *local = self.local_map[Local::new(idx - self.args.len())];
+    }
+
     fn visit_lvalue(&mut self,
                     lvalue: &mut Lvalue<'tcx>,
                     _ctxt: LvalueContext<'tcx>,
                     _location: Location) {
-        if let Lvalue::Local(ref mut local) = *lvalue {
-            if let Some(l) = self.update_local(*local) {
-                // Temp or Var; update the local reference
-                *local = l;
-                return;
-            }
-        }
-        if let Lvalue::Local(local) = *lvalue {
-            if local == RETURN_POINTER {
-                // Return pointer; update the lvalue itself
-                *lvalue = self.destination.clone();
-            } else if local.index() < (self.args.len() + 1) {
-                // Argument, once again update the the lvalue itself
-                let idx = local.index() - 1;
-                if let Operand::Consume(ref lval) = self.args[idx] {
-                    *lvalue = lval.clone();
-                } else {
-                    bug!("Arg operand `{:?}` is not an Lvalue use.", idx)
-                }
-            }
+        if let Lvalue::Local(RETURN_POINTER) = *lvalue {
+            // Return pointer; update the lvalue itself
+            *lvalue = self.destination.clone();
         } else {
-            self.super_lvalue(lvalue, _ctxt, _location)
+            self.super_lvalue(lvalue, _ctxt, _location);
         }
     }
 
@@ -657,6 +668,8 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
         self.super_terminator_kind(block, kind, loc);
 
         match *kind {
+            TerminatorKind::GeneratorDrop |
+            TerminatorKind::Yield { .. } => bug!(),
             TerminatorKind::Goto { ref mut target} => {
                 *target = self.update_target(*target);
             }

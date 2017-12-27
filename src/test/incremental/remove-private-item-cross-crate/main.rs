@@ -16,6 +16,7 @@
 
 #![feature(rustc_attrs)]
 #![crate_type = "bin"]
+
 #![rustc_partition_reused(module="main", cfg="rpass2")]
 
 extern crate a;

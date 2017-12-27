@@ -42,18 +42,24 @@
 #[macro_use]
 extern crate syntax;
 extern crate syntax_pos;
+extern crate rustc_errors;
+
+mod diagnostic;
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+pub use diagnostic::{Diagnostic, Level};
 
 use std::{ascii, fmt, iter};
+use std::rc::Rc;
 use std::str::FromStr;
 
 use syntax::ast;
 use syntax::errors::DiagnosticBuilder;
-use syntax::parse::{self, token, parse_stream_from_source_str};
-use syntax::print::pprust;
+use syntax::parse::{self, token};
 use syntax::symbol::Symbol;
 use syntax::tokenstream;
 use syntax_pos::DUMMY_SP;
-use syntax_pos::SyntaxContext;
+use syntax_pos::{FileMap, Pos, SyntaxContext};
 use syntax_pos::hygiene::Mark;
 
 /// The main type provided by this crate, representing an abstract stream of
@@ -89,10 +95,7 @@ impl FromStr for TokenStream {
             // notify the expansion info that it is unhygienic
             let mark = Mark::fresh(mark);
             mark.set_expn_info(expn_info);
-            let span = syntax_pos::Span {
-                ctxt: SyntaxContext::empty().apply_mark(mark),
-                ..call_site
-            };
+            let span = call_site.with_ctxt(SyntaxContext::empty().apply_mark(mark));
             let stream = parse::parse_stream_from_source_str(name, src, sess, Some(span));
             Ok(__internal::token_stream_wrap(stream))
         })
@@ -171,16 +174,16 @@ impl TokenStream {
 
 /// A region of source code, along with macro expansion information.
 #[unstable(feature = "proc_macro", issue = "38356")]
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Span(syntax_pos::Span);
 
 #[unstable(feature = "proc_macro", issue = "38356")]
 impl Default for Span {
     fn default() -> Span {
-        ::__internal::with_sess(|(_, mark)| Span(syntax_pos::Span {
-            ctxt: SyntaxContext::empty().apply_mark(mark),
-            ..mark.expn_info().unwrap().call_site
-        }))
+        ::__internal::with_sess(|(_, mark)| {
+            let call_site = mark.expn_info().unwrap().call_site;
+            Span(call_site.with_ctxt(SyntaxContext::empty().apply_mark(mark)))
+        })
     }
 }
 
@@ -191,11 +194,147 @@ pub fn quote_span(span: Span) -> TokenStream {
     TokenStream(quote::Quote::quote(&span.0))
 }
 
+macro_rules! diagnostic_method {
+    ($name:ident, $level:expr) => (
+        /// Create a new `Diagnostic` with the given `message` at the span
+        /// `self`.
+        #[unstable(feature = "proc_macro", issue = "38356")]
+        pub fn $name<T: Into<String>>(self, message: T) -> Diagnostic {
+            Diagnostic::spanned(self, $level, message)
+        }
+    )
+}
+
 impl Span {
     /// The span of the invocation of the current procedural macro.
     #[unstable(feature = "proc_macro", issue = "38356")]
     pub fn call_site() -> Span {
         ::__internal::with_sess(|(_, mark)| Span(mark.expn_info().unwrap().call_site))
+    }
+
+    /// The original source file into which this span points.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn source_file(&self) -> SourceFile {
+        SourceFile {
+            filemap: __internal::lookup_char_pos(self.0.lo()).file,
+        }
+    }
+
+    /// Get the starting line/column in the source file for this span.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn start(&self) -> LineColumn {
+        let loc = __internal::lookup_char_pos(self.0.lo());
+        LineColumn {
+            line: loc.line,
+            column: loc.col.to_usize()
+        }
+    }
+
+    /// Get the ending line/column in the source file for this span.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn end(&self) -> LineColumn {
+        let loc = __internal::lookup_char_pos(self.0.hi());
+        LineColumn {
+            line: loc.line,
+            column: loc.col.to_usize()
+        }
+    }
+
+    /// Create a new span encompassing `self` and `other`.
+    ///
+    /// Returns `None` if `self` and `other` are from different files.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn join(&self, other: Span) -> Option<Span> {
+        let self_loc = __internal::lookup_char_pos(self.0.lo());
+        let other_loc = __internal::lookup_char_pos(self.0.lo());
+
+        if self_loc.file.name != other_loc.file.name { return None }
+
+        Some(Span(self.0.to(other.0)))
+    }
+
+    diagnostic_method!(error, Level::Error);
+    diagnostic_method!(warning, Level::Warning);
+    diagnostic_method!(note, Level::Note);
+    diagnostic_method!(help, Level::Help);
+}
+
+/// A line-column pair representing the start or end of a `Span`.
+#[unstable(feature = "proc_macro", issue = "38356")]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub struct LineColumn {
+    /// The 1-indexed line in the source file on which the span starts or ends (inclusive).
+    line: usize,
+    /// The 0-indexed column (in UTF-8 characters) in the source file on which
+    /// the span starts or ends (inclusive).
+    column: usize
+}
+
+/// The source file of a given `Span`.
+#[unstable(feature = "proc_macro", issue = "38356")]
+#[derive(Clone)]
+pub struct SourceFile {
+    filemap: Rc<FileMap>,
+}
+
+impl SourceFile {
+    /// Get the path to this source file as a string.
+    ///
+    /// ### Note
+    /// If the code span associated with this `SourceFile` was generated by an external macro, this
+    /// may not be an actual path on the filesystem. Use [`is_real`] to check.
+    ///
+    /// Also note that even if `is_real` returns `true`, if `-Z remap-path-prefix-*` was passed on
+    /// the command line, the path as given may not actually be valid.
+    ///
+    /// [`is_real`]: #method.is_real
+    # [unstable(feature = "proc_macro", issue = "38356")]
+    pub fn as_str(&self) -> &str {
+        &self.filemap.name
+    }
+
+    /// Returns `true` if this source file is a real source file, and not generated by an external
+    /// macro's expansion.
+    # [unstable(feature = "proc_macro", issue = "38356")]
+    pub fn is_real(&self) -> bool {
+        // This is a hack until intercrate spans are implemented and we can have real source files
+        // for spans generated in external macros.
+        // https://github.com/rust-lang/rust/pull/43604#issuecomment-333334368
+        self.filemap.is_real_file()
+    }
+}
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+impl AsRef<str> for SourceFile {
+    fn as_ref(&self) -> &str {
+        self.as_str()
+    }
+}
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+impl fmt::Debug for SourceFile {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("SourceFile")
+            .field("path", &self.as_str())
+            .field("is_real", &self.is_real())
+            .finish()
+    }
+}
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+impl PartialEq for SourceFile {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.filemap, &other.filemap)
+    }
+}
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+impl Eq for SourceFile {}
+
+#[unstable(feature = "proc_macro", issue = "38356")]
+impl PartialEq<str> for SourceFile {
+    fn eq(&self, other: &str) -> bool {
+        self.as_ref() == other
     }
 }
 
@@ -491,6 +630,7 @@ impl TokenTree {
             Dot => op!('.'),
             DotDot => joint!('.', Dot),
             DotDotDot => joint!('.', DotDot),
+            DotDotEq => joint!('.', DotEq),
             Comma => op!(','),
             Semi => op!(';'),
             Colon => op!(':'),
@@ -506,50 +646,14 @@ impl TokenTree {
             Ident(ident) | Lifetime(ident) => TokenNode::Term(Term(ident.name)),
             Literal(..) | DocComment(..) => TokenNode::Literal(self::Literal(token)),
 
-            Interpolated(ref nt) => {
-                // An `Interpolated` token means that we have a `Nonterminal`
-                // which is often a parsed AST item. At this point we now need
-                // to convert the parsed AST to an actual token stream, e.g.
-                // un-parse it basically.
-                //
-                // Unfortunately there's not really a great way to do that in a
-                // guaranteed lossless fashion right now. The fallback here is
-                // to just stringify the AST node and reparse it, but this loses
-                // all span information.
-                //
-                // As a result, some AST nodes are annotated with the token
-                // stream they came from. Attempt to extract these lossless
-                // token streams before we fall back to the stringification.
-                let mut tokens = None;
-
-                match nt.0 {
-                    Nonterminal::NtItem(ref item) => {
-                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
-                    }
-                    Nonterminal::NtTraitItem(ref item) => {
-                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
-                    }
-                    Nonterminal::NtImplItem(ref item) => {
-                        tokens = prepend_attrs(&item.attrs, item.tokens.as_ref(), span);
-                    }
-                    _ => {}
-                }
-
-                tokens.map(|tokens| {
-                    TokenNode::Group(Delimiter::None,
-                                     TokenStream(tokens.clone()))
-                }).unwrap_or_else(|| {
-                    __internal::with_sess(|(sess, _)| {
-                        TokenNode::Group(Delimiter::None, TokenStream(nt.1.force(|| {
-                            // FIXME(jseyfried): Avoid this pretty-print + reparse hack
-                            let name = "<macro expansion>".to_owned();
-                            let source = pprust::token_to_string(&token);
-                            parse_stream_from_source_str(name, source, sess, Some(span))
-                        })))
-                    })
+            Interpolated(_) => {
+                __internal::with_sess(|(sess, _)| {
+                    let tts = token.interpolated_to_tokenstream(sess, span);
+                    TokenNode::Group(Delimiter::None, TokenStream(tts))
                 })
             }
 
+            DotEq => unreachable!(),
             OpenDelim(..) | CloseDelim(..) => unreachable!(),
             Whitespace | Comment | Shebang(..) | Eof => unreachable!(),
         };
@@ -570,7 +674,7 @@ impl TokenTree {
                 }).into();
             },
             TokenNode::Term(symbol) => {
-                let ident = ast::Ident { name: symbol.0, ctxt: self.span.0.ctxt };
+                let ident = ast::Ident { name: symbol.0, ctxt: self.span.0.ctxt() };
                 let token =
                     if symbol.0.as_str().starts_with("'") { Lifetime(ident) } else { Ident(ident) };
                 return TokenTree::Token(self.span.0, token).into();
@@ -612,34 +716,6 @@ impl TokenTree {
     }
 }
 
-fn prepend_attrs(attrs: &[ast::Attribute],
-                 tokens: Option<&tokenstream::TokenStream>,
-                 span: syntax_pos::Span)
-    -> Option<tokenstream::TokenStream>
-{
-    let tokens = match tokens {
-        Some(tokens) => tokens,
-        None => return None,
-    };
-    if attrs.len() == 0 {
-        return Some(tokens.clone())
-    }
-    let mut builder = tokenstream::TokenStreamBuilder::new();
-    for attr in attrs {
-        assert_eq!(attr.style, ast::AttrStyle::Outer,
-                   "inner attributes should prevent cached tokens from existing");
-        let stream = __internal::with_sess(|(sess, _)| {
-            // FIXME: Avoid this pretty-print + reparse hack as bove
-            let name = "<macro expansion>".to_owned();
-            let source = pprust::attr_to_string(attr);
-            parse_stream_from_source_str(name, source, sess, Some(span))
-        });
-        builder.push(stream);
-    }
-    builder.push(tokens.clone());
-    Some(builder.build())
-}
-
 /// Permanently unstable internal implementation details of this crate. This
 /// should not be used.
 ///
@@ -663,9 +739,13 @@ pub mod __internal {
     use syntax::parse::{self, ParseSess};
     use syntax::parse::token::{self, Token};
     use syntax::tokenstream;
-    use syntax_pos::DUMMY_SP;
+    use syntax_pos::{BytePos, Loc, DUMMY_SP};
 
     use super::{TokenStream, LexError};
+
+    pub fn lookup_char_pos(pos: BytePos) -> Loc {
+        with_sess(|(sess, _)| sess.codemap().lookup_char_pos(pos))
+    }
 
     pub fn new_token_stream(item: P<ast::Item>) -> TokenStream {
         let token = Token::interpolated(token::NtItem(item));

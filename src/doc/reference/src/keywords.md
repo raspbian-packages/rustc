@@ -1,6 +1,6 @@
 # Keywords
 
-Rust divides keywords in three categories:
+Rust divides keywords into three categories:
   - [strict](#strict-keywords)
   - [weak](#weak-keywords)
   - [reserved](#reserved-keywords)
@@ -45,7 +45,7 @@ not allowed to declare a variable with name `struct`.
 > KW_TYPE           : `type`  
 > KW_UNSAFE         : `unsafe`  
 > KW_USE            : `use`  
-> KW_WHERE          : `wher`  
+> KW_WHERE          : `where`  
 > KW_WHILE          : `while`  
 
 ## Weak keywords
@@ -63,7 +63,7 @@ it is possible to declare a variable or method with the name `union`.
 
 These keywords aren't used yet, but they are reserved for future use.
 The reasoning behind this is to make current programs forward compatible with
-future versions of rust by forbiding them to use these keywords.
+future versions of Rust by forbidding them to use these keywords.
 
 > **<sup>Lexer</sup>**  
 > KW_ABSTRACT       : `abstract`  

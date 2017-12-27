@@ -1,4 +1,5 @@
 # Contributing to Rust
+[contributing-to-rust]: #contributing-to-rust
 
 Thank you for your interest in contributing to Rust! There are many ways to
 contribute, and we appreciate all of them. This document is a bit long, so here's
@@ -18,11 +19,12 @@ hop on [#rust-internals][pound-rust-internals].
 
 As a reminder, all contributors are expected to follow our [Code of Conduct][coc].
 
-[pound-rust-internals]: http://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust-internals
+[pound-rust-internals]: https://chat.mibbit.com/?server=irc.mozilla.org&channel=%23rust-internals
 [internals]: https://internals.rust-lang.org
 [coc]: https://www.rust-lang.org/conduct.html
 
 ## Feature Requests
+[feature-requests]: #feature-requests
 
 To request a change to the way that the Rust language works, please open an
 issue in the [RFCs repository](https://github.com/rust-lang/rfcs/issues/new)
@@ -30,6 +32,7 @@ rather than this one. New features and other significant language changes
 must go through the RFC process.
 
 ## Bug Reports
+[bug-reports]: #bug-reports
 
 While bugs are unfortunate, they're a reality in software. We can't fix what we
 don't know about, so please report liberally. If you're not sure if something
@@ -80,6 +83,7 @@ $ RUST_BACKTRACE=1 rustc ...
 ```
 
 ## The Build System
+[the-build-system]: #the-build-system
 
 Rust's build system allows you to bootstrap the compiler, run tests &
 benchmarks, generate documentation, install a fresh build of Rust, and more.
@@ -94,6 +98,7 @@ system internals, try asking in [`#rust-internals`][pound-rust-internals].
 [bootstrap]: https://github.com/rust-lang/rust/tree/master/src/bootstrap/
 
 ### Configuration
+[configuration]: #configuration
 
 Before you can start building the compiler you need to configure the build for
 your system. In most cases, that will just mean using the defaults provided
@@ -125,6 +130,11 @@ file. If you still have a `config.mk` file in your directory - from
 `./configure` - you may need to delete it for `config.toml` to work.
 
 ### Building
+[building]: #building
+
+Dependencies
+- [build dependencies](README.md#building-from-source)
+- `gdb` 6.2.0 minimum, 7.1 or later recommended for test builds
 
 The build system uses the `x.py` script to control the build process. This script
 is used to build, test, and document various parts of the compiler. You can
@@ -194,6 +204,7 @@ Note: Previously `./configure` and `make` were used to build this project.
 They are still available, but `x.py` is the recommended build system.
 
 ### Useful commands
+[useful-commands]: #useful-commands
 
 Some common invocations of `x.py` are:
 
@@ -232,9 +243,38 @@ Some common invocations of `x.py` are:
   guidelines as of yet, but basic rules like 4 spaces for indentation and no
   more than 99 characters in a single line should be kept in mind when writing
   code.
-- `rustup toolchain link <name> build/<host-triple>/<stage>` - Use the custom compiler build via [rustup](https://github.com/rust-lang-nursery/rustup.rs#working-with-custom-toolchains-and-local-builds).
+
+### Using your local build
+[using-local-build]: #using-local-build
+
+If you use Rustup to manage your rust install, it has a feature called ["custom
+toolchains"][toolchain-link] that you can use to access your newly-built compiler
+without having to install it to your system or user PATH. If you've run `python
+x.py build`, then you can add your custom rustc to a new toolchain like this:
+
+[toolchain-link]: https://github.com/rust-lang-nursery/rustup.rs#working-with-custom-toolchains-and-local-builds
+
+```
+rustup toolchain link <name> build/<host-triple>/stage2
+```
+
+Where `<host-triple>` is the build triple for the host (the triple of your
+computer, by default), and `<name>` is the name for your custom toolchain. (If you
+added `--stage 1` to your build command, the compiler will be in the `stage1`
+folder instead.) You'll only need to do this once - it will automatically point
+to the latest build you've done.
+
+Once this is set up, you can use your custom toolchain just like any other. For
+example, if you've named your toolchain `local`, running `cargo +local build` will
+compile a project with your custom rustc, setting `rustup override set local` will
+override the toolchain for your current directory, and `cargo +local doc` will use
+your custom rustc and rustdoc to generate docs. (If you do this with a `--stage 1`
+build, you'll need to build rustdoc specially, since it's not normally built in
+stage 1. `python x.py build --stage 1 src/libstd src/tools/rustdoc` will build
+rustdoc and libstd, which will allow rustdoc to be run with that toolchain.)
 
 ## Pull Requests
+[pull-requests]: #pull-requests
 
 Pull requests are the primary mechanism we use to change Rust. GitHub itself
 has some [great documentation][pull-requests] on using the Pull Request feature.
@@ -298,7 +338,33 @@ Speaking of tests, Rust has a comprehensive test suite. More information about
 it can be found
 [here](https://github.com/rust-lang/rust-wiki-backup/blob/master/Note-testsuite.md).
 
+### External Dependencies
+[external-dependencies]: #external-dependencies
+
+Currently building Rust will also build the following external projects:
+
+* [clippy](https://github.com/rust-lang-nursery/rust-clippy)
+* [miri](https://github.com/solson/miri)
+
+If your changes break one of these projects, you need to fix them by opening
+a pull request against the broken project asking to put the fix on a branch.
+Then you can disable the tool building via `src/tools/toolstate.toml`.
+Once the branch containing your fix is likely to be merged, you can point
+the affected submodule at this branch.
+
+Don't forget to also add your changes with
+
+```
+git add path/to/submodule
+```
+
+outside the submodule.
+
+It can also be more convenient during development to set `submodules = false`
+in the `config.toml` to prevent `x.py` from resetting to the original branch.
+
 ## Writing Documentation
+[writing-documentation]: #writing-documentation
 
 Documentation improvements are very welcome. The source of `doc.rust-lang.org`
 is located in `src/doc` in the tree, and standard API documentation is generated
@@ -329,6 +395,7 @@ reference to `doc/reference.html`. The CSS might be messed up, but you can
 verify that the HTML is right.
 
 ## Issue Triage
+[issue-triage]: #issue-triage
 
 Sometimes, an issue will stay open, even though the bug has been fixed. And
 sometimes, the original bug may go stale because something has changed in the
@@ -347,32 +414,56 @@ labels to triage issues:
 
 * Magenta, **B**-prefixed labels identify bugs which are **blockers**.
 
+* Dark blue, **beta-** labels track changes which need to be backported into
+  the beta branches.
+
+* Light purple, **C**-prefixed labels represent the **category** of an issue.
+
 * Green, **E**-prefixed labels explain the level of **experience** necessary
   to fix the issue.
+
+* The dark blue **final-comment-period** label marks bugs that are using the
+  RFC signoff functionality of [rfcbot][rfcbot] and are currenty in the final
+  comment period.
 
 * Red, **I**-prefixed labels indicate the **importance** of the issue. The
   [I-nominated][inom] label indicates that an issue has been nominated for
   prioritizing at the next triage meeting.
 
+* The purple **metabug** label marks lists of bugs collected by other
+  categories.
+
+* Purple gray, **O**-prefixed labels are the **operating system** or platform
+  that this issue is specific to.
+
 * Orange, **P**-prefixed labels indicate a bug's **priority**. These labels
   are only assigned during triage meetings, and replace the [I-nominated][inom]
   label.
 
+* The gray **proposed-final-comment-period** label marks bugs that are using
+  the RFC signoff functionality of [rfcbot][rfcbot] and are currently awaiting
+  signoff of all team members in order to enter the final comment period.
+
+* Pink, **regression**-prefixed labels track regressions from stable to the
+  release channels.
+
+* The light orange **relnotes** label marks issues that should be documented in
+  the release notes of the next release.
+
+* Gray, **S**-prefixed labels are used for tracking the **status** of pull
+  requests.
+
 * Blue, **T**-prefixed bugs denote which **team** the issue belongs to.
-
-* Dark blue, **beta-** labels track changes which need to be backported into
-  the beta branches.
-
-* The purple **metabug** label marks lists of bugs collected by other
-  categories.
 
 If you're looking for somewhere to start, check out the [E-easy][eeasy] tag.
 
 [inom]: https://github.com/rust-lang/rust/issues?q=is%3Aopen+is%3Aissue+label%3AI-nominated
 [eeasy]: https://github.com/rust-lang/rust/issues?q=is%3Aopen+is%3Aissue+label%3AE-easy
 [lru]: https://github.com/rust-lang/rust/issues?q=is%3Aissue+is%3Aopen+sort%3Aupdated-asc
+[rfcbot]: https://github.com/dikaiosune/rust-dashboard/blob/master/RFCBOT.md
 
 ## Out-of-tree Contributions
+[out-of-tree-contributions]: #out-of-tree-contributions
 
 There are a number of other ways to contribute to Rust that don't deal with
 this repository.
@@ -392,11 +483,13 @@ valuable!
 [community-library]: https://github.com/rust-lang/rfcs/labels/A-community-library
 
 ## Helpful Links and Information
+[helpful-info]: #helpful-info
 
 For people new to Rust, and just starting to contribute, or even for
 more seasoned developers, some useful places to look for information
 are:
 
+* [Rust Forge][rustforge] contains additional documentation, including write-ups of how to achieve common tasks
 * The [Rust Internals forum][rif], a place to ask questions and
   discuss Rust's internals
 * The [generated documentation for rust's compiler][gdfrustc]
@@ -412,6 +505,7 @@ are:
 [gsearchdocs]: https://www.google.com/search?q=site:doc.rust-lang.org+your+query+here
 [rif]: http://internals.rust-lang.org
 [rr]: https://doc.rust-lang.org/book/README.html
+[rustforge]: https://forge.rust-lang.org/
 [tlgba]: http://tomlee.co/2014/04/a-more-detailed-tour-of-the-rust-compiler/
 [ro]: http://www.rustaceans.org/
 [rctd]: ./src/test/COMPILER_TESTS.md

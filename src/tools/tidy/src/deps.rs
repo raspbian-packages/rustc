@@ -33,6 +33,15 @@ static EXCEPTIONS: &'static [&'static str] = &[
     "openssl", // BSD+advertising clause, cargo, mdbook
     "pest", // MPL2, mdbook via handlebars
     "thread-id", // Apache-2.0, mdbook
+    "cssparser", // MPL-2.0, rustdoc
+    "smallvec", // MPL-2.0, rustdoc
+    // FIXME: remove magenta references when "everything" has moved over to using the zircon name.
+    "magenta-sys", // BSD-3-Clause, rustdoc
+    "magenta", // BSD-3-Clause, rustdoc
+    "zircon-sys", // BSD-3-Clause, rustdoc
+    "zircon", // BSD-3-Clause, rustdoc
+    "cssparser-macros", // MPL-2.0, rustdoc
+    "selectors", // MPL-2.0, rustdoc
 ];
 
 pub fn check(path: &Path, bad: &mut bool) {

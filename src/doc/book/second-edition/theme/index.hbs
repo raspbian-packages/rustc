@@ -14,10 +14,17 @@
         <link rel="shortcut icon" href="{{ favicon }}">
 
         <!-- Font Awesome -->
-        <link rel="stylesheet" href="../font-awesome.min.css">
+        <link rel="stylesheet" href="../../font-awesome.min.css">
 
-        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../../highlight.css">
         <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme -->
+        {{#each additional_css}}
+        <link rel="stylesheet" href="{{this}}">
+        {{/each}}
+
         <style>
             .page-wrapper.has-warning > .nav-chapters {
               /* add height for warning content & margin */
@@ -84,33 +91,27 @@
             }
         </style>
 
+        {{#if mathjax_support}}
         <!-- MathJax -->
-        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        <script type="text/javascript" src="../../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        {{/if}}
 
-        <script src="../jquery.min.js"></script>
+        <script src="../../jquery.min.js"></script>
+
+        <!-- Custom JS script -->
+        {{#each additional_js}}
+        <script type="text/javascript" src="{{this}}"></script>
+        {{/each}}
+
     </head>
     <body class="light">
-        <!-- Set the theme before any content is loaded, prevents flash -->
-        <script type="text/javascript">
-            var theme = localStorage.getItem('theme');
-            if (theme == null) { theme = 'light'; }
-            $('body').removeClass().addClass(theme);
-        </script>
-
-        <!-- Hide / unhide sidebar before it is displayed -->
-        <script type="text/javascript">
-            var sidebar = localStorage.getItem('sidebar');
-            if (sidebar === "hidden") { $("html").addClass("sidebar-hidden") }
-            else if (sidebar === "visible") { $("html").addClass("sidebar-visible") }
-        </script>
-
         <div id="sidebar" class="sidebar">
             {{#toc}}{{/toc}}
         </div>
 
         <div id="page-wrapper" class="page-wrapper has-warning">
 
-            <div class="page">
+            <div class="page" tabindex="-1">
                 <header><p class="warning">You are reading a <strong>draft</strong> of the next edition of TRPL. For more, go <a href="../index.html">here</a>.</p></header>
                 <div id="menu-bar" class="menu-bar">
                     <div class="left-buttons">
@@ -118,13 +119,14 @@
                         <i id="theme-toggle" class="fa fa-paint-brush"></i>
                     </div>
 
-                    <h1 class="menu-title">{{ title }}</h1>
+                    <h1 class="menu-title">{{ book_title }}</h1>
 
                     <div class="right-buttons">
-                        <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                        <a href="print.html">
+                            <i id="print-button" class="fa fa-print" title="Print this book"></i>
+                        </a>
                     </div>
                 </div>
-
 
                 <div id="content" class="content">
                     {{{ content }}}
@@ -132,13 +134,13 @@
 
                 <!-- Mobile navigation buttons -->
                 {{#previous}}
-                    <a href="{{link}}" class="mobile-nav-chapters previous">
+                    <a rel="prev" href="{{link}}" class="mobile-nav-chapters previous">
                         <i class="fa fa-angle-left"></i>
                     </a>
                 {{/previous}}
 
                 {{#next}}
-                    <a href="{{link}}" class="mobile-nav-chapters next">
+                    <a rel="next" href="{{link}}" class="mobile-nav-chapters next">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 {{/next}}
@@ -163,8 +165,15 @@
         <!-- Livereload script (if served using the cli tool) -->
         {{{livereload}}}
 
-        <script src="highlight.js"></script>
-        <script src="store.js"></script>
+        {{#if is_print}}
+        <script>
+            $(document).ready(function() {
+                window.print();
+            })
+        </script>
+        {{/if}}
+
+        <script src="../../highlight.js"></script>
         <script src="book.js"></script>
     </body>
 </html>

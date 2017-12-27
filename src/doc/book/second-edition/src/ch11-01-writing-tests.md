@@ -211,8 +211,7 @@ helps us check that our code is functioning in the way we intend.
 
 Remember all the way back in Chapter 5, Listing 5-9, where we had a `Rectangle`
 struct and a `can_hold` method, repeated here in Listing 11-5. Let’s put this
-code in *src/lib.rs* instead of *src/main.rs* and write some tests for it using
-the `assert!` macro.
+code in *src/lib.rs* and write some tests for it using the `assert!` macro.
 
 <span class="filename">Filename: src/lib.rs</span>
 
@@ -592,7 +591,7 @@ Listing 11-8 shows how we’d write a test that checks the error conditions of
 <span class="filename">Filename: src/lib.rs</span>
 
 ```rust
-struct Guess {
+pub struct Guess {
     value: u32,
 }
 
@@ -638,7 +637,7 @@ Looks good! Now let’s introduce a bug in our code, by removing the condition
 that the `new` function will panic if the value is greater than 100:
 
 ```rust
-# struct Guess {
+# pub struct Guess {
 #     value: u32,
 # }
 #
@@ -686,7 +685,7 @@ different messages depending on whether the value was too small or too large:
 <span class="filename">Filename: src/lib.rs</span>
 
 ```rust
-struct Guess {
+pub struct Guess {
     value: u32,
 }
 
@@ -764,7 +763,7 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured
 ```
 
 The failure message indicates that this test did indeed panic as we expected,
-but the panic message `did not include expected string 'Guess value must be
+but the panic message did not include expected string `'Guess value must be
 less than or equal to 100'`. We can see the panic message that we did get,
 which in this case was `Guess value must be greater than or equal to 1, got
 200.` We could then start figuring out where our bug was!

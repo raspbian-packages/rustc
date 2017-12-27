@@ -560,14 +560,26 @@ impl OpenOptions {
     ///
     /// One maybe obvious note when using append-mode: make sure that all data
     /// that belongs together is written to the file in one operation. This
-    /// can be done by concatenating strings before passing them to `write()`,
+    /// can be done by concatenating strings before passing them to [`write()`],
     /// or using a buffered writer (with a buffer of adequate size),
-    /// and calling `flush()` when the message is complete.
+    /// and calling [`flush()`] when the message is complete.
     ///
     /// If a file is opened with both read and append access, beware that after
     /// opening, and after every write, the position for reading may be set at the
     /// end of the file. So, before writing, save the current position (using
-    /// `seek(SeekFrom::Current(0))`, and restore it before the next read.
+    /// [`seek`]`(`[`SeekFrom`]`::`[`Current`]`(0))`, and restore it before the next read.
+    ///
+    /// ## Note
+    ///
+    /// This function doesn't create the file if it doesn't exist. Use the [`create`]
+    /// method to do so.
+    ///
+    /// [`write()`]: ../../std/fs/struct.File.html#method.write
+    /// [`flush()`]: ../../std/fs/struct.File.html#method.flush
+    /// [`seek`]: ../../std/fs/struct.File.html#method.seek
+    /// [`SeekFrom`]: ../../std/io/enum.SeekFrom.html
+    /// [`Current`]: ../../std/io/enum.SeekFrom.html#variant.Current
+    /// [`create`]: #method.create
     ///
     /// # Examples
     ///
@@ -605,8 +617,11 @@ impl OpenOptions {
     /// This option indicates whether a new file will be created if the file
     /// does not yet already exist.
     ///
-    /// In order for the file to be created, `write` or `append` access must
+    /// In order for the file to be created, [`write`] or [`append`] access must
     /// be used.
+    ///
+    /// [`write`]: #method.write
+    /// [`append`]: #method.append
     ///
     /// # Examples
     ///
@@ -630,11 +645,14 @@ impl OpenOptions {
     /// whether a file exists and creating a new one, the file may have been
     /// created by another process (a TOCTOU race condition / attack).
     ///
-    /// If `.create_new(true)` is set, `.create()` and `.truncate()` are
+    /// If `.create_new(true)` is set, [`.create()`] and [`.truncate()`] are
     /// ignored.
     ///
     /// The file must be opened with write or append access in order to create
     /// a new file.
+    ///
+    /// [`.create()`]: #method.create
+    /// [`.truncate()`]: #method.truncate
     ///
     /// # Examples
     ///
@@ -1356,14 +1374,17 @@ pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> 
 /// Note that if `from` and `to` both point to the same file, then the file
 /// will likely get truncated by this operation.
 ///
-/// On success, the total number of bytes copied is returned.
+/// On success, the total number of bytes copied is returned and it is equal to
+/// the length of the `to` file as reported by `metadata`.
 ///
 /// # Platform-specific behavior
 ///
 /// This function currently corresponds to the `open` function in Unix
 /// with `O_RDONLY` for `from` and `O_WRONLY`, `O_CREAT`, and `O_TRUNC` for `to`.
 /// `O_CLOEXEC` is set for returned file descriptors.
-/// On Windows, this function currently corresponds to `CopyFileEx`.
+/// On Windows, this function currently corresponds to `CopyFileEx`. Alternate
+/// NTFS streams are copied but only the size of the main stream is returned by
+/// this function.
 /// Note that, this [may change in the future][changes].
 ///
 /// [changes]: ../io/index.html#platform-specific-behavior
@@ -1577,9 +1598,9 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
 ///
 /// Notable exception is made for situations where any of the directories
 /// specified in the `path` could not be created as it was being created concurrently.
-/// Such cases are considered success. In other words: calling `create_dir_all`
-/// concurrently from multiple threads or processes is guaranteed to not fail
-/// due to race itself.
+/// Such cases are considered to be successful. That is, calling `create_dir_all`
+/// concurrently from multiple threads or processes is guaranteed not to fail
+/// due to a race condition with itself.
 ///
 /// # Examples
 ///
@@ -2143,6 +2164,27 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn set_get_unix_permissions() {
+        use os::unix::fs::PermissionsExt;
+
+        let tmpdir = tmpdir();
+        let filename = &tmpdir.join("set_get_unix_permissions");
+        check!(fs::create_dir(filename));
+        let mask = 0o7777;
+
+        check!(fs::set_permissions(filename,
+                                   fs::Permissions::from_mode(0)));
+        let metadata0 = check!(fs::metadata(filename));
+        assert_eq!(mask & metadata0.permissions().mode(), 0);
+
+        check!(fs::set_permissions(filename,
+                                   fs::Permissions::from_mode(0o1777)));
+        let metadata1 = check!(fs::metadata(filename));
+        assert_eq!(mask & metadata1.permissions().mode(), 0o1777);
+    }
+
+    #[test]
     #[cfg(windows)]
     fn file_test_io_seek_read_write() {
         use os::windows::fs::FileExt;
@@ -2550,11 +2592,23 @@ mod tests {
     fn copy_file_preserves_streams() {
         let tmp = tmpdir();
         check!(check!(File::create(tmp.join("in.txt:bunny"))).write("carrot".as_bytes()));
-        assert_eq!(check!(fs::copy(tmp.join("in.txt"), tmp.join("out.txt"))), 6);
+        assert_eq!(check!(fs::copy(tmp.join("in.txt"), tmp.join("out.txt"))), 0);
         assert_eq!(check!(tmp.join("out.txt").metadata()).len(), 0);
         let mut v = Vec::new();
         check!(check!(File::open(tmp.join("out.txt:bunny"))).read_to_end(&mut v));
         assert_eq!(v, b"carrot".to_vec());
+    }
+
+    #[test]
+    fn copy_file_returns_metadata_len() {
+        let tmp = tmpdir();
+        let in_path = tmp.join("in.txt");
+        let out_path = tmp.join("out.txt");
+        check!(check!(File::create(&in_path)).write(b"lettuce"));
+        #[cfg(windows)]
+        check!(check!(File::create(tmp.join("in.txt:bunny"))).write(b"carrot"));
+        let copied_len = check!(fs::copy(&in_path, &out_path));
+        assert_eq!(check!(out_path.metadata()).len(), copied_len);
     }
 
     #[test]

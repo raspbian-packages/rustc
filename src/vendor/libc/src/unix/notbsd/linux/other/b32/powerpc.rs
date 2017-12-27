@@ -37,6 +37,37 @@ s! {
         __glibc_reserved5: ::c_ulong,
     }
 
+    pub struct statfs64 {
+        pub f_type: ::__fsword_t,
+        pub f_bsize: ::__fsword_t,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_fsid: ::fsid_t,
+        pub f_namelen: ::__fsword_t,
+        pub f_frsize: ::__fsword_t,
+        pub f_flags: ::__fsword_t,
+        pub f_spare: [::__fsword_t; 4],
+    }
+
+    pub struct statvfs64 {
+        pub f_bsize: ::c_ulong,
+        pub f_frsize: ::c_ulong,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_favail: u64,
+        pub f_fsid: ::c_ulong,
+        __f_unused: ::c_int,
+        pub f_flag: ::c_ulong,
+        pub f_namemax: ::c_ulong,
+        __f_spare: [::c_int; 6],
+    }
+
     pub struct shmid_ds {
         pub shm_perm: ::ipc_perm,
         __glibc_reserved1: ::c_uint,
@@ -95,8 +126,10 @@ pub const SO_PEERCRED: ::c_int = 21;
 pub const FIOCLEX: ::c_ulong = 0x20006601;
 pub const FIONBIO: ::c_ulong = 0x8004667e;
 
+pub const SYS_pivot_root: ::c_long = 203;
 pub const SYS_gettid: ::c_long = 207;
 pub const SYS_perf_event_open: ::c_long = 319;
+pub const SYS_memfd_create: ::c_long = 360;
 
 pub const MCL_CURRENT: ::c_int = 0x2000;
 pub const MCL_FUTURE: ::c_int = 0x4000;

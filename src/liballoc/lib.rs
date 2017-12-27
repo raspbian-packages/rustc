@@ -80,6 +80,7 @@
 #![cfg_attr(not(test), feature(core_float))]
 #![cfg_attr(not(test), feature(exact_size_is_empty))]
 #![cfg_attr(not(test), feature(slice_rotate))]
+#![cfg_attr(not(test), feature(generator_trait))]
 #![cfg_attr(test, feature(rand, test))]
 #![feature(allow_internal_unstable)]
 #![feature(box_patterns)]
@@ -97,6 +98,7 @@
 #![feature(generic_param_attrs)]
 #![feature(i128_type)]
 #![feature(inclusive_range)]
+#![feature(iter_rfold)]
 #![feature(lang_items)]
 #![feature(needs_allocator)]
 #![feature(nonzero)]
@@ -120,7 +122,7 @@
 #![feature(unsize)]
 #![feature(allocator_internals)]
 
-#![cfg_attr(not(test), feature(fused, fn_traits, placement_new_protocol, swap_with_slice))]
+#![cfg_attr(not(test), feature(fused, fn_traits, placement_new_protocol, swap_with_slice, i128))]
 #![cfg_attr(test, feature(test, box_heap))]
 
 // Allow testing this library

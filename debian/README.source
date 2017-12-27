@@ -149,7 +149,7 @@ Import of a new upstream version
 
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 or X.YY.0~beta probably
-$ tar xf ../rustc-${ver/\~/-}-src.tar.gz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
+$ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
 # ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
 $ git commit -m "Update Files-Excluded for new upstream version ${ver/\~/-}" debian/copyright
 $ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
@@ -163,6 +163,7 @@ $ dch -v $ver+dfsg1-1 -m "New upstream release."
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc
+# Use /usr/share/cargo/guess-crate-copyright to help update d/copyright quickly
 
 # If you need to repack again, bump the 'repacksuffix' in d/watch then run
 $ uscan --verbose --force-download
@@ -188,8 +189,8 @@ Comparing Debian rustc vs upstream rustc
 
 This package does things the Debian way, which differs significantly from
 upstream practices. If you find a bug, you might want to check if it is present
-in the upstream package. Run "debian/rules debian/configure-upstream" to
-generate a script, that you can then run in an unpacked upstream directory.
+in the upstream package. Run "debian/rules debian/config.toml" to generate our
+config.toml that you can then use in an unpacked upstream directory.
 
 This will configure it in a "halfway" style between upstream and Debian.
 Specifically, it will not build LLVM nor download stuff from crates.io, yet

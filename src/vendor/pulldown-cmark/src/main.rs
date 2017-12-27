@@ -118,12 +118,12 @@ impl<'a> Iterator for Spec<'a> {
             None => return None,
         };
 
-        let i_end = match self.spec[i_start..].find("\n.\n").map(|pos| pos + i_start){
+        let i_end = match self.spec[i_start..].find("\n.\n").map(|pos| (pos + 1) + i_start){
             Some(pos) => pos,
             None => return None,
         };
 
-        let e_end = match self.spec[i_end + 3..].find("````````````````````````````````\n").map(|pos| pos + i_end + 3){
+        let e_end = match self.spec[i_end + 2..].find("````````````````````````````````\n").map(|pos| pos + i_end + 2){
             Some(pos) => pos,
             None => return None,
         };
@@ -131,7 +131,7 @@ impl<'a> Iterator for Spec<'a> {
         self.test_n += 1;
         self.spec = &self.spec[e_end + 33 ..];
 
-        Some(TestCase::new(self.test_n, &spec[i_start .. i_end], &spec[i_end + 3 .. e_end]))
+        Some(TestCase::new(self.test_n, &spec[i_start .. i_end], &spec[i_end + 2 .. e_end]))
     }
 }
 
@@ -153,44 +153,44 @@ fn run_spec(spec_text: &str, args: &[String], opts: Options) {
     let spec = Spec::new(spec_text);
     let mut tests_failed = 0;
     let mut tests_run = 0;
-    let mut line_count = 0;
+    let mut fail_report = String::new();
 
     for test in spec {
         if first.map(|fst| test.n < fst).unwrap_or(false) { continue }
         if last.map(|lst| test.n > lst).unwrap_or(false) { break }
 
-        if tests_run == 0 || line_count == 0 || (test.n % 10 == 0) {
-            if line_count > 30 {
-                println!("");
-                line_count = 0;
-            } else if line_count > 0 {
+        if test.n % 10 == 1 {
+            if test.n % 40 == 1 {
+                if test.n > 1 {
+                    println!("");
+                }
+            } else {
                 print!(" ");
             }
             print!("[{:3}]", test.n);
-        } else if line_count > 0 && (test.n % 10) == 5 {
+        } else if test.n % 10 == 6 {
             print!(" ");
         }
 
-        let our_html = render_html(&test.input.replace("→", "\t").replace("\n", "\r\n"), opts);
+        let our_html = render_html(&test.input, opts);
 
-        if our_html == test.expected.replace("→", "\t") {
+        if our_html == test.expected {
             print!(".");
         } else {
             if tests_failed == 0 {
-                print!("FAIL {}:\n\n---input---\n{}\n\n---wanted---\n{}\n\n---got---\n{}\n",
+                fail_report = format!("\nFAIL {}:\n\n---input---\n{:?}\n\n---wanted---\n{:?}\n\n---got---\n{:?}\n",
                     test.n, test.input, test.expected, our_html);
-            } else {
-                print!("X");
             }
+            print!("X");
             tests_failed += 1;
         }
 
         let _ = io::stdout().flush();
         tests_run += 1;
-        line_count += 1;
     }
 
-    println!("\n{}/{} tests passed", tests_run - tests_failed, tests_run)
+    println!("\n{}/{} tests passed", tests_run - tests_failed, tests_run);
+    print!("{}", fail_report);
 }
 
 fn brief<ProgramName>(program: ProgramName) -> String
@@ -236,7 +236,7 @@ pub fn main() {
         opts.insert(OPTION_ENABLE_FOOTNOTES);
     }
     if let Some(filename) = matches.opt_str("spec") {
-        run_spec(&read_file(&filename), &matches.free, opts);
+        run_spec(&read_file(&filename).replace("→", "\t"), &matches.free, opts);
     } else if let Some(filename) = matches.opt_str("bench") {
         let inp = read_file(&filename);
         for _ in 0..1000 {

@@ -3,13 +3,16 @@ submodules = false
 vendor = true
 locked-deps = false
 
+rustc = "RUST_DESTDIR/usr/bin/rustc"
+cargo = "RUST_DESTDIR/usr/bin/cargo"
+
 build = "DEB_BUILD_RUST_TYPE"
 host = ["DEB_HOST_RUST_TYPE"]
 target = ["DEB_TARGET_RUST_TYPE"]
 
 full-bootstrap = true # work around https://github.com/rust-lang/rust/issues/45317
 
-docs = false
+docs = BUILD_DOCS
 
 [install]
 prefix = "/usr"
@@ -28,9 +31,12 @@ llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
 
 )dnl
 [llvm]
+link-shared = true
 
 [rust]
 use-jemalloc = false
+optimize = MAKE_OPTIMISATIONS
+dist-src = false
 
 channel = "RELEASE_CHANNEL"
 
@@ -39,4 +45,5 @@ channel = "RELEASE_CHANNEL"
 #codegen-units = 0
 debuginfo = true
 debuginfo-lines = true
+debuginfo-only-std = false
 rpath = false

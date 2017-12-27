@@ -45,15 +45,23 @@ Created by [gh-md-toc](https://github.com/ekalinin/github-markdown-toc)
 
 ## What's New
 
-Here's the highlights for v2.26.0
+Here's what's new in 2.26.2:
+
+*   if all subcommands are hidden, the subcommands section of the help message is no longer displayed 
+*   fixes a bug where default values are not applied if the option supports zero values 
+*   fixes using require_equals(true) and min_values(0) together 
+*   escape special characters in zsh and fish completions 
+*   avoid panic generating default help msg if term width set to 0 due to bug in textwrap 0.7.0 
+*   Change `who's` -> `whose` in documentation
+* **Help Message:**  fixes `App::long_about` not being displayed
+* **Suggestions:**  output for flag after subcommand 
+
+
+Here's the highlights for v2.21.0 to v2.26.0
 
 *   **The minimum required version of Rust is now 1.13.0 (Stable)**
 *   bumps unicode-segmentation to v1.2 
 *   update textwrap to version 0.7.0 which increases the performance of writing help strings
-
-
-Here's the highlights for v2.21.0 to v2.25.1
-
 * impl Default for Values + OsValues for any lifetime. 
 * use textwrap crate for wrapping help texts
 * suggests to use flag after subcommand when applicable
@@ -144,7 +152,7 @@ I first want to say I'm a big a fan of BurntSushi's work, the creator of `Docopt
 
 `docopt` is also excellent at translating arguments into Rust types automatically. There is even a syntax extension which will do all this for you, if you're willing to use a nightly compiler (use of a stable compiler requires you to somewhat manually translate from arguments to Rust types). To use BurntSushi's words, `docopt` is also a sort of black box. You get what you get, and it's hard to tweak implementation or customize the experience for your use case.
 
-Because `docopt` is doing a ton of work to parse your help messages and determine what you were trying to communicate as valid arguments, it's also one of the more heavy weight parsers performance-wise. For most applications this isn't a concern and this isn't to say `docopt` is slow, in fact from it. This is just something to keep in mind while comparing.
+Because `docopt` is doing a ton of work to parse your help messages and determine what you were trying to communicate as valid arguments, it's also one of the more heavy weight parsers performance-wise. For most applications this isn't a concern and this isn't to say `docopt` is slow, in fact far from it. This is just something to keep in mind while comparing.
 
 #### All else being equal, what are some reasons to use `clap`?
 

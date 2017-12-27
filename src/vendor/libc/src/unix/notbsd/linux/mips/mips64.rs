@@ -76,6 +76,36 @@ s! {
         st_pad5: [::c_long; 7],
     }
 
+    pub struct statfs64 {
+        pub f_type: ::c_long,
+        pub f_bsize: ::c_long,
+        pub f_frsize: ::c_long,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_bavail: u64,
+        pub f_fsid: ::fsid_t,
+        pub f_namelen: ::c_long,
+        pub f_flags: ::c_long,
+        pub f_spare: [::c_long; 5],
+    }
+
+    pub struct statvfs64 {
+        pub f_bsize: ::c_ulong,
+        pub f_frsize: ::c_ulong,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_favail: u64,
+        pub f_fsid: ::c_ulong,
+        pub f_flag: ::c_ulong,
+        pub f_namemax: ::c_ulong,
+        __f_spare: [::c_int; 6],
+    }
+
     pub struct pthread_attr_t {
         __size: [::c_ulong; 7]
     }
@@ -221,4 +251,7 @@ pub const O_LARGEFILE: ::c_int = 0;
 
 pub const RLIM_INFINITY: ::rlim_t = 0xffff_ffff_ffff_ffff;
 
-pub const SYS_gettid: ::c_long = 5178;   // Valid for n64
+// Valid for n64
+pub const SYS_pivot_root: ::c_long = 5151;
+pub const SYS_gettid: ::c_long = 5178;
+pub const SYS_memfd_create: ::c_long = 5314;

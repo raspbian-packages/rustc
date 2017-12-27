@@ -79,7 +79,8 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                 self.check_def_id(def.def_id());
             }
             _ if self.ignore_non_const_paths => (),
-            Def::PrimTy(..) | Def::SelfTy(..) => (),
+            Def::PrimTy(..) | Def::SelfTy(..) |
+            Def::Local(..) | Def::Upvar(..) => {}
             Def::Variant(variant_id) | Def::VariantCtor(variant_id, ..) => {
                 if let Some(enum_id) = self.tcx.parent_def_id(variant_id) {
                     self.check_def_id(enum_id);
@@ -469,7 +470,7 @@ impl<'a, 'tcx> DeadVisitor<'a, 'tcx> {
     fn should_warn_about_field(&mut self, field: &hir::StructField) -> bool {
         let field_type = self.tcx.type_of(self.tcx.hir.local_def_id(field.id));
         let is_marker_field = match field_type.ty_to_def_id() {
-            Some(def_id) => self.tcx.lang_items.items().iter().any(|item| *item == Some(def_id)),
+            Some(def_id) => self.tcx.lang_items().items().iter().any(|item| *item == Some(def_id)),
             _ => false
         };
         !field.is_positional()
@@ -552,9 +553,22 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
 
     fn visit_item(&mut self, item: &'tcx hir::Item) {
         if self.should_warn_about_item(item) {
+            // For items that have a definition with a signature followed by a
+            // block, point only at the signature.
+            let span = match item.node {
+                hir::ItemFn(..) |
+                hir::ItemMod(..) |
+                hir::ItemEnum(..) |
+                hir::ItemStruct(..) |
+                hir::ItemUnion(..) |
+                hir::ItemTrait(..) |
+                hir::ItemDefaultImpl(..) |
+                hir::ItemImpl(..) => self.tcx.sess.codemap().def_span(item.span),
+                _ => item.span,
+            };
             self.warn_dead_code(
                 item.id,
-                item.span,
+                span,
                 item.name,
                 item.node.descriptive_variant()
             );
@@ -569,8 +583,7 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
                      g: &'tcx hir::Generics,
                      id: ast::NodeId) {
         if self.should_warn_about_variant(&variant.node) {
-            self.warn_dead_code(variant.node.data.id(), variant.span,
-                                variant.node.name, "variant");
+            self.warn_dead_code(variant.node.data.id(), variant.span, variant.node.name, "variant");
         } else {
             intravisit::walk_variant(self, variant, g, id);
         }
@@ -595,15 +608,17 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
         match impl_item.node {
             hir::ImplItemKind::Const(_, body_id) => {
                 if !self.symbol_is_live(impl_item.id, None) {
-                    self.warn_dead_code(impl_item.id, impl_item.span,
-                                        impl_item.name, "associated const");
+                    self.warn_dead_code(impl_item.id,
+                                        impl_item.span,
+                                        impl_item.name,
+                                        "associated const");
                 }
                 self.visit_nested_body(body_id)
             }
             hir::ImplItemKind::Method(_, body_id) => {
                 if !self.symbol_is_live(impl_item.id, None) {
-                    self.warn_dead_code(impl_item.id, impl_item.span,
-                                        impl_item.name, "method");
+                    let span = self.tcx.sess.codemap().def_span(impl_item.span);
+                    self.warn_dead_code(impl_item.id, span, impl_item.name, "method");
                 }
                 self.visit_nested_body(body_id)
             }

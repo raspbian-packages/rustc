@@ -60,6 +60,7 @@ using the `cargo run` command:
 ```text
 $ cargo run
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished dev [unoptimized + debuginfo] target(s) in 1.50 secs
      Running `target/debug/guessing_game`
 Hello, world!
 ```
@@ -134,8 +135,8 @@ println!("Guess the number!");
 println!("Please input your guess.");
 ```
 
-This code is just printing a prompt stating what the game is and requesting
-input from the user.
+This code is printing a prompt stating what the game is and requesting input
+from the user.
 
 ### Storing Values with Variables
 
@@ -284,21 +285,24 @@ If we don’t call `expect`, the program will compile, but we’ll get a warning
 ```text
 $ cargo build
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
-src/main.rs:10:5: 10:39 warning: unused result which must be used,
-#[warn(unused_must_use)] on by default
-src/main.rs:10     io::stdin().read_line(&mut guess);
-                   ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+warning: unused `std::result::Result` which must be used
+  --> src/main.rs:10:5
+   |
+10 |     io::stdin().read_line(&mut guess);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: #[warn(unused_must_use)] on by default
 ```
 
 Rust warns that we haven’t used the `Result` value returned from `read_line`,
 indicating that the program hasn’t handled a possible error. The right way to
-suppress the warning is to actually write error handling, but since we just
-want to crash this program when a problem occurs, we can use `expect`. You’ll
-learn about recovering from errors in Chapter 9.
+suppress the warning is to actually write error handling, but since we want to
+crash this program when a problem occurs, we can use `expect`. You’ll learn
+about recovering from errors in Chapter 9.
 
 ### Printing Values with `println!` Placeholders
 
-Aside from the closing curly brace, there’s only one more line to discuss in
+Aside from the closing curly brackets, there’s only one more line to discuss in
 the code added so far, which is the following:
 
 ```rust,ignore
@@ -328,6 +332,7 @@ Let’s test the first part of the guessing game. You can run it using
 ```text
 $ cargo run
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished dev [unoptimized + debuginfo] target(s) in 2.53 secs
      Running `target/debug/guessing_game`
 Guess the number!
 Please input your guess.
@@ -391,6 +396,7 @@ $ cargo build
    Compiling libc v0.2.14
    Compiling rand v0.3.14
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished dev [unoptimized + debuginfo] target(s) in 2.53 secs
 ```
 
 <span class="caption">Listing 2-2: The output from running `cargo build` after
@@ -565,6 +571,7 @@ Try running the program a few times:
 ```text
 $ cargo run
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished dev [unoptimized + debuginfo] target(s) in 2.53 secs
      Running `target/debug/guessing_game`
 Guess the number!
 The secret number is: 7
@@ -758,13 +765,12 @@ We bind `guess` to the expression `guess.trim().parse()`. The `guess` in the
 expression refers to the original `guess` that was a `String` with the input in
 it. The `trim` method on a `String` instance will eliminate any whitespace at
 the beginning and end. `u32` can only contain numerical characters, but the
-user must press the <span class="keystroke">return</span> key to satisfy
-`read_line`. When the user presses <span class="keystroke">return</span>, a
-newline character is added to the string. For example, if the user types
-<span class="keystroke">5</span> and presses <span class="keystroke">
-return</span>, `guess` looks like this: `5\n`. The `\n` represents “newline,”
-the <span class="keystroke">return</span> key. The `trim` method eliminates
-`\n`, resulting in just `5`.
+user must press the <span class="keystroke">enter</span> key to satisfy
+`read_line`. When the user presses <span class="keystroke">enter</span>, a
+newline character is added to the string. For example, if the user types <span
+class="keystroke">5</span> and presses <span class="keystroke"> enter</span>,
+`guess` looks like this: `5\n`. The `\n` represents “newline,” the enter key.
+The `trim` method eliminates `\n`, resulting in just `5`.
 
 The [`parse` method on strings][parse]<!-- ignore --> parses a string into some
 kind of number. Because this method can parse a variety of number types, we
@@ -795,6 +801,7 @@ Let’s run the program now!
 ```text
 $ cargo run
    Compiling guessing_game v0.1.0 (file:///projects/guessing_game)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.43 secs
      Running `target/guessing_game`
 Guess the number!
 The secret number is: 58

@@ -8,10 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use middle::const_val::ConstVal;
 use hir::def_id::DefId;
 use ty::subst::Substs;
-use ty::{ClosureSubsts, Region, Ty};
+use ty::{ClosureSubsts, Region, Ty, GeneratorInterior};
 use mir::*;
 use rustc_const_math::ConstUsize;
 use syntax_pos::Span;
@@ -214,6 +213,18 @@ macro_rules! make_mir_visitor {
                 self.super_ty(ty);
             }
 
+            fn visit_region(&mut self,
+                            region: & $($mutability)* ty::Region<'tcx>,
+                            _: Location) {
+                self.super_region(region);
+            }
+
+            fn visit_const(&mut self,
+                           constant: & $($mutability)* &'tcx ty::Const<'tcx>,
+                           _: Location) {
+                self.super_const(constant);
+            }
+
             fn visit_substs(&mut self,
                             substs: & $($mutability)* &'tcx Substs<'tcx>,
                             _: Location) {
@@ -226,10 +237,10 @@ macro_rules! make_mir_visitor {
                 self.super_closure_substs(substs);
             }
 
-            fn visit_const_val(&mut self,
-                               const_val: & $($mutability)* ConstVal,
-                               _: Location) {
-                self.super_const_val(const_val);
+            fn visit_generator_interior(&mut self,
+                                    interior: & $($mutability)* GeneratorInterior<'tcx>,
+                                    _: Location) {
+                self.super_generator_interior(interior);
             }
 
             fn visit_const_int(&mut self,
@@ -247,6 +258,12 @@ macro_rules! make_mir_visitor {
             fn visit_local_decl(&mut self,
                                 local_decl: & $($mutability)* LocalDecl<'tcx>) {
                 self.super_local_decl(local_decl);
+            }
+
+            fn visit_local(&mut self,
+                            _local: & $($mutability)* Local,
+                            _context: LvalueContext<'tcx>,
+                            _location: Location) {
             }
 
             fn visit_visibility_scope(&mut self,
@@ -348,11 +365,11 @@ macro_rules! make_mir_visitor {
                     StatementKind::SetDiscriminant{ ref $($mutability)* lvalue, .. } => {
                         self.visit_lvalue(lvalue, LvalueContext::Store, location);
                     }
-                    StatementKind::StorageLive(ref $($mutability)* lvalue) => {
-                        self.visit_lvalue(lvalue, LvalueContext::StorageLive, location);
+                    StatementKind::StorageLive(ref $($mutability)* local) => {
+                        self.visit_local(local, LvalueContext::StorageLive, location);
                     }
-                    StatementKind::StorageDead(ref $($mutability)* lvalue) => {
-                        self.visit_lvalue(lvalue, LvalueContext::StorageDead, location);
+                    StatementKind::StorageDead(ref $($mutability)* local) => {
+                        self.visit_local(local, LvalueContext::StorageDead, location);
                     }
                     StatementKind::InlineAsm { ref $($mutability)* outputs,
                                                ref $($mutability)* inputs,
@@ -415,6 +432,7 @@ macro_rules! make_mir_visitor {
 
                     TerminatorKind::Resume |
                     TerminatorKind::Return |
+                    TerminatorKind::GeneratorDrop |
                     TerminatorKind::Unreachable => {
                     }
 
@@ -461,6 +479,15 @@ macro_rules! make_mir_visitor {
                         self.visit_branch(block, target);
                         cleanup.map(|t| self.visit_branch(block, t));
                     }
+
+                    TerminatorKind::Yield { ref $($mutability)* value,
+                                              resume,
+                                              drop } => {
+                        self.visit_operand(value, source_location);
+                        self.visit_branch(block, resume);
+                        drop.map(|t| self.visit_branch(block, t));
+                    }
+
                 }
             }
 
@@ -475,7 +502,9 @@ macro_rules! make_mir_visitor {
                         self.visit_operand(len, location);
                         self.visit_operand(index, location);
                     }
-                    AssertMessage::Math(_) => {}
+                    AssertMessage::Math(_) => {},
+                    AssertMessage::GeneratorResumedAfterReturn => {},
+                    AssertMessage::GeneratorResumedAfterPanic => {},
                 }
             }
 
@@ -493,9 +522,10 @@ macro_rules! make_mir_visitor {
                         self.visit_const_usize(length, location);
                     }
 
-                    Rvalue::Ref(r, bk, ref $($mutability)* path) => {
+                    Rvalue::Ref(ref $($mutability)* r, bk, ref $($mutability)* path) => {
+                        self.visit_region(r, location);
                         self.visit_lvalue(path, LvalueContext::Borrow {
-                            region: r,
+                            region: *r,
                             kind: bk
                         }, location);
                     }
@@ -553,6 +583,13 @@ macro_rules! make_mir_visitor {
                                 self.visit_def_id(def_id, location);
                                 self.visit_closure_substs(closure_substs, location);
                             }
+                            AggregateKind::Generator(ref $($mutability)* def_id,
+                                                   ref $($mutability)* closure_substs,
+                                                   ref $($mutability)* interior) => {
+                                self.visit_def_id(def_id, location);
+                                self.visit_closure_substs(closure_substs, location);
+                                self.visit_generator_interior(interior, location);
+                            }
                         }
 
                         for operand in operands {
@@ -580,7 +617,8 @@ macro_rules! make_mir_visitor {
                             context: LvalueContext<'tcx>,
                             location: Location) {
                 match *lvalue {
-                    Lvalue::Local(_) => {
+                    Lvalue::Local(ref $($mutability)* local) => {
+                        self.visit_local(local, context, location);
                     }
                     Lvalue::Static(ref $($mutability)* static_) => {
                         self.visit_static(static_, context, location);
@@ -632,8 +670,8 @@ macro_rules! make_mir_visitor {
                     ProjectionElem::Field(_field, ref $($mutability)* ty) => {
                         self.visit_ty(ty, Lookup::Loc(location));
                     }
-                    ProjectionElem::Index(ref $($mutability)* operand) => {
-                        self.visit_operand(operand, location);
+                    ProjectionElem::Index(ref $($mutability)* local) => {
+                        self.visit_local(local, LvalueContext::Consume, location);
                     }
                     ProjectionElem::ConstantIndex { offset: _,
                                                     min_length: _,
@@ -651,11 +689,14 @@ macro_rules! make_mir_visitor {
                     ref $($mutability)* ty,
                     name: _,
                     ref $($mutability)* source_info,
+                    internal: _,
+                    ref $($mutability)* lexical_scope,
                     is_user_variable: _,
                 } = *local_decl;
 
                 self.visit_ty(ty, Lookup::Src(*source_info));
                 self.visit_source_info(source_info);
+                self.visit_visibility_scope(lexical_scope);
             }
 
             fn super_visibility_scope(&mut self,
@@ -685,13 +726,8 @@ macro_rules! make_mir_visitor {
                              literal: & $($mutability)* Literal<'tcx>,
                              location: Location) {
                 match *literal {
-                    Literal::Item { ref $($mutability)* def_id,
-                                    ref $($mutability)* substs } => {
-                        self.visit_def_id(def_id, location);
-                        self.visit_substs(substs, location);
-                    }
                     Literal::Value { ref $($mutability)* value } => {
-                        self.visit_const_val(value, location);
+                        self.visit_const(value, location);
                     }
                     Literal::Promoted { index: _ } => {}
                 }
@@ -716,14 +752,21 @@ macro_rules! make_mir_visitor {
             fn super_ty(&mut self, _ty: & $($mutability)* Ty<'tcx>) {
             }
 
+            fn super_region(&mut self, _region: & $($mutability)* ty::Region<'tcx>) {
+            }
+
+            fn super_const(&mut self, _const: & $($mutability)* &'tcx ty::Const<'tcx>) {
+            }
+
             fn super_substs(&mut self, _substs: & $($mutability)* &'tcx Substs<'tcx>) {
+            }
+
+            fn super_generator_interior(&mut self,
+                                    _interior: & $($mutability)* GeneratorInterior<'tcx>) {
             }
 
             fn super_closure_substs(&mut self,
                                     _substs: & $($mutability)* ClosureSubsts<'tcx>) {
-            }
-
-            fn super_const_val(&mut self, _const_val: & $($mutability)* ConstVal) {
             }
 
             fn super_const_int(&mut self, _const_int: &ConstInt) {

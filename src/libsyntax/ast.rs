@@ -134,7 +134,7 @@ impl PathSegment {
     }
     pub fn crate_root(span: Span) -> Self {
         PathSegment {
-            identifier: Ident { ctxt: span.ctxt, ..keywords::CrateRoot.ident() },
+            identifier: Ident { ctxt: span.ctxt(), ..keywords::CrateRoot.ident() },
             span,
             parameters: None,
         }
@@ -538,8 +538,14 @@ pub enum BindingMode {
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum RangeEnd {
-    Included,
+    Included(RangeSyntax),
     Excluded,
+}
+
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum RangeSyntax {
+    DotDotDot,
+    DotDotEq,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -578,7 +584,7 @@ pub enum PatKind {
     Ref(P<Pat>, Mutability),
     /// A literal
     Lit(P<Expr>),
-    /// A range pattern, e.g. `1...2` or `1..2`
+    /// A range pattern, e.g. `1...2`, `1..=2` or `1..2`
     Range(P<Expr>, P<Expr>, RangeEnd),
     /// `[a, b, ..i, y, z]` is represented as:
     ///     `PatKind::Slice(box [a, b], Some(i), box [y, z])`
@@ -761,9 +767,9 @@ pub enum StmtKind {
 
     /// Expr without trailing semi-colon.
     Expr(P<Expr>),
-
+    /// Expr with a trailing semi-colon.
     Semi(P<Expr>),
-
+    /// Macro.
     Mac(P<(Mac, MacStmtStyle, ThinVec<Attribute>)>),
 }
 
@@ -780,8 +786,6 @@ pub enum MacStmtStyle {
     NoBraces,
 }
 
-// FIXME (pending discussion of #1697, #2178...): local should really be
-// a refinement on pat.
 /// Local represents a `let` statement, e.g., `let <pat>:<ty> = <expr>;`
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Local {
@@ -810,6 +814,7 @@ pub struct Arm {
     pub pats: Vec<P<Pat>>,
     pub guard: Option<P<Expr>>,
     pub body: P<Expr>,
+    pub beginning_vert: Option<Span>, // For RFC 1925 feature gate
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -1016,6 +1021,9 @@ pub enum ExprKind {
 
     /// `expr?`
     Try(P<Expr>),
+
+    /// A `yield`, with an optional value to be yielded
+    Yield(Option<P<Expr>>),
 }
 
 /// The explicit Self type in a "qualified path". The actual
@@ -1217,7 +1225,8 @@ pub enum ImplItemKind {
     Macro(Mac),
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy,
+         PartialOrd, Ord)]
 pub enum IntTy {
     Is,
     I8,
@@ -1270,7 +1279,8 @@ impl IntTy {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy,
+         PartialOrd, Ord)]
 pub enum UintTy {
     Us,
     U8,
@@ -1320,7 +1330,8 @@ impl fmt::Display for UintTy {
     }
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy,
+         PartialOrd, Ord)]
 pub enum FloatTy {
     F32,
     F64,
@@ -1914,7 +1925,7 @@ pub enum ItemKind {
     ///
     /// E.g. `trait Foo { .. }` or `trait Foo<T> { .. }`
     Trait(Unsafety, Generics, TyParamBounds, Vec<TraitItem>),
-    // Default trait implementation.
+    /// Auto trait implementation.
     ///
     /// E.g. `impl Trait for .. {}` or `impl<T> Trait<T> for .. {}`
     DefaultImpl(Unsafety, TraitRef),

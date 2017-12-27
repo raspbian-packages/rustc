@@ -24,6 +24,7 @@ use std::mem;
 use std::path::PathBuf;
 use std::usize;
 
+pub use self::impls::{MaybeStorageLive};
 pub use self::impls::{MaybeInitializedLvals, MaybeUninitializedLvals};
 pub use self::impls::{DefinitelyInitializedLvals};
 pub use self::impls::borrows::{Borrows, BorrowData, BorrowIndex};
@@ -351,6 +352,29 @@ pub trait DataflowResultsConsumer<'a, 'tcx: 'a> {
                           flow_state: &mut Self::FlowState);
 }
 
+pub fn state_for_location<T: BitDenotation>(loc: Location,
+                                            analysis: &T,
+                                            result: &DataflowResults<T>)
+    -> IdxSetBuf<T::Idx> {
+    let mut entry = result.sets().on_entry_set_for(loc.block.index()).to_owned();
+
+    {
+        let mut sets = BlockSets {
+            on_entry: &mut entry.clone(),
+            kill_set: &mut entry.clone(),
+            gen_set: &mut entry,
+        };
+
+        for stmt in 0..loc.statement_index {
+            let mut stmt_loc = loc;
+            stmt_loc.statement_index = stmt;
+            analysis.statement_effect(&mut sets, stmt_loc);
+        }
+    }
+
+    entry
+}
+
 pub struct DataflowAnalysis<'a, 'tcx: 'a, O> where O: BitDenotation
 {
     flow_state: DataflowState<O>,
@@ -653,14 +677,20 @@ impl<'a, 'tcx: 'a, D> DataflowAnalysis<'a, 'tcx, D> where D: BitDenotation
         match bb_data.terminator().kind {
             mir::TerminatorKind::Return |
             mir::TerminatorKind::Resume |
+            mir::TerminatorKind::GeneratorDrop |
             mir::TerminatorKind::Unreachable => {}
             mir::TerminatorKind::Goto { ref target } |
             mir::TerminatorKind::Assert { ref target, cleanup: None, .. } |
+            mir::TerminatorKind::Yield { resume: ref target, drop: None, .. } |
             mir::TerminatorKind::Drop { ref target, location: _, unwind: None } |
             mir::TerminatorKind::DropAndReplace {
                 ref target, value: _, location: _, unwind: None
             } => {
                 self.propagate_bits_into_entry_set_for(in_out, changed, target);
+            }
+            mir::TerminatorKind::Yield { resume: ref target, drop: Some(ref drop), .. } => {
+                self.propagate_bits_into_entry_set_for(in_out, changed, target);
+                self.propagate_bits_into_entry_set_for(in_out, changed, drop);
             }
             mir::TerminatorKind::Assert { ref target, cleanup: Some(ref unwind), .. } |
             mir::TerminatorKind::Drop { ref target, location: _, unwind: Some(ref unwind) } |

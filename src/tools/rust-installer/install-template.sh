@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # Copyright 2014 The Rust Project Developers. See the COPYRIGHT
 # file at the top-level directory of this distribution and at
 # http://rust-lang.org/COPYRIGHT.
@@ -319,62 +319,6 @@ abs_path() {
     (unset CDPATH && cd "$path" > /dev/null && pwd)
 }
 
-get_host_triple() {
-    local _uname_value=$(uname -s)
-    local _ostype
-    case $_uname_value in
-
-	Linux)
-            _ostype=unknown-linux-gnu
-            ;;
-
-	FreeBSD)
-            _ostype=unknown-freebsd
-            ;;
-
-	DragonFly)
-            _ostype=unknown-dragonfly
-            ;;
-
-	Bitrig)
-            _ostype=unknown-bitrig
-            ;;
-
-	NetBSD)
-            _ostype=unknown-netbsd
-            ;;
-
-	OpenBSD)
-            _ostype=unknown-openbsd
-            ;;
-
-	Darwin)
-            _ostype=apple-darwin
-            ;;
-
-	MINGW*)
-            _ostype=pc-windows-gnu
-            ;;
-
-	MSYS*)
-            _ostype=pc-windows-gnu
-            ;;
-
-	CYGWIN*)
-            _ostype=pc-windows-gnu
-            ;;
-	Haiku)
-            _ostype=unknown-haiku
-            ;;
-
-	*)
-	    err "unknown value from uname -s: $_uname_value"
-	    ;;
-    esac
-
-    RETVAL="$_ostype"
-}
-
 uninstall_legacy() {
     local _abs_libdir="$1"
 
@@ -675,11 +619,13 @@ install_components() {
 
 		    maybe_backup_path "$_file_install_path"
 
-		    if echo "$_file" | grep "^bin/" > /dev/null
+		    if echo "$_file" | grep "^bin/" > /dev/null || test -x "$_src_dir/$_component/$_file"
 		    then
-			run install -m755 "$_src_dir/$_component/$_file" "$_file_install_path"
+			run cp "$_src_dir/$_component/$_file" "$_file_install_path"
+			run chmod 755 "$_file_install_path"
 		    else
-			run install -m644 "$_src_dir/$_component/$_file" "$_file_install_path"
+			run cp "$_src_dir/$_component/$_file" "$_file_install_path"
+			run chmod 644 "$_file_install_path"
 		    fi
 		    critical_need_ok "file creation failed"
 
@@ -719,11 +665,10 @@ install_components() {
 maybe_configure_ld() {
     local _abs_libdir="$1"
 
-    get_host_triple
-    local _ostype="$RETVAL"
+    local _ostype="$(uname -s)"
     assert_nz "$_ostype"  "ostype"
 
-    if [ "$_ostype" = "unknown-linux-gnu" -a ! -n "${CFG_DISABLE_LDCONFIG-}" ]; then
+    if [ "$_ostype" = "Linux" -a ! -n "${CFG_DISABLE_LDCONFIG-}" ]; then
 
 	# Fedora-based systems do not configure the dynamic linker to look
 	# /usr/local/lib, which is our default installation directory. To
@@ -756,11 +701,10 @@ maybe_configure_ld() {
 }
 
 maybe_unconfigure_ld() {
-    get_host_triple
-    local _ostype="$RETVAL"
+    local _ostype="$(uname -s)"
     assert_nz "$_ostype"  "ostype"
 
-    if [ "$_ostype" != "unknown-linux-gnu" ]; then
+    if [ "$_ostype" != "Linux" ]; then
 	return 0
     fi
 

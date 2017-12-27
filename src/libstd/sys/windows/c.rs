@@ -32,6 +32,7 @@ pub type DWORD = c_ulong;
 pub type HANDLE = LPVOID;
 pub type HINSTANCE = HANDLE;
 pub type HMODULE = HINSTANCE;
+pub type HRESULT = LONG;
 pub type BOOL = c_int;
 pub type BYTE = u8;
 pub type BOOLEAN = BYTE;
@@ -197,6 +198,8 @@ pub const ERROR_OPERATION_ABORTED: DWORD = 995;
 pub const ERROR_IO_PENDING: DWORD = 997;
 pub const ERROR_TIMEOUT: DWORD = 0x5B4;
 
+pub const E_NOTIMPL: HRESULT = 0x80004001u32 as HRESULT;
+
 pub const INVALID_HANDLE_VALUE: HANDLE = !0 as HANDLE;
 
 pub const FACILITY_NT_BIT: DWORD = 0x1000_0000;
@@ -276,10 +279,13 @@ pub const WAIT_TIMEOUT: DWORD = 258;
 pub const WAIT_FAILED: DWORD = 0xFFFFFFFF;
 
 #[cfg(target_env = "msvc")]
+#[cfg(feature = "backtrace")]
 pub const MAX_SYM_NAME: usize = 2000;
 #[cfg(target_arch = "x86")]
+#[cfg(feature = "backtrace")]
 pub const IMAGE_FILE_MACHINE_I386: DWORD = 0x014c;
 #[cfg(target_arch = "x86_64")]
+#[cfg(feature = "backtrace")]
 pub const IMAGE_FILE_MACHINE_AMD64: DWORD = 0x8664;
 
 pub const PROV_RSA_FULL: DWORD = 1;
@@ -572,6 +578,7 @@ pub struct OVERLAPPED {
 
 #[repr(C)]
 #[cfg(target_env = "msvc")]
+#[cfg(feature = "backtrace")]
 pub struct SYMBOL_INFO {
     pub SizeOfStruct: c_ulong,
     pub TypeIndex: c_ulong,
@@ -595,6 +602,7 @@ pub struct SYMBOL_INFO {
 
 #[repr(C)]
 #[cfg(target_env = "msvc")]
+#[cfg(feature = "backtrace")]
 pub struct IMAGEHLP_LINE64 {
     pub SizeOfStruct: u32,
     pub Key: *const c_void,
@@ -613,6 +621,7 @@ pub enum ADDRESS_MODE {
 }
 
 #[repr(C)]
+#[cfg(feature = "backtrace")]
 pub struct ADDRESS64 {
     pub Offset: u64,
     pub Segment: u16,
@@ -620,6 +629,7 @@ pub struct ADDRESS64 {
 }
 
 #[repr(C)]
+#[cfg(feature = "backtrace")]
 pub struct STACKFRAME64 {
     pub AddrPC: ADDRESS64,
     pub AddrReturn: ADDRESS64,
@@ -635,6 +645,7 @@ pub struct STACKFRAME64 {
 }
 
 #[repr(C)]
+#[cfg(feature = "backtrace")]
 pub struct KDHELP64 {
     pub Thread: u64,
     pub ThCallbackStack: DWORD,
@@ -1086,6 +1097,7 @@ extern "system" {
     pub fn FindNextFileW(findFile: HANDLE, findFileData: LPWIN32_FIND_DATAW)
                          -> BOOL;
     pub fn FindClose(findFile: HANDLE) -> BOOL;
+    #[cfg(feature = "backtrace")]
     pub fn RtlCaptureContext(ctx: *mut CONTEXT);
     pub fn getsockopt(s: SOCKET,
                       level: c_int,
@@ -1117,7 +1129,9 @@ extern "system" {
                        res: *mut *mut ADDRINFOA) -> c_int;
     pub fn freeaddrinfo(res: *mut ADDRINFOA);
 
+    #[cfg(feature = "backtrace")]
     pub fn LoadLibraryW(name: LPCWSTR) -> HMODULE;
+    #[cfg(feature = "backtrace")]
     pub fn FreeLibrary(handle: HMODULE) -> BOOL;
     pub fn GetProcAddress(handle: HMODULE,
                           name: LPCSTR) -> *mut c_void;
@@ -1163,8 +1177,8 @@ extern "system" {
                   timeout: *const timeval) -> c_int;
 }
 
-// Functions that aren't available on Windows XP, but we still use them and just
-// provide some form of a fallback implementation.
+// Functions that aren't available on every version of Windows that we support,
+// but we still use them and just provide some form of a fallback implementation.
 compat_fn! {
     kernel32:
 
@@ -1181,6 +1195,10 @@ compat_fn! {
     }
     pub fn SetThreadStackGuarantee(_size: *mut c_ulong) -> BOOL {
         SetLastError(ERROR_CALL_NOT_IMPLEMENTED as DWORD); 0
+    }
+    pub fn SetThreadDescription(hThread: HANDLE,
+                                lpThreadDescription: LPCWSTR) -> HRESULT {
+        SetLastError(ERROR_CALL_NOT_IMPLEMENTED as DWORD); E_NOTIMPL
     }
     pub fn SetFileInformationByHandle(_hFile: HANDLE,
                     _FileInformationClass: FILE_INFO_BY_HANDLE_CLASS,

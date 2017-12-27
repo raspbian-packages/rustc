@@ -292,7 +292,7 @@
 //! [to_writer]: https://docs.serde.rs/serde_json/ser/fn.to_writer.html
 //! [macro]: https://docs.serde.rs/serde_json/macro.json.html
 
-#![doc(html_root_url = "https://docs.rs/serde_json/1.0.2")]
+#![doc(html_root_url = "https://docs.rs/serde_json/1.0.3")]
 #![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
 // Because of "JavaScript"... fixed in Manishearth/rust-clippy#1071
 #![cfg_attr(feature = "cargo-clippy", allow(doc_markdown))]
@@ -308,10 +308,12 @@
 // string ser/de uses indexing and slicing
     indexing_slicing,
 // things are often more readable this way
+    cast_lossless,
     shadow_reuse,
     shadow_unrelated,
     single_match_else,
     stutter,
+    use_self,
 // not practical
     missing_docs_in_private_items,
 ))]
@@ -319,7 +321,6 @@
 #![deny(missing_docs)]
 
 extern crate num_traits;
-extern crate core;
 #[macro_use]
 extern crate serde;
 extern crate itoa;

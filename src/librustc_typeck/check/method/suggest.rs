@@ -45,7 +45,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             ty::TyFnPtr(_) => true,
             // If it's not a simple function, look for things which implement FnOnce
             _ => {
-                let fn_once = match tcx.lang_items.require(FnOnceTraitLangItem) {
+                let fn_once = match tcx.lang_items().require(FnOnceTraitLangItem) {
                     Ok(fn_once) => fn_once,
                     Err(..) => return false,
                 };
@@ -164,6 +164,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             MethodError::NoMatch(NoMatchData { static_candidates: static_sources,
                                                unsatisfied_predicates,
                                                out_of_scope_traits,
+                                               lev_candidate,
                                                mode,
                                                .. }) => {
                 let tcx = self.tcx;
@@ -282,6 +283,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                               item_name,
                                               rcvr_expr,
                                               out_of_scope_traits);
+
+                if let Some(lev_candidate) = lev_candidate {
+                    err.help(&format!("did you mean `{}`?", lev_candidate.name));
+                }
                 err.emit();
             }
 
@@ -294,22 +299,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
                 report_candidates(&mut err, sources);
                 err.emit();
-            }
-
-            MethodError::ClosureAmbiguity(trait_def_id) => {
-                let msg = format!("the `{}` method from the `{}` trait cannot be explicitly \
-                                   invoked on this closure as we have not yet inferred what \
-                                   kind of closure it is",
-                                  item_name,
-                                  self.tcx.item_path_str(trait_def_id));
-                let msg = if let Some(callee) = rcvr_expr {
-                    format!("{}; use overloaded call notation instead (e.g., `{}()`)",
-                            msg,
-                            self.tcx.hir.node_to_pretty_string(callee.id))
-                } else {
-                    msg
-                };
-                self.sess().span_err(span, &msg);
             }
 
             MethodError::PrivateMatch(def, out_of_scope_traits) => {
@@ -336,6 +325,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     self.suggest_use_candidates(&mut err, help, candidates);
                 }
                 err.emit();
+            }
+
+            MethodError::BadReturnType => {
+                bug!("no return type expectations but got BadReturnType")
             }
         }
     }
@@ -564,14 +557,14 @@ pub fn all_traits<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> AllTraits<'a> 
                     if !external_mods.insert(def_id) {
                         return;
                     }
-                    for child in tcx.sess.cstore.item_children(def_id, tcx.sess) {
+                    for child in tcx.item_children(def_id).iter() {
                         handle_external_def(tcx, traits, external_mods, child.def)
                     }
                 }
                 _ => {}
             }
         }
-        for cnum in tcx.sess.cstore.crates() {
+        for &cnum in tcx.crates().iter() {
             let def_id = DefId {
                 krate: cnum,
                 index: CRATE_DEF_INDEX,

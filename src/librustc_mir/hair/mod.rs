@@ -17,9 +17,9 @@
 use rustc_const_math::ConstUsize;
 use rustc::mir::{BinOp, BorrowKind, Field, Literal, UnOp};
 use rustc::hir::def_id::DefId;
-use rustc::middle::region::CodeExtent;
+use rustc::middle::region;
 use rustc::ty::subst::Substs;
-use rustc::ty::{self, AdtDef, ClosureSubsts, Region, Ty};
+use rustc::ty::{AdtDef, ClosureSubsts, Region, Ty, GeneratorInterior};
 use rustc::hir;
 use syntax::ast;
 use syntax_pos::Span;
@@ -29,14 +29,38 @@ pub mod cx;
 
 pub use rustc_const_eval::pattern::{BindingMode, Pattern, PatternKind, FieldPattern};
 
+#[derive(Copy, Clone, Debug)]
+pub enum LintLevel {
+    Inherited,
+    Explicit(ast::NodeId)
+}
+
+impl LintLevel {
+    pub fn is_explicit(self) -> bool {
+        match self {
+            LintLevel::Inherited => false,
+            LintLevel::Explicit(_) => true
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Block<'tcx> {
     pub targeted_by_break: bool,
-    pub extent: CodeExtent,
-    pub opt_destruction_extent: Option<CodeExtent>,
+    pub region_scope: region::Scope,
+    pub opt_destruction_scope: Option<region::Scope>,
     pub span: Span,
     pub stmts: Vec<StmtRef<'tcx>>,
     pub expr: Option<ExprRef<'tcx>>,
+    pub safety_mode: BlockSafety,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum BlockSafety {
+    Safe,
+    ExplicitUnsafe(ast::NodeId),
+    PushUnsafe,
+    PopUnsafe
 }
 
 #[derive(Clone, Debug)]
@@ -46,16 +70,15 @@ pub enum StmtRef<'tcx> {
 
 #[derive(Clone, Debug)]
 pub struct Stmt<'tcx> {
-    pub span: Span,
     pub kind: StmtKind<'tcx>,
-    pub opt_destruction_extent: Option<CodeExtent>,
+    pub opt_destruction_scope: Option<region::Scope>,
 }
 
 #[derive(Clone, Debug)]
 pub enum StmtKind<'tcx> {
     Expr {
         /// scope for this statement; may be used as lifetime of temporaries
-        scope: CodeExtent,
+        scope: region::Scope,
 
         /// expression being evaluated in this statement
         expr: ExprRef<'tcx>,
@@ -64,17 +87,20 @@ pub enum StmtKind<'tcx> {
     Let {
         /// scope for variables bound in this let; covers this and
         /// remaining statements in block
-        remainder_scope: CodeExtent,
+        remainder_scope: region::Scope,
 
         /// scope for the initialization itself; might be used as
         /// lifetime of temporaries
-        init_scope: CodeExtent,
+        init_scope: region::Scope,
 
         /// let <PAT> = ...
         pattern: Pattern<'tcx>,
 
         /// let pat = <INIT> ...
-        initializer: Option<ExprRef<'tcx>>
+        initializer: Option<ExprRef<'tcx>>,
+
+        /// the lint level for this let-statement
+        lint_level: LintLevel,
     },
 }
 
@@ -99,7 +125,7 @@ pub struct Expr<'tcx> {
 
     /// lifetime of this expression if it should be spilled into a
     /// temporary; should be None only if in a constant context
-    pub temp_lifetime: Option<CodeExtent>,
+    pub temp_lifetime: Option<region::Scope>,
 
     /// span of the expression in the source
     pub span: Span,
@@ -111,14 +137,15 @@ pub struct Expr<'tcx> {
 #[derive(Clone, Debug)]
 pub enum ExprKind<'tcx> {
     Scope {
-        extent: CodeExtent,
+        region_scope: region::Scope,
+        lint_level: LintLevel,
         value: ExprRef<'tcx>,
     },
     Box {
         value: ExprRef<'tcx>,
     },
     Call {
-        ty: ty::Ty<'tcx>,
+        ty: Ty<'tcx>,
         fun: ExprRef<'tcx>,
         args: Vec<ExprRef<'tcx>>,
     },
@@ -208,11 +235,11 @@ pub enum ExprKind<'tcx> {
         arg: ExprRef<'tcx>,
     },
     Break {
-        label: CodeExtent,
+        label: region::Scope,
         value: Option<ExprRef<'tcx>>,
     },
     Continue {
-        label: CodeExtent,
+        label: region::Scope,
     },
     Return {
         value: Option<ExprRef<'tcx>>,
@@ -238,6 +265,7 @@ pub enum ExprKind<'tcx> {
         closure_id: DefId,
         substs: ClosureSubsts<'tcx>,
         upvars: Vec<ExprRef<'tcx>>,
+        interior: Option<GeneratorInterior<'tcx>>,
     },
     Literal {
         literal: Literal<'tcx>,
@@ -246,6 +274,9 @@ pub enum ExprKind<'tcx> {
         asm: &'tcx hir::InlineAsm,
         outputs: Vec<ExprRef<'tcx>>,
         inputs: Vec<ExprRef<'tcx>>
+    },
+    Yield {
+        value: ExprRef<'tcx>,
     },
 }
 
@@ -272,6 +303,7 @@ pub struct Arm<'tcx> {
     pub patterns: Vec<Pattern<'tcx>>,
     pub guard: Option<ExprRef<'tcx>>,
     pub body: ExprRef<'tcx>,
+    pub lint_level: LintLevel,
 }
 
 #[derive(Copy, Clone, Debug)]

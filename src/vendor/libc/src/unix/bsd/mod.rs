@@ -360,6 +360,10 @@ f! {
     pub fn WCOREDUMP(status: ::c_int) -> bool {
         (status & 0o200) != 0
     }
+
+    pub fn QCMD(cmd: ::c_int, type_: ::c_int) -> ::c_int {
+        (cmd << 8) | (type_ & 0x00ff)
+    }
 }
 
 extern {
@@ -371,21 +375,10 @@ extern {
     pub fn kqueue() -> ::c_int;
     pub fn unmount(target: *const ::c_char, arg: ::c_int) -> ::c_int;
     pub fn syscall(num: ::c_int, ...) -> ::c_int;
-    #[cfg_attr(target_os = "netbsd", link_name = "__getpwnam_r50")]
-    pub fn getpwnam_r(name: *const ::c_char,
-                      pwd: *mut passwd,
-                      buf: *mut ::c_char,
-                      buflen: ::size_t,
-                      result: *mut *mut passwd) -> ::c_int;
-    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
-    pub fn getpwuid_r(uid: ::uid_t,
-                      pwd: *mut passwd,
-                      buf: *mut ::c_char,
-                      buflen: ::size_t,
-                      result: *mut *mut passwd) -> ::c_int;
     #[cfg_attr(target_os = "netbsd", link_name = "__getpwent50")]
     pub fn getpwent() -> *mut passwd;
     pub fn setpwent();
+    pub fn endpwent();
     pub fn getprogname() -> *const ::c_char;
     pub fn setprogname(name: *const ::c_char);
     pub fn getloadavg(loadavg: *mut ::c_double, nelem: ::c_int) -> ::c_int;
@@ -466,6 +459,67 @@ extern {
                    -> ::ssize_t;
 
     pub fn sync();
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getgrgid_r")]
+    pub fn getgrgid_r(uid: ::uid_t,
+                      grp: *mut ::group,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut ::group) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "sigaltstack$UNIX2003")]
+    #[cfg_attr(target_os = "netbsd", link_name = "__sigaltstack14")]
+    pub fn sigaltstack(ss: *const stack_t,
+                       oss: *mut stack_t) -> ::c_int;
+    pub fn sem_close(sem: *mut sem_t) -> ::c_int;
+    pub fn getdtablesize() -> ::c_int;
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getgrnam_r")]
+    pub fn getgrnam_r(name: *const ::c_char,
+                      grp: *mut ::group,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut ::group) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "pthread_sigmask$UNIX2003")]
+    pub fn pthread_sigmask(how: ::c_int, set: *const sigset_t,
+                           oldset: *mut sigset_t) -> ::c_int;
+    pub fn sem_open(name: *const ::c_char, oflag: ::c_int, ...) -> *mut sem_t;
+    pub fn getgrnam(name: *const ::c_char) -> *mut ::group;
+    pub fn pthread_kill(thread: ::pthread_t, sig: ::c_int) -> ::c_int;
+    pub fn sem_unlink(name: *const ::c_char) -> ::c_int;
+    pub fn daemon(nochdir: ::c_int, noclose: ::c_int) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwnam_r50")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getpwnam_r")]
+    pub fn getpwnam_r(name: *const ::c_char,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getpwuid_r")]
+    pub fn getpwuid_r(uid: ::uid_t,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch ="x86"),
+               link_name = "sigwait$UNIX2003")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_sigwait")]
+    pub fn sigwait(set: *const sigset_t,
+                   sig: *mut ::c_int) -> ::c_int;
+    pub fn pthread_atfork(prepare: Option<unsafe extern fn()>,
+                          parent: Option<unsafe extern fn()>,
+                          child: Option<unsafe extern fn()>) -> ::c_int;
+    pub fn getgrgid(gid: ::gid_t) -> *mut ::group;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "popen$UNIX2003")]
+    pub fn popen(command: *const c_char,
+                 mode: *const c_char) -> *mut ::FILE;
+    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
+                     mode: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn pthread_create(native: *mut ::pthread_t,
+                          attr: *const ::pthread_attr_t,
+                          f: extern fn(*mut ::c_void) -> *mut ::c_void,
+                          value: *mut ::c_void) -> ::c_int;
 }
 
 cfg_if! {

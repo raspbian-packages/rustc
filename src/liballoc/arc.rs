@@ -22,7 +22,7 @@ use core::borrow;
 use core::fmt;
 use core::cmp::Ordering;
 use core::intrinsics::abort;
-use core::mem::{self, size_of_val, uninitialized};
+use core::mem::{self, align_of_val, size_of_val, uninitialized};
 use core::ops::Deref;
 use core::ops::CoerceUnsized;
 use core::ptr::{self, Shared};
@@ -52,8 +52,10 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// also destroyed.
 ///
 /// Shared references in Rust disallow mutation by default, and `Arc` is no
-/// exception. If you need to mutate through an `Arc`, use [`Mutex`][mutex],
-/// [`RwLock`][rwlock], or one of the [`Atomic`][atomic] types.
+/// exception: you cannot generally obtain a mutable reference to something
+/// inside an `Arc`. If you need to mutate through an `Arc`, use
+/// [`Mutex`][mutex], [`RwLock`][rwlock], or one of the [`Atomic`][atomic]
+/// types.
 ///
 /// ## Thread Safety
 ///
@@ -72,13 +74,13 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// first: after all, isn't the point of `Arc<T>` thread safety? The key is
 /// this: `Arc<T>` makes it thread safe to have multiple ownership of the same
 /// data, but it  doesn't add thread safety to its data. Consider
-/// `Arc<RefCell<T>>`. `RefCell<T>` isn't [`Sync`], and if `Arc<T>` was always
-/// [`Send`], `Arc<RefCell<T>>` would be as well. But then we'd have a problem:
-/// `RefCell<T>` is not thread safe; it keeps track of the borrowing count using
+/// `Arc<`[`RefCell<T>`]`>`. [`RefCell<T>`] isn't [`Sync`], and if `Arc<T>` was always
+/// [`Send`], `Arc<`[`RefCell<T>`]`>` would be as well. But then we'd have a problem:
+/// [`RefCell<T>`] is not thread safe; it keeps track of the borrowing count using
 /// non-atomic operations.
 ///
 /// In the end, this means that you may need to pair `Arc<T>` with some sort of
-/// `std::sync` type, usually `Mutex<T>`.
+/// [`std::sync`] type, usually [`Mutex<T>`][mutex].
 ///
 /// ## Breaking cycles with `Weak`
 ///
@@ -106,7 +108,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// // a and b both point to the same memory location as foo.
 /// ```
 ///
-/// The `Arc::clone(&from)` syntax is the most idiomatic because it conveys more explicitly
+/// The [`Arc::clone(&from)`] syntax is the most idiomatic because it conveys more explicitly
 /// the meaning of the code. In the example above, this syntax makes it easier to see that
 /// this code is creating a new reference rather than copying the whole content of foo.
 ///
@@ -141,6 +143,9 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// [upgrade]: struct.Weak.html#method.upgrade
 /// [`None`]: ../../std/option/enum.Option.html#variant.None
 /// [assoc]: ../../book/first-edition/method-syntax.html#associated-functions
+/// [`RefCell<T>`]: ../../std/cell/struct.RefCell.html
+/// [`std::sync`]: ../../std/sync/index.html
+/// [`Arc::clone(&from)`]: #method.clone
 ///
 /// # Examples
 ///
@@ -324,7 +329,9 @@ impl<T> Arc<T> {
             Ok(elem)
         }
     }
+}
 
+impl<T: ?Sized> Arc<T> {
     /// Consumes the `Arc`, returning the wrapped pointer.
     ///
     /// To avoid a memory leak the pointer must be converted back to an `Arc` using
@@ -378,16 +385,21 @@ impl<T> Arc<T> {
     /// ```
     #[stable(feature = "rc_raw", since = "1.17.0")]
     pub unsafe fn from_raw(ptr: *const T) -> Self {
-        // To find the corresponding pointer to the `ArcInner` we need to subtract the offset of the
-        // `data` field from the pointer.
-        let ptr = (ptr as *const u8).offset(-offset_of!(ArcInner<T>, data));
+        // Align the unsized value to the end of the ArcInner.
+        // Because it is ?Sized, it will always be the last field in memory.
+        let align = align_of_val(&*ptr);
+        let layout = Layout::new::<ArcInner<()>>();
+        let offset = (layout.size() + layout.padding_needed_for(align)) as isize;
+
+        // Reverse the offset to find the original ArcInner.
+        let fake_ptr = ptr as *mut ArcInner<T>;
+        let arc_ptr = set_data_ptr(fake_ptr, (ptr as *mut u8).offset(-offset));
+
         Arc {
-            ptr: Shared::new_unchecked(ptr as *mut u8 as *mut _),
+            ptr: Shared::new_unchecked(arc_ptr),
         }
     }
-}
 
-impl<T: ?Sized> Arc<T> {
     /// Creates a new [`Weak`][weak] pointer to this value.
     ///
     /// [weak]: struct.Weak.html
@@ -1489,6 +1501,28 @@ mod tests {
 
             assert_eq!(Arc::try_unwrap(x).map(|x| *x), Ok("hello"));
         }
+    }
+
+    #[test]
+    fn test_into_from_raw_unsized() {
+        use std::fmt::Display;
+        use std::string::ToString;
+
+        let arc: Arc<str> = Arc::from("foo");
+
+        let ptr = Arc::into_raw(arc.clone());
+        let arc2 = unsafe { Arc::from_raw(ptr) };
+
+        assert_eq!(unsafe { &*ptr }, "foo");
+        assert_eq!(arc, arc2);
+
+        let arc: Arc<Display> = Arc::new(123);
+
+        let ptr = Arc::into_raw(arc.clone());
+        let arc2 = unsafe { Arc::from_raw(ptr) };
+
+        assert_eq!(unsafe { &*ptr }.to_string(), "123");
+        assert_eq!(arc2.to_string(), "123");
     }
 
     #[test]

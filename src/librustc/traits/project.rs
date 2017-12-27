@@ -19,6 +19,7 @@ use super::PredicateObligation;
 use super::SelectionContext;
 use super::SelectionError;
 use super::VtableClosureData;
+use super::VtableGeneratorData;
 use super::VtableFnPointerData;
 use super::VtableImplData;
 use super::util;
@@ -26,10 +27,10 @@ use super::util;
 use hir::def_id::DefId;
 use infer::{InferCtxt, InferOk};
 use infer::type_variable::TypeVariableOrigin;
+use middle::const_val::ConstVal;
 use rustc_data_structures::snapshot_map::{Snapshot, SnapshotMap};
-use syntax::ast;
 use syntax::symbol::Symbol;
-use ty::subst::Subst;
+use ty::subst::{Subst, Substs};
 use ty::{self, ToPredicate, ToPolyTraitRef, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder};
 use util::common::FN_OUTPUT_NAME;
@@ -259,7 +260,7 @@ impl<'a, 'b, 'gcx, 'tcx> AssociatedTypeNormalizer<'a, 'b, 'gcx, 'tcx> {
     fn fold<T:TypeFoldable<'tcx>>(&mut self, value: &T) -> T {
         let value = self.selcx.infcx().resolve_type_vars_if_possible(value);
 
-        if !value.has_projection_types() {
+        if !value.has_projections() {
             value.clone()
         } else {
             value.fold_with(self)
@@ -330,6 +331,39 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
                 ty
             }
         }
+    }
+
+    fn fold_const(&mut self, constant: &'tcx ty::Const<'tcx>) -> &'tcx ty::Const<'tcx> {
+        if let ConstVal::Unevaluated(def_id, substs) = constant.val {
+            if substs.needs_infer() {
+                let identity_substs = Substs::identity_for_item(self.tcx(), def_id);
+                let data = self.param_env.and((def_id, identity_substs));
+                match self.tcx().lift_to_global(&data) {
+                    Some(data) => {
+                        match self.tcx().const_eval(data) {
+                            Ok(evaluated) => {
+                                let evaluated = evaluated.subst(self.tcx(), substs);
+                                return self.fold_const(evaluated);
+                            }
+                            Err(_) => {}
+                        }
+                    }
+                    None => {}
+                }
+            } else {
+                let data = self.param_env.and((def_id, substs));
+                match self.tcx().lift_to_global(&data) {
+                    Some(data) => {
+                        match self.tcx().const_eval(data) {
+                            Ok(evaluated) => return self.fold_const(evaluated),
+                            Err(_) => {}
+                        }
+                    }
+                    None => {}
+                }
+            }
+        }
+        constant
     }
 }
 
@@ -505,9 +539,7 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
 
     let obligation = Obligation::with_depth(cause.clone(), depth, param_env, projection_ty);
     match project_type(selcx, &obligation) {
-        Ok(ProjectedTy::Progress(Progress { ty: projected_ty,
-                                            mut obligations,
-                                            cacheable })) => {
+        Ok(ProjectedTy::Progress(Progress { ty: projected_ty, mut obligations })) => {
             // if projection succeeded, then what we get out of this
             // is also non-normalized (consider: it was derived from
             // an impl, where-clause etc) and hence we must
@@ -516,14 +548,12 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
             debug!("opt_normalize_projection_type: \
                     projected_ty={:?} \
                     depth={} \
-                    obligations={:?} \
-                    cacheable={:?}",
+                    obligations={:?}",
                    projected_ty,
                    depth,
-                   obligations,
-                   cacheable);
+                   obligations);
 
-            let result = if projected_ty.has_projection_types() {
+            let result = if projected_ty.has_projections() {
                 let mut normalizer = AssociatedTypeNormalizer::new(selcx,
                                                                    param_env,
                                                                    cause,
@@ -548,7 +578,7 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
             };
 
             let cache_value = prune_cache_value_obligations(infcx, &result);
-            infcx.projection_cache.borrow_mut().insert_ty(cache_key, cache_value, cacheable);
+            infcx.projection_cache.borrow_mut().insert_ty(cache_key, cache_value);
 
             Some(result)
         }
@@ -560,7 +590,7 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
                 value: projected_ty,
                 obligations: vec![]
             };
-            infcx.projection_cache.borrow_mut().insert_ty(cache_key, result.clone(), true);
+            infcx.projection_cache.borrow_mut().insert_ty(cache_key, result.clone());
             Some(result)
         }
         Err(ProjectionTyError::TooManyCandidates) => {
@@ -709,7 +739,6 @@ enum ProjectedTy<'tcx> {
 struct Progress<'tcx> {
     ty: Ty<'tcx>,
     obligations: Vec<PredicateObligation<'tcx>>,
-    cacheable: bool,
 }
 
 impl<'tcx> Progress<'tcx> {
@@ -717,7 +746,6 @@ impl<'tcx> Progress<'tcx> {
         Progress {
             ty: tcx.types.err,
             obligations: vec![],
-            cacheable: true
         }
     }
 
@@ -987,6 +1015,7 @@ fn assemble_candidates_from_impls<'cx, 'gcx, 'tcx>(
 
         match vtable {
             super::VtableClosure(_) |
+            super::VtableGenerator(_) |
             super::VtableFnPointer(_) |
             super::VtableObject(_) => {
                 debug!("assemble_candidates_from_impls: vtable={:?}",
@@ -1014,10 +1043,9 @@ fn assemble_candidates_from_impls<'cx, 'gcx, 'tcx>(
                 // In either case, we handle this by not adding a
                 // candidate for an impl if it contains a `default`
                 // type.
-                let item_name = selcx.tcx().associated_item(obligation.predicate.item_def_id).name;
                 let node_item = assoc_ty_def(selcx,
                                              impl_data.impl_def_id,
-                                             item_name);
+                                             obligation.predicate.item_def_id);
 
                 let is_default = if node_item.node.is_from_trait() {
                     // If true, the impl inherited a `type Foo = Bar`
@@ -1146,6 +1174,8 @@ fn confirm_select_candidate<'cx, 'gcx, 'tcx>(
     match vtable {
         super::VtableImpl(data) =>
             confirm_impl_candidate(selcx, obligation, data),
+        super::VtableGenerator(data) =>
+            confirm_generator_candidate(selcx, obligation, data),
         super::VtableClosure(data) =>
             confirm_closure_candidate(selcx, obligation, data),
         super::VtableFnPointer(data) =>
@@ -1228,6 +1258,60 @@ fn confirm_object_candidate<'cx, 'gcx, 'tcx>(
     confirm_param_env_candidate(selcx, obligation, env_predicate)
 }
 
+fn confirm_generator_candidate<'cx, 'gcx, 'tcx>(
+    selcx: &mut SelectionContext<'cx, 'gcx, 'tcx>,
+    obligation: &ProjectionTyObligation<'tcx>,
+    vtable: VtableGeneratorData<'tcx, PredicateObligation<'tcx>>)
+    -> Progress<'tcx>
+{
+    let gen_sig = selcx.infcx().generator_sig(vtable.closure_def_id).unwrap()
+        .subst(selcx.tcx(), vtable.substs.substs);
+    let Normalized {
+        value: gen_sig,
+        obligations
+    } = normalize_with_depth(selcx,
+                             obligation.param_env,
+                             obligation.cause.clone(),
+                             obligation.recursion_depth+1,
+                             &gen_sig);
+
+    debug!("confirm_generator_candidate: obligation={:?},gen_sig={:?},obligations={:?}",
+           obligation,
+           gen_sig,
+           obligations);
+
+    let tcx = selcx.tcx();
+
+    let gen_def_id = tcx.lang_items().gen_trait().unwrap();
+
+    // Note: we unwrap the binder here but re-create it below (1)
+    let ty::Binder((trait_ref, yield_ty, return_ty)) =
+        tcx.generator_trait_ref_and_outputs(gen_def_id,
+                                            obligation.predicate.self_ty(),
+                                            gen_sig);
+
+    let name = tcx.associated_item(obligation.predicate.item_def_id).name;
+    let ty = if name == Symbol::intern("Return") {
+        return_ty
+    } else if name == Symbol::intern("Yield") {
+        yield_ty
+    } else {
+        bug!()
+    };
+
+    let predicate = ty::Binder(ty::ProjectionPredicate { // (1) recreate binder here
+        projection_ty: ty::ProjectionTy {
+            substs: trait_ref.substs,
+            item_def_id: obligation.predicate.item_def_id,
+        },
+        ty: ty
+    });
+
+    confirm_param_env_candidate(selcx, obligation, predicate)
+        .with_addl_obligations(vtable.nested)
+        .with_addl_obligations(obligations)
+}
+
 fn confirm_fn_pointer_candidate<'cx, 'gcx, 'tcx>(
     selcx: &mut SelectionContext<'cx, 'gcx, 'tcx>,
     obligation: &ProjectionTyObligation<'tcx>,
@@ -1295,7 +1379,7 @@ fn confirm_callable_candidate<'cx, 'gcx, 'tcx>(
            fn_sig);
 
     // the `Output` associated type is declared on `FnOnce`
-    let fn_once_def_id = tcx.lang_items.fn_once_trait().unwrap();
+    let fn_once_def_id = tcx.lang_items().fn_once_trait().unwrap();
 
     // Note: we unwrap the binder here but re-create it below (1)
     let ty::Binder((trait_ref, ret_type)) =
@@ -1331,7 +1415,6 @@ fn confirm_param_env_candidate<'cx, 'gcx, 'tcx>(
             Progress {
                 ty: ty_match.value,
                 obligations,
-                cacheable: ty_match.unconstrained_regions.is_empty(),
             }
         }
         Err(e) => {
@@ -1356,8 +1439,7 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
 
     let tcx = selcx.tcx();
     let param_env = obligation.param_env;
-    let assoc_ty = assoc_ty_def(selcx, impl_def_id,
-        tcx.associated_item(obligation.predicate.item_def_id).name);
+    let assoc_ty = assoc_ty_def(selcx, impl_def_id, obligation.predicate.item_def_id);
 
     let ty = if !assoc_ty.item.defaultness.has_value() {
         // This means that the impl is missing a definition for the
@@ -1375,7 +1457,6 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
     Progress {
         ty: ty.subst(tcx, substs),
         obligations: nested,
-        cacheable: true
     }
 }
 
@@ -1387,10 +1468,11 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
 fn assoc_ty_def<'cx, 'gcx, 'tcx>(
     selcx: &SelectionContext<'cx, 'gcx, 'tcx>,
     impl_def_id: DefId,
-    assoc_ty_name: ast::Name)
+    assoc_ty_def_id: DefId)
     -> specialization_graph::NodeItem<ty::AssociatedItem>
 {
     let tcx = selcx.tcx();
+    let assoc_ty_name = tcx.associated_item(assoc_ty_def_id).name;
     let trait_def_id = tcx.impl_trait_ref(impl_def_id).unwrap().def_id;
     let trait_def = tcx.trait_def(trait_def_id);
 
@@ -1402,7 +1484,8 @@ fn assoc_ty_def<'cx, 'gcx, 'tcx>(
     // cycle error if the specialization graph is currently being built.
     let impl_node = specialization_graph::Node::Impl(impl_def_id);
     for item in impl_node.items(tcx) {
-        if item.kind == ty::AssociatedKind::Type && item.name == assoc_ty_name {
+        if item.kind == ty::AssociatedKind::Type &&
+                tcx.hygienic_eq(item.name, assoc_ty_name, trait_def_id) {
             return specialization_graph::NodeItem {
                 node: specialization_graph::Node::Impl(impl_def_id),
                 item,
@@ -1412,7 +1495,7 @@ fn assoc_ty_def<'cx, 'gcx, 'tcx>(
 
     if let Some(assoc_item) = trait_def
         .ancestors(tcx, impl_def_id)
-        .defs(tcx, assoc_ty_name, ty::AssociatedKind::Type)
+        .defs(tcx, assoc_ty_name, ty::AssociatedKind::Type, trait_def_id)
         .next() {
         assoc_item
     } else {
@@ -1537,20 +1620,11 @@ impl<'tcx> ProjectionCache<'tcx> {
         Ok(())
     }
 
-    /// Indicates that `key` was normalized to `value`. If `cacheable` is false,
-    /// then this result is sadly not cacheable (this only occurs in weird
-    /// buggy cases, like #38714).
-    fn insert_ty(&mut self,
-                 key: ProjectionCacheKey<'tcx>,
-                 value: NormalizedTy<'tcx>,
-                 cacheable: bool) {
+    /// Indicates that `key` was normalized to `value`.
+    fn insert_ty(&mut self, key: ProjectionCacheKey<'tcx>, value: NormalizedTy<'tcx>) {
         debug!("ProjectionCacheEntry::insert_ty: adding cache entry: key={:?}, value={:?}",
                key, value);
-        let fresh_key = if cacheable {
-            self.map.insert(key, ProjectionCacheEntry::NormalizedTy(value))
-        } else {
-            !self.map.remove(key)
-        };
+        let fresh_key = self.map.insert(key, ProjectionCacheEntry::NormalizedTy(value));
         assert!(!fresh_key, "never started projecting `{:?}`", key);
     }
 

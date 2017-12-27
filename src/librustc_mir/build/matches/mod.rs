@@ -16,8 +16,7 @@
 use build::{BlockAnd, BlockAndExtension, Builder};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::bitvec::BitVector;
-use rustc::middle::const_val::ConstVal;
-use rustc::ty::{AdtDef, Ty};
+use rustc::ty::{self, Ty};
 use rustc::mir::*;
 use rustc::hir;
 use hair::*;
@@ -47,8 +46,11 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         // Get the arm bodies and their scopes, while declaring bindings.
         let arm_bodies: Vec<_> = arms.iter().map(|arm| {
+            // BUG: use arm lint level
             let body = self.hir.mirror(arm.body.clone());
-            let scope = self.declare_bindings(None, body.span, &arm.patterns[0]);
+            let scope = self.declare_bindings(None, body.span,
+                                              LintLevel::Inherited,
+                                              &arm.patterns[0]);
             (body, scope.unwrap_or(self.visibility_scope))
         }).collect();
 
@@ -172,11 +174,22 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn declare_bindings(&mut self,
                             mut var_scope: Option<VisibilityScope>,
                             scope_span: Span,
+                            lint_level: LintLevel,
                             pattern: &Pattern<'tcx>)
                             -> Option<VisibilityScope> {
+        assert!(!(var_scope.is_some() && lint_level.is_explicit()),
+               "can't have both a var and a lint scope at the same time");
         self.visit_bindings(pattern, &mut |this, mutability, name, var, span, ty| {
             if var_scope.is_none() {
-                var_scope = Some(this.new_visibility_scope(scope_span));
+                var_scope = Some(this.new_visibility_scope(scope_span,
+                                                           LintLevel::Inherited,
+                                                           None));
+                // If we have lints, create a new visibility scope
+                // that marks the lints for the locals.
+                if lint_level.is_explicit() {
+                    this.visibility_scope =
+                        this.new_visibility_scope(scope_span, lint_level, None);
+                }
             }
             let source_info = SourceInfo {
                 span,
@@ -184,6 +197,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             };
             this.declare_binding(source_info, mutability, name, var, ty);
         });
+        // Pop any scope we created for the locals.
+        if let Some(var_scope) = var_scope {
+            self.visibility_scope = var_scope;
+        }
         var_scope
     }
 
@@ -194,7 +211,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         let source_info = self.source_info(span);
         self.cfg.push(block, Statement {
             source_info,
-            kind: StatementKind::StorageLive(Lvalue::Local(local_id))
+            kind: StatementKind::StorageLive(local_id)
         });
         Lvalue::Local(local_id)
     }
@@ -202,8 +219,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn schedule_drop_for_binding(&mut self, var: NodeId, span: Span) {
         let local_id = self.var_indices[&var];
         let var_ty = self.local_decls[local_id].ty;
-        let extent = self.hir.region_maps.var_scope(var);
-        self.schedule_drop(span, extent, &Lvalue::Local(local_id), var_ty);
+        let hir_id = self.hir.tcx().hir.node_to_hir_id(var);
+        let region_scope = self.hir.region_scope_tree.var_scope(hir_id.local_id);
+        self.schedule_drop(span, region_scope, &Lvalue::Local(local_id), var_ty);
     }
 
     pub fn visit_bindings<F>(&mut self, pattern: &Pattern<'tcx>, f: &mut F)
@@ -293,20 +311,20 @@ pub struct MatchPair<'pat, 'tcx:'pat> {
 enum TestKind<'tcx> {
     // test the branches of enum
     Switch {
-        adt_def: &'tcx AdtDef,
+        adt_def: &'tcx ty::AdtDef,
         variants: BitVector,
     },
 
     // test the branches of enum
     SwitchInt {
         switch_ty: Ty<'tcx>,
-        options: Vec<ConstVal<'tcx>>,
-        indices: FxHashMap<ConstVal<'tcx>, usize>,
+        options: Vec<&'tcx ty::Const<'tcx>>,
+        indices: FxHashMap<&'tcx ty::Const<'tcx>, usize>,
     },
 
     // test for equality
     Eq {
-        value: ConstVal<'tcx>,
+        value: &'tcx ty::Const<'tcx>,
         ty: Ty<'tcx>,
     },
 
@@ -712,6 +730,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             ty: var_ty.clone(),
             name: Some(name),
             source_info,
+            lexical_scope: self.visibility_scope,
+            internal: false,
             is_user_variable: true,
         });
         self.var_indices.insert(var_id, var);

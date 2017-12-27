@@ -11,7 +11,7 @@
 use llvm::{self, ValueRef, AttributePlace};
 use base;
 use builder::Builder;
-use common::{instance_ty, ty_fn_sig, type_is_fat_ptr, C_uint};
+use common::{instance_ty, ty_fn_sig, type_is_fat_ptr, C_usize};
 use context::CrateContext;
 use cabi_x86;
 use cabi_x86_64;
@@ -37,6 +37,7 @@ use type_of;
 use rustc::hir;
 use rustc::ty::{self, Ty};
 use rustc::ty::layout::{self, Layout, LayoutTyper, TyLayout, Size};
+use rustc_back::PanicStrategy;
 
 use libc::c_uint;
 use std::cmp;
@@ -65,17 +66,17 @@ pub use self::attr_impl::ArgAttribute;
 mod attr_impl {
     // The subset of llvm::Attribute needed for arguments, packed into a bitfield.
     bitflags! {
-        #[derive(Default, Debug)]
-        flags ArgAttribute : u16 {
-            const ByVal     = 1 << 0,
-            const NoAlias   = 1 << 1,
-            const NoCapture = 1 << 2,
-            const NonNull   = 1 << 3,
-            const ReadOnly  = 1 << 4,
-            const SExt      = 1 << 5,
-            const StructRet = 1 << 6,
-            const ZExt      = 1 << 7,
-            const InReg     = 1 << 8,
+        #[derive(Default)]
+        pub struct ArgAttribute: u16 {
+            const ByVal     = 1 << 0;
+            const NoAlias   = 1 << 1;
+            const NoCapture = 1 << 2;
+            const NonNull   = 1 << 3;
+            const ReadOnly  = 1 << 4;
+            const SExt      = 1 << 5;
+            const StructRet = 1 << 6;
+            const ZExt      = 1 << 7;
+            const InReg     = 1 << 8;
         }
     }
 }
@@ -527,7 +528,7 @@ impl<'a, 'tcx> ArgType<'tcx> {
         }
         let ccx = bcx.ccx;
         if self.is_indirect() {
-            let llsz = C_uint(ccx, self.layout.size(ccx).bytes());
+            let llsz = C_usize(ccx, self.layout.size(ccx).bytes());
             let llalign = self.layout.align(ccx).abi();
             base::call_memcpy(bcx, dst, val, llsz, llalign as u32);
         } else if let Some(ty) = self.cast {
@@ -564,7 +565,7 @@ impl<'a, 'tcx> ArgType<'tcx> {
                 base::call_memcpy(bcx,
                                   bcx.pointercast(dst, Type::i8p(ccx)),
                                   bcx.pointercast(llscratch, Type::i8p(ccx)),
-                                  C_uint(ccx, self.layout.size(ccx).bytes()),
+                                  C_usize(ccx, self.layout.size(ccx).bytes()),
                                   cmp::min(self.layout.align(ccx).abi() as u32,
                                            llalign_of_min(ccx, ty)));
 
@@ -612,7 +613,7 @@ pub struct FnType<'tcx> {
 impl<'a, 'tcx> FnType<'tcx> {
     pub fn of_instance(ccx: &CrateContext<'a, 'tcx>, instance: &ty::Instance<'tcx>)
                        -> Self {
-        let fn_ty = instance_ty(ccx.shared(), &instance);
+        let fn_ty = instance_ty(ccx.tcx(), &instance);
         let sig = ty_fn_sig(ccx, fn_ty);
         let sig = ccx.tcx().erase_late_bound_regions_and_normalize(&sig);
         Self::new(ccx, sig, &[])
@@ -750,9 +751,7 @@ impl<'a, 'tcx> FnType<'tcx> {
                 Some(ty.boxed_ty())
             }
 
-            ty::TyRef(b, mt) => {
-                use rustc::ty::{BrAnon, ReLateBound};
-
+            ty::TyRef(_, mt) => {
                 // `&mut` pointer parameters never alias other parameters, or mutable global data
                 //
                 // `&T` where `T` contains no `UnsafeCell<U>` is immutable, and can be marked as
@@ -760,19 +759,22 @@ impl<'a, 'tcx> FnType<'tcx> {
                 // on memory dependencies rather than pointer equality
                 let is_freeze = ccx.shared().type_is_freeze(mt.ty);
 
-                if mt.mutbl != hir::MutMutable && is_freeze {
+                let no_alias_is_safe =
+                    if ccx.shared().tcx().sess.opts.debugging_opts.mutable_noalias ||
+                       ccx.shared().tcx().sess.panic_strategy() == PanicStrategy::Abort {
+                        // Mutable refrences or immutable shared references
+                        mt.mutbl == hir::MutMutable || is_freeze
+                    } else {
+                        // Only immutable shared references
+                        mt.mutbl != hir::MutMutable && is_freeze
+                    };
+
+                if no_alias_is_safe {
                     arg.attrs.set(ArgAttribute::NoAlias);
                 }
 
                 if mt.mutbl == hir::MutImmutable && is_freeze {
                     arg.attrs.set(ArgAttribute::ReadOnly);
-                }
-
-                // When a reference in an argument has no named lifetime, it's
-                // impossible for that reference to escape this function
-                // (returned or stored beyond the call by a closure).
-                if let ReLateBound(_, BrAnon(_)) = *b {
-                    arg.attrs.set(ArgAttribute::NoCapture);
                 }
 
                 Some(mt.ty)

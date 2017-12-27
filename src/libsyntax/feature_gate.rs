@@ -26,7 +26,7 @@ use self::AttributeType::*;
 use self::AttributeGate::*;
 
 use abi::Abi;
-use ast::{self, NodeId, PatKind, RangeEnd};
+use ast::{self, NodeId, PatKind, RangeEnd, RangeSyntax};
 use attr;
 use codemap::Spanned;
 use syntax_pos::Span;
@@ -137,6 +137,7 @@ declare_features! (
 
     // rustc internal
     (active, rustc_diagnostic_macros, "1.0.0", None),
+    (active, rustc_const_unstable, "1.0.0", None),
     (active, advanced_slice_patterns, "1.0.0", Some(23121)),
     (active, box_syntax, "1.0.0", Some(27779)),
     (active, placement_in_syntax, "1.0.0", Some(27779)),
@@ -260,7 +261,7 @@ declare_features! (
     // rustc internal
     (active, abi_vectorcall, "1.7.0", None),
 
-    // a...b and ...b
+    // a..=b and ..=b
     (active, inclusive_range_syntax, "1.7.0", Some(28237)),
 
     // X..Y patterns
@@ -268,9 +269,6 @@ declare_features! (
 
     // impl specialization (RFC 1210)
     (active, specialization, "1.7.0", Some(31844)),
-
-    // Allow Drop types in statics/const functions (RFC 1440)
-    (active, drop_types_in_const, "1.9.0", Some(33156)),
 
     // Allows cfg(target_has_atomic = "...").
     (active, cfg_target_has_atomic, "1.9.0", Some(32976)),
@@ -311,6 +309,9 @@ declare_features! (
 
     // The `i128` type
     (active, i128_type, "1.16.0", Some(35118)),
+
+    // The `repr(i128)` annotation for enums
+    (active, repr128, "1.16.0", Some(35118)),
 
     // The `unadjusted` ABI. Perma unstable.
     (active, abi_unadjusted, "1.16.0", None),
@@ -366,15 +367,37 @@ declare_features! (
     // Allows unsized tuple coercion.
     (active, unsized_tuple_coercion, "1.20.0", Some(42877)),
 
+    // Generators
+    (active, generators, "1.21.0", None),
+
+
     // global allocators and their internals
     (active, global_allocator, "1.20.0", None),
     (active, allocator_internals, "1.20.0", None),
 
     // #[doc(cfg(...))]
     (active, doc_cfg, "1.21.0", Some(43781)),
+    // #[doc(masked)]
+    (active, doc_masked, "1.21.0", Some(44027)),
 
-    // allow `#[must_use]` on functions (RFC 1940)
+    // allow `#[must_use]` on functions and comparison operators (RFC 1940)
     (active, fn_must_use, "1.21.0", Some(43302)),
+
+    // allow '|' at beginning of match arms (RFC 1925)
+    (active, match_beginning_vert, "1.21.0", Some(44101)),
+
+    // Copy/Clone closures (RFC 2132)
+    (active, clone_closures, "1.22.0", Some(44490)),
+    (active, copy_closures, "1.22.0", Some(44490)),
+
+    // allow `'_` placeholder lifetimes
+    (active, underscore_lifetimes, "1.22.0", Some(44524)),
+
+    // allow `..=` in patterns (RFC 1192)
+    (active, dotdoteq_in_patterns, "1.22.0", Some(28237)),
+
+    // Default match binding modes (RFC 2005)
+    (active, match_default_bindings, "1.22.0", Some(42640)),
 );
 
 declare_features! (
@@ -459,6 +482,8 @@ declare_features! (
     (accepted, compile_error, "1.20.0", Some(40872)),
     // See rust-lang/rfcs#1414. Allows code like `let x: &'static u32 = &42` to work.
     (accepted, rvalue_static_promotion, "1.21.0", Some(38865)),
+    // Allow Drop types in constants (RFC 1440)
+    (accepted, drop_types_in_const, "1.22.0", Some(33156)),
 );
 
 // If you change this, please modify src/doc/unstable-book as well. You must
@@ -613,6 +638,11 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                              "the `#[rustc_on_unimplemented]` attribute \
                                               is an experimental feature",
                                              cfg_fn!(on_unimplemented))),
+    ("rustc_const_unstable", Normal, Gated(Stability::Unstable,
+                                             "rustc_const_unstable",
+                                             "the `#[rustc_const_unstable]` attribute \
+                                              is an internal feature",
+                                             cfg_fn!(rustc_const_unstable))),
     ("global_allocator", Normal, Gated(Stability::Unstable,
                                        "global_allocator",
                                        "the `#[global_allocator]` attribute is \
@@ -695,6 +725,12 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                                    and will never be stable",
                                                   cfg_fn!(rustc_attrs))),
     ("rustc_partition_translated", Whitelisted, Gated(Stability::Unstable,
+                                                      "rustc_attrs",
+                                                      "this attribute \
+                                                       is just used for rustc unit tests \
+                                                       and will never be stable",
+                                                      cfg_fn!(rustc_attrs))),
+    ("rustc_synthetic", Whitelisted, Gated(Stability::Unstable,
                                                       "rustc_attrs",
                                                       "this attribute \
                                                        is just used for rustc unit tests \
@@ -791,7 +827,8 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
     ("no_debug", Whitelisted, Gated(
         Stability::Deprecated("https://github.com/rust-lang/rust/issues/29721"),
         "no_debug",
-        "the `#[no_debug]` attribute is an experimental feature",
+        "the `#[no_debug]` attribute was an experimental feature that has been \
+         deprecated due to lack of demand",
         cfg_fn!(no_debug))),
     ("omit_gdb_pretty_printer_section", Whitelisted, Gated(Stability::Unstable,
                                                        "omit_gdb_pretty_printer_section",
@@ -1222,6 +1259,10 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                     gate_feature_post!(&self, doc_cfg, attr.span,
                         "#[doc(cfg(...))] is experimental"
                     );
+                } else if content.iter().any(|c| c.check_name("masked")) {
+                    gate_feature_post!(&self, doc_masked, attr.span,
+                        "#[doc(masked)] is experimental"
+                    );
                 }
             }
         }
@@ -1248,8 +1289,8 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
     fn visit_item(&mut self, i: &'a ast::Item) {
         match i.node {
             ast::ItemKind::ExternCrate(_) => {
-                if attr::contains_name(&i.attrs[..], "macro_reexport") {
-                    gate_feature_post!(&self, macro_reexport, i.span,
+                if let Some(attr) = attr::find_by_name(&i.attrs[..], "macro_reexport") {
+                    gate_feature_post!(&self, macro_reexport, attr.span,
                                        "macros reexports are experimental \
                                         and possibly buggy");
                 }
@@ -1276,36 +1317,32 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                                         function may change over time, for now \
                                         a top-level `fn main()` is required");
                 }
-                if attr::contains_name(&i.attrs[..], "must_use") {
-                    gate_feature_post!(&self, fn_must_use, i.span,
+                if let Some(attr) = attr::find_by_name(&i.attrs[..], "must_use") {
+                    gate_feature_post!(&self, fn_must_use, attr.span,
                                        "`#[must_use]` on functions is experimental",
                                        GateStrength::Soft);
                 }
             }
 
             ast::ItemKind::Struct(..) => {
-                if attr::contains_name(&i.attrs[..], "simd") {
-                    gate_feature_post!(&self, simd, i.span,
+                if let Some(attr) = attr::find_by_name(&i.attrs[..], "simd") {
+                    gate_feature_post!(&self, simd, attr.span,
                                        "SIMD types are experimental and possibly buggy");
-                    self.context.parse_sess.span_diagnostic.span_warn(i.span,
+                    self.context.parse_sess.span_diagnostic.span_warn(attr.span,
                                                                       "the `#[simd]` attribute \
                                                                        is deprecated, use \
                                                                        `#[repr(simd)]` instead");
                 }
-                for attr in &i.attrs {
-                    if attr.path == "repr" {
-                        for item in attr.meta_item_list().unwrap_or_else(Vec::new) {
-                            if item.check_name("simd") {
-                                gate_feature_post!(&self, repr_simd, i.span,
-                                                   "SIMD types are experimental \
-                                                    and possibly buggy");
-
-                            }
-                            if item.check_name("align") {
-                                gate_feature_post!(&self, repr_align, i.span,
-                                                   "the struct `#[repr(align(u16))]` attribute \
-                                                    is experimental");
-                            }
+                if let Some(attr) = attr::find_by_name(&i.attrs[..], "repr") {
+                    for item in attr.meta_item_list().unwrap_or_else(Vec::new) {
+                        if item.check_name("simd") {
+                            gate_feature_post!(&self, repr_simd, attr.span,
+                                               "SIMD types are experimental and possibly buggy");
+                        }
+                        if item.check_name("align") {
+                            gate_feature_post!(&self, repr_align, attr.span,
+                                               "the struct `#[repr(align(u16))]` attribute \
+                                                is experimental");
                         }
                     }
                 }
@@ -1334,8 +1371,8 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
 
                 for impl_item in impl_items {
                     if let ast::ImplItemKind::Method(..) = impl_item.node {
-                        if attr::contains_name(&impl_item.attrs[..], "must_use") {
-                            gate_feature_post!(&self, fn_must_use, impl_item.span,
+                        if let Some(attr) = attr::find_by_name(&impl_item.attrs[..], "must_use") {
+                            gate_feature_post!(&self, fn_must_use, attr.span,
                                                "`#[must_use]` on methods is experimental",
                                                GateStrength::Soft);
                         }
@@ -1410,6 +1447,11 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             ast::ExprKind::InPlace(..) => {
                 gate_feature_post!(&self, placement_in_syntax, e.span, EXPLAIN_PLACEMENT_IN);
             }
+            ast::ExprKind::Yield(..) => {
+                gate_feature_post!(&self, generators,
+                                  e.span,
+                                  "yield syntax is experimental");
+            }
             ast::ExprKind::Lit(ref lit) => {
                 if let ast::LitKind::Int(_, ref ty) = lit.node {
                     match *ty {
@@ -1428,6 +1470,15 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             _ => {}
         }
         visit::walk_expr(self, e);
+    }
+
+    fn visit_arm(&mut self, arm: &'a ast::Arm) {
+        if let Some(span) = arm.beginning_vert {
+            gate_feature_post!(&self, match_beginning_vert,
+                               span,
+                               "Use of a '|' at the beginning of a match arm is experimental")
+        }
+        visit::walk_arm(self, arm)
     }
 
     fn visit_pat(&mut self, pattern: &'a ast::Pat) {
@@ -1452,6 +1503,10 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             PatKind::Range(_, _, RangeEnd::Excluded) => {
                 gate_feature_post!(&self, exclusive_range_pattern, pattern.span,
                                    "exclusive range pattern syntax is experimental");
+            }
+            PatKind::Range(_, _, RangeEnd::Included(RangeSyntax::DotDotEq)) => {
+                gate_feature_post!(&self, dotdoteq_in_patterns, pattern.span,
+                                   "`..=` syntax in patterns is experimental");
             }
             _ => {}
         }
@@ -1537,12 +1592,20 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
         }
         visit::walk_lifetime_def(self, lifetime_def)
     }
+
+    fn visit_lifetime(&mut self, lt: &'a ast::Lifetime) {
+        if lt.ident.name == "'_" {
+            gate_feature_post!(&self, underscore_lifetimes, lt.span,
+                               "underscore lifetimes are unstable");
+        }
+        visit::walk_lifetime(self, lt)
+    }
 }
 
 pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute]) -> Features {
     let mut features = Features::new();
 
-    let mut feature_checker = MutexFeatureChecker::default();
+    let mut feature_checker = FeatureChecker::default();
 
     for attr in krate_attrs {
         if !attr.check_name("feature") {
@@ -1591,14 +1654,16 @@ pub fn get_features(span_handler: &Handler, krate_attrs: &[ast::Attribute]) -> F
     features
 }
 
-// A collector for mutually-exclusive features and their flag spans
+/// A collector for mutually exclusive and interdependent features and their flag spans.
 #[derive(Default)]
-struct MutexFeatureChecker {
+struct FeatureChecker {
     proc_macro: Option<Span>,
     custom_attribute: Option<Span>,
+    copy_closures: Option<Span>,
+    clone_closures: Option<Span>,
 }
 
-impl MutexFeatureChecker {
+impl FeatureChecker {
     // If this method turns out to be a hotspot due to branching,
     // the branching can be eliminated by modifying `set!()` to set these spans
     // only for the features that need to be checked for mutual exclusion.
@@ -1611,6 +1676,14 @@ impl MutexFeatureChecker {
         if features.custom_attribute {
             self.custom_attribute = self.custom_attribute.or(Some(span));
         }
+
+        if features.copy_closures {
+            self.copy_closures = self.copy_closures.or(Some(span));
+        }
+
+        if features.clone_closures {
+            self.clone_closures = self.clone_closures.or(Some(span));
+        }
     }
 
     fn check(self, handler: &Handler) {
@@ -1619,6 +1692,15 @@ impl MutexFeatureChecker {
                                               `#![feature(custom_attribute)] at the same time")
                 .span_note(ca_span, "`#![feature(custom_attribute)]` declared here")
                 .emit();
+
+            panic!(FatalError);
+        }
+
+        if let (Some(span), None) = (self.copy_closures, self.clone_closures) {
+            handler.struct_span_err(span, "`#![feature(copy_closures)]` can only be used with \
+                                           `#![feature(clone_closures)]`")
+                  .span_note(span, "`#![feature(copy_closures)]` declared here")
+                  .emit();
 
             panic!(FatalError);
         }

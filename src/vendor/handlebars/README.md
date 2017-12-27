@@ -12,6 +12,35 @@ Rust templating with [Handlebars templating language](https://handlebarsjs.com).
 
 ## Getting Started
 
+### Quick Start
+
+```rust
+extern crate handlebars;
+#[macro_use]
+extern crate serde_json;
+
+use handlebars::Handlebars;
+
+fn main() {
+    let mut reg = Handlebars::new();
+    // render without register
+    println!(
+        "{}",
+        reg.template_render("Hello {{name}}", &json!({"name": "foo"}))
+            .unwrap()
+    );
+
+    // register template using given name
+    reg.register_template_string("tpl_1", "Good afternoon, {{name}}")
+        .unwrap();
+    println!("{}", reg.render("tpl_1", &json!({"name": "foo"})).unwrap());
+}
+```
+
+Note that I use `unwrap` here which is not recommended in your real code.
+
+### Code Example
+
 If you are not familiar with [handlebars language
 syntax](https://handlebarsjs.com), it is recommended to walk through
 their introduction first.
@@ -107,11 +136,6 @@ embed you page into this parent.
 You can find a real example for template inheritance in
 `examples/partials.rs`, and templates used by this file.
 
-From 0.23 we support Handlebars 4.0 partial syntax by
-default. Original partial syntax via `block`, `partial` helpers are
-still supported via feature flag `partial_legacy`. Examples can be
-find in `examples/partials.rs`.
-
 #### WebAssembly compatible
 
 You can use this handlebars implementation in your rust project that
@@ -124,13 +148,9 @@ compiles to WebAssembly. Checkout my fork of
   javascript version. Specifically, mustache list iteration and null
   check doesn't work. But you can use `#each` and `#if` for same
   behavior.
-* You will need to make your data `ToJson`-able, so we can render
-  it. If you were on nightly channel, we have [a syntax
-  extension](https://github.com/sunng87/tojson_macros) to generate
-  default `ToJson` implementation for you. If you use
-  [serde](https://github.com/serde-rs/serde), you can enable
-  `serde_type` feature of handlebars-rust and add `#derive[Serialize]`
-  for your types.
+* You will need to make your data `Serializable` on serde. We don't
+  actually serialize data into JSON string or similar. However, we use
+  JSON data type system in template render process.
 
 ### Handlebars-js features supported in Handlebars-rust
 

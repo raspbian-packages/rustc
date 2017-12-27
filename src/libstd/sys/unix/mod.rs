@@ -22,12 +22,12 @@ use libc;
 #[cfg(all(not(dox), target_os = "haiku"))]     pub use os::haiku as platform;
 #[cfg(all(not(dox), target_os = "ios"))]       pub use os::ios as platform;
 #[cfg(all(not(dox), target_os = "macos"))]     pub use os::macos as platform;
-#[cfg(all(not(dox), target_os = "nacl"))]      pub use os::nacl as platform;
 #[cfg(all(not(dox), target_os = "netbsd"))]    pub use os::netbsd as platform;
 #[cfg(all(not(dox), target_os = "openbsd"))]   pub use os::openbsd as platform;
 #[cfg(all(not(dox), target_os = "solaris"))]   pub use os::solaris as platform;
 #[cfg(all(not(dox), target_os = "emscripten"))] pub use os::emscripten as platform;
 #[cfg(all(not(dox), target_os = "fuchsia"))]   pub use os::fuchsia as platform;
+#[cfg(all(not(dox), target_os = "l4re"))]      pub use os::linux as platform;
 
 #[macro_use]
 pub mod weak;
@@ -44,7 +44,12 @@ pub mod fd;
 pub mod fs;
 pub mod memchr;
 pub mod mutex;
+#[cfg(not(target_os = "l4re"))]
 pub mod net;
+#[cfg(target_os = "l4re")]
+mod l4re;
+#[cfg(target_os = "l4re")]
+pub use self::l4re::net;
 pub mod os;
 pub mod os_str;
 pub mod path;
@@ -71,11 +76,11 @@ pub fn init() {
         reset_sigpipe();
     }
 
-    #[cfg(not(any(target_os = "nacl", target_os = "emscripten", target_os="fuchsia")))]
+    #[cfg(not(any(target_os = "emscripten", target_os="fuchsia")))]
     unsafe fn reset_sigpipe() {
         assert!(signal(libc::SIGPIPE, libc::SIG_IGN) != libc::SIG_ERR);
     }
-    #[cfg(any(target_os = "nacl", target_os = "emscripten", target_os="fuchsia"))]
+    #[cfg(any(target_os = "emscripten", target_os="fuchsia"))]
     unsafe fn reset_sigpipe() {}
 }
 

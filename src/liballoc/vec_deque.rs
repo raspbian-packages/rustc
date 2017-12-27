@@ -459,9 +459,11 @@ impl<T> VecDeque<T> {
     ///
     /// `i` and `j` may be equal.
     ///
-    /// Fails if there is no element with either index.
-    ///
     /// Element at index 0 is the front of the queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if either index is out of bounds.
     ///
     /// # Examples
     ///
@@ -1920,7 +1922,7 @@ impl<'a, T: 'a + fmt::Debug> fmt::Debug for Iter<'a, T> {
     }
 }
 
-// FIXME(#19839) Remove in favor of `#[derive(Clone)]`
+// FIXME(#26925) Remove in favor of `#[derive(Clone)]`
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Iter<'a, T> {
     fn clone(&self) -> Iter<'a, T> {
@@ -1970,6 +1972,14 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
         }
         self.head = wrap_index(self.head.wrapping_sub(1), self.ring.len());
         unsafe { Some(self.ring.get_unchecked(self.head)) }
+    }
+
+    fn rfold<Acc, F>(self, mut accum: Acc, mut f: F) -> Acc
+        where F: FnMut(Acc, Self::Item) -> Acc
+    {
+        let (front, back) = RingSlices::ring_slices(self.ring, self.head, self.tail);
+        accum = back.iter().rfold(accum, &mut f);
+        front.iter().rfold(accum, &mut f)
     }
 }
 
@@ -2055,6 +2065,14 @@ impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
             let elem = self.ring.get_unchecked_mut(self.head);
             Some(&mut *(elem as *mut _))
         }
+    }
+
+    fn rfold<Acc, F>(self, mut accum: Acc, mut f: F) -> Acc
+        where F: FnMut(Acc, Self::Item) -> Acc
+    {
+        let (front, back) = RingSlices::ring_slices(self.ring, self.head, self.tail);
+        accum = back.iter_mut().rfold(accum, &mut f);
+        front.iter_mut().rfold(accum, &mut f)
     }
 }
 

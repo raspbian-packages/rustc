@@ -20,7 +20,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
              let arena: TypedArena<SmallDroppable> = TypedArena::new();
 --- a/src/libstd/thread/local.rs
 +++ b/src/libstd/thread/local.rs
-@@ -520,7 +520,7 @@
+@@ -531,7 +531,7 @@
  #[cfg(all(test, not(target_os = "emscripten")))]
  mod tests {
      use sync::mpsc::{channel, Sender};
@@ -29,7 +29,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
      use super::LocalKeyState;
      use thread;
  
-@@ -533,9 +533,9 @@
+@@ -544,9 +544,9 @@
          }
      }
  

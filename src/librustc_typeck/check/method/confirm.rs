@@ -16,6 +16,7 @@ use hir::def_id::DefId;
 use rustc::ty::subst::Substs;
 use rustc::traits;
 use rustc::ty::{self, LvaluePreference, NoPreference, PreferMutLvalue, Ty};
+use rustc::ty::subst::Subst;
 use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, OverloadedDeref};
 use rustc::ty::fold::TypeFoldable;
 use rustc::infer::{self, InferOk};
@@ -84,9 +85,6 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // Adjust the self expression the user provided and obtain the adjusted type.
         let self_ty = self.adjust_self_ty(unadjusted_self_ty, &pick);
 
-        // Make sure nobody calls `drop()` explicitly.
-        self.enforce_illegal_method_limitations(&pick);
-
         // Create substitutions for the method's type parameters.
         let rcvr_substs = self.fresh_receiver_substs(self_ty, &pick);
         let all_substs = self.instantiate_method_substs(&pick, segment, rcvr_substs);
@@ -95,6 +93,22 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
 
         // Create the final signature for the method, replacing late-bound regions.
         let (method_sig, method_predicates) = self.instantiate_method_sig(&pick, all_substs);
+
+        // Unify the (adjusted) self type with what the method expects.
+        //
+        // SUBTLE: if we want good error messages, because of "guessing" while matching
+        // traits, no trait system method can be called before this point because they
+        // could alter our Self-type, except for normalizing the receiver from the
+        // signature (which is also done during probing).
+        let method_sig_rcvr =
+            self.normalize_associated_types_in(self.span, &method_sig.inputs()[0]);
+        self.unify_receivers(self_ty, method_sig_rcvr);
+
+        let (method_sig, method_predicates) =
+            self.normalize_associated_types_in(self.span, &(method_sig, method_predicates));
+
+        // Make sure nobody calls `drop()` explicitly.
+        self.enforce_illegal_method_limitations(&pick);
 
         // If there is a `Self: Sized` bound and `Self` is a trait object, it is possible that
         // something which derefs to `Self` actually implements the trait and the caller
@@ -105,9 +119,6 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // in scope, and if we find another method which can be used, we'll output an
         // appropriate hint suggesting to import the trait.
         let illegal_sized_bound = self.predicates_require_illegal_sized_bound(&method_predicates);
-
-        // Unify the (adjusted) self type with what the method expects.
-        self.unify_receivers(self_ty, method_sig.inputs()[0]);
 
         // Add any trait/regions obligations specified on the method's type parameters.
         // We won't add these if we encountered an illegal sized bound, so that we can use
@@ -232,24 +243,6 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
                 })
             }
 
-            probe::ExtensionImplPick(impl_def_id) => {
-                // The method being invoked is the method as defined on the trait,
-                // so return the substitutions from the trait. Consider:
-                //
-                //     impl<A,B,C> Trait<A,B> for Foo<C> { ... }
-                //
-                // If we instantiate A, B, and C with $A, $B, and $C
-                // respectively, then we want to return the type
-                // parameters from the trait ([$A,$B]), not those from
-                // the impl ([$A,$B,$C]) not the receiver type ([$C]).
-                let impl_polytype = self.impl_self_ty(self.span, impl_def_id);
-                let impl_trait_ref =
-                    self.instantiate_type_scheme(self.span,
-                                                 impl_polytype.substs,
-                                                 &self.tcx.impl_trait_ref(impl_def_id).unwrap());
-                impl_trait_ref.substs
-            }
-
             probe::TraitPick => {
                 let trait_def_id = pick.item.container.id();
 
@@ -318,7 +311,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
             if i < parent_substs.len() {
                 parent_substs.region_at(i)
             } else if let Some(lifetime)
-                    = provided.lifetimes.get(i - parent_substs.len()) {
+                    = provided.as_ref().and_then(|p| p.lifetimes.get(i - parent_substs.len())) {
                 AstConv::ast_region_to_region(self.fcx, lifetime, Some(def))
             } else {
                 self.region_var_for_def(self.span, def)
@@ -328,7 +321,10 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
             if i < parent_substs.len() {
                 parent_substs.type_at(i)
             } else if let Some(ast_ty)
-                    = provided.types.get(i - parent_substs.len() - method_generics.regions.len()) {
+                = provided.as_ref().and_then(|p| {
+                    p.types.get(i - parent_substs.len() - method_generics.regions.len())
+                })
+            {
                 self.to_ty(ast_ty)
             } else {
                 self.type_var_for_def(self.span, def, cur_substs)
@@ -353,6 +349,9 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
     ///////////////////////////////////////////////////////////////////////////
     //
 
+    // NOTE: this returns the *unnormalized* predicates and method sig. Because of
+    // inference guessing, the predicates and method signature can't be normalized
+    // until we unify the `Self` type.
     fn instantiate_method_sig(&mut self,
                               pick: &probe::Pick<'tcx>,
                               all_substs: &'tcx Substs<'tcx>)
@@ -367,8 +366,6 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         let def_id = pick.item.def_id;
         let method_predicates = self.tcx.predicates_of(def_id)
                                     .instantiate(self.tcx, all_substs);
-        let method_predicates = self.normalize_associated_types_in(self.span,
-                                                                   &method_predicates);
 
         debug!("method_predicates after subst = {:?}", method_predicates);
 
@@ -384,7 +381,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         debug!("late-bound lifetimes from method instantiated, method_sig={:?}",
                method_sig);
 
-        let method_sig = self.instantiate_type_scheme(self.span, all_substs, &method_sig);
+        let method_sig = method_sig.subst(self.tcx, all_substs);
         debug!("type scheme substituted, method_sig={:?}", method_sig);
 
         (method_sig, method_predicates)
@@ -558,7 +555,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
     fn predicates_require_illegal_sized_bound(&self,
                                               predicates: &ty::InstantiatedPredicates<'tcx>)
                                               -> bool {
-        let sized_def_id = match self.tcx.lang_items.sized_trait() {
+        let sized_def_id = match self.tcx.lang_items().sized_trait() {
             Some(def_id) => def_id,
             None => return false,
         };

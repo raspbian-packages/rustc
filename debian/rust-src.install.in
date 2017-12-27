@@ -6,7 +6,7 @@ LICENSE-MIT     usr/src/rustc-RUST_LONG_VERSION
 CONTRIBUTING.md usr/src/rustc-RUST_LONG_VERSION
 README.md       usr/src/rustc-RUST_LONG_VERSION
 RELEASES.md     usr/src/rustc-RUST_LONG_VERSION
+config.toml.example    usr/src/rustc-RUST_LONG_VERSION
 configure       usr/src/rustc-RUST_LONG_VERSION
 x.py            usr/src/rustc-RUST_LONG_VERSION
-man             usr/src/rustc-RUST_LONG_VERSION
 src             usr/src/rustc-RUST_LONG_VERSION

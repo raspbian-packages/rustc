@@ -145,7 +145,27 @@ pub struct Lifetime {
     /// HIR lowering inserts these placeholders in type paths that
     /// refer to type definitions needing lifetime parameters,
     /// `&T` and `&mut T`, and trait objects without `... + 'a`.
-    pub name: Name,
+    pub name: LifetimeName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+pub enum LifetimeName {
+    Implicit,
+    Underscore,
+    Static,
+    Name(Name),
+}
+
+impl LifetimeName {
+    pub fn name(&self) -> Name {
+        use self::LifetimeName::*;
+        match *self {
+            Implicit => keywords::Invalid.name(),
+            Underscore => Symbol::intern("'_"),
+            Static => keywords::StaticLifetime.name(),
+            Name(name) => name,
+        }
+    }
 }
 
 impl fmt::Debug for Lifetime {
@@ -159,11 +179,15 @@ impl fmt::Debug for Lifetime {
 
 impl Lifetime {
     pub fn is_elided(&self) -> bool {
-        self.name == keywords::Invalid.name()
+        use self::LifetimeName::*;
+        match self.name {
+            Implicit | Underscore => true,
+            Static | Name(_) => false,
+        }
     }
 
     pub fn is_static(&self) -> bool {
-        self.name == "'static"
+        self.name == LifetimeName::Static
     }
 }
 
@@ -212,7 +236,13 @@ pub struct PathSegment {
     /// this is more than just simple syntactic sugar; the use of
     /// parens affects the region binding rules, so we preserve the
     /// distinction.
-    pub parameters: PathParameters,
+    pub parameters: Option<P<PathParameters>>,
+
+    /// Whether to infer remaining type parameters, if any.
+    /// This only applies to expression and pattern paths, and
+    /// out of those only the segments with no type parameters
+    /// to begin with, e.g. `Vec::new` is `<Vec<..>>::new::<..>`.
+    pub infer_types: bool,
 }
 
 impl PathSegment {
@@ -220,8 +250,34 @@ impl PathSegment {
     pub fn from_name(name: Name) -> PathSegment {
         PathSegment {
             name,
-            parameters: PathParameters::none()
+            infer_types: true,
+            parameters: None
         }
+    }
+
+    pub fn new(name: Name, parameters: PathParameters, infer_types: bool) -> Self {
+        PathSegment {
+            name,
+            infer_types,
+            parameters: if parameters.is_empty() {
+                None
+            } else {
+                Some(P(parameters))
+            }
+        }
+    }
+
+    // FIXME: hack required because you can't create a static
+    // PathParameters, so you can't just return a &PathParameters.
+    pub fn with_parameters<F, R>(&self, f: F) -> R
+        where F: FnOnce(&PathParameters) -> R
+    {
+        let dummy = PathParameters::none();
+        f(if let Some(ref params) = self.parameters {
+            &params
+        } else {
+            &dummy
+        })
     }
 }
 
@@ -231,11 +287,6 @@ pub struct PathParameters {
     pub lifetimes: HirVec<Lifetime>,
     /// The type parameters for this path segment, if present.
     pub types: HirVec<P<Ty>>,
-    /// Whether to infer remaining type parameters, if any.
-    /// This only applies to expression and pattern paths, and
-    /// out of those only the segments with no type parameters
-    /// to begin with, e.g. `Vec::new` is `<Vec<..>>::new::<..>`.
-    pub infer_types: bool,
     /// Bindings (equality constraints) on associated types, if present.
     /// E.g., `Foo<A=Bar>`.
     pub bindings: HirVec<TypeBinding>,
@@ -250,10 +301,14 @@ impl PathParameters {
         Self {
             lifetimes: HirVec::new(),
             types: HirVec::new(),
-            infer_types: true,
             bindings: HirVec::new(),
             parenthesized: false,
         }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lifetimes.is_empty() && self.types.is_empty() &&
+            self.bindings.is_empty() && !self.parenthesized
     }
 
     pub fn inputs(&self) -> &[P<Ty>] {
@@ -296,6 +351,7 @@ pub struct TyParam {
     pub default: Option<P<Ty>>,
     pub span: Span,
     pub pure_wrt_drop: bool,
+    pub synthetic: Option<SyntheticTyParamKind>,
 }
 
 /// Represents lifetimes and type parameters attached to a declaration
@@ -364,6 +420,13 @@ impl Generics {
     }
 }
 
+/// Synthetic Type Parameters are converted to an other form during lowering, this allows
+/// to track the original form they had. Usefull for error messages.
+#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum SyntheticTyParamKind {
+    ImplTrait
+}
+
 /// A `where` clause in a definition
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct WhereClause {
@@ -413,6 +476,10 @@ pub struct WhereEqPredicate {
 
 pub type CrateConfig = HirVec<P<MetaItem>>;
 
+/// The top-level data structure that stores the entire contents of
+/// the crate currently being compiled.
+///
+/// For more details, see [the module-level README](README.md).
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Debug)]
 pub struct Crate {
     pub module: Mod,
@@ -611,7 +678,7 @@ pub enum BindingAnnotation {
   RefMut,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum RangeEnd {
     Included,
     Excluded,
@@ -623,8 +690,10 @@ pub enum PatKind {
     Wild,
 
     /// A fresh binding `ref mut binding @ OPT_SUBPATTERN`.
-    /// The `DefId` is for the definition of the variable being bound.
-    Binding(BindingAnnotation, DefId, Spanned<Name>, Option<P<Pat>>),
+    /// The `NodeId` is the canonical ID for the variable being bound,
+    /// e.g. in `Ok(x) | Err(x)`, both `x` use the same canonical ID,
+    /// which is the pattern ID of the first `x`.
+    Binding(BindingAnnotation, NodeId, Spanned<Name>, Option<P<Pat>>),
 
     /// A struct or struct variant pattern, e.g. `Variant {x, y, ..}`.
     /// The `bool` is `true` in the presence of a `..`.
@@ -847,8 +916,6 @@ impl Stmt_ {
     }
 }
 
-// FIXME (pending discussion of #1697, #2178...): local should really be
-// a refinement on pat.
 /// Local represents a `let` statement, e.g., `let <pat>:<ty> = <expr>;`
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Local {
@@ -925,11 +992,32 @@ pub struct BodyId {
     pub node_id: NodeId,
 }
 
-/// The body of a function or constant value.
+/// The body of a function, closure, or constant value. In the case of
+/// a function, the body contains not only the function body itself
+/// (which is an expression), but also the argument patterns, since
+/// those are something that the caller doesn't really care about.
+///
+/// # Examples
+///
+/// ```
+/// fn foo((x, y): (u32, u32)) -> u32 {
+///     x + y
+/// }
+/// ```
+///
+/// Here, the `Body` associated with `foo()` would contain:
+///
+/// - an `arguments` array containing the `(x, y)` pattern
+/// - a `value` containing the `x + y` expression (maybe wrapped in a block)
+/// - `is_generator` would be false
+///
+/// All bodies have an **owner**, which can be accessed via the HIR
+/// map using `body_owner_def_id()`.
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Body {
     pub arguments: HirVec<Arg>,
-    pub value: Expr
+    pub value: Expr,
+    pub is_generator: bool,
 }
 
 impl Body {
@@ -1007,7 +1095,10 @@ pub enum Expr_ {
     /// A closure (for example, `move |a, b, c| {a + b + c}`).
     ///
     /// The final span is the span of the argument block `|...|`
-    ExprClosure(CaptureClause, P<FnDecl>, BodyId, Span),
+    ///
+    /// This may also be a generator literal, indicated by the final boolean,
+    /// in that case there is an GeneratorClause.
+    ExprClosure(CaptureClause, P<FnDecl>, BodyId, Span, bool),
     /// A block (`{ ... }`)
     ExprBlock(P<Block>),
 
@@ -1052,6 +1143,9 @@ pub enum Expr_ {
     /// For example, `[1; 5]`. The first expression is the element
     /// to be repeated; the second is the number of times to repeat it.
     ExprRepeat(P<Expr>, BodyId),
+
+    /// A suspension point for generators. This is `yield <expr>` in Rust.
+    ExprYield(P<Expr>),
 }
 
 /// Optionally `Self`-qualified value/type path or associated extension.
@@ -1297,6 +1391,7 @@ pub struct Ty {
     pub id: NodeId,
     pub node: Ty_,
     pub span: Span,
+    pub hir_id: HirId,
 }
 
 impl fmt::Debug for Ty {
@@ -1323,6 +1418,7 @@ pub struct BareFnTy {
     pub abi: Abi,
     pub lifetimes: HirVec<LifetimeDef>,
     pub decl: P<FnDecl>,
+    pub arg_names: HirVec<Spanned<Name>>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -1834,6 +1930,15 @@ pub struct Freevar {
 
     // First span where it is accessed (there can be multiple).
     pub span: Span
+}
+
+impl Freevar {
+    pub fn var_id(&self) -> NodeId {
+        match self.def {
+            Def::Local(id) | Def::Upvar(id, ..) => id,
+            _ => bug!("Freevar::var_id: bad def ({:?})", self.def)
+        }
+    }
 }
 
 pub type FreevarMap = NodeMap<Vec<Freevar>>;

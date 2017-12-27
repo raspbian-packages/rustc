@@ -48,6 +48,9 @@ fn anonymize_predicate<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
 
         ty::Predicate::Subtype(ref data) =>
             ty::Predicate::Subtype(tcx.anonymize_late_bound_regions(data)),
+
+        ty::Predicate::ConstEvaluatable(def_id, substs) =>
+            ty::Predicate::ConstEvaluatable(def_id, substs),
     }
 }
 
@@ -174,6 +177,10 @@ impl<'cx, 'gcx, 'tcx> Elaborator<'cx, 'gcx, 'tcx> {
             }
             ty::Predicate::ClosureKind(..) => {
                 // Nothing to elaborate when waiting for a closure's kind to be inferred.
+            }
+            ty::Predicate::ConstEvaluatable(..) => {
+                // Currently, we do not elaborate const-evaluatable
+                // predicates.
             }
 
             ty::Predicate::RegionOutlives(..) => {
@@ -513,6 +520,19 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         ty::Binder((trait_ref, sig.skip_binder().output()))
     }
 
+    pub fn generator_trait_ref_and_outputs(self,
+        fn_trait_def_id: DefId,
+        self_ty: Ty<'tcx>,
+        sig: ty::PolyGenSig<'tcx>)
+        -> ty::Binder<(ty::TraitRef<'tcx>, Ty<'tcx>, Ty<'tcx>)>
+    {
+        let trait_ref = ty::TraitRef {
+            def_id: fn_trait_def_id,
+            substs: self.mk_substs_trait(self_ty, &[]),
+        };
+        ty::Binder((trait_ref, sig.skip_binder().yield_ty, sig.skip_binder().return_ty))
+    }
+
     pub fn impl_is_default(self, node_item_def_id: DefId) -> bool {
         match self.hir.as_local_node_id(node_item_def_id) {
             Some(node_id) => {
@@ -525,8 +545,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             }
             None => {
                 self.global_tcx()
-                    .sess
-                    .cstore
                     .impl_defaultness(node_item_def_id)
                     .is_default()
             }

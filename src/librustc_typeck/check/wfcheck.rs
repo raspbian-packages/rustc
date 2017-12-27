@@ -449,7 +449,7 @@ impl<'a, 'gcx> CheckTypeWellFormedVisitor<'a, 'gcx> {
                                          fcx: &FnCtxt<'fcx, 'gcx, 'tcx>,
                                          method_sig: &hir::MethodSig,
                                          method: &ty::AssociatedItem,
-                                         self_ty: ty::Ty<'tcx>)
+                                         self_ty: Ty<'tcx>)
     {
         // check that the type of the method's receiver matches the
         // method's first parameter.
@@ -523,7 +523,7 @@ impl<'a, 'gcx> CheckTypeWellFormedVisitor<'a, 'gcx> {
 
             let (span, name) = if index < ast_generics.lifetimes.len() {
                 (ast_generics.lifetimes[index].lifetime.span,
-                 ast_generics.lifetimes[index].lifetime.name)
+                 ast_generics.lifetimes[index].lifetime.name.name())
             } else {
                 let index = index - ast_generics.lifetimes.len();
                 (ast_generics.ty_params[index].span,
@@ -539,7 +539,7 @@ impl<'a, 'gcx> CheckTypeWellFormedVisitor<'a, 'gcx> {
     {
         let mut err = error_392(self.tcx, span, param_name);
 
-        let suggested_marker_id = self.tcx.lang_items.phantom_data();
+        let suggested_marker_id = self.tcx.lang_items().phantom_data();
         match suggested_marker_id {
             Some(def_id) => {
                 err.help(

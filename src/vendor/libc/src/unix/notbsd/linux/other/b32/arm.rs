@@ -38,6 +38,37 @@ s! {
         pub st_ino: ::ino64_t,
     }
 
+    pub struct statfs64 {
+        pub f_type: ::__fsword_t,
+        pub f_bsize: ::__fsword_t,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_fsid: ::fsid_t,
+        pub f_namelen: ::__fsword_t,
+        pub f_frsize: ::__fsword_t,
+        pub f_flags: ::__fsword_t,
+        pub f_spare: [::__fsword_t; 4],
+    }
+
+    pub struct statvfs64 {
+        pub f_bsize: ::c_ulong,
+        pub f_frsize: ::c_ulong,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_favail: u64,
+        pub f_fsid: ::c_ulong,
+        __f_unused: ::c_int,
+        pub f_flag: ::c_ulong,
+        pub f_namemax: ::c_ulong,
+        __f_spare: [::c_int; 6],
+    }
+
     pub struct shmid_ds {
         pub shm_perm: ::ipc_perm,
         pub shm_segsz: ::size_t,
@@ -94,8 +125,10 @@ pub const SO_RCVBUFFORCE: ::c_int = 33;
 pub const FIOCLEX: ::c_ulong = 0x5451;
 pub const FIONBIO: ::c_ulong = 0x5421;
 
+pub const SYS_pivot_root: ::c_long = 218;
 pub const SYS_gettid: ::c_long = 224;
 pub const SYS_perf_event_open: ::c_long = 364;
+pub const SYS_memfd_create: ::c_long = 385;
 
 pub const PTRACE_GETFPXREGS: ::c_uint = 18;
 pub const PTRACE_SETFPXREGS: ::c_uint = 19;

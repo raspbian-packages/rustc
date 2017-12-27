@@ -8,9 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::{OverlapError, specializes};
+use super::OverlapError;
 
 use hir::def_id::DefId;
+use ich::{self, StableHashingContext};
+use rustc_data_structures::stable_hasher::{HashStable, StableHasher,
+                                           StableHasherResult};
 use traits;
 use ty::{self, TyCtxt, TypeFoldable};
 use ty::fast_reject::{self, SimplifiedType};
@@ -113,17 +116,17 @@ impl<'a, 'gcx, 'tcx> Children {
                 let overlap = traits::overlapping_impls(&infcx,
                                                         possible_sibling,
                                                         impl_def_id);
-                if let Some(impl_header) = overlap {
+                if let Some(overlap) = overlap {
                     if tcx.impls_are_allowed_to_overlap(impl_def_id, possible_sibling) {
                         return Ok((false, false));
                     }
 
-                    let le = specializes(tcx, impl_def_id, possible_sibling);
-                    let ge = specializes(tcx, possible_sibling, impl_def_id);
+                    let le = tcx.specializes((impl_def_id, possible_sibling));
+                    let ge = tcx.specializes((possible_sibling, impl_def_id));
 
                     if le == ge {
                         // overlap, but no specialization; error out
-                        let trait_ref = impl_header.trait_ref.unwrap();
+                        let trait_ref = overlap.impl_header.trait_ref.unwrap();
                         let self_ty = trait_ref.self_ty();
                         Err(OverlapError {
                             with_impl: possible_sibling,
@@ -135,7 +138,8 @@ impl<'a, 'gcx, 'tcx> Children {
                                 Some(self_ty.to_string())
                             } else {
                                 None
-                            }
+                            },
+                            intercrate_ambiguity_causes: overlap.intercrate_ambiguity_causes,
                         })
                     } else {
                         Ok((le, ge))
@@ -342,11 +346,14 @@ impl<'a, 'gcx, 'tcx> Ancestors {
     /// Search the items from the given ancestors, returning each definition
     /// with the given name and the given kind.
     #[inline] // FIXME(#35870) Avoid closures being unexported due to impl Trait.
-    pub fn defs(self, tcx: TyCtxt<'a, 'gcx, 'tcx>, name: Name, kind: ty::AssociatedKind)
+    pub fn defs(self, tcx: TyCtxt<'a, 'gcx, 'tcx>, trait_item_name: Name,
+                trait_item_kind: ty::AssociatedKind, trait_def_id: DefId)
                 -> impl Iterator<Item = NodeItem<ty::AssociatedItem>> + 'a {
         self.flat_map(move |node| {
-            node.items(tcx).filter(move |item| item.kind == kind && item.name == name)
-                           .map(move |item| NodeItem { node: node, item: item })
+            node.items(tcx).filter(move |impl_item| {
+                impl_item.kind == trait_item_kind &&
+                tcx.hygienic_eq(impl_item.name, trait_item_name, trait_def_id)
+            }).map(move |item| NodeItem { node: node, item: item })
         })
     }
 }
@@ -364,3 +371,21 @@ pub fn ancestors(tcx: TyCtxt,
         current_source: Some(Node::Impl(start_from_impl)),
     }
 }
+
+impl<'gcx> HashStable<StableHashingContext<'gcx>> for Children {
+    fn hash_stable<W: StableHasherResult>(&self,
+                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hasher: &mut StableHasher<W>) {
+        let Children {
+            ref nonblanket_impls,
+            ref blanket_impls,
+        } = *self;
+
+        ich::hash_stable_trait_impls(hcx, hasher, blanket_impls, nonblanket_impls);
+    }
+}
+
+impl_stable_hash_for!(struct self::Graph {
+    parent,
+    children
+});

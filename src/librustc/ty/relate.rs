@@ -14,9 +14,12 @@
 //! type equality, etc.
 
 use hir::def_id::DefId;
+use middle::const_val::ConstVal;
+use traits::Reveal;
 use ty::subst::{Kind, Substs};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::error::{ExpectedFound, TypeError};
+use util::common::ErrorReported;
 use std::rc::Rc;
 use std::iter;
 use syntax::abi;
@@ -389,6 +392,18 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
             Ok(tcx.mk_dynamic(relation.relate(a_obj, b_obj)?, region_bound))
         }
 
+        (&ty::TyGenerator(a_id, a_substs, a_interior),
+         &ty::TyGenerator(b_id, b_substs, b_interior))
+            if a_id == b_id =>
+        {
+            // All TyGenerator types with the same id represent
+            // the (anonymous) type of the same generator expression. So
+            // all of their regions should be equated.
+            let substs = relation.relate(&a_substs, &b_substs)?;
+            let interior = relation.relate(&a_interior, &b_interior)?;
+            Ok(tcx.mk_generator(a_id, substs, interior))
+        }
+
         (&ty::TyClosure(a_id, a_substs),
          &ty::TyClosure(b_id, b_substs))
             if a_id == b_id =>
@@ -416,10 +431,45 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
         (&ty::TyArray(a_t, sz_a), &ty::TyArray(b_t, sz_b)) =>
         {
             let t = relation.relate(&a_t, &b_t)?;
-            if sz_a == sz_b {
-                Ok(tcx.mk_array(t, sz_a))
-            } else {
-                Err(TypeError::FixedArraySize(expected_found(relation, &sz_a, &sz_b)))
+            assert_eq!(sz_a.ty, tcx.types.usize);
+            assert_eq!(sz_b.ty, tcx.types.usize);
+            let to_u64 = |x: &'tcx ty::Const<'tcx>| -> Result<u64, ErrorReported> {
+                match x.val {
+                    ConstVal::Integral(x) => Ok(x.to_u64().unwrap()),
+                    ConstVal::Unevaluated(def_id, substs) => {
+                        // FIXME(eddyb) get the right param_env.
+                        let param_env = ty::ParamEnv::empty(Reveal::UserFacing);
+                        match tcx.lift_to_global(&substs) {
+                            Some(substs) => {
+                                match tcx.const_eval(param_env.and((def_id, substs))) {
+                                    Ok(&ty::Const { val: ConstVal::Integral(x), .. }) => {
+                                        return Ok(x.to_u64().unwrap());
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            None => {}
+                        }
+                        tcx.sess.delay_span_bug(tcx.def_span(def_id),
+                            "array length could not be evaluated");
+                        Err(ErrorReported)
+                    }
+                    _ => bug!("arrays should not have {:?} as length", x)
+                }
+            };
+            match (to_u64(sz_a), to_u64(sz_b)) {
+                (Ok(sz_a_u64), Ok(sz_b_u64)) => {
+                    if sz_a_u64 == sz_b_u64 {
+                        Ok(tcx.mk_ty(ty::TyArray(t, sz_a)))
+                    } else {
+                        Err(TypeError::FixedArraySize(
+                            expected_found(relation, &sz_a_u64, &sz_b_u64)))
+                    }
+                }
+                // We reported an error or will ICE, so we can return TyError.
+                (Err(ErrorReported), _) | (_, Err(ErrorReported)) => {
+                    Ok(tcx.types.err)
+                }
             }
         }
 
@@ -509,6 +559,18 @@ impl<'tcx> Relate<'tcx> for ty::ClosureSubsts<'tcx> {
     {
         let substs = relate_substs(relation, None, a.substs, b.substs)?;
         Ok(ty::ClosureSubsts { substs: substs })
+    }
+}
+
+impl<'tcx> Relate<'tcx> for ty::GeneratorInterior<'tcx> {
+    fn relate<'a, 'gcx, R>(relation: &mut R,
+                           a: &ty::GeneratorInterior<'tcx>,
+                           b: &ty::GeneratorInterior<'tcx>)
+                           -> RelateResult<'tcx, ty::GeneratorInterior<'tcx>>
+        where R: TypeRelation<'a, 'gcx, 'tcx>, 'gcx: 'a+'tcx, 'tcx: 'a
+    {
+        let interior = relation.relate(&a.witness, &b.witness)?;
+        Ok(ty::GeneratorInterior::new(interior))
     }
 }
 

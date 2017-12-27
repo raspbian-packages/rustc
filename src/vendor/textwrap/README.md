@@ -15,7 +15,7 @@ the [Python textwrap module][py-textwrap].
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-textwrap = "0.7"
+textwrap = "0.8"
 ```
 
 and this to your crate root:
@@ -27,7 +27,7 @@ If you would like to have automatic hyphenation, specify the
 dependency as:
 ```toml
 [dependencies]
-textwrap = { version: "0.7", features: ["hyphenation"] }
+textwrap = { version: "0.8", features: ["hyphenation"] }
 ```
 
 ## Documentation
@@ -65,7 +65,7 @@ use textwrap::Wrapper;
 
 fn main() {
     let corpus = hyphenation::load(Language::English_US).unwrap();
-    let wrapper = Wrapper::new(18).word_splitter(Box::new(corpus));
+    let wrapper = Wrapper::with_splitter(18, corpus);
     let text = "textwrap: a small library for wrapping text.";
     println!("{}", wrapper.fill(text))
 }
@@ -172,6 +172,24 @@ cost abstractions.
 ## Release History
 
 This section lists the largest changes per release.
+
+### Version 0.8.0 — September 4th, 2017
+
+The `Wrapper` stuct is now generic over the type of word splitter
+being used. This means less boxing and a nicer API. The
+`Wrapper::word_splitter` method has been removed. This is a *breaking
+API change* if you used the method to change the word splitter.
+
+The `Wrapper` struct has two new methods that will wrap the input text
+lazily: `Wrapper::wrap_iter` and `Wrapper::into_wrap_iter`. Use those
+if you will be iterating over the wrapped lines one by one.
+
+Issues closed:
+
+* Fixed [#59][issue-59]: `wrap` could return an iterator. Thanks
+  @hcpl!
+
+* Fixed [#81][issue-81]: Set `html_root_url`
 
 ### Version 0.7.0 — July 20th, 2017
 

@@ -41,12 +41,6 @@ RELEASE_CHANNEL := stable
 
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
-# These are the normal build flags. Upstream is moving to debian/config.toml
-# but at the current version not all of these flags are available in that file.
-# Certain flags also need to be kept here *as well as* debian/config.toml.in
-# because of https://github.com/rust-lang/rust/issues/43295
-DEB_CONFIGURE_FLAGS = --enable-llvm-link-shared --disable-dist-src --prefix=/usr --release-channel=$(RELEASE_CHANNEL) --disable-jemalloc --disable-debuginfo-only-std
-
 # Use system LLVM (comment out to use vendored LLVM)
 LLVM_VERSION = 4.0
 OLD_LLVM_VERSION = 3.9
@@ -56,7 +50,6 @@ LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDI
 LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_LIBRARY_PATH),$(LLVM_LIBRARY_PATH))
 export LD_LIBRARY_PATH
 endif
-DEB_CONFIGURE_FLAGS += --llvm-root=$(LLVM_DESTDIR)/usr/lib/llvm-$(LLVM_VERSION)
 
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
 RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
@@ -83,6 +76,7 @@ update-version:
 #
 PRECONFIGURE_CHECK = :
 HAVE_BINARY_TARBALL := $(shell ls -1 stage0/*/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
+DOWNLOAD_BOOTSTRAP := false
 # allow not using the binary tarball although it exists
 #ifneq (,$(filter $(DEB_HOST_ARCH), amd64 arm64 armhf i386 powerpc ppc64el s390x))
 #  HAVE_BINARY_TARBALL := 0
@@ -102,12 +96,13 @@ ifeq (0,$(HAVE_BINARY_TARBALL))
         LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(RUST_LIBRARY_PATH),$(RUST_LIBRARY_PATH))
         export LD_LIBRARY_PATH
         endif
-        DEB_CONFIGURE_FLAGS += --enable-local-rust --local-rust-root=$(RUST_DESTDIR)/usr
-    endif
     #
     # Case A-2: the builder selected the "dlstage0" build profile.
     # In this case, the rust build scripts will download a stage0 into stage0/ and use that.
     # We don't need to do anything specific in this build file, so this case is empty.
+    else
+        DOWNLOAD_BOOTSTRAP := true
+    endif
 else
     # Case B (Bootstrapping a new distro): the extracted source tree does
     # include a bootstrapping tarball for the current architecture; see the
@@ -124,14 +119,14 @@ else
     endif
 endif
 
-BUILD_DOCS = 1
+BUILD_DOCS := true
 ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
-  DEB_CONFIGURE_FLAGS += --disable-docs
-  BUILD_DOCS =
+  BUILD_DOCS := false
 endif
 
+MAKE_OPTIMISATIONS := true
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
-  DEB_CONFIGURE_FLAGS += --disable-optimize --disable-optimize-cxx --disable-optimize-llvm
+  MAKE_OPTIMISATIONS := false
 endif
 
 # Build products or non-source files in src/, that shouldn't go in rust-src
@@ -155,27 +150,20 @@ override_dh_clean:
 	# Upstream contains a lot of these
 	dh_clean -XCargo.toml.orig
 
-debian/configure-upstream: debian/config.toml debian/rules
-	rm -f "$@"
-	echo '#!/bin/sh' >> "$@"
-	echo '# This script can be used to configure a mostly-clean upstream checkout' >> "$@"
-	echo '# in case you need to test any differences between it and Debian' >> "$@"
-	echo 'set -e' >> "$@"
-	echo 'test -f ./configure' >> "$@"
-	echo 'cat > config.toml <<EOF' >> "$@"
-	cat debian/config.toml >> "$@"
-	echo 'EOF' >> "$@"
-	echo "./configure $(DEB_CONFIGURE_FLAGS) \"\$$@\"" >> "$@"
-	chmod +x "$@"
-
 debian/config.toml: debian/config.toml.in
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
 		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DBUILD_DOCS="$(BUILD_DOCS)" \
+		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
 		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
+		-DRUST_DESTDIR="$(RUST_DESTDIR)" \
 		"$<" > "$@"
+	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
+	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
+	[ $(DEB_BUILD_ARCH) != armhf ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
 
 debian/rust-src.%: debian/rust-src.%.in
 	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \
@@ -201,13 +189,14 @@ override_dh_auto_configure: debian/config.toml
 	# We excluded some embedded libraries in d/copyright
 	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
 	# We patched this for sparc64 support
-	debian/prune-checksums src/vendor/gcc/.cargo-checksum.json
-	# Do the actual configure
-	./configure $(DEB_CONFIGURE_FLAGS)
+	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
+	# We don't run ./configure because we use debian/config.toml directly
+	ln -sf debian/config.toml config.toml
 
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
 	$(RM) -rf $(SRC_CLEAN) debian/config.toml debian/rust-src.install debian/rust-src.links
+	$(RM) -f config.toml src/vendor/backtrace-sys/src/libbacktrace
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
@@ -220,7 +209,7 @@ override_dh_auto_build-arch: generate-sources
 # there is no point running this yourself "to save time" since it implicitly
 # depends on build-arch anyways.
 override_dh_auto_build-indep: generate-sources
-ifneq (,$(BUILD_DOCS))
+ifeq (true,$(BUILD_DOCS))
 # Rust has a weird way of configuring whether to build docs or not
 	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
 	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
@@ -259,7 +248,7 @@ endif
 endif
 
 override_dh_auto_test-indep:
-ifneq (,$(BUILD_DOCS))
+ifeq (true,$(BUILD_DOCS))
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
@@ -287,7 +276,7 @@ override_dh_auto_install:
 	  fi; \
 	done
 
-ifneq (,$(BUILD_DOCS))
+ifeq (true,$(BUILD_DOCS))
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify
 	# the rebase
@@ -320,6 +309,10 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		-o -name 'license' \
 		-o -name 'COPYING*' \
 		\) -delete
+	# Remove files that autoload remote resources, caught by lintian
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/cssparser/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/kuchiki/docs/*.html
 
 override_dh_installchangelogs:
 	dh_missing --list-missing || true

@@ -18,6 +18,7 @@ pub type msglen_t = ::c_ulong;
 pub type nfds_t = ::c_ulong;
 pub type nl_item = ::c_int;
 pub type idtype_t = ::c_uint;
+pub type loff_t = ::c_longlong;
 
 pub type __u8 = ::c_uchar;
 pub type __u16 = ::c_ushort;
@@ -197,6 +198,11 @@ s! {
         pub ssi_stime: ::uint64_t,
         pub ssi_addr: ::uint64_t,
         _pad: [::uint8_t; 48],
+    }
+
+    pub struct itimerspec {
+        pub it_interval: ::timespec,
+        pub it_value: ::timespec,
     }
 
     pub struct fsid_t {
@@ -620,6 +626,10 @@ pub const F_TEST: ::c_int = 3;
 pub const F_TLOCK: ::c_int = 2;
 pub const F_ULOCK: ::c_int = 0;
 
+pub const IFF_LOWER_UP: ::c_int = 0x10000;
+pub const IFF_DORMANT: ::c_int = 0x20000;
+pub const IFF_ECHO: ::c_int = 0x40000;
+
 pub const ST_RDONLY: ::c_ulong = 1;
 pub const ST_NOSUID: ::c_ulong = 2;
 pub const ST_NODEV: ::c_ulong = 4;
@@ -664,6 +674,64 @@ pub const SCHED_FIFO: ::c_int = 1;
 pub const SCHED_RR: ::c_int = 2;
 pub const SCHED_BATCH: ::c_int = 3;
 pub const SCHED_IDLE: ::c_int = 5;
+
+// netinet/in.h
+// NOTE: These are in addition to the constants defined in src/unix/mod.rs
+
+// IPPROTO_IP defined in src/unix/mod.rs
+/// Hop-by-hop option header
+pub const IPPROTO_HOPOPTS: ::c_int = 0;
+// IPPROTO_ICMP defined in src/unix/mod.rs
+/// group mgmt protocol
+pub const IPPROTO_IGMP: ::c_int = 2;
+/// for compatibility
+pub const IPPROTO_IPIP: ::c_int = 4;
+// IPPROTO_TCP defined in src/unix/mod.rs
+/// exterior gateway protocol
+pub const IPPROTO_EGP: ::c_int = 8;
+/// pup
+pub const IPPROTO_PUP: ::c_int = 12;
+// IPPROTO_UDP defined in src/unix/mod.rs
+/// xns idp
+pub const IPPROTO_IDP: ::c_int = 22;
+/// tp-4 w/ class negotiation
+pub const IPPROTO_TP: ::c_int = 29;
+/// DCCP
+pub const IPPROTO_DCCP: ::c_int = 33;
+// IPPROTO_IPV6 defined in src/unix/mod.rs
+/// IP6 routing header
+pub const IPPROTO_ROUTING: ::c_int = 43;
+/// IP6 fragmentation header
+pub const IPPROTO_FRAGMENT: ::c_int = 44;
+/// resource reservation
+pub const IPPROTO_RSVP: ::c_int = 46;
+/// General Routing Encap.
+pub const IPPROTO_GRE: ::c_int = 47;
+/// IP6 Encap Sec. Payload
+pub const IPPROTO_ESP: ::c_int = 50;
+/// IP6 Auth Header
+pub const IPPROTO_AH: ::c_int = 51;
+// IPPROTO_ICMPV6 defined in src/unix/mod.rs
+/// IP6 no next header
+pub const IPPROTO_NONE: ::c_int = 59;
+/// IP6 destination option
+pub const IPPROTO_DSTOPTS: ::c_int = 60;
+pub const IPPROTO_MTP: ::c_int = 92;
+pub const IPPROTO_BEETPH: ::c_int = 94;
+/// encapsulation header
+pub const IPPROTO_ENCAP: ::c_int = 98;
+/// Protocol indep. multicast
+pub const IPPROTO_PIM: ::c_int = 103;
+/// IP Payload Comp. Protocol
+pub const IPPROTO_COMP: ::c_int = 108;
+/// SCTP
+pub const IPPROTO_SCTP: ::c_int = 132;
+pub const IPPROTO_MH: ::c_int = 135;
+pub const IPPROTO_UDPLITE: ::c_int = 136;
+pub const IPPROTO_MPLS: ::c_int = 137;
+/// raw IP packet
+pub const IPPROTO_RAW: ::c_int = 255;
+pub const IPPROTO_MAX: ::c_int = 256;
 
 pub const AF_IB: ::c_int = 27;
 pub const AF_MPLS: ::c_int = 28;
@@ -716,6 +784,7 @@ pub const EPOLLONESHOT: ::c_int = 0x40000000;
 
 pub const QFMT_VFS_OLD: ::c_int = 1;
 pub const QFMT_VFS_V0: ::c_int = 2;
+pub const QFMT_VFS_V1: ::c_int = 4;
 
 pub const EFD_SEMAPHORE: ::c_int = 0x1;
 
@@ -898,6 +967,10 @@ pub const ITIMER_REAL: ::c_int = 0;
 pub const ITIMER_VIRTUAL: ::c_int = 1;
 pub const ITIMER_PROF: ::c_int = 2;
 
+pub const TFD_CLOEXEC: ::c_int = O_CLOEXEC;
+pub const TFD_NONBLOCK: ::c_int = O_NONBLOCK;
+pub const TFD_TIMER_ABSTIME: ::c_int = 1;
+
 pub const XATTR_CREATE: ::c_int = 0x1;
 pub const XATTR_REPLACE: ::c_int = 0x2;
 
@@ -914,6 +987,11 @@ pub const FALLOC_FL_UNSHARE_RANGE: ::c_int = 0x40;
 // We still define it for Linux as it's defined by libc on other platforms,
 // and it's mentioned in the man pages for getxattr and setxattr.
 pub const ENOATTR: ::c_int = ::ENODATA;
+
+pub const SO_ORIGINAL_DST: ::c_int = 80;
+pub const IUTF8: ::tcflag_t = 0x00004000;
+pub const CMSPAR: ::tcflag_t = 0o10000000000;
+pub const O_TMPFILE: ::c_int = 0o20000000 | O_DIRECTORY;
 
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
@@ -955,7 +1033,7 @@ f! {
 
     pub fn minor(dev: ::dev_t) -> ::c_uint {
         let mut minor = 0;
-        minor |= (dev & 0xfffff00000000000) >> 0;
+        minor |= (dev & 0x00000000000000ff) >> 0;
         minor |= (dev & 0x00000ffffff00000) >> 12;
         minor as ::c_uint
     }
@@ -987,6 +1065,7 @@ extern {
     pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
 
     pub fn setpwent();
+    pub fn endpwent();
     pub fn getpwent() -> *mut passwd;
     pub fn setspent();
     pub fn endspent();
@@ -1066,6 +1145,13 @@ extern {
     pub fn signalfd(fd: ::c_int,
                     mask: *const ::sigset_t,
                     flags: ::c_int) -> ::c_int;
+    pub fn timerfd_create(clockid: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn timerfd_gettime(fd: ::c_int,
+                           curr_value: *mut itimerspec) -> ::c_int;
+    pub fn timerfd_settime(fd: ::c_int,
+                           flags: ::c_int,
+                           new_value: *const itimerspec,
+                           old_value: *mut itimerspec) -> ::c_int;
     pub fn pwritev(fd: ::c_int,
                    iov: *const ::iovec,
                    iovcnt: ::c_int,
@@ -1202,20 +1288,171 @@ extern {
     pub fn getdomainname(name: *mut ::c_char, len: ::size_t) -> ::c_int;
     pub fn setdomainname(name: *const ::c_char, len: ::size_t) -> ::c_int;
     pub fn vhangup() -> ::c_int;
-}
-
-extern {
     pub fn sendmmsg(sockfd: ::c_int, msgvec: *mut mmsghdr, vlen: ::c_uint,
                     flags: ::c_int) -> ::c_int;
     pub fn recvmmsg(sockfd: ::c_int, msgvec: *mut mmsghdr, vlen: ::c_uint,
                     flags: ::c_int, timeout: *mut ::timespec) -> ::c_int;
     pub fn sync();
+    pub fn syscall(num: ::c_long, ...) -> ::c_long;
+    pub fn sched_getaffinity(pid: ::pid_t,
+                             cpusetsize: ::size_t,
+                             cpuset: *mut cpu_set_t) -> ::c_int;
+    pub fn sched_setaffinity(pid: ::pid_t,
+                             cpusetsize: ::size_t,
+                             cpuset: *const cpu_set_t) -> ::c_int;
+    pub fn epoll_create(size: ::c_int) -> ::c_int;
+    pub fn epoll_create1(flags: ::c_int) -> ::c_int;
+    pub fn epoll_wait(epfd: ::c_int,
+                      events: *mut ::epoll_event,
+                      maxevents: ::c_int,
+                      timeout: ::c_int) -> ::c_int;
+    pub fn epoll_ctl(epfd: ::c_int,
+                     op: ::c_int,
+                     fd: ::c_int,
+                     event: *mut ::epoll_event) -> ::c_int;
+    pub fn pthread_getschedparam(native: ::pthread_t,
+                                 policy: *mut ::c_int,
+                                 param: *mut ::sched_param) -> ::c_int;
+    pub fn unshare(flags: ::c_int) -> ::c_int;
+    pub fn umount(target: *const ::c_char) -> ::c_int;
+    pub fn sched_get_priority_max(policy: ::c_int) -> ::c_int;
+    pub fn tee(fd_in: ::c_int,
+               fd_out: ::c_int,
+               len: ::size_t,
+               flags: ::c_uint) -> ::ssize_t;
+    pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
+    pub fn splice(fd_in: ::c_int,
+                  off_in: *mut ::loff_t,
+                  fd_out: ::c_int,
+                  off_out: *mut ::loff_t,
+                  len: ::size_t,
+                  flags: ::c_uint) -> ::ssize_t;
+    pub fn eventfd(init: ::c_uint, flags: ::c_int) -> ::c_int;
+    pub fn sched_rr_get_interval(pid: ::pid_t, tp: *mut ::timespec) -> ::c_int;
+    pub fn sem_timedwait(sem: *mut sem_t,
+                         abstime: *const ::timespec) -> ::c_int;
+    pub fn sched_setparam(pid: ::pid_t, param: *const ::sched_param) -> ::c_int;
+    pub fn setns(fd: ::c_int, nstype: ::c_int) -> ::c_int;
+    pub fn swapoff(puath: *const ::c_char) -> ::c_int;
+    pub fn vmsplice(fd: ::c_int,
+                    iov: *const ::iovec,
+                    nr_segs: ::size_t,
+                    flags: ::c_uint) -> ::ssize_t;
+    pub fn mount(src: *const ::c_char,
+                 target: *const ::c_char,
+                 fstype: *const ::c_char,
+                 flags: ::c_ulong,
+                 data: *const ::c_void) -> ::c_int;
+    pub fn personality(persona: ::c_ulong) -> ::c_int;
+    pub fn prctl(option: ::c_int, ...) -> ::c_int;
+    pub fn sched_getparam(pid: ::pid_t, param: *mut ::sched_param) -> ::c_int;
+    pub fn ppoll(fds: *mut ::pollfd,
+                 nfds: nfds_t,
+                 timeout: *const ::timespec,
+                 sigmask: *const sigset_t) -> ::c_int;
+    pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
+                                   abstime: *const ::timespec) -> ::c_int;
+    pub fn clone(cb: extern fn(*mut ::c_void) -> ::c_int,
+                 child_stack: *mut ::c_void,
+                 flags: ::c_int,
+                 arg: *mut ::c_void, ...) -> ::c_int;
+    pub fn sched_getscheduler(pid: ::pid_t) -> ::c_int;
+    pub fn clock_nanosleep(clk_id: ::clockid_t,
+                           flags: ::c_int,
+                           rqtp: *const ::timespec,
+                           rmtp:  *mut ::timespec) -> ::c_int;
+    pub fn pthread_attr_getguardsize(attr: *const ::pthread_attr_t,
+                                     guardsize: *mut ::size_t) -> ::c_int;
+    pub fn sethostname(name: *const ::c_char, len: ::size_t) -> ::c_int;
+    pub fn sched_get_priority_min(policy: ::c_int) -> ::c_int;
+    pub fn pthread_condattr_getpshared(attr: *const pthread_condattr_t,
+                                       pshared: *mut ::c_int) -> ::c_int;
+    pub fn sysinfo(info: *mut ::sysinfo) -> ::c_int;
+    pub fn umount2(target: *const ::c_char, flags: ::c_int) -> ::c_int;
+    pub fn pthread_setschedparam(native: ::pthread_t,
+                                 policy: ::c_int,
+                                 param: *const ::sched_param) -> ::c_int;
+    pub fn swapon(path: *const ::c_char, swapflags: ::c_int) -> ::c_int;
+    pub fn sched_setscheduler(pid: ::pid_t,
+                              policy: ::c_int,
+                              param: *const ::sched_param) -> ::c_int;
+    pub fn sendfile(out_fd: ::c_int,
+                    in_fd: ::c_int,
+                    offset: *mut off_t,
+                    count: ::size_t) -> ::ssize_t;
+    pub fn sigsuspend(mask: *const ::sigset_t) -> ::c_int;
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getgrgid_r")]
+    pub fn getgrgid_r(uid: ::uid_t,
+                      grp: *mut ::group,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut ::group) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "sigaltstack$UNIX2003")]
+    #[cfg_attr(target_os = "netbsd", link_name = "__sigaltstack14")]
+    pub fn sigaltstack(ss: *const stack_t,
+                       oss: *mut stack_t) -> ::c_int;
+    pub fn sem_close(sem: *mut sem_t) -> ::c_int;
+    pub fn getdtablesize() -> ::c_int;
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getgrnam_r")]
+    pub fn getgrnam_r(name: *const ::c_char,
+                      grp: *mut ::group,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut ::group) -> ::c_int;
+    pub fn initgroups(user: *const ::c_char, group: ::gid_t) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "pthread_sigmask$UNIX2003")]
+    pub fn pthread_sigmask(how: ::c_int, set: *const sigset_t,
+                           oldset: *mut sigset_t) -> ::c_int;
+    pub fn sem_open(name: *const ::c_char, oflag: ::c_int, ...) -> *mut sem_t;
+    pub fn getgrnam(name: *const ::c_char) -> *mut ::group;
+    pub fn pthread_kill(thread: ::pthread_t, sig: ::c_int) -> ::c_int;
+    pub fn sem_unlink(name: *const ::c_char) -> ::c_int;
+    pub fn daemon(nochdir: ::c_int, noclose: ::c_int) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwnam_r50")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getpwnam_r")]
+    pub fn getpwnam_r(name: *const ::c_char,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
+    #[cfg_attr(target_os = "netbsd", link_name = "__getpwuid_r50")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_getpwuid_r")]
+    pub fn getpwuid_r(uid: ::uid_t,
+                      pwd: *mut passwd,
+                      buf: *mut ::c_char,
+                      buflen: ::size_t,
+                      result: *mut *mut passwd) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch ="x86"),
+               link_name = "sigwait$UNIX2003")]
+    #[cfg_attr(target_os = "solaris", link_name = "__posix_sigwait")]
+    pub fn sigwait(set: *const sigset_t,
+                   sig: *mut ::c_int) -> ::c_int;
+    pub fn pthread_atfork(prepare: Option<unsafe extern fn()>,
+                          parent: Option<unsafe extern fn()>,
+                          child: Option<unsafe extern fn()>) -> ::c_int;
+    pub fn getgrgid(gid: ::gid_t) -> *mut ::group;
+    pub fn getgrouplist(user: *const ::c_char,
+                        group: ::gid_t,
+                        groups: *mut ::gid_t,
+                        ngroups: *mut ::c_int) -> ::c_int;
+    pub fn pthread_mutexattr_getpshared(attr: *const pthread_mutexattr_t,
+                                        pshared: *mut ::c_int) -> ::c_int;
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "popen$UNIX2003")]
+    pub fn popen(command: *const c_char,
+                 mode: *const c_char) -> *mut ::FILE;
+    pub fn faccessat(dirfd: ::c_int, pathname: *const ::c_char,
+                     mode: ::c_int, flags: ::c_int) -> ::c_int;
+    pub fn pthread_create(native: *mut ::pthread_t,
+                          attr: *const ::pthread_attr_t,
+                          f: extern fn(*mut ::c_void) -> *mut ::c_void,
+                          value: *mut ::c_void) -> ::c_int;
 }
 
 cfg_if! {
-    if #[cfg(any(target_env = "musl",
-                 target_os = "fuchsia",
-                 target_os = "emscripten"))] {
+    if #[cfg(any(target_env = "musl", target_os = "fuchsia"))] {
         mod musl;
         pub use self::musl::*;
     } else if #[cfg(any(target_arch = "mips",

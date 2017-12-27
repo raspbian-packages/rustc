@@ -12,6 +12,7 @@ mod sip;
 
 use std::hash::{Hash, Hasher};
 use std::default::Default;
+use std::rc::Rc;
 
 struct MyHasher {
     hash: u64,
@@ -64,12 +65,14 @@ fn test_writer_hasher() {
     assert_eq!(hash(& s), 97 + 0xFF);
     let s: Box<str> = String::from("a").into_boxed_str();
     assert_eq!(hash(& s), 97 + 0xFF);
+    let s: Rc<&str> = Rc::new("a");
+    assert_eq!(hash(&s), 97 + 0xFF);
     let cs: &[u8] = &[1, 2, 3];
     assert_eq!(hash(& cs), 9);
     let cs: Box<[u8]> = Box::new([1, 2, 3]);
     assert_eq!(hash(& cs), 9);
-
-    // FIXME (#18248) Add tests for hashing Rc<str> and Rc<[T]>
+    let cs: Rc<[u8]> = Rc::new([1, 2, 3]);
+    assert_eq!(hash(& cs), 9);
 
     let ptr = 5_usize as *const i32;
     assert_eq!(hash(&ptr), 5);
@@ -108,4 +111,17 @@ fn test_custom_state() {
     }
 
     assert_eq!(hash(&Custom { hash: 5 }), 5);
+}
+
+// FIXME: Instantiated functions with i128 in the signature is not supported in Emscripten.
+// See https://github.com/kripken/emscripten-fastcomp/issues/169
+#[cfg(not(target_os = "emscripten"))]
+#[test]
+fn test_indirect_hasher() {
+    let mut hasher = MyHasher { hash: 0 };
+    {
+        let mut indirect_hasher: &mut Hasher = &mut hasher;
+        5u32.hash(&mut indirect_hasher);
+    }
+    assert_eq!(hasher.hash, 5);
 }

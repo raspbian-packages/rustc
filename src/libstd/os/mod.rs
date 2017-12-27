@@ -27,7 +27,7 @@ pub use sys::unix_ext as unix;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use sys::windows_ext as windows;
 
-#[cfg(any(dox, target_os = "linux"))]
+#[cfg(any(dox, target_os = "linux", target_os = "l4re"))]
 #[doc(cfg(target_os = "linux"))]
 pub mod linux;
 
@@ -38,7 +38,6 @@ pub mod linux;
 #[cfg(all(not(dox), target_os = "haiku"))]      pub mod haiku;
 #[cfg(all(not(dox), target_os = "ios"))]        pub mod ios;
 #[cfg(all(not(dox), target_os = "macos"))]      pub mod macos;
-#[cfg(all(not(dox), target_os = "nacl"))]       pub mod nacl;
 #[cfg(all(not(dox), target_os = "netbsd"))]     pub mod netbsd;
 #[cfg(all(not(dox), target_os = "openbsd"))]    pub mod openbsd;
 #[cfg(all(not(dox), target_os = "solaris"))]    pub mod solaris;

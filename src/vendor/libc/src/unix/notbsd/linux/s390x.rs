@@ -272,6 +272,36 @@ s! {
         __glibc_reserved4: ::c_ulong,
         __glibc_reserved5: ::c_ulong,
     }
+
+    pub struct statfs64 {
+        pub f_type: ::c_uint,
+        pub f_bsize: ::c_uint,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_fsid: ::fsid_t,
+        pub f_namelen: ::c_uint,
+        pub f_frsize: ::c_uint,
+        pub f_flags: ::c_uint,
+        pub f_spare: [::c_uint; 4],
+    }
+
+    pub struct statvfs64 {
+        pub f_bsize: ::c_ulong,
+        pub f_frsize: ::c_ulong,
+        pub f_blocks: u64,
+        pub f_bfree: u64,
+        pub f_bavail: u64,
+        pub f_files: u64,
+        pub f_ffree: u64,
+        pub f_favail: u64,
+        pub f_fsid: ::c_ulong,
+        pub f_flag: ::c_ulong,
+        pub f_namemax: ::c_ulong,
+        __f_spare: [::c_int; 6],
+    }
 }
 
 pub const SFD_CLOEXEC: ::c_int = 0x080000;
@@ -668,8 +698,6 @@ pub const CPU_SETSIZE: ::c_int = 0x400;
 
 pub const EXTPROC: ::tcflag_t = 0x00010000;
 
-pub const QFMT_VFS_V1: ::c_int = 4;
-
 pub const PTRACE_TRACEME: ::c_uint = 0;
 pub const PTRACE_PEEKTEXT: ::c_uint = 1;
 pub const PTRACE_PEEKDATA: ::c_uint = 2;
@@ -698,13 +726,8 @@ pub const PTRACE_INTERRUPT: ::c_uint = 0x4207;
 pub const PTRACE_LISTEN: ::c_uint = 0x4208;
 pub const PTRACE_PEEKSIGINFO: ::c_uint = 0x4209;
 
-pub const MADV_DODUMP: ::c_int = 17;
-pub const MADV_DONTDUMP: ::c_int = 16;
-
 pub const EPOLLWAKEUP: ::c_int = 0x20000000;
 
-pub const MADV_HUGEPAGE: ::c_int = 14;
-pub const MADV_NOHUGEPAGE: ::c_int = 15;
 pub const MAP_HUGETLB: ::c_int = 0x040000;
 
 pub const EFD_NONBLOCK: ::c_int = 0x800;
@@ -775,8 +798,10 @@ pub const LINUX_REBOOT_CMD_RESTART2: ::c_int = 0xA1B2C3D4;
 pub const LINUX_REBOOT_CMD_SW_SUSPEND: ::c_int = 0xD000FCE2;
 pub const LINUX_REBOOT_CMD_KEXEC: ::c_int = 0x45584543;
 
+pub const SYS_pivot_root: ::c_long = 217;
 pub const SYS_gettid: ::c_long = 236;
 pub const SYS_perf_event_open: ::c_long = 331;
+pub const SYS_memfd_create: ::c_long = 350;
 
 pub const VTIME: usize = 5;
 pub const VSWTC: usize = 7;

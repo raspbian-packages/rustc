@@ -92,9 +92,9 @@
 //! }
 //! ```
 
-#![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
-       html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "http://doc.rust-lang.org/getopts/")]
+#![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
+       html_favicon_url = "https://www.rust-lang.org/favicon.ico",
+       html_root_url = "https://doc.rust-lang.org/getopts/")]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(rust_build, feature(staged_api))]
@@ -123,7 +123,8 @@ use std::result;
 /// A description of the options that a program can handle.
 pub struct Options {
     grps: Vec<OptGroup>,
-    parsing_style : ParsingStyle
+    parsing_style : ParsingStyle,
+    long_only: bool
 }
 
 impl Options {
@@ -131,7 +132,8 @@ impl Options {
     pub fn new() -> Options {
         Options {
             grps: Vec::new(),
-            parsing_style: ParsingStyle::FloatingFrees
+            parsing_style: ParsingStyle::FloatingFrees,
+            long_only: false
         }
     }
 
@@ -141,11 +143,23 @@ impl Options {
         self
     }
 
+    /// Set or clear "long options only" mode.
+    ///
+    /// In "long options only" mode, short options cannot be clustered
+    /// together, and long options can be given with either a single
+    /// "-" or the customary "--".  This mode also changes the meaning
+    /// of "-a=b"; in the ordinary mode this will parse a short option
+    /// "-a" with argument "=b"; whereas in long-options-only mode the
+    /// argument will be simply "b".
+    pub fn long_only(&mut self, long_only: bool) -> &mut Options {
+        self.long_only = long_only;
+        self
+    }
+
     /// Create a generic option group, stating all parameters explicitly.
     pub fn opt(&mut self, short_name: &str, long_name: &str, desc: &str,
                        hint: &str, hasarg: HasArg, occur: Occur) -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -164,8 +178,7 @@ impl Options {
     /// * `desc` - Description for usage help
     pub fn optflag(&mut self, short_name: &str, long_name: &str, desc: &str)
                            -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -185,8 +198,7 @@ impl Options {
     /// * `desc` - Description for usage help
     pub fn optflagmulti(&mut self, short_name: &str, long_name: &str, desc: &str)
                                 -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -207,8 +219,7 @@ impl Options {
     ///   e.g. `"FILE"` for a `-o FILE` option
     pub fn optflagopt(&mut self, short_name: &str, long_name: &str, desc: &str,
                               hint: &str) -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -230,8 +241,7 @@ impl Options {
     ///   e.g. `"FILE"` for a `-o FILE` option
     pub fn optmulti(&mut self, short_name: &str, long_name: &str, desc: &str, hint: &str)
                             -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -252,8 +262,7 @@ impl Options {
     ///   e.g. `"FILE"` for a `-o FILE` option
     pub fn optopt(&mut self, short_name: &str, long_name: &str, desc: &str, hint: &str)
                           -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -274,8 +283,7 @@ impl Options {
     ///   e.g. `"FILE"` for a `-o FILE` option
     pub fn reqopt(&mut self, short_name: &str, long_name: &str, desc: &str, hint: &str)
                           -> &mut Options {
-        let len = short_name.len();
-        assert!(len == 1 || len == 0);
+        validate_names(short_name, long_name);
         self.grps.push(OptGroup {
             short_name: short_name.to_string(),
             long_name: long_name.to_string(),
@@ -333,17 +341,24 @@ impl Options {
             } else {
                 let mut names;
                 let mut i_arg = None;
-                if cur.as_bytes()[1] == b'-' {
-                    let tail = &cur[2..curlen];
+                let mut was_long = true;
+                if cur.as_bytes()[1] == b'-' || self.long_only {
+                    let tail = if cur.as_bytes()[1] == b'-' {
+                        &cur[2..curlen]
+                    } else {
+                        assert!(self.long_only);
+                        &cur[1..curlen]
+                    };
                     let tail_eq: Vec<&str> = tail.splitn(2, '=').collect();
                     if tail_eq.len() <= 1 {
-                        names = vec!(Long(tail.to_string()));
+                        names = vec!(Name::from_str(tail));
                     } else {
                         names =
-                            vec!(Long(tail_eq[0].to_string()));
+                            vec!(Name::from_str(tail_eq[0]));
                         i_arg = Some(tail_eq[1].to_string());
                     }
                 } else {
+                    was_long = false;
                     names = Vec::new();
                     for (j, ch) in cur.char_indices().skip(1) {
                         let opt = Short(ch);
@@ -391,11 +406,17 @@ impl Options {
                         vals[optid].push(Given);
                       }
                       Maybe => {
+                        // Note that here we do not handle `--arg value`.
+                        // This matches GNU getopt behavior; but also
+                        // makes sense, because if this were accepted,
+                        // then users could only write a "Maybe" long
+                        // option at the end of the arguments when
+                        // FloatingFrees is in use.
                         if !i_arg.is_none() {
                             vals[optid]
                                 .push(Val((i_arg.clone())
                                 .unwrap()));
-                        } else if name_pos < names.len() || i + 1 == l ||
+                        } else if was_long || name_pos < names.len() || i + 1 == l ||
                                 is_arg(&args[i + 1]) {
                             vals[optid].push(Given);
                         } else {
@@ -436,18 +457,16 @@ impl Options {
     }
 
     /// Derive a short one-line usage summary from a set of long options.
-    #[allow(deprecated)] // connect => join in 1.3
     pub fn short_usage(&self, program_name: &str) -> String {
         let mut line = format!("Usage: {} ", program_name);
         line.push_str(&self.grps.iter()
                            .map(format_option)
                            .collect::<Vec<String>>()
-                           .connect(" "));
+                           .join(" "));
         line
     }
 
     /// Derive a usage message from a set of options.
-    #[allow(deprecated)] // connect => join in 1.3
     pub fn usage(&self, brief: &str) -> String {
         let desc_sep = format!("\n{}", repeat(" ").take(24).collect::<String>());
 
@@ -490,7 +509,11 @@ impl Options {
             match long_name.len() {
                 0 => {}
                 _ => {
-                    row.push_str("--");
+                    if self.long_only {
+                        row.push('-');
+                    } else {
+                        row.push_str("--");
+                    }
                     row.push_str(&long_name);
                     row.push(' ');
                 }
@@ -537,14 +560,25 @@ impl Options {
 
             // FIXME: #5516 should be graphemes not codepoints
             // wrapped description
-            row.push_str(&desc_rows.connect(&desc_sep));
+            row.push_str(&desc_rows.join(&desc_sep));
 
             row
         });
 
         format!("{}\n\nOptions:\n{}\n", brief,
-                rows.collect::<Vec<String>>().connect("\n"))
+                rows.collect::<Vec<String>>().join("\n"))
     }
+}
+
+fn validate_names(short_name: &str, long_name: &str) {
+    let len = short_name.len();
+    assert!(len == 1 || len == 0,
+            "the short_name (first argument) should be a single character, \
+             or an empty string for none");
+    let len = long_name.len();
+    assert!(len == 0 || len > 1,
+            "the long_name (second argument) should be longer than a single \
+             character, or an empty string for none");
 }
 
 /// What parsing style to use when parsing arguments.
@@ -669,17 +703,6 @@ impl Error for Fail {
     }
 }
 
-/// The type of failure that occurred.
-#[derive(Clone, Copy, PartialEq, Eq)]
-#[allow(missing_docs)]
-pub enum FailType {
-    ArgumentMissing_,
-    UnrecognizedOption_,
-    OptionMissing_,
-    OptionDuplicated_,
-    UnexpectedArgument_,
-}
-
 /// The result of parsing a command line with a set of options.
 pub type Result = result::Result<Matches, Fail>;
 
@@ -754,6 +777,10 @@ impl Matches {
 
     fn opt_val(&self, nm: &str) -> Option<Optval> {
         self.opt_vals(nm).into_iter().next()
+    }
+    /// Returns true if an option was defined
+    pub fn opt_defined(&self, nm: &str) -> bool {
+        find_opt(&self.opts, Name::from_str(nm)).is_some()
     }
 
     /// Returns true if an option was matched.
@@ -848,19 +875,19 @@ impl fmt::Display for Fail {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
             ArgumentMissing(ref nm) => {
-                write!(f, "Argument to option '{}' missing.", *nm)
+                write!(f, "Argument to option '{}' missing", *nm)
             }
             UnrecognizedOption(ref nm) => {
-                write!(f, "Unrecognized option: '{}'.", *nm)
+                write!(f, "Unrecognized option: '{}'", *nm)
             }
             OptionMissing(ref nm) => {
-                write!(f, "Required option '{}' missing.", *nm)
+                write!(f, "Required option '{}' missing", *nm)
             }
             OptionDuplicated(ref nm) => {
-                write!(f, "Option '{}' given more than once.", *nm)
+                write!(f, "Option '{}' given more than once", *nm)
             }
             UnexpectedArgument(ref nm) => {
-                write!(f, "Option '{}' does not take an argument.", *nm)
+                write!(f, "Option '{}' does not take an argument", *nm)
             }
         }
     }
@@ -924,16 +951,12 @@ enum LengthLimit {
 
 
 /// Splits a string into substrings with possibly internal whitespace,
-/// each of them at most `lim` bytes long. The substrings have leading and trailing
-/// whitespace removed, and are only cut at whitespace boundaries.
+/// each of them at most `lim` bytes long, if possible. The substrings
+/// have leading and trailing whitespace removed, and are only cut at
+/// whitespace boundaries.
 ///
 /// Note: Function was moved here from `std::str` because this module is the only place that
 /// uses it, and because it was too specific for a general string function.
-///
-/// # Panics
-///
-/// Panics during iteration if the string contains a non-whitespace
-/// sequence longer than the limit.
 fn each_split_within<'a, F>(ss: &'a str, lim: usize, mut it: F)
                             -> bool where F: FnMut(&'a str) -> bool {
     // Just for fun, let's write this as a state machine:
@@ -961,9 +984,11 @@ fn each_split_within<'a, F>(ss: &'a str, lim: usize, mut it: F)
             (A, Cr, _)        => { slice_start = i; last_start = i; B }
 
             (B, Cr, UnderLim) => { B }
-            (B, Cr, OverLim)  if (i - last_start + 1) > lim
-                            => panic!("word starting with {} longer than limit!",
-                                      &ss[last_start..i + 1]),
+            (B, Cr, OverLim)  if (i - last_start + 1) > lim => {
+                // A single word has gone over the limit.  In this
+                // case we just accept that the word will be too long.
+                B
+            }
             (B, Cr, OverLim)  => {
                 *cont = it(&ss[slice_start..last_end]);
                 slice_start = last_start;
@@ -1329,7 +1354,7 @@ mod tests {
     fn test_optflagopt() {
         let long_args = vec!("--test".to_string());
         let mut opts = Options::new();
-        opts.optflag("t", "test", "testing");
+        opts.optflagopt("t", "test", "testing", "ARG");
         match opts.parse(&long_args) {
           Ok(ref m) => {
             assert!(m.opt_present("test"));
@@ -1344,6 +1369,30 @@ mod tests {
             assert!(m.opt_present("t"));
           }
           _ => panic!()
+        }
+        let short_args = vec!("-t".to_string(), "x".to_string());
+        match opts.parse(&short_args) {
+            Ok(ref m) => {
+                assert_eq!(m.opt_str("t").unwrap(), "x");
+                assert_eq!(m.opt_str("test").unwrap(), "x");
+            }
+            _ => panic!()
+        }
+        let long_args = vec!("--test=x".to_string());
+        match opts.parse(&long_args) {
+            Ok(ref m) => {
+                assert_eq!(m.opt_str("t").unwrap(), "x");
+                assert_eq!(m.opt_str("test").unwrap(), "x");
+            }
+            _ => panic!()
+        }
+        let long_args = vec!("--test".to_string(), "x".to_string());
+        match opts.parse(&long_args) {
+            Ok(ref m) => {
+                assert_eq!(m.opt_str("t"), None);
+                assert_eq!(m.opt_str("test"), None);
+            }
+            _ => panic!()
         }
         let no_args: Vec<String> = vec!();
         match opts.parse(&no_args) {
@@ -1708,6 +1757,8 @@ Options:
             "This is a long description which won't be wrapped..+.."); // 54
         opts.optflag("a", "apple",
             "This is a long description which _will_ be wrapped..+..");
+        opts.optflag("b", "banana",
+            "HereWeNeedOneSingleWordThatIsLongerThanTheWrappingLengthAndThisIsIt");
 
         let expected =
 "Usage: fruits
@@ -1716,6 +1767,7 @@ Options:
     -k, --kiwi          This is a long description which won't be wrapped..+..
     -a, --apple         This is a long description which _will_ be
                         wrapped..+..
+    -b, --banana        HereWeNeedOneSingleWordThatIsLongerThanTheWrappingLengthAndThisIsIt
 ";
 
         let usage = opts.usage("Usage: fruits");
@@ -1812,7 +1864,15 @@ Options:
         debug!("generated: <<{}>>", generated_usage);
         assert_eq!(generated_usage, expected);
     }
-
+    #[test]
+    fn test_nonexistant_opt() {
+        let mut opts = Options::new();
+        opts.optflag("b", "bar", "Desc");
+        let args: Vec<String> = Vec::new();
+        let matches = opts.parse(&args).unwrap();
+        assert_eq!(matches.opt_defined("foo"), false);
+        assert_eq!(matches.opt_defined("bar"), true);
+    }
     #[test]
     fn test_args_with_equals() {
         let mut opts = Options::new();
@@ -1827,5 +1887,99 @@ Options:
         };
         assert_eq!(matches.opts_str(&["o".to_string()]).unwrap(), "A=B");
         assert_eq!(matches.opts_str(&["t".to_string()]).unwrap(), "C=D");
+    }
+
+    #[test]
+    fn test_long_only_usage() {
+        let mut opts = Options::new();
+        opts.long_only(true);
+        opts.optflag("k", "kiwi", "Description");
+        opts.optflag("a", "apple", "Description");
+
+        let expected =
+"Usage: fruits
+
+Options:
+    -k, -kiwi           Description
+    -a, -apple          Description
+";
+
+        let usage = opts.usage("Usage: fruits");
+
+        debug!("expected: <<{}>>", expected);
+        debug!("generated: <<{}>>", usage);
+        assert!(usage == expected)
+    }
+
+    #[test]
+    fn test_long_only_mode() {
+        let mut opts = Options::new();
+        opts.long_only(true);
+        opts.optopt("a", "apple", "Description", "X");
+        opts.optopt("b", "banana", "Description", "X");
+        opts.optopt("c", "currant", "Description", "X");
+        opts.optopt("", "durian", "Description", "X");
+        opts.optopt("e", "", "Description", "X");
+        opts.optopt("", "fruit", "Description", "X");
+
+        let args = vec!("-a", "A", "-b=B", "--c=C", "-durian", "D", "--e", "E",
+                        "-fruit=any");
+        let matches = &match opts.parse(&args) {
+            Ok(m) => m,
+            Err(e) => panic!("{}", e)
+        };
+        assert_eq!(matches.opts_str(&["a".to_string()]).unwrap(), "A");
+        assert_eq!(matches.opts_str(&["b".to_string()]).unwrap(), "B");
+        assert_eq!(matches.opts_str(&["c".to_string()]).unwrap(), "C");
+        assert_eq!(matches.opts_str(&["durian".to_string()]).unwrap(), "D");
+        assert_eq!(matches.opts_str(&["e".to_string()]).unwrap(), "E");
+        assert_eq!(matches.opts_str(&["fruit".to_string()]).unwrap(), "any");
+    }
+
+    #[test]
+    fn test_long_only_mode_no_short_parse() {
+        let mut opts = Options::new();
+        opts.long_only(true);
+        opts.optflag("h", "help", "Description");
+        opts.optflag("i", "ignore", "Description");
+        opts.optflag("", "hi", "Description");
+
+        let args = vec!("-hi");
+        let matches = &match opts.parse(&args) {
+            Ok(m) => m,
+            Err(e) => panic!("{}", e)
+        };
+        assert!(matches.opt_present("hi"));
+        assert!(!matches.opt_present("h"));
+        assert!(!matches.opt_present("i"));
+    }
+
+    #[test]
+    fn test_normal_mode_no_long_parse() {
+        // Like test_long_only_mode_no_short_parse, but we make sure
+        // that long_only can be disabled, and the right thing
+        // happens.
+        let mut opts = Options::new();
+        opts.long_only(true);
+        opts.optflag("h", "help", "Description");
+        opts.optflag("i", "ignore", "Description");
+        opts.optflag("", "hi", "Description");
+        opts.long_only(false);
+
+        let args = vec!("-hi");
+        let matches = &match opts.parse(&args) {
+            Ok(m) => m,
+            Err(e) => panic!("{}", e)
+        };
+        assert!(!matches.opt_present("hi"));
+        assert!(matches.opt_present("h"));
+        assert!(matches.opt_present("i"));
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_long_name_too_short() {
+        let mut opts = Options::new();
+        opts.optflag("", "a", "Oops, long option too short");
     }
 }
