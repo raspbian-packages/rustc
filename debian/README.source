@@ -1,0 +1,244 @@
+Document by Ximin Luo, Luca Bruno & Sylvestre Ledru
+
+This source package is unfortunately quite tricky and with several cutting
+edges, due to the complexity of rust-lang bootstrapping system and the high
+rate of language changes still ongoing.
+
+We try to describe here inner packaging details and the reasons behind them.
+
+If you are looking to help maintain this package, be sure to read the "Notes
+for package maintainers" section further below.
+
+
+Embedded libraries
+==================
+
+This source package embeds several external libraries (foeked and managed
+by rust upstream as git submodules).
+In early stages, many more libraries were forked/emebedded but we are steadily
+progressing in splitting them out.
+
+Here below the remaining ones, with the technical reasons.
+
+ * jemalloc from https://github.com/rust-lang/jemalloc
+   -> system-wide one can't be used due to rust using a "je_" prefix.
+
+   This is intentional upstream design and won't change soon, see:
+    - https://github.com/rust-lang/rust/pull/18678
+    - http://smallcultfollowing.com/babysteps/blog/2014/11/14/allocators-in-rust/
+
+ * compiler-rt from https://github.com/rust-lang/compiler-rt
+   -> system-wide compiler-rt fails during linkage
+
+   Bug reported upstream, still to be fixed, see:
+    - https://github.com/rust-lang/rust/issues/15054
+    - https://github.com/rust-lang/rust/issues/15708
+
+As a summary, we plan to:
+ * keep embedding jemalloc (probably forever)
+ * work with upstream to fix compiler-rt linkage soon.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200
+
+
+Building from source
+====================
+
+The Debian rustc package will use the system rustc to bootstrap itself from.
+The system rustc has to be either the previous or the same version as the rustc
+being built; the build will fail if this is not the case.
+
+    sudo apt-get build-dep ./
+    dpkg-buildpackage
+    # Or, to directly use what's in the Debian FTP archive
+    sudo apt-get build-dep rustc
+    apt-get source --compile rustc
+
+Alternatively, you may give the "pkg.rustc.dlstage0" DEB_BUILD_PROFILE to
+instead use the process defined by Rust upstream. This downloads the "official"
+stage0 compiler for the version being built from rust-lang.org. At the time of
+writing "official" means "the previous stable version".
+
+    sudo apt-get build-dep -P pkg.rustc.dlstage0 ./
+    dpkg-buildpackage
+    # Or, to directly use what's in the Debian FTP archive
+    sudo apt-get build-dep -P pkg.rustc.dlstage0 rustc
+    apt-get source --compile -P pkg.rustc.dlstage0 rustc
+
+After [1] is fixed, both of these should in theory give identical results.
+
+If neither of these options are acceptable to you, e.g. because your distro
+does not have rustc already and your build process cannot access the network,
+see "Bootstrapping" below.
+
+[1] https://github.com/rust-lang/rust/issues/34902
+
+
+Bootstrapping
+=============
+
+To bootstrap rustc on a distro that does not have it or cargo available on any
+architecture (so cross-compiling is not an option) you can run `debian/rules
+source_orig-stage0`. This creates a .dsc that does not Build-Depend on rustc or
+cargo. Instead, it includes an extra orig-stage0 source tarball that contains
+the official stage0 compiler, pre-downloaded from rust-lang.org so that your
+build daemons don't need to access the network during the build.
+
+    debian/rules source_orig-stage0
+    # Follow the final manual instructions that it outputs. Then:
+    sbuild ../rustc_*.dsc && dput ../rustc_*.dsc
+
+To only bootstrap specific architectures, run this instead:
+
+    upstream_bootstrap_arch="arm64 armhf" debian/rules source_orig-stage0
+
+This way, other architectures will be omitted from the orig-stage0 tarball. You
+might want to do this e.g. if these other architectures are already present in
+your distro, but the $upstream_bootstrap_arch ones are not yet present.
+
+Notes
+-----
+
+The approach bundles the upstream bootstrapping binaries inside the Debian
+source package. This is a nasty hack that stretches the definition of "source
+package", but has a few advantages explained below.
+
+The traditional Debian way of bootstrapping compilers - and other distros have
+similar approaches - is some variant of the following:
+
+1. A developer locally installs some upstream bootstrapping binaries.
+2. They locally build a Debian package, using these binaries as undeclared
+   build dependencies.
+3. They upload these binary packages to Debian, which can be used as declared
+   Build-Depends in the future, including by the same package.
+
+The problem with this is, Debian does not have any policy nor infrastructure
+that can try to reproduce what this developer supposedly did.
+
+Using bootstrapping binary blobs *at some point of the process* is unavoidable.
+Rather than pretending we didn't do this, it is better to record *which blobs*
+we used, so it can be audited later. If we bundle non-Debian build-dependencies
+inside the source package, then we can do a *source-only upload*, and the
+building of the binary packages can be done by the normal build infrastructure.
+
+If the build process is reproducible [1] then we can be sure that *you* (as the
+developer that prepared the source-only upload) didn't backdoor the binaries,
+nor did the build daemons even if they were compromised during the build.
+
+The bootstrapping binaries may still have been backdoored, but this is true in
+both scenarios. So our arrangement is still a strict improvement in security,
+because it reduces the set of "things that may have been backdoored". Also,
+more people use the upstream binaries than the "magical original Debian
+package", so backdoors have a greater chance of being detected in the former.
+
+In the long run, this process is laying the foundations for doing Diverse
+Double-Compilation [2], where we use *many independent* bootstrapping binaries
+to reproduce bit-for-bit identical output compilers, giving confidence that
+nothing was backdoored along the way.
+
+[1] The build process for rustc is currently *not* reproducible but we're
+    working towards it. https://github.com/rust-lang/rust/issues/34902
+[2] http://www.dwheeler.com/trusting-trust/
+
+
+Maintaining this package
+========================
+
+Import of a new upstream version
+--------------------------------
+
+$ uscan --verbose
+$ ver=UPDATE-ME # whatever it is, X.YY.0 or X.YY.0~beta probably
+$ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
+# ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
+$ git commit -m "Update Files-Excluded for new upstream version ${ver/\~/-}" debian/copyright
+$ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
+
+# Keep running this and follow its instructions, until it gives no output:
+$ debian/check-orig-suspicious.sh $ver
+# When you are satisfied with the above, proceed:
+
+$ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
+$ dch -v $ver+dfsg1-1 -m "New upstream release."
+$ debian/rules update-version
+# might also need to bump the version of the cargo Build-Depends
+# then refresh patches, etc etc
+# Use /usr/share/cargo/guess-crate-copyright to help update d/copyright quickly
+
+# If you need to repack again, bump the 'repacksuffix' in d/watch then run
+$ uscan --verbose --force-download
+# This will do a local repack using the new Files-Excluded rules, without
+# redownloading the orig tarball (despite the slightly misleading flag).
+
+
+Proceeding after build failure
+------------------------------
+
+If your build fails, don't run `./x.py` directly as that will detect it's being
+run with different settings, and run the build from scratch all over again.
+overwriting all intermediate files. Instead, do:
+
+$ debian/rules run_rustbuild X_CMD="build|test|install" X_FLAGS="whatever"
+
+Hopefully, this will directly proceed to the step that failed, without
+rebuilding everything in between.
+
+
+Comparing Debian rustc vs upstream rustc
+----------------------------------------
+
+This package does things the Debian way, which differs significantly from
+upstream practices. If you find a bug, you might want to check if it is present
+in the upstream package. Run "debian/rules debian/config.toml" to generate our
+config.toml that you can then use in an unpacked upstream directory.
+
+This will configure it in a "halfway" style between upstream and Debian.
+Specifically, it will not build LLVM nor download stuff from crates.io, yet
+Debian patches are *not* applied. These specific settings were chosen as a
+tradeoff between convenience vs being close to what upstream does - so that the
+chances of a bug here being a genuine upstream issue rather than a Debian bug,
+is much higher. Also, with the exception of LLVM, these are non-default modes
+*supported by* upstream so they would be happy to receive bug reports about it
+even if your issue only occurs here.
+
+OTOH if you need to test a completely clean upstream build, including all the
+annoying stuff like building LLVM and downloading dependencies from crates.io,
+simply unpack the tarball and run `./configure && ./x.py build` etc as normal.
+This can be useful for confirming that an issue is caused by Debian's LLVM.
+
+If you need to test a LLVM patch, do something like this:
+
+# build your patched LLVM debs, then:
+$ mkdir -p llvm-destdir && cd llvm-destdir
+$ ver=4.0; VERSION=FIXME
+$ for i in llvm-$ver llvm-$ver-dev llvm-$ver-runtime llvm-$ver-tools libllvm$ver; do \
+    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
+$ cd ../rustc
+$ debian/rules LLVM_DESTDIR=$PWD/../llvm-destdir build
+
+If you need to test a patch to the stage0 rustc, do something like this:
+
+# build your patched rustc debs or upstream rustc, then:
+$ mkdir -p rust-destdir && cd rust-destdir
+$ ver=1.20; VERSION=FIXME;
+$ for i in rustc libstd-rust-$ver libstd-rust-dev; do \
+    dpkg -x ../"$i"_*${VERSION}_*.deb .; done
+$ cd ../rustc
+$ debian/rules RUST_DESTDIR=$PWD/../rust-destdir build
+
+
+Useful links
+------------
+
+The Fedora rust team is more active than the Debian one. Here are their links:
+
+Source code
+https://src.fedoraproject.org/cgit/rpms/rust.git/tree/
+
+Binary packages and test logs
+https://kojipkgs.fedoraproject.org//packages/rust/
+If the same test fails both on Fedora and Debian it's a good indication that
+we're not Doing It Wrong and can file a valid bug upstream.
+
+Package metadata
+https://admin.fedoraproject.org/pkgdb/package/rpms/rust/
