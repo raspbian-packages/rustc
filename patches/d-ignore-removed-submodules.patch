@@ -1,0 +1,73 @@
+Description: Ignore submodules that we're not building
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: not-needed
+--- a/src/Cargo.toml
++++ b/src/Cargo.toml
+@@ -15,31 +15,7 @@
+   "tools/remote-test-client",
+   "tools/remote-test-server",
+   "tools/rust-installer",
+-  "tools/cargo",
+   "tools/rustdoc",
+-  "tools/rls",
+-  "tools/rustfmt",
+-  # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
+-  "tools/rls/test_data/borrow_error",
+-  "tools/rls/test_data/completion",
+-  "tools/rls/test_data/find_all_refs",
+-  "tools/rls/test_data/find_all_refs_no_cfg_test",
+-  "tools/rls/test_data/goto_def",
+-  "tools/rls/test_data/highlight",
+-  "tools/rls/test_data/hover",
+-  "tools/rls/test_data/rename",
+-  "tools/rls/test_data/reformat",
+-  "tools/rls/test_data/bin_lib_no_cfg_test",
+-  "tools/rls/test_data/multiple_bins",
+-  "tools/rls/test_data/bin_lib",
+-  "tools/rls/test_data/reformat_with_range",
+-  "tools/rls/test_data/find_impls",
+-  "tools/rls/test_data/infer_bin",
+-  "tools/rls/test_data/infer_custom_bin",
+-  "tools/rls/test_data/infer_lib",
+-  "tools/rls/test_data/omit_init_build",
+-  "tools/rls/test_data/unicødë",
+-  "tools/rls/test_data/workspace_symbol",
+ ]
+ 
+ # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
+@@ -59,8 +35,3 @@
+ debug = false
+ debug-assertions = false
+ 
+-[patch."https://github.com/rust-lang/cargo"]
+-cargo = { path = "tools/cargo" }
+-
+-[patch.crates-io]
+-rustfmt-nightly = { path = "tools/rustfmt" }
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -618,10 +618,6 @@
+             args.append("--verbose")
+             if self.verbose > 1:
+                 args.append("--verbose")
+-        if self.use_locked_deps:
+-            args.append("--locked")
+-        if self.use_vendored_sources:
+-            args.append("--frozen")
+         run(args, env=env, verbose=self.verbose)
+ 
+     def build_triple(self):
+--- a/src/bootstrap/builder.rs
++++ b/src/bootstrap/builder.rs
+@@ -589,10 +589,7 @@
+         if self.config.rust_optimize && cmd != "bench" {
+             cargo.arg("--release");
+         }
+-        if self.config.locked_deps {
+-            cargo.arg("--locked");
+-        }
+-        if self.config.vendor || self.is_sudo {
++        if self.is_sudo {
+             cargo.arg("--frozen");
+         }
+ 
