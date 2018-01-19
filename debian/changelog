@@ -1,0 +1,625 @@
+rustc (1.23.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 19 Jan 2018 11:49:31 +0100
+
+rustc (1.23.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update to latest Standards-Version; no changes required.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 14 Jan 2018 00:08:17 +0100
+
+rustc (1.22.1+dfsg1-2) unstable; urgency=medium
+
+  * Fix B-D rustc version so this package can be built using itself.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 01 Jan 2018 14:27:19 +0100
+
+rustc (1.22.1+dfsg1-1) unstable; urgency=medium
+
+  [ Ximin Luo ]
+  * Remove unimportant files that autoload remote resources from rust-src.
+  * Fix more symlinks in rust-doc.
+  * On armhf, only generate debuginfo for libstd and not the compiler itself.
+    This works around buildds running out of memory, see upstream #45854.
+  * Update to latest Standards-Version; no changes required.
+
+  [ Chris Coulson ]
+  * Fix some test failures that occur because we build rust without an rpath.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 18 Dec 2017 19:46:25 +0100
+
+rustc (1.22.1+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Fix symlink target. (Closes: #877276)
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 25 Nov 2017 22:29:12 +0100
+
+rustc (1.21.0+dfsg1-3) unstable; urgency=medium
+
+  * Add/fix detection for sparc64, thanks to John Paul Adrian Glaubitz.
+  * Workaround FTBFS when building docs. (Closes: #880262)
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 06 Nov 2017 10:03:32 +0100
+
+rustc (1.21.0+dfsg1-2) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Fix bootstrapping using 1.21.0, which is more strict about redundant &mut
+    previously used in u-output-failed-commands.patch.
+  * Only allow up to 5 test failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 25 Oct 2017 20:27:30 +0200
+
+rustc (1.21.0+dfsg1-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Fix the "install" target for cross-compilations; cross-compiling with
+    sbuild --host=$foreign-arch should work again.
+  * Update to latest Standards-Version; changes:
+    - Priority changed to optional from extra.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 17 Oct 2017 00:42:54 +0200
+
+rustc (1.20.0+dfsg1-3) unstable; urgency=medium
+
+  * Disable jemalloc to fix FTBFS with 1.21 on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 25 Oct 2017 12:01:19 +0200
+
+rustc (1.20.0+dfsg1-2) unstable; urgency=medium
+
+  * Update changelog entry for 1.20.0+dfsg1-1 to reflect that it was actually
+    and accidentally uploaded to unstable. No harm, no foul.
+  * We are no longer failing the build when tests fail, see NEWS or
+    README.Debian for details.
+  * Bump LLVM requirement to fix some failing tests.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 21 Oct 2017 14:20:17 +0200
+
+rustc (1.20.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 15 Oct 2017 23:30:35 +0200
+
+rustc (1.19.0+dfsg3-4) unstable; urgency=medium
+
+  * Bump LLVM requirement to pull in a fix for a FTBFS on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 15 Oct 2017 21:31:03 +0200
+
+rustc (1.19.0+dfsg3-3) unstable; urgency=medium
+
+  * Fix a trailing whitespace for tidy.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 16:09:41 +0200
+
+rustc (1.19.0+dfsg3-2) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Add a patch to print extra information when tests fail.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 19 Sep 2017 12:32:03 +0200
+
+rustc (1.19.0+dfsg3-1) experimental; urgency=medium
+
+  * New upstream release.
+  * Upgrade to LLVM 4.0. (Closes: #873421)
+  * rust-src: install Debian patches as well
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 15 Sep 2017 04:02:09 +0200
+
+rustc (1.18.0+dfsg1-4) unstable; urgency=medium
+
+  * Support gperf 3.1. (Closes: #869610)
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 25 Jul 2017 23:19:47 +0200
+
+rustc (1.18.0+dfsg1-3) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Disable failing run-make test on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 22 Jul 2017 20:30:25 +0200
+
+rustc (1.18.0+dfsg1-2) experimental; urgency=medium
+
+  * Update to latest Standards-Version; no changes required.
+  * Change rustc to Multi-Arch: allowed and update Build-Depends with :native
+    annotations. Multi-Arch: foreign is typically for arch-indep packages that
+    might need to satisfy dependency chains of different architectures. Also
+    update instructions on cross-compiling to match this newer situation.
+  * Build debugging symbols for non-libstd parts of rustc.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 23:04:03 +0200
+
+rustc (1.18.0+dfsg1-1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 27 Jun 2017 12:51:22 +0200
+
+rustc (1.17.0+dfsg2-8) unstable; urgency=medium
+
+  * Workaround for linux #865549, fix FTBFS on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 17 Jul 2017 13:41:59 +0200
+
+rustc (1.17.0+dfsg2-7) unstable; urgency=medium
+
+  * Show exception traceback in bootstrap.py to examine ppc64el build failure.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 10:46:27 +0200
+
+rustc (1.17.0+dfsg2-6) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 21 Jun 2017 00:24:22 +0200
+
+rustc (1.17.0+dfsg2-5) experimental; urgency=medium
+
+  * More work-arounds for armhf test failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 16 Jun 2017 13:27:45 +0200
+
+rustc (1.17.0+dfsg2-4) experimental; urgency=medium
+
+  * Fix arch-indep and arch-dep tests.
+  * Bump the LLVM requirement to fix FTBFS on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 21:37:16 +0200
+
+rustc (1.17.0+dfsg2-3) experimental; urgency=medium
+
+  * Try to force the real gdb package. Some resolvers like aspcud will select
+    gdb-minimal under some circumstances, but this causes the debuginfo-gdb
+    tests to break.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 14 Jun 2017 00:48:37 +0200
+
+rustc (1.17.0+dfsg2-2) experimental; urgency=medium
+
+  * Support and document cross-compiling of rustc itself.
+  * Document cross-compiling other rust packages such as cargo.
+  * Work around upstream #39015 by disabling those tests rather than by
+    disabling optimisation, which causes FTBFS on 1.17.0 ppc64el. See
+    upstream #42476 and #42532 for details.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 13 Jun 2017 21:13:31 +0200
+
+rustc (1.17.0+dfsg2-1) experimental; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * New upstream release
+
+  [ Ximin Luo ]
+  * Adapt packaging for rustbuild, the new upstream cargo-based build system.
+
+  [ Matthijs van Otterdijk ]
+  * Add a binary package, rust-src. (Closes: #846177)
+  * Link to local Debian web resources in the docs, instead of remote ones.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 16 May 2017 18:00:53 +0200
+
+rustc (1.16.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable so we have something to build 1.17 with.
+  * Update u-ignoretest-powerpc.patch for 1.16.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 19 Apr 2017 22:47:18 +0200
+
+rustc (1.16.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Don't ignore test failures on Debian unstable.
+  * Re-fix ignoring armhf test, accidentally reverted in previous version.
+  * Try to fix buildd failure by swapping B-D alternatives.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Apr 2017 15:05:47 +0200
+
+rustc (1.16.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release
+  * u-ignoretest-jemalloc.patch removed (applied upstream)
+
+  [ Matthias Klose ]
+  * Bootstrap using the rustc version in the archive, on all architectures.
+  * Work around a GCC 4.8 ICE on AArch64.
+  * Use alternative build dependencies on cmake3 and binutils-2.26 for
+    builds on 14.04 LTS (trusty).
+  * debian/make_orig*dl_tarball.sh: Include all Ubuntu architectures.
+  * debian/rules: Ignore test results for now.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 13 Apr 2017 15:24:03 +0200
+
+rustc (1.15.1+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable so we have something to build 1.16 with.
+  * Try to fix ignoring atomic-lock-free tests on armhf.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 22 Mar 2017 00:13:27 +0100
+
+rustc (1.15.1+dfsg1-1~exp3) experimental; urgency=medium
+
+  * Ignore atomic-lock-free tests on armhf.
+  * Update ignoretest-armhf_03.patch for newer 1.15.1 behaviour.
+  * Tidy up some other patches to do with ignoring tests.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 12 Mar 2017 04:15:33 +0100
+
+rustc (1.15.1+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Update armhf ignoretest patch.
+  * Bootstrap armhf. (Closes: #809316, #834003)
+  * Bootstrap ppc4el. (Closes: #839643)
+  * Fix rust-lldb symlink. (Closes: #850639)
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 02 Mar 2017 23:01:26 +0100
+
+rustc (1.15.1+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release (won't probably be in stretch).
+    see the 1.4 git branch for the follow up for stable
+  * Call to the test renamed from check-notidy => check
+  * d/p/u-destdir-support.diff: Apply upstream patch to support
+    destdir in the make install (for rustbuild, in later versions)
+  * Overrides the 'binary-or-shlib-defines-rpath' lintian warnings.
+    We need them for now
+  * Refresh of the patches
+
+  [ Sven Joachim ]
+  * Drop Pre-Depends on multiarch-support. (Closes: #856109)
+
+  [ Erwan Prioul ]
+  * Fix test and build failures for ppc64el. (Closes: #839643)
+
+  [ Ximin Luo ]
+  * Disable rustbuild for the time being (as it was in 1.14) and instead
+    bootstrap two new arches, armhf and ppc64el.
+  * Switch back to debhelper 9 to make backporting easier.
+  * Switch Build-Depends on binutils-multiarch back to binutils, the former is
+    no longer needed by the upstream tests.
+
+  [ Matthias Klose ]
+  * Compatibility fixes and improvements to help work better on Ubuntu.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sun, 26 Feb 2017 21:12:27 +0100
+
+rustc (1.14.0+dfsg1-3) unstable; urgency=medium
+
+  * Fix mips64 Makefile patches.
+  * Don't run arch-dep tests in a arch-indep build.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 04 Jan 2017 21:34:56 +0100
+
+rustc (1.14.0+dfsg1-2) unstable; urgency=medium
+
+  * Update README.Debian, the old one was way out of date.
+  * Detect mips CPUs in ./configure and fill in mips Makefile rules.
+  * Work around jemalloc-related problems in the upstream bootstrapping
+    binaries for arm64, ppc64el, s390x.
+  * Disable jemalloc on s390x - upstream already disable it for some other
+    arches.
+  * Disable jemalloc tests for arches where jemalloc is disabled.
+  * We still expect the following failures:
+    * arm64 should be fixed (i.e. no failures) compared to the previous upload.
+    * armhf will FTBFS due to 'Illegal instruction' and this can only be fixed
+      with the next stable rustc release.
+    * mips mipsel mips64el ppc64 ppc64el s390x will FTBFS due to yet other
+      test failures beyond the ones I fixed above; this upload is only to save
+      me manual work in producing nice reports that exhibit these failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 29 Dec 2016 23:00:47 +0100
+
+rustc (1.14.0+dfsg1-1) unstable; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * New upstream release
+  * Update debian/watch
+
+  [ Ximin Luo ]
+  * Try to bootstrap armhf ppc64 ppc64el s390x mips mipsel mips64el.
+    (Closes: #809316, #834003, #839643)
+  * Make rust-gdb and rust-lldb arch:all packages.
+  * Switch to debhelper 10.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 24 Dec 2016 18:03:03 +0100
+
+rustc (1.13.0+dfsg1-2) unstable; urgency=high
+
+  * Skip macro-stepping test on arm64, until
+    https://github.com/rust-lang/rust/issues/37225 is resolved.
+
+ -- Luca Bruno <lucab@debian.org>  Sat, 26 Nov 2016 23:40:14 +0000
+
+rustc (1.13.0+dfsg1-1) unstable; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * New upstream release.
+
+  [ Ximin Luo ]
+  * Use Debian system jquery instead of upstream's embedded copy.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 11 Nov 2016 13:35:23 +0100
+
+rustc (1.12.1+dfsg1-1) unstable; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * New (minor) upstream release
+  * Missing dependency from rust-lldb to python-lldb-3.8 (Closes: #841833)
+  * Switch to llvm 3.9. (Closes: #841834)
+
+  [ Ximin Luo ]
+  * Dynamically apply rust-boot-1.12.1-from-1.12.0.diff.
+    This allows us to bootstrap from either 1.11.0 or 1.12.0.
+  * Bump LLVM Build-Depends version to get the backported patches for LLVM
+    #30402 and #29163.
+  * Install debugger_pretty_printers_common to rust-gdb and rust-lldb.
+    (Closes: #841835)
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 07 Nov 2016 14:15:14 +0100
+
+rustc (1.12.0+dfsg1-2) unstable; urgency=medium
+
+  * Ignore test run-make/no-duplicate-libs. Fails on i386
+  * Ignore test run-pass-valgrind/down-with-thread-dtors.rs . Fails on arm64
+  * I am not switching to llvm 3.9 now because a test freezes. The plan is
+    to silent the warning breaking the build and upload 1.12.1 after
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Wed, 05 Oct 2016 10:48:01 +0200
+
+rustc (1.12.0+dfsg1-1) unstable; urgency=medium
+
+  * new upstream release
+    - Rebase of the patches and removal of deprecated patches
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 29 Sep 2016 20:45:04 +0200
+
+rustc (1.11.0+dfsg1-3) unstable; urgency=medium
+
+  * Fix separate build-arch and build-indep builds.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 13 Sep 2016 12:30:41 +0200
+
+rustc (1.11.0+dfsg1-2) unstable; urgency=medium
+
+  * Fix rebuilding against the current version, by backporting a patch I wrote
+    that was already applied upstream. Should fix the FTBFS that was observed
+    by tests.reproducible-builds.org.
+  * Ignore a failing stdcall test on arm64; should fix the FTBFS there.
+  * Backport a doctest fix I wrote, already applied upstream.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 12 Sep 2016 17:40:12 +0200
+
+rustc (1.11.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+  * Add versioned binutils dependency. (Closes: #819475, #823540)
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 07 Sep 2016 10:31:57 +0200
+
+rustc (1.10.0+dfsg1-3) unstable; urgency=medium
+
+  * Rebuild with LLVM 3.8, same as what upstream are using
+  * Dynamically link against LLVM. (Closes: #832565)
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 30 Jul 2016 22:36:41 +0200
+
+rustc (1.10.0+dfsg1-2) unstable; urgency=medium
+
+  * Tentatively support ARM architectures
+  * Include upstream arm64,armel,armhf stage0 compilers (i.e. 1.9.0 stable)
+    in a orig-dl tarball, like how we previously did for amd64,i386.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 22 Jul 2016 15:54:51 +0200
+
+rustc (1.10.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+  * Add myself to uploaders
+  * Update our build process to bootstrap from the previous Debian rustc stable
+    version by default. See README.Debian for other options.
+  * Update to latest Standards-Version; no changes required.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 17 Jul 2016 03:40:49 +0200
+
+rustc (1.9.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release (Closes: #825752)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sun, 29 May 2016 17:57:38 +0200
+
+rustc (1.8.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+
+  [ Ximin Luo ]
+  * Fix using XZ for the orig tarball: needs explicit --repack in debian/watch
+  * Drop wno-error patch; applied upstream.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 15 Apr 2016 12:01:45 +0200
+
+rustc (1.7.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 03 Mar 2016 22:41:24 +0100
+
+rustc (1.6.0+dfsg1-3) unstable; urgency=medium
+
+  * Apply upstream fix to silent a valgrind issue in the test suite
+    (Closes: ##812825)
+  * Add gcc & libc-dev as dependency of rustc to make sure it works
+    out of the box
+
+  [ Ximin Luo ]
+  * Work around rust bug https://github.com/rust-lang/rust/issues/31529
+  * Enable optional tests, and add verbosity/backtraces to tests
+  * Use XZ instead of GZ compression (will apply to the next new upload)
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Tue, 02 Feb 2016 15:08:11 +0100
+
+rustc (1.6.0+dfsg1-2) unstable; urgency=medium
+
+  * mk/rt.mk: Modify upstream code to append -Wno-error rather than trying
+    to remove the string "-Werror".  (Closes: #812448)
+  * Disable new gcc-6 "-Wmisleading-indentation" warning, which triggers
+    (incorrectly) on src/rt/miniz.c.  (Closes: #811573)
+  * Guard arch-dependent dh_install commands appropriately, fixing
+    arch-indep-only builds.  (Closes: #809124)
+
+ -- Angus Lees <gus@debian.org>  Tue, 26 Jan 2016 05:40:14 +1100
+
+rustc (1.6.0+dfsg1-1) unstable; urgency=medium
+
+  * new upstream release
+
+  [ Ximin Luo ]
+  * Use secure links for Vcs-* fields.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 22 Jan 2016 10:56:08 +0100
+
+rustc (1.5.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+    - We believe that we should let rust transit to testing
+      (Closes: #786836)
+  * Move away from hash to the same rust naming schema
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Thu, 10 Dec 2015 17:23:32 +0100
+
+rustc (1.4.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+    198068b3 => 1bf6e69c
+  * Update the download url in debian/watch
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 30 Oct 2015 09:36:02 +0100
+
+rustc (1.3.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+    62abc69f => 198068b3
+  * jquery updated from 2.1.0 to 2.1.4
+
+  [ Ximin Luo ]
+  * Use LLVM 3.7 as upstream does, now that it's released. (Closes: #797626)
+  * Fix debian/copyright syntax mistakes.
+  * Don't Replace/Break previous versions of libstd-rust-*
+  * Check that the libstd-rust-* name in d/control matches upstream.
+  * Several other minor build tweaks.
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 19 Sep 2015 14:39:35 +0200
+
+rustc (1.2.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release
+    libstd-rust-7d23ff90 => libstd-rust-62abc69f
+  * Add llvm-3.6-tools to the build dep as it is
+    now needed for tests
+  * Fix the Vcs-Browser value
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 08 Aug 2015 23:13:44 +0200
+
+rustc (1.1.0+dfsg1-3) unstable; urgency=medium
+
+  * rust-{gdb,lldb} now Replaces pre-split rustc package.
+    Closes: #793433.
+  * Several minor lintian cleanups.
+
+ -- Angus Lees <gus@debian.org>  Fri, 24 Jul 2015 17:47:48 +1000
+
+rustc (1.1.0+dfsg1-2) unstable; urgency=medium
+
+  [ Angus Lees ]
+  * Replace remote Rust logo with local file in HTML docs.
+  * Symlink rust-{gdb,lldb}.1 to {gdb,lldb}.1 manpages.
+    Note that gdb.1 requires the gdb-doc package, and that lldb.1 doesn't
+    exist yet (see #792908).
+  * Restore "Architecture: amd64 i386" filter, mistakenly removed in
+    previous version.  Unfortunately the toolchain bootstrap isn't ready
+    to support all Debian archs yet.  Closes: #793147.
+
+ -- Angus Lees <gus@debian.org>  Wed, 22 Jul 2015 09:51:08 +1000
+
+rustc (1.1.0+dfsg1-1) unstable; urgency=low
+
+  [ Angus Lees ]
+  * Set SONAME when building dylibs
+  * Split out libstd-rust, libstd-rust-dev, rust-gdb, rust-lldb from rustc
+    - libs are now installed into multiarch-friendly locations
+    - rpath is no longer required to use dylibs (but talk to Debian Rust
+      maintainers before building a package that depends on the dylibs)
+  * Install /usr/share/rustc/architecture.mk, which declares Rust arch
+    triples for Debian archs and is intended to help future Rust packaging
+    efforts.  Warning: it may not be complete/accurate yet.
+  * New upstream release (1.1)
+
+ -- Angus Lees <gus@debian.org>  Thu, 16 Jul 2015 14:23:47 +1000
+
+rustc (1.0.0+dfsg1-1) unstable; urgency=medium
+
+  [ Angus Lees ]
+  * New upstream release (1.0!)
+
+  [ Sylvestre Ledru ]
+  * Fix the watch file
+  * Update of the repack to remove llvm sources
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 16 May 2015 08:24:32 +1000
+
+rustc (1.0.0~beta.4-1~exp1) experimental; urgency=low
+
+  [ Angus Lees ]
+  * New upstream release (beta 3)
+    - Drop manpage patch - now included upstream
+  * Replace duplicated compile-time dylibs with symlinks to run-time libs
+    (reduces installed size by ~68MB)
+
+  [ Sylvestre Ledru ]
+  * New upstream release (beta 4)
+  * Replace two more occurrences of jquery by the package
+  * Repack upstream to remove an LLVM file with a non-DFSG license
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Wed, 06 May 2015 11:14:30 +0200
+
+rustc (1.0.0~alpha.2-1~exp1) experimental; urgency=low
+
+  [ Angus Lees ]
+  * Patch upstream manpages to address minor troff issues
+  * Make 'debian/rules clean' also clean LLVM source
+  * Rename primary 'rust' binary package to 'rustc'
+  * Fix potential FTBFS: rust-doc requires texlive-fonts-recommended (for
+    pzdr.tfm)
+  * Build against system LLVM
+
+  [ Sylvestre Ledru ]
+  * New testing release
+  * Renaming of the source package
+  * Set a minimal version for dpkg-dev and debhelper (for profiles)
+  * For now, disable build profiles as they are not supported in Debian
+  * Introduce some changes by Angus Lees
+    - Introduction of build stages
+    - Disable the parallel execution of tests
+    - Improving of the parallel syntax
+    - Use override_dh_auto_build-arch
+    - Use override_dh_auto_build-indep
+    - Better declarations of the doc
+    - Update of the description
+    - Watch file updated (with key check)
+
+  [ Luca Bruno ]
+  * rules: respect 'nocheck' DEB_BUILD_OPTIONS
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 07 Mar 2015 09:25:47 +0100
+
+rust (1.0.0~alpha-0~exp1) experimental; urgency=low
+
+  * Initial package (Closes: #689207)
+    Work done by Luca Bruno, Jordan Justen and Sylvestre Ledru
+
+ -- Sylvestre Ledru <sylvestre@debian.org>  Fri, 23 Jan 2015 15:47:37 +0100
