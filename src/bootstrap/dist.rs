@@ -856,7 +856,10 @@ impl Step for PlainSourceTarball {
         }
 
         // If we're building from git sources, we need to vendor a complete distribution.
-        if build.rust_info.is_git() {
+        //
+        // Debian: disabling this block because the debian package is also in a git
+        //         repository, but cargo-vendor should not be installed or run.
+        if false && build.rust_info.is_git() {
             // Get cargo-vendor installed, if it isn't already.
             let mut has_cargo_vendor = false;
             let mut cmd = Command::new(&build.initial_cargo);
