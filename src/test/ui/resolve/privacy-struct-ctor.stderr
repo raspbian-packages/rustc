@@ -1,0 +1,72 @@
+error[E0423]: expected value, found struct `Z`
+  --> $DIR/privacy-struct-ctor.rs:26:9
+   |
+26 |         Z;
+   |         ^
+   |         |
+   |         did you mean `S`?
+   |         constructor is not visible here due to private fields
+   |         did you mean `Z { /* fields */ }`?
+help: possible better candidate is found in another module, you can import it into scope
+   |
+22 |     use m::n::Z;
+   |
+
+error[E0423]: expected value, found struct `S`
+  --> $DIR/privacy-struct-ctor.rs:35:5
+   |
+35 |     S;
+   |     ^
+   |     |
+   |     constructor is not visible here due to private fields
+   |     did you mean `S { /* fields */ }`?
+help: possible better candidate is found in another module, you can import it into scope
+   |
+31 | use m::S;
+   |
+
+error[E0423]: expected value, found struct `xcrate::S`
+  --> $DIR/privacy-struct-ctor.rs:40:5
+   |
+40 |     xcrate::S;
+   |     ^^^^^^^^^
+   |     |
+   |     constructor is not visible here due to private fields
+   |     did you mean `xcrate::S { /* fields */ }`?
+help: possible better candidate is found in another module, you can import it into scope
+   |
+31 | use m::S;
+   |
+
+error[E0603]: tuple struct `Z` is private
+  --> $DIR/privacy-struct-ctor.rs:25:9
+   |
+25 |         n::Z; //~ ERROR tuple struct `Z` is private
+   |         ^^^^
+
+error[E0603]: tuple struct `S` is private
+  --> $DIR/privacy-struct-ctor.rs:34:5
+   |
+34 |     m::S; //~ ERROR tuple struct `S` is private
+   |     ^^^^
+
+error[E0603]: tuple struct `Z` is private
+  --> $DIR/privacy-struct-ctor.rs:37:5
+   |
+37 |     m::n::Z; //~ ERROR tuple struct `Z` is private
+   |     ^^^^^^^
+
+error[E0603]: tuple struct `S` is private
+  --> $DIR/privacy-struct-ctor.rs:39:5
+   |
+39 |     xcrate::m::S; //~ ERROR tuple struct `S` is private
+   |     ^^^^^^^^^^^^
+
+error[E0603]: tuple struct `Z` is private
+  --> $DIR/privacy-struct-ctor.rs:42:5
+   |
+42 |     xcrate::m::n::Z; //~ ERROR tuple struct `Z` is private
+   |     ^^^^^^^^^^^^^^^
+
+error: aborting due to 8 previous errors
+

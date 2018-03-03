@@ -1,0 +1,62 @@
+[workspace]
+members = [
+  "bootstrap",
+  "rustc",
+  "libstd",
+  "libtest",
+  "tools/cargotest",
+  "tools/clippy",
+  "tools/compiletest",
+  "tools/error_index_generator",
+  "tools/linkchecker",
+  "tools/rustbook",
+  "tools/unstable-book-gen",
+  "tools/tidy",
+  "tools/build-manifest",
+  "tools/remote-test-client",
+  "tools/remote-test-server",
+  "tools/rust-installer",
+  "tools/cargo",
+  "tools/rustdoc",
+  "tools/rls",
+  "tools/rustfmt",
+  "tools/miri",
+  # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
+  "tools/rls/test_data/bin_lib",
+  "tools/rls/test_data/borrow_error",
+  "tools/rls/test_data/common",
+  "tools/rls/test_data/deglob",
+  "tools/rls/test_data/features",
+  "tools/rls/test_data/find_all_refs_no_cfg_test",
+  "tools/rls/test_data/find_impls",
+  "tools/rls/test_data/infer_bin",
+  "tools/rls/test_data/infer_custom_bin",
+  "tools/rls/test_data/infer_lib",
+  "tools/rls/test_data/multiple_bins",
+  "tools/rls/test_data/reformat",
+  "tools/rls/test_data/reformat_with_range",
+  "tools/rls/test_data/workspace_symbol",
+]
+
+# Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
+# MSVC when running the compile-fail test suite when a should-fail test panics.
+# But hey if this is removed and it gets past the bots, sounds good to me.
+[profile.release]
+opt-level = 2
+[profile.bench]
+opt-level = 2
+
+# These options are controlled from our rustc wrapper script, so turn them off
+# here and have them controlled elsewhere.
+[profile.dev]
+debug = false
+debug-assertions = false
+[profile.test]
+debug = false
+debug-assertions = false
+
+[patch."https://github.com/rust-lang/cargo"]
+cargo = { path = "tools/cargo" }
+
+[patch.crates-io]
+rustfmt-nightly = { path = "tools/rustfmt" }
