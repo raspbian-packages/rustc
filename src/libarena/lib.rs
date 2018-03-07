@@ -572,6 +572,9 @@ mod tests {
 
     #[test]
     fn test_typed_arena_drop_small_count() {
+        if cfg!(target_arch = "powerpc64") {
+            return;
+        }
         DROP_COUNTER.with(|c| c.set(0));
         {
             let arena: TypedArena<SmallDroppable> = TypedArena::new();
