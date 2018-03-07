@@ -1,0 +1,15 @@
+--- rustc-1.24.0+dfsg1/src/libcompiler_builtins/build.rs.orig	2018-02-12 16:56:07.000000000 -0200
++++ rustc-1.24.0+dfsg1/src/libcompiler_builtins/build.rs	2018-03-02 07:22:10.124164162 -0300
+@@ -52,9 +52,9 @@
+     }
+ 
+     // Only emit the ARM Linux atomic emulation on pre-ARMv6 architectures.
+-    if llvm_target[0] == "armv4t" || llvm_target[0] == "armv5te" {
+-        println!("cargo:rustc-cfg=kernel_user_helpers")
+-    }
++    // if llvm_target[0] == "armv4t" || llvm_target[0] == "armv5te" {
++    //     println!("cargo:rustc-cfg=kernel_user_helpers")
++    // }
+ }
+ 
+ #[cfg(feature = "gen-tests")]
