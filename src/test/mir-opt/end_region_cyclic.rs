@@ -39,12 +39,13 @@ fn main() {
 fn query() -> bool { true }
 
 // END RUST SOURCE
-// START rustc.node16.SimplifyCfg-qualify-consts.after.mir
+// START rustc.main.SimplifyCfg-qualify-consts.after.mir
 // fn main() -> () {
 //     let mut _0: ();
 //     scope 1 {
 //         let _2: S<'35_0rs>;
 //     }
+//     ...
 //     let mut _1: ();
 //     let mut _3: std::cell::Cell<std::option::Option<&'35_0rs S<'35_0rs>>>;
 //     let mut _4: std::option::Option<&'35_0rs S<'35_0rs>>;
@@ -129,4 +130,4 @@ fn query() -> bool { true }
 //         goto -> bb1;
 //     }
 // }
-// END rustc.node16.SimplifyCfg-qualify-consts.after.mir
+// END rustc.main.SimplifyCfg-qualify-consts.after.mir

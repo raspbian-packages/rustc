@@ -127,6 +127,14 @@ s! {
         pub shm_dtime: ::time_t,
         pub shm_ctime: ::time_t,
     }
+
+    pub struct xucred {
+        pub cr_version: ::c_uint,
+        pub cr_uid: ::uid_t,
+        pub cr_ngroups: ::c_short,
+        pub cr_groups: [::gid_t;16],
+        __cr_unused1: *mut ::c_void,
+    }
 }
 
 pub const SIGEV_THREAD_ID: ::c_int = 4;
@@ -402,6 +410,11 @@ pub const SO_PROTOCOL: ::c_int = 0x1016;
 pub const SO_PROTOTYPE: ::c_int = SO_PROTOCOL;
 pub const SO_VENDOR: ::c_int = 0x80000000;
 
+pub const LOCAL_PEERCRED: ::c_int = 1;
+pub const LOCAL_CREDS: ::c_int = 2;
+pub const LOCAL_CONNWAIT: ::c_int = 4;
+pub const LOCAL_VENDOR: ::c_int = SO_VENDOR;
+
 pub const AF_SLOW: ::c_int = 33;
 pub const AF_SCLUSTER: ::c_int = 34;
 pub const AF_ARP: ::c_int = 35;
@@ -411,6 +424,32 @@ pub const AF_INET_SDP: ::c_int = 40;
 pub const AF_INET6_SDP: ::c_int = 42;
 #[doc(hidden)]
 pub const AF_MAX: ::c_int = 42;
+
+// https://github.com/freebsd/freebsd/blob/master/sys/net/if.h#L140
+pub const IFF_UP: ::c_int = 0x1; // (n) interface is up
+pub const IFF_BROADCAST: ::c_int = 0x2; // (i) broadcast address valid
+pub const IFF_DEBUG: ::c_int = 0x4; // (n) turn on debugging
+pub const IFF_LOOPBACK: ::c_int = 0x8; // (i) is a loopback net
+pub const IFF_POINTOPOINT: ::c_int = 0x10; // (i) is a point-to-point link
+// 0x20           was IFF_SMART
+pub const IFF_DRV_RUNNING: ::c_int = 0x40; // (d) resources allocated
+pub const IFF_NOARP: ::c_int = 0x80; // (n) no address resolution protocol
+pub const IFF_PROMISC: ::c_int = 0x100; // (n) receive all packets
+pub const IFF_ALLMULTI: ::c_int = 0x200; // (n) receive all multicast packets
+pub const IFF_DRV_OACTIVE: ::c_int = 0x400; // (d) tx hardware queue is full
+pub const IFF_SIMPLEX: ::c_int = 0x800; // (i) can't hear own transmissions
+pub const IFF_LINK0: ::c_int = 0x1000; // per link layer defined bit
+pub const IFF_LINK1: ::c_int = 0x2000; // per link layer defined bit
+pub const IFF_LINK2: ::c_int = 0x4000; // per link layer defined bit
+pub const IFF_ALTPHYS: ::c_int = IFF_LINK2; // use alternate physical connection
+pub const IFF_MULTICAST: ::c_int = 0x8000; // (i) supports multicast
+// (i) unconfigurable using ioctl(2)
+pub const IFF_CANTCONFIG: ::c_int = 0x10000;
+pub const IFF_PPROMISC: ::c_int = 0x20000; // (n) user-requested promisc mode
+pub const IFF_MONITOR: ::c_int = 0x40000; // (n) user-requested monitor mode
+pub const IFF_STATICARP: ::c_int = 0x80000; // (n) static ARP
+pub const IFF_DYING: ::c_int = 0x200000; // (n) interface is winding down
+pub const IFF_RENAMING: ::c_int = 0x400000; // (n) interface is being renamed
 
 // sys/netinet/in.h
 // Protocols (RFC 1700)
@@ -651,6 +690,8 @@ pub const IPPROTO_DIVERT: ::c_int = 258;
 /// SeND pseudo-protocol
 pub const IPPROTO_SEND: ::c_int = 259;
 
+pub const IP_BINDANY: ::c_int = 24;
+
 pub const PF_SLOW: ::c_int = AF_SLOW;
 pub const PF_SCLUSTER: ::c_int = AF_SCLUSTER;
 pub const PF_ARP: ::c_int = AF_ARP;
@@ -688,6 +729,7 @@ pub const SHM_LOCK: ::c_int = 11;
 pub const SHM_UNLOCK: ::c_int = 12;
 pub const SHM_STAT: ::c_int = 13;
 pub const SHM_INFO: ::c_int = 14;
+pub const SHM_ANON: *mut ::c_char = 1 as *mut ::c_char;
 
 // The *_MAXID constants never should've been used outside of the
 // FreeBSD base system.  And with the exception of CTL_P1003_1B_MAXID,
@@ -763,6 +805,9 @@ pub const TAB3: ::tcflag_t = 0x00000004;
 pub const _PC_ACL_NFS4: ::c_int = 64;
 
 pub const _SC_CPUSET_SIZE: ::c_int = 122;
+
+pub const XU_NGROUPS: ::c_int = 16;
+pub const XUCRED_VERSION: ::c_uint = 0;
 
 extern {
     pub fn __error() -> *mut ::c_int;

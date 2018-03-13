@@ -5,9 +5,9 @@
 [![Current Version](http://meritbadge.herokuapp.com/clippy)](https://crates.io/crates/clippy)
 [![License: MPL-2.0](https://img.shields.io/crates/l/clippy.svg)](#License)
 
-A collection of lints to catch common mistakes and improve your Rust code.
+A collection of lints to catch common mistakes and improve your [Rust](https://github.com/rust-lang/rust) code.
 
-[There are 209 lints included in this crate!](https://rust-lang-nursery.github.io/rust-clippy/master/index.html)
+[There are 208 lints included in this crate!](https://rust-lang-nursery.github.io/rust-clippy/master/index.html)
 
 More to come, please [file an issue](https://github.com/rust-lang-nursery/rust-clippy/issues) if you have ideas!
 
@@ -179,6 +179,15 @@ transparently:
 ```rust
 #[cfg_attr(feature = "cargo-clippy", allow(needless_lifetimes))]
 ```
+
+## Updating rustc
+
+Sometimes, rustc moves forward without clippy catching up. Therefore updating
+rustc may leave clippy a non-functional state until we fix the resulting
+breakage.
+
+You can use the [rust-update](rust-update) script to update rustc only if
+clippy would also update correctly.
 
 ## License
 

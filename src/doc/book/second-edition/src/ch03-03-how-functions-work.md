@@ -117,7 +117,7 @@ types. The function then prints out the values in both of its parameters. Note
 that function parameters don’t all need to be the same type, they just happen
 to be in this example.
 
-Let’s try running this code. Replace the program currently in your *function*
+Let’s try running this code. Replace the program currently in your *functions*
 project’s *src/main.rs* file with the preceding example, and run it using
 `cargo run`:
 
@@ -150,7 +150,7 @@ instructions that perform some action and do not return a value. *Expressions*
 evaluate to a resulting value. Let’s look at some examples.
 
 Creating a variable and assigning a value to it with the `let` keyword is a
-statement. In Listing 3-3, `let y = 6;` is a statement:
+statement. In Listing 3-1, `let y = 6;` is a statement:
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -160,13 +160,13 @@ fn main() {
 }
 ```
 
-<span class="caption">Listing 3-3: A `main` function declaration containing one statement.</span>
+<span class="caption">Listing 3-1: A `main` function declaration containing one statement.</span>
 
 Function definitions are also statements; the entire preceding example is a
 statement in itself.
 
 Statements do not return values. Therefore, you can’t assign a `let` statement
-to another variable, as the following code tries to do:
+to another variable, as the following code tries to do; you’ll get an error:
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -176,7 +176,7 @@ fn main() {
 }
 ```
 
-When you run this program, you’ll get an error like this:
+When you run this program, the error you’ll get looks like this:
 
 ```text
 $ cargo run
@@ -199,7 +199,7 @@ not the case in Rust.
 Expressions evaluate to something and make up most of the rest of the code that
 you’ll write in Rust. Consider a simple math operation, such as `5 + 6`, which
 is an expression that evaluates to the value `11`. Expressions can be part of
-statements: in Listing 3-3 that had the statement `let y = 6;`, `6` is an
+statements: in Listing 3-1 that had the statement `let y = 6;`, `6` is an
 expression that evaluates to the value `6`. Calling a function is an
 expression. Calling a macro is an expression. The block that we use to create
 new scopes, `{}`, is an expression, for example:
@@ -303,7 +303,7 @@ fn plus_one(x: i32) -> i32 {
 
 Running this code will print `The value of x is: 6`. What happens if we place a
 semicolon at the end of the line containing `x + 1`, changing it from an
-expression to a statement?
+expression to a statement? We’ll get an error:
 
 <span class="filename">Filename: src/main.rs</span>
 

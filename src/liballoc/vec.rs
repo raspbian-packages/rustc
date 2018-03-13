@@ -853,8 +853,6 @@ impl<T> Vec<T> {
     /// # Examples
     ///
     /// ```
-    /// use std::ascii::AsciiExt;
-    ///
     /// let mut vec = vec!["foo", "bar", "Bar", "baz", "bar"];
     ///
     /// vec.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
@@ -1543,6 +1541,7 @@ impl<T: Hash> Hash for Vec<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> Index<usize> for Vec<T> {
     type Output = T;
 
@@ -1554,6 +1553,7 @@ impl<T> Index<usize> for Vec<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> IndexMut<usize> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: usize) -> &mut T {
@@ -1562,8 +1562,8 @@ impl<T> IndexMut<usize> for Vec<T> {
     }
 }
 
-
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::Range<usize>> for Vec<T> {
     type Output = [T];
 
@@ -1572,7 +1572,9 @@ impl<T> ops::Index<ops::Range<usize>> for Vec<T> {
         Index::index(&**self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::RangeTo<usize>> for Vec<T> {
     type Output = [T];
 
@@ -1581,7 +1583,9 @@ impl<T> ops::Index<ops::RangeTo<usize>> for Vec<T> {
         Index::index(&**self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::RangeFrom<usize>> for Vec<T> {
     type Output = [T];
 
@@ -1590,7 +1594,9 @@ impl<T> ops::Index<ops::RangeFrom<usize>> for Vec<T> {
         Index::index(&**self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::RangeFull> for Vec<T> {
     type Output = [T];
 
@@ -1599,7 +1605,9 @@ impl<T> ops::Index<ops::RangeFull> for Vec<T> {
         self
     }
 }
+
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::RangeInclusive<usize>> for Vec<T> {
     type Output = [T];
 
@@ -1608,7 +1616,9 @@ impl<T> ops::Index<ops::RangeInclusive<usize>> for Vec<T> {
         Index::index(&**self, index)
     }
 }
+
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::Index<ops::RangeToInclusive<usize>> for Vec<T> {
     type Output = [T];
 
@@ -1619,41 +1629,52 @@ impl<T> ops::Index<ops::RangeToInclusive<usize>> for Vec<T> {
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::Range<usize>> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: ops::Range<usize>) -> &mut [T] {
         IndexMut::index_mut(&mut **self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::RangeTo<usize>> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeTo<usize>) -> &mut [T] {
         IndexMut::index_mut(&mut **self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::RangeFrom<usize>> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeFrom<usize>) -> &mut [T] {
         IndexMut::index_mut(&mut **self, index)
     }
 }
+
 #[stable(feature = "rust1", since = "1.0.0")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::RangeFull> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, _index: ops::RangeFull) -> &mut [T] {
         self
     }
 }
+
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::RangeInclusive<usize>> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut [T] {
         IndexMut::index_mut(&mut **self, index)
     }
 }
+
 #[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[rustc_on_unimplemented = "vector indices are of type `usize` or ranges of `usize`"]
 impl<T> ops::IndexMut<ops::RangeToInclusive<usize>> for Vec<T> {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut [T] {

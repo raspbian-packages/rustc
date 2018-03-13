@@ -57,8 +57,8 @@
 
 use infer;
 use super::{InferCtxt, TypeTrace, SubregionOrigin, RegionVariableOrigin, ValuePairs};
-use super::region_inference::{RegionResolutionError, ConcreteFailure, SubSupConflict,
-                              GenericBoundFailure, GenericKind};
+use super::region_constraints::GenericKind;
+use super::lexical_region_resolve::RegionResolutionError;
 
 use std::fmt;
 use hir;
@@ -66,7 +66,7 @@ use hir::map as hir_map;
 use hir::def_id::DefId;
 use middle::region;
 use traits::{ObligationCause, ObligationCauseCode};
-use ty::{self, Region, Ty, TyCtxt, TypeFoldable};
+use ty::{self, Region, Ty, TyCtxt, TypeFoldable, TypeVariants};
 use ty::error::TypeError;
 use syntax::ast::DUMMY_NODE_ID;
 use syntax_pos::{Pos, Span};
@@ -177,13 +177,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             ty::ReEarlyBound(_) |
             ty::ReFree(_) => {
-                let scope = match *region {
-                    ty::ReEarlyBound(ref br) => {
-                        self.parent_def_id(br.def_id).unwrap()
-                    }
-                    ty::ReFree(ref fr) => fr.scope,
-                    _ => bug!()
-                };
+                let scope = region.free_region_binding_scope(self);
                 let prefix = match *region {
                     ty::ReEarlyBound(ref br) => {
                         format!("the lifetime {} as defined on", br.name)
@@ -262,6 +256,27 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                 errors: &Vec<RegionResolutionError<'tcx>>) {
         debug!("report_region_errors(): {} errors to start", errors.len());
 
+        if self.tcx.sess.opts.debugging_opts.nll {
+            for error in errors {
+                match *error {
+                    RegionResolutionError::ConcreteFailure(ref origin, ..) |
+                    RegionResolutionError::GenericBoundFailure(ref origin, ..) => {
+                        self.tcx.sess.span_warn(
+                            origin.span(),
+                            "not reporting region error due to -Znll");
+                    }
+
+                    RegionResolutionError::SubSupConflict(ref rvo, ..) => {
+                        self.tcx.sess.span_warn(
+                            rvo.span(),
+                            "not reporting region error due to -Znll");
+                    }
+                }
+            }
+
+            return;
+        }
+
         // try to pre-process the errors, which will group some of them
         // together into a `ProcessedErrors` group:
         let errors = self.process_errors(errors);
@@ -272,33 +287,37 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             debug!("report_region_errors: error = {:?}", error);
 
             if !self.try_report_named_anon_conflict(&error) &&
-               !self.try_report_anon_anon_conflict(&error) {
+                !self.try_report_anon_anon_conflict(&error)
+            {
+                match error.clone() {
+                    // These errors could indicate all manner of different
+                    // problems with many different solutions. Rather
+                    // than generate a "one size fits all" error, what we
+                    // attempt to do is go through a number of specific
+                    // scenarios and try to find the best way to present
+                    // the error. If all of these fails, we fall back to a rather
+                    // general bit of code that displays the error information
+                    RegionResolutionError::ConcreteFailure(origin, sub, sup) => {
+                        self.report_concrete_failure(region_scope_tree, origin, sub, sup).emit();
+                    }
 
-               match error.clone() {
-                  // These errors could indicate all manner of different
-                  // problems with many different solutions. Rather
-                  // than generate a "one size fits all" error, what we
-                  // attempt to do is go through a number of specific
-                  // scenarios and try to find the best way to present
-                  // the error. If all of these fails, we fall back to a rather
-                  // general bit of code that displays the error information
-                  ConcreteFailure(origin, sub, sup) => {
-                      self.report_concrete_failure(region_scope_tree, origin, sub, sup).emit();
-                  }
+                    RegionResolutionError::GenericBoundFailure(kind, param_ty, sub) => {
+                        self.report_generic_bound_failure(region_scope_tree, kind, param_ty, sub);
+                    }
 
-                  GenericBoundFailure(kind, param_ty, sub) => {
-                      self.report_generic_bound_failure(region_scope_tree, kind, param_ty, sub);
-                  }
-
-                  SubSupConflict(var_origin, sub_origin, sub_r, sup_origin, sup_r) => {
+                    RegionResolutionError::SubSupConflict(var_origin,
+                                                          sub_origin,
+                                                          sub_r,
+                                                          sup_origin,
+                                                          sup_r) => {
                         self.report_sub_sup_conflict(region_scope_tree,
                                                      var_origin,
                                                      sub_origin,
                                                      sub_r,
                                                      sup_origin,
                                                      sup_r);
-                  }
-               }
+                    }
+                }
             }
         }
     }
@@ -330,9 +349,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         // the only thing in the list.
 
         let is_bound_failure = |e: &RegionResolutionError<'tcx>| match *e {
-            ConcreteFailure(..) => false,
-            SubSupConflict(..) => false,
-            GenericBoundFailure(..) => true,
+            RegionResolutionError::GenericBoundFailure(..) => true,
+            RegionResolutionError::ConcreteFailure(..) |
+            RegionResolutionError::SubSupConflict(..) => false,
         };
 
 
@@ -344,9 +363,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         // sort the errors by span, for better error message stability.
         errors.sort_by_key(|u| match *u {
-            ConcreteFailure(ref sro, _, _) => sro.span(),
-            GenericBoundFailure(ref sro, _, _) => sro.span(),
-            SubSupConflict(ref rvo, _, _, _, _) => rvo.span(),
+            RegionResolutionError::ConcreteFailure(ref sro, _, _) => sro.span(),
+            RegionResolutionError::GenericBoundFailure(ref sro, _, _) => sro.span(),
+            RegionResolutionError::SubSupConflict(ref rvo, _, _, _, _) => rvo.span(),
         });
         errors
     }
@@ -673,14 +692,17 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                          values: Option<ValuePairs<'tcx>>,
                          terr: &TypeError<'tcx>)
     {
-        let (expected_found, is_simple_error) = match values {
-            None => (None, false),
+        let (expected_found, exp_found, is_simple_error) = match values {
+            None => (None, None, false),
             Some(values) => {
-                let is_simple_error = match values {
+                let (is_simple_error, exp_found) = match values {
                     ValuePairs::Types(exp_found) => {
-                        exp_found.expected.is_primitive() && exp_found.found.is_primitive()
+                        let is_simple_err = exp_found.expected.is_primitive()
+                            && exp_found.found.is_primitive();
+
+                        (is_simple_err, Some(exp_found))
                     }
-                    _ => false,
+                    _ => (false, None),
                 };
                 let vals = match self.values_str(&values) {
                     Some((expected, found)) => Some((expected, found)),
@@ -690,11 +712,16 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                         return
                     }
                 };
-                (vals, is_simple_error)
+                (vals, exp_found, is_simple_error)
             }
         };
 
         let span = cause.span;
+
+        diag.span_label(span, terr.to_string());
+        if let Some((sp, msg)) = secondary_span {
+            diag.span_label(sp, msg);
+        }
 
         if let Some((expected, found)) = expected_found {
             match (terr, is_simple_error, expected == found) {
@@ -704,21 +731,43 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                         &format!(" ({})", values.expected.sort_string(self.tcx)),
                         &format!(" ({})", values.found.sort_string(self.tcx)));
                 }
-                (_, false,  _) => {
+                (_, false, _) => {
+                    if let Some(exp_found) = exp_found {
+                        let (def_id, ret_ty) = match exp_found.found.sty {
+                            TypeVariants::TyFnDef(def, _) => {
+                                (Some(def), Some(self.tcx.fn_sig(def).output()))
+                            }
+                            _ => (None, None)
+                        };
+
+                        let exp_is_struct = match exp_found.expected.sty {
+                            TypeVariants::TyAdt(def, _) => def.is_struct(),
+                            _ => false
+                        };
+
+                        if let (Some(def_id), Some(ret_ty)) = (def_id, ret_ty) {
+                            if exp_is_struct && exp_found.expected == ret_ty.0 {
+                                let message = format!(
+                                    "did you mean `{}(/* fields */)`?",
+                                    self.tcx.item_path_str(def_id)
+                                );
+                                diag.span_label(cause.span, message);
+                            }
+                        }
+                    }
+
                     diag.note_expected_found(&"type", expected, found);
                 }
                 _ => (),
             }
         }
 
-        diag.span_label(span, terr.to_string());
-        if let Some((sp, msg)) = secondary_span {
-            diag.span_label(sp, msg);
-        }
-
-        self.note_error_origin(diag, &cause);
         self.check_and_note_conflicting_crates(diag, terr, span);
         self.tcx.note_and_explain_type_err(diag, terr, span);
+
+        // It reads better to have the error origin as the final
+        // thing.
+        self.note_error_origin(diag, &cause);
     }
 
     pub fn report_and_explain_type_error(&self,
@@ -726,6 +775,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                          terr: &TypeError<'tcx>)
                                          -> DiagnosticBuilder<'tcx>
     {
+        debug!("report_and_explain_type_error(trace={:?}, terr={:?})",
+               trace,
+               terr);
+
         let span = trace.cause.span;
         let failure_str = trace.cause.as_failure_str();
         let mut diag = match trace.cause.code {
@@ -832,14 +885,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         };
 
         if let SubregionOrigin::CompareImplMethodObligation {
-            span, item_name, impl_item_def_id, trait_item_def_id, lint_id
+            span, item_name, impl_item_def_id, trait_item_def_id,
         } = origin {
             self.report_extra_impl_obligation(span,
                                               item_name,
                                               impl_item_def_id,
                                               trait_item_def_id,
-                                              &format!("`{}: {}`", bound_kind, sub),
-                                              lint_id)
+                                              &format!("`{}: {}`", bound_kind, sub))
                 .emit();
             return;
         }
@@ -978,6 +1030,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 let var_name = self.tcx.hir.name(var_node_id);
                 format!(" for capture of `{}` by closure", var_name)
             }
+            infer::NLL(..) => bug!("NLL variable found in lexical phase"),
         };
 
         struct_span_err!(self.tcx.sess, var_origin.span(), E0495,

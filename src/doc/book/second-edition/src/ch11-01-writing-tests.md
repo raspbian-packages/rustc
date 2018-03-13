@@ -46,6 +46,7 @@ follows:
 mod tests {
     #[test]
     fn it_works() {
+        assert_eq!(2 + 2, 4);
     }
 }
 ```
@@ -60,9 +61,9 @@ function as a test. We could also have non-test functions in the `tests` module
 to help set up common scenarios or perform common operations, so we need to
 indicate which functions are tests with the `#[test]` attribute.
 
-The function currently has no body, which means there is no code to fail the
-test; an empty test is a passing test! Let’s run it and see that this test
-passes.
+The function body uses the `assert_eq!` macro to assert that 2 + 2 equals 4.
+This assertion serves as an example of the format for a typical test. Let’s run
+it and see that this test passes.
 
 The `cargo test` command runs all tests we have in our project, as shown in
 Listing 11-2:
@@ -99,7 +100,7 @@ We don’t have any tests we’ve marked as ignored, so the summary says `0
 ignored`. We’re going to talk about ignoring tests in the next section on
 different ways to run tests. The `0 measured` statistic is for benchmark tests
 that measure performance. Benchmark tests are, as of this writing, only
-available in nightly Rust. See Appendix D for more information about nightly
+available in nightly Rust. See Chapter 1 for more information about nightly
 Rust.
 
 The next part of the test output that starts with `Doc-tests adder` is for the
@@ -119,6 +120,7 @@ Give the `it_works` function a different name, such as `exploration`, like so:
 mod tests {
     #[test]
     fn exploration() {
+        assert_eq!(2 + 2, 4);
     }
 }
 ```
@@ -147,6 +149,7 @@ like Listing 11-3:
 mod tests {
     #[test]
     fn exploration() {
+        assert_eq!(2 + 2, 4);
     }
 
     #[test]

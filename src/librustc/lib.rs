@@ -45,22 +45,26 @@
 #![feature(conservative_impl_trait)]
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
+#![feature(drain_filter)]
 #![feature(i128_type)]
+#![feature(match_default_bindings)]
+#![feature(inclusive_range_syntax)]
 #![cfg_attr(windows, feature(libc))]
+#![feature(macro_vis_matcher)]
 #![feature(never_type)]
 #![feature(nonzero)]
 #![feature(quote)]
+#![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_patterns)]
 #![feature(specialization)]
 #![feature(unboxed_closures)]
+#![feature(underscore_lifetimes)]
 #![feature(trace_macros)]
 #![feature(test)]
+#![feature(const_atomic_bool_new)]
 
-#![cfg_attr(stage0, feature(const_fn))]
-#![cfg_attr(not(stage0), feature(const_atomic_bool_new))]
-
-#![recursion_limit="256"]
+#![recursion_limit="512"]
 
 extern crate arena;
 #[macro_use] extern crate bitflags;
@@ -106,6 +110,7 @@ pub mod lint;
 
 pub mod middle {
     pub mod allocator;
+    pub mod borrowck;
     pub mod expr_use_visitor;
     pub mod const_val;
     pub mod cstore;

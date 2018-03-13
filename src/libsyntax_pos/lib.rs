@@ -44,6 +44,8 @@ use serialize::{Encodable, Decodable, Encoder, Decoder};
 extern crate serialize;
 extern crate serialize as rustc_serialize; // used by deriving
 
+extern crate unicode_width;
+
 pub mod hygiene;
 pub use hygiene::{SyntaxContext, ExpnInfo, ExpnFormat, NameAndSpan, CompilerDesugaringKind};
 
@@ -73,6 +75,21 @@ pub struct SpanData {
     /// Information about where the macro came from, if this piece of
     /// code was created by a macro expansion.
     pub ctxt: SyntaxContext,
+}
+
+impl SpanData {
+    #[inline]
+    pub fn with_lo(&self, lo: BytePos) -> Span {
+        Span::new(lo, self.hi, self.ctxt)
+    }
+    #[inline]
+    pub fn with_hi(&self, hi: BytePos) -> Span {
+        Span::new(self.lo, hi, self.ctxt)
+    }
+    #[inline]
+    pub fn with_ctxt(&self, ctxt: SyntaxContext) -> Span {
+        Span::new(self.lo, self.hi, ctxt)
+    }
 }
 
 // The interner in thread-local, so `Span` shouldn't move between threads.
@@ -109,8 +126,7 @@ impl Span {
     }
     #[inline]
     pub fn with_lo(self, lo: BytePos) -> Span {
-        let base = self.data();
-        Span::new(lo, base.hi, base.ctxt)
+        self.data().with_lo(lo)
     }
     #[inline]
     pub fn hi(self) -> BytePos {
@@ -118,8 +134,7 @@ impl Span {
     }
     #[inline]
     pub fn with_hi(self, hi: BytePos) -> Span {
-        let base = self.data();
-        Span::new(base.lo, hi, base.ctxt)
+        self.data().with_hi(hi)
     }
     #[inline]
     pub fn ctxt(self) -> SyntaxContext {
@@ -127,20 +142,21 @@ impl Span {
     }
     #[inline]
     pub fn with_ctxt(self, ctxt: SyntaxContext) -> Span {
-        let base = self.data();
-        Span::new(base.lo, base.hi, ctxt)
+        self.data().with_ctxt(ctxt)
     }
 
     /// Returns a new span representing just the end-point of this span
     pub fn end_point(self) -> Span {
-        let lo = cmp::max(self.hi().0 - 1, self.lo().0);
-        self.with_lo(BytePos(lo))
+        let span = self.data();
+        let lo = cmp::max(span.hi.0 - 1, span.lo.0);
+        span.with_lo(BytePos(lo))
     }
 
     /// Returns a new span representing the next character after the end-point of this span
     pub fn next_point(self) -> Span {
-        let lo = cmp::max(self.hi().0, self.lo().0 + 1);
-        Span::new(BytePos(lo), BytePos(lo), self.ctxt())
+        let span = self.data();
+        let lo = cmp::max(span.hi.0, span.lo.0 + 1);
+        Span::new(BytePos(lo), BytePos(lo), span.ctxt)
     }
 
     /// Returns `self` if `self` is not the dummy span, and `other` otherwise.
@@ -150,7 +166,9 @@ impl Span {
 
     /// Return true if `self` fully encloses `other`.
     pub fn contains(self, other: Span) -> bool {
-        self.lo() <= other.lo() && other.hi() <= self.hi()
+        let span = self.data();
+        let other = other.data();
+        span.lo <= other.lo && other.hi <= span.hi
     }
 
     /// Return true if the spans are equal with regards to the source text.
@@ -158,13 +176,17 @@ impl Span {
     /// Use this instead of `==` when either span could be generated code,
     /// and you only care that they point to the same bytes of source text.
     pub fn source_equal(&self, other: &Span) -> bool {
-        self.lo() == other.lo() && self.hi() == other.hi()
+        let span = self.data();
+        let other = other.data();
+        span.lo == other.lo && span.hi == other.hi
     }
 
     /// Returns `Some(span)`, where the start is trimmed by the end of `other`
     pub fn trim_start(self, other: Span) -> Option<Span> {
-        if self.hi() > other.hi() {
-            Some(self.with_lo(cmp::max(self.lo(), other.hi())))
+        let span = self.data();
+        let other = other.data();
+        if span.hi > other.hi {
+            Some(span.with_lo(cmp::max(span.lo, other.hi)))
         } else {
             None
         }
@@ -268,29 +290,35 @@ impl Span {
 
     /// Return a `Span` that would enclose both `self` and `end`.
     pub fn to(self, end: Span) -> Span {
+        let span = self.data();
+        let end = end.data();
         Span::new(
-            cmp::min(self.lo(), end.lo()),
-            cmp::max(self.hi(), end.hi()),
+            cmp::min(span.lo, end.lo),
+            cmp::max(span.hi, end.hi),
             // FIXME(jseyfried): self.ctxt should always equal end.ctxt here (c.f. issue #23480)
-            if self.ctxt() == SyntaxContext::empty() { end.ctxt() } else { self.ctxt() },
+            if span.ctxt == SyntaxContext::empty() { end.ctxt } else { span.ctxt },
         )
     }
 
     /// Return a `Span` between the end of `self` to the beginning of `end`.
     pub fn between(self, end: Span) -> Span {
+        let span = self.data();
+        let end = end.data();
         Span::new(
-            self.hi(),
-            end.lo(),
-            if end.ctxt() == SyntaxContext::empty() { end.ctxt() } else { self.ctxt() },
+            span.hi,
+            end.lo,
+            if end.ctxt == SyntaxContext::empty() { end.ctxt } else { span.ctxt },
         )
     }
 
     /// Return a `Span` between the beginning of `self` to the beginning of `end`.
     pub fn until(self, end: Span) -> Span {
+        let span = self.data();
+        let end = end.data();
         Span::new(
-            self.lo(),
-            end.lo(),
-            if end.ctxt() == SyntaxContext::empty() { end.ctxt() } else { self.ctxt() },
+            span.lo,
+            end.lo,
+            if end.ctxt == SyntaxContext::empty() { end.ctxt } else { span.ctxt },
         )
     }
 }
@@ -316,13 +344,14 @@ impl Default for Span {
 
 impl serialize::UseSpecializedEncodable for Span {
     fn default_encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
+        let span = self.data();
         s.emit_struct("Span", 2, |s| {
             s.emit_struct_field("lo", 0, |s| {
-                self.lo().encode(s)
+                span.lo.encode(s)
             })?;
 
             s.emit_struct_field("hi", 1, |s| {
-                self.hi().encode(s)
+                span.hi.encode(s)
             })
         })
     }
@@ -339,8 +368,11 @@ impl serialize::UseSpecializedDecodable for Span {
 }
 
 fn default_span_debug(span: Span, f: &mut fmt::Formatter) -> fmt::Result {
-    write!(f, "Span {{ lo: {:?}, hi: {:?}, ctxt: {:?} }}",
-           span.lo(), span.hi(), span.ctxt())
+    f.debug_struct("Span")
+        .field("lo", &span.lo())
+        .field("hi", &span.hi())
+        .field("ctxt", &span.ctxt())
+        .finish()
 }
 
 impl fmt::Debug for Span {
@@ -464,6 +496,63 @@ pub struct MultiByteChar {
     pub bytes: usize,
 }
 
+/// Identifies an offset of a non-narrow character in a FileMap
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable, Eq, PartialEq)]
+pub enum NonNarrowChar {
+    /// Represents a zero-width character
+    ZeroWidth(BytePos),
+    /// Represents a wide (fullwidth) character
+    Wide(BytePos),
+}
+
+impl NonNarrowChar {
+    fn new(pos: BytePos, width: usize) -> Self {
+        match width {
+            0 => NonNarrowChar::ZeroWidth(pos),
+            2 => NonNarrowChar::Wide(pos),
+            _ => panic!("width {} given for non-narrow character", width),
+        }
+    }
+
+    /// Returns the absolute offset of the character in the CodeMap
+    pub fn pos(&self) -> BytePos {
+        match *self {
+            NonNarrowChar::ZeroWidth(p) |
+            NonNarrowChar::Wide(p) => p,
+        }
+    }
+
+    /// Returns the width of the character, 0 (zero-width) or 2 (wide)
+    pub fn width(&self) -> usize {
+        match *self {
+            NonNarrowChar::ZeroWidth(_) => 0,
+            NonNarrowChar::Wide(_) => 2,
+        }
+    }
+}
+
+impl Add<BytePos> for NonNarrowChar {
+    type Output = Self;
+
+    fn add(self, rhs: BytePos) -> Self {
+        match self {
+            NonNarrowChar::ZeroWidth(pos) => NonNarrowChar::ZeroWidth(pos + rhs),
+            NonNarrowChar::Wide(pos) => NonNarrowChar::Wide(pos + rhs),
+        }
+    }
+}
+
+impl Sub<BytePos> for NonNarrowChar {
+    type Output = Self;
+
+    fn sub(self, rhs: BytePos) -> Self {
+        match self {
+            NonNarrowChar::ZeroWidth(pos) => NonNarrowChar::ZeroWidth(pos - rhs),
+            NonNarrowChar::Wide(pos) => NonNarrowChar::Wide(pos - rhs),
+        }
+    }
+}
+
 /// The state of the lazy external source loading mechanism of a FileMap.
 #[derive(PartialEq, Eq, Clone)]
 pub enum ExternalSource {
@@ -522,11 +611,13 @@ pub struct FileMap {
     pub lines: RefCell<Vec<BytePos>>,
     /// Locations of multi-byte characters in the source code
     pub multibyte_chars: RefCell<Vec<MultiByteChar>>,
+    /// Width of characters that are not narrow in the source code
+    pub non_narrow_chars: RefCell<Vec<NonNarrowChar>>,
 }
 
 impl Encodable for FileMap {
     fn encode<S: Encoder>(&self, s: &mut S) -> Result<(), S::Error> {
-        s.emit_struct("FileMap", 7, |s| {
+        s.emit_struct("FileMap", 8, |s| {
             s.emit_struct_field("name", 0, |s| self.name.encode(s))?;
             s.emit_struct_field("name_was_remapped", 1, |s| self.name_was_remapped.encode(s))?;
             s.emit_struct_field("src_hash", 6, |s| self.src_hash.encode(s))?;
@@ -580,6 +671,9 @@ impl Encodable for FileMap {
             })?;
             s.emit_struct_field("multibyte_chars", 5, |s| {
                 (*self.multibyte_chars.borrow()).encode(s)
+            })?;
+            s.emit_struct_field("non_narrow_chars", 7, |s| {
+                (*self.non_narrow_chars.borrow()).encode(s)
             })
         })
     }
@@ -588,7 +682,7 @@ impl Encodable for FileMap {
 impl Decodable for FileMap {
     fn decode<D: Decoder>(d: &mut D) -> Result<FileMap, D::Error> {
 
-        d.read_struct("FileMap", 6, |d| {
+        d.read_struct("FileMap", 8, |d| {
             let name: String = d.read_struct_field("name", 0, |d| Decodable::decode(d))?;
             let name_was_remapped: bool =
                 d.read_struct_field("name_was_remapped", 1, |d| Decodable::decode(d))?;
@@ -627,6 +721,8 @@ impl Decodable for FileMap {
             })?;
             let multibyte_chars: Vec<MultiByteChar> =
                 d.read_struct_field("multibyte_chars", 5, |d| Decodable::decode(d))?;
+            let non_narrow_chars: Vec<NonNarrowChar> =
+                d.read_struct_field("non_narrow_chars", 7, |d| Decodable::decode(d))?;
             Ok(FileMap {
                 name,
                 name_was_remapped,
@@ -641,7 +737,8 @@ impl Decodable for FileMap {
                 src_hash,
                 external_src: RefCell::new(ExternalSource::AbsentOk),
                 lines: RefCell::new(lines),
-                multibyte_chars: RefCell::new(multibyte_chars)
+                multibyte_chars: RefCell::new(multibyte_chars),
+                non_narrow_chars: RefCell::new(non_narrow_chars)
             })
         })
     }
@@ -679,6 +776,7 @@ impl FileMap {
             end_pos: Pos::from_usize(end_pos),
             lines: RefCell::new(Vec::new()),
             multibyte_chars: RefCell::new(Vec::new()),
+            non_narrow_chars: RefCell::new(Vec::new()),
         }
     }
 
@@ -766,6 +864,23 @@ impl FileMap {
             bytes,
         };
         self.multibyte_chars.borrow_mut().push(mbc);
+    }
+
+    pub fn record_width(&self, pos: BytePos, ch: char) {
+        let width = match ch {
+            '\t' | '\n' =>
+                // Tabs will consume one column.
+                // Make newlines take one column so that displayed spans can point them.
+                1,
+            ch =>
+                // Assume control characters are zero width.
+                // FIXME: How can we decide between `width` and `width_cjk`?
+                unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0),
+        };
+        // Only record non-narrow characters.
+        if width != 1 {
+            self.non_narrow_chars.borrow_mut().push(NonNarrowChar::new(pos, width));
+        }
     }
 
     pub fn is_real_file(&self) -> bool {
@@ -914,7 +1029,9 @@ pub struct Loc {
     /// The (1-based) line number
     pub line: usize,
     /// The (0-based) column offset
-    pub col: CharPos
+    pub col: CharPos,
+    /// The (0-based) column offset when displayed
+    pub col_display: usize,
 }
 
 /// A source code location used as the result of lookup_char_pos_adj

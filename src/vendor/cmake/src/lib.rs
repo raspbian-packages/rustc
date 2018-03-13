@@ -70,6 +70,7 @@ pub struct Config {
     cmake_target: Option<String>,
     env: Vec<(OsString, OsString)>,
     static_crt: Option<bool>,
+    uses_cxx11: bool,
 }
 
 /// Builds the native library rooted at `path` with the default cmake options.
@@ -111,6 +112,7 @@ impl Config {
             cmake_target: None,
             env: Vec::new(),
             static_crt: None,
+            uses_cxx11: false
         }
     }
 
@@ -221,15 +223,33 @@ impl Config {
         self
     }
 
+    /// Alters the default target triple on OSX to ensure that c++11 is
+    /// available. Does not change the target triple if it is explicitly
+    /// specified.
+    ///
+    /// This does not otherwise affect any CXX flags, i.e. it does not set
+    /// -std=c++11 or -stdlib=libc++.
+    pub fn uses_cxx11(&mut self) -> &mut Config {
+        self.uses_cxx11 = true;
+        self
+    }
+
     /// Run this configuration, compiling the library with all the configured
     /// options.
     ///
     /// This will run both the build system generator command as well as the
     /// command to build the library.
     pub fn build(&mut self) -> PathBuf {
-        let target = self.target.clone().unwrap_or_else(|| {
-            getenv_unwrap("TARGET")
-        });
+        let target = match self.target.clone() {
+            Some(t) => t,
+            None => {
+                let mut t = getenv_unwrap("TARGET");
+                if t.ends_with("-darwin") && self.uses_cxx11 {
+                    t = t + "11"
+                }
+                t
+            }
+        };
         let host = self.host.clone().unwrap_or_else(|| {
             getenv_unwrap("HOST")
         });
@@ -459,6 +479,7 @@ impl Config {
 
         run(cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path), "cmake");
 
+        let mut makeflags = None;
         let mut parallel_args = Vec::new();
         if let Ok(s) = env::var("NUM_JOBS") {
             match self.generator.as_ref().map(|g| g.to_string_lossy()) {
@@ -467,14 +488,22 @@ impl Config {
                 }
                 Some(ref g) if g.contains("Visual Studio") => {
                     parallel_args.push(format!("/m:{}", s));
+				}
+				Some(ref g) if g.contains("NMake") => {
+					// NMake creates `Makefile`s, but doesn't understand `-jN`.
+				}
+                _ if fs::metadata(&dst.join("build/Makefile")).is_ok() => {
+                    match env::var_os("CARGO_MAKEFLAGS") {
+                        // Only do this on non-windows as we could actually be
+                        // invoking make instead of mingw32-make which doesn't
+                        // work with our jobserver
+                        Some(ref s) if !cfg!(windows) => makeflags = Some(s.clone()),
+
+                        // This looks like `make`, let's hope it understands `-jN`.
+                        _ => parallel_args.push(format!("-j{}", s)),
+                    }
                 }
-                Some(ref g) if g.contains("NMake") => {
-                    // NMake creates `Makefile`s, but doesn't understand `-jN`.
-                }
-                _ => if fs::metadata(&dst.join("build/Makefile")).is_ok() {
-                    // This looks like `make`, let's hope it understands `-jN`.
-                    parallel_args.push(format!("-j{}", s));
-                }
+                _ => {}
             }
         }
 
@@ -483,6 +512,9 @@ impl Config {
         let mut cmd = Command::new("cmake");
         for &(ref k, ref v) in c_compiler.env().iter().chain(&self.env) {
             cmd.env(k, v);
+        }
+        if let Some(flags) = makeflags {
+            cmd.env("MAKEFLAGS", flags);
         }
         run(cmd.arg("--build").arg(".")
                .arg("--target").arg(target)

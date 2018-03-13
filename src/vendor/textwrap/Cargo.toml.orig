@@ -1,6 +1,6 @@
 [package]
 name = "textwrap"
-version = "0.8.0" # Remember to update html_root_url.
+version = "0.9.0"
 authors = ["Martin Geisler <martin@geisler.net>"]
 description = """
 Textwrap is a small library for word wrapping, indenting, and
@@ -16,6 +16,7 @@ readme = "README.md"
 keywords = ["text", "formatting", "wrap", "typesetting", "hyphenation"]
 categories = ["text-processing", "command-line-interface"]
 license = "MIT"
+exclude = [".dir-locals.el"]
 
 [package.metadata.docs.rs]
 all-features = true
@@ -26,9 +27,10 @@ appveyor = { repository = "mgeisler/textwrap" }
 
 [dependencies]
 unicode-width = "0.1.3"
-term_size = "0.3.0"
+term_size = { version = "0.3.0", optional = true }
 hyphenation = { version = "0.6.1", optional = true }
 
 [dev-dependencies]
 lipsum = "0.3"
 rand = "0.3"
+version-sync = "0.2"

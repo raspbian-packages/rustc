@@ -23,6 +23,7 @@ use std::collections::hash_map::Entry::{Occupied, Vacant};
 use std::cmp;
 use syntax::ast;
 use syntax::codemap::Spanned;
+use syntax::feature_gate;
 use syntax::ptr::P;
 use syntax_pos::Span;
 
@@ -68,7 +69,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             PatKind::Binding(..) |
             PatKind::Ref(..) => false,
         };
-        if is_non_ref_pat && tcx.sess.features.borrow().match_default_bindings {
+        if is_non_ref_pat {
             debug!("pattern is non reference pattern");
             let mut exp_ty = self.resolve_type_vars_with_obligations(&expected);
 
@@ -113,10 +114,24 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 }
             };
             if pat_adjustments.len() > 0 {
-                debug!("default binding mode is now {:?}", def_bm);
-                self.inh.tables.borrow_mut()
-                    .pat_adjustments_mut()
-                    .insert(pat.hir_id, pat_adjustments);
+                if tcx.sess.features.borrow().match_default_bindings {
+                    debug!("default binding mode is now {:?}", def_bm);
+                    self.inh.tables.borrow_mut()
+                        .pat_adjustments_mut()
+                        .insert(pat.hir_id, pat_adjustments);
+                } else {
+                    let mut err = feature_gate::feature_err(
+                        &tcx.sess.parse_sess,
+                        "match_default_bindings",
+                        pat.span,
+                        feature_gate::GateIssue::Language,
+                        "non-reference pattern used to match a reference",
+                    );
+                    if let Ok(snippet) = tcx.sess.codemap().span_to_snippet(pat.span) {
+                        err.span_suggestion(pat.span, "consider using", format!("&{}", &snippet));
+                    }
+                    err.emit();
+                }
             }
         }
 
@@ -325,8 +340,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             if let Some(mut err) = err {
                                 if is_arg {
                                     if let PatKind::Binding(..) = inner.node {
-                                        if let Ok(snippet) = self.sess().codemap()
-                                                                        .span_to_snippet(pat.span)
+                                        if let Ok(snippet) = tcx.sess.codemap()
+                                                                     .span_to_snippet(pat.span)
                                         {
                                             err.help(&format!("did you mean `{}: &{}`?",
                                                               &snippet[1..],
@@ -456,7 +471,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         //
         // 2. Things go horribly wrong if we use subtype. The reason for
         // THIS is a fairly subtle case involving bound regions. See the
-        // `givens` field in `region_inference`, as well as the test
+        // `givens` field in `region_constraints`, as well as the test
         // `regions-relate-bound-regions-on-closures-to-inference-variables.rs`,
         // for details. Short version is that we must sometimes detect
         // relationships between specific region variables and regions
@@ -810,10 +825,11 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                def_bm: ty::BindingMode) {
         let tcx = self.tcx;
 
-        let (substs, kind_name) = match adt_ty.sty {
-            ty::TyAdt(adt, substs) => (substs, adt.variant_descr()),
+        let (substs, adt) = match adt_ty.sty {
+            ty::TyAdt(adt, substs) => (substs, adt),
             _ => span_bug!(span, "struct pattern is not an ADT")
         };
+        let kind_name = adt.variant_descr();
 
         // Index the struct fields' types.
         let field_map = variant.fields
@@ -865,6 +881,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             };
 
             self.check_pat_walk(&field.pat, field_ty, def_bm, true);
+        }
+
+        // Require `..` if struct has non_exhaustive attribute.
+        if adt.is_struct() && adt.is_non_exhaustive() && !adt.did.is_local() && !etc {
+            span_err!(tcx.sess, span, E0638,
+                      "`..` required with {} marked as non-exhaustive",
+                      kind_name);
         }
 
         // Report an error if incorrect number of the fields were specified.

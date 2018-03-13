@@ -26,13 +26,6 @@ impl<'tcx, T: fmt::Debug> fmt::Debug for Normalized<'tcx, T> {
     }
 }
 
-impl<'tcx> fmt::Debug for traits::RegionObligation<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "RegionObligation(sub_region={:?}, sup_type={:?})",
-               self.sub_region,
-               self.sup_type)
-    }
-}
 impl<'tcx, O: fmt::Debug> fmt::Debug for traits::Obligation<'tcx, O> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Obligation(predicate={:?},depth={})",
@@ -47,7 +40,7 @@ impl<'tcx, N: fmt::Debug> fmt::Debug for traits::Vtable<'tcx, N> {
             super::VtableImpl(ref v) =>
                 write!(f, "{:?}", v),
 
-            super::VtableDefaultImpl(ref t) =>
+            super::VtableAutoImpl(ref t) =>
                 write!(f, "{:?}", t),
 
             super::VtableClosure(ref d) =>
@@ -104,9 +97,9 @@ impl<'tcx, N: fmt::Debug> fmt::Debug for traits::VtableBuiltinData<N> {
     }
 }
 
-impl<'tcx, N: fmt::Debug> fmt::Debug for traits::VtableDefaultImplData<N> {
+impl<'tcx, N: fmt::Debug> fmt::Debug for traits::VtableAutoImplData<N> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "VtableDefaultImplData(trait_def_id={:?}, nested={:?})",
+        write!(f, "VtableAutoImplData(trait_def_id={:?}, nested={:?})",
                self.trait_def_id,
                self.nested)
     }
@@ -221,13 +214,11 @@ impl<'a, 'tcx> Lift<'tcx> for traits::ObligationCauseCode<'a> {
             }
             super::CompareImplMethodObligation { item_name,
                                                  impl_item_def_id,
-                                                 trait_item_def_id,
-                                                 lint_id } => {
+                                                 trait_item_def_id } => {
                 Some(super::CompareImplMethodObligation {
                     item_name,
                     impl_item_def_id,
                     trait_item_def_id,
-                    lint_id,
                 })
             }
             super::ExprAssignable => Some(super::ExprAssignable),
@@ -292,7 +283,7 @@ impl<'a, 'tcx> Lift<'tcx> for traits::Vtable<'a, ()> {
                     })
                 })
             }
-            traits::VtableDefaultImpl(t) => Some(traits::VtableDefaultImpl(t)),
+            traits::VtableAutoImpl(t) => Some(traits::VtableAutoImpl(t)),
             traits::VtableGenerator(traits::VtableGeneratorData {
                 closure_def_id,
                 substs,
@@ -407,9 +398,9 @@ impl<'tcx, N: TypeFoldable<'tcx>> TypeFoldable<'tcx> for traits::VtableClosureDa
     }
 }
 
-impl<'tcx, N: TypeFoldable<'tcx>> TypeFoldable<'tcx> for traits::VtableDefaultImplData<N> {
+impl<'tcx, N: TypeFoldable<'tcx>> TypeFoldable<'tcx> for traits::VtableAutoImplData<N> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        traits::VtableDefaultImplData {
+        traits::VtableAutoImplData {
             trait_def_id: self.trait_def_id,
             nested: self.nested.fold_with(folder),
         }
@@ -463,7 +454,7 @@ impl<'tcx, N: TypeFoldable<'tcx>> TypeFoldable<'tcx> for traits::Vtable<'tcx, N>
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         match *self {
             traits::VtableImpl(ref v) => traits::VtableImpl(v.fold_with(folder)),
-            traits::VtableDefaultImpl(ref t) => traits::VtableDefaultImpl(t.fold_with(folder)),
+            traits::VtableAutoImpl(ref t) => traits::VtableAutoImpl(t.fold_with(folder)),
             traits::VtableGenerator(ref d) => {
                 traits::VtableGenerator(d.fold_with(folder))
             }
@@ -482,7 +473,7 @@ impl<'tcx, N: TypeFoldable<'tcx>> TypeFoldable<'tcx> for traits::Vtable<'tcx, N>
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         match *self {
             traits::VtableImpl(ref v) => v.visit_with(visitor),
-            traits::VtableDefaultImpl(ref t) => t.visit_with(visitor),
+            traits::VtableAutoImpl(ref t) => t.visit_with(visitor),
             traits::VtableGenerator(ref d) => d.visit_with(visitor),
             traits::VtableClosure(ref d) => d.visit_with(visitor),
             traits::VtableFnPointer(ref d) => d.visit_with(visitor),

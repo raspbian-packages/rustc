@@ -7,12 +7,12 @@ use rustc::ty;
 use rustc::ty::subst::Substs;
 use rustc_const_eval::ConstContext;
 use rustc_const_math::ConstFloat;
-use syntax::codemap::{Span, ExpnFormat};
-use utils::{get_item_name, get_parent_expr, implements_trait, in_macro, is_integer_literal, match_qpath, snippet,
-            span_lint, span_lint_and_then, walk_ptrs_ty, last_path_segment, iter_input_pats, in_constant,
-            match_trait_method, paths};
+use syntax::codemap::{ExpnFormat, Span};
+use utils::{get_item_name, get_parent_expr, implements_trait, in_constant, in_macro, is_integer_literal,
+            iter_input_pats, last_path_segment, match_qpath, match_trait_method, paths, snippet, span_lint,
+            span_lint_and_then, walk_ptrs_ty};
 use utils::sugg::Sugg;
-use syntax::ast::{LitKind, CRATE_NODE_ID, FloatTy};
+use syntax::ast::{FloatTy, LitKind, CRATE_NODE_ID};
 
 /// **What it does:** Checks for function arguments and let bindings denoted as
 /// `ref`.
@@ -242,7 +242,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                         TOPLEVEL_REF_ARG,
                         arg.pat.span,
                         "`ref` directly on a function argument is ignored. Consider using a reference type \
-                               instead.",
+                         instead.",
                     );
                 },
                 _ => {},
@@ -251,55 +251,57 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
     }
 
     fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, s: &'tcx Stmt) {
-        if_let_chain! {[
-            let StmtDecl(ref d, _) = s.node,
-            let DeclLocal(ref l) = d.node,
-            let PatKind::Binding(an, _, i, None) = l.pat.node,
-            let Some(ref init) = l.init
-        ], {
-            if an == BindingAnnotation::Ref || an == BindingAnnotation::RefMut {
-                let init = Sugg::hir(cx, init, "..");
-                let (mutopt,initref) = if an == BindingAnnotation::RefMut {
-                    ("mut ", init.mut_addr())
-                } else {
-                    ("", init.addr())
-                };
-                let tyopt = if let Some(ref ty) = l.ty {
-                    format!(": &{mutopt}{ty}", mutopt=mutopt, ty=snippet(cx, ty.span, "_"))
-                } else {
-                    "".to_owned()
-                };
-                span_lint_and_then(cx,
-                    TOPLEVEL_REF_ARG,
-                    l.pat.span,
-                    "`ref` on an entire `let` pattern is discouraged, take a reference with `&` instead",
-                    |db| {
-                        db.span_suggestion(s.span,
-                                           "try",
-                                           format!("let {name}{tyopt} = {initref};",
-                                                   name=snippet(cx, i.span, "_"),
-                                                   tyopt=tyopt,
-                                                   initref=initref));
-                    }
-                );
+        if_chain! {
+            if let StmtDecl(ref d, _) = s.node;
+            if let DeclLocal(ref l) = d.node;
+            if let PatKind::Binding(an, _, i, None) = l.pat.node;
+            if let Some(ref init) = l.init;
+            then {
+                if an == BindingAnnotation::Ref || an == BindingAnnotation::RefMut {
+                    let init = Sugg::hir(cx, init, "..");
+                    let (mutopt,initref) = if an == BindingAnnotation::RefMut {
+                        ("mut ", init.mut_addr())
+                    } else {
+                        ("", init.addr())
+                    };
+                    let tyopt = if let Some(ref ty) = l.ty {
+                        format!(": &{mutopt}{ty}", mutopt=mutopt, ty=snippet(cx, ty.span, "_"))
+                    } else {
+                        "".to_owned()
+                    };
+                    span_lint_and_then(cx,
+                        TOPLEVEL_REF_ARG,
+                        l.pat.span,
+                        "`ref` on an entire `let` pattern is discouraged, take a reference with `&` instead",
+                        |db| {
+                            db.span_suggestion(s.span,
+                                               "try",
+                                               format!("let {name}{tyopt} = {initref};",
+                                                       name=snippet(cx, i.span, "_"),
+                                                       tyopt=tyopt,
+                                                       initref=initref));
+                        }
+                    );
+                }
             }
-        }};
-        if_let_chain! {[
-            let StmtSemi(ref expr, _) = s.node,
-            let Expr_::ExprBinary(ref binop, ref a, ref b) = expr.node,
-            binop.node == BiAnd || binop.node == BiOr,
-            let Some(sugg) = Sugg::hir_opt(cx, a),
-        ], {
-            span_lint_and_then(cx,
-                SHORT_CIRCUIT_STATEMENT,
-                s.span,
-                "boolean short circuit operator in statement may be clearer using an explicit test",
-                |db| {
-                    let sugg = if binop.node == BiOr { !sugg } else { sugg };
-                    db.span_suggestion(s.span, "replace it with",
-                                       format!("if {} {{ {}; }}", sugg, &snippet(cx, b.span, "..")));
-                });
-        }};
+        };
+        if_chain! {
+            if let StmtSemi(ref expr, _) = s.node;
+            if let Expr_::ExprBinary(ref binop, ref a, ref b) = expr.node;
+            if binop.node == BiAnd || binop.node == BiOr;
+            if let Some(sugg) = Sugg::hir_opt(cx, a);
+            then {
+                span_lint_and_then(cx,
+                    SHORT_CIRCUIT_STATEMENT,
+                    s.span,
+                    "boolean short circuit operator in statement may be clearer using an explicit test",
+                    |db| {
+                        let sugg = if binop.node == BiOr { !sugg } else { sugg };
+                        db.span_suggestion(s.span, "replace it with",
+                                           format!("if {} {{ {}; }}", sugg, &snippet(cx, b.span, "..")));
+                    });
+            }
+        };
     }
 
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
@@ -326,8 +328,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                     }
                     if let Some(name) = get_item_name(cx, expr) {
                         let name = name.as_str();
-                        if name == "eq" || name == "ne" || name == "is_nan" || name.starts_with("eq_") ||
-                            name.ends_with("_eq")
+                        if name == "eq" || name == "ne" || name == "is_nan" || name.starts_with("eq_")
+                            || name.ends_with("_eq")
                         {
                             return;
                         }
@@ -385,7 +387,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                 expr.span,
                 &format!(
                     "used binding `{}` which is prefixed with an underscore. A leading \
-                                underscore signals that a binding will not be used.",
+                     underscore signals that a binding will not be used.",
                     binding
                 ),
             );
@@ -408,23 +410,29 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
 
 fn check_nan(cx: &LateContext, path: &Path, expr: &Expr) {
     if !in_constant(cx, expr.id) {
-        path.segments.last().map(|seg| if seg.name == "NAN" {
-            span_lint(
-                cx,
-                CMP_NAN,
-                expr.span,
-                "doomed comparison with NAN, use `std::{f32,f64}::is_nan()` instead",
-            );
+        path.segments.last().map(|seg| {
+            if seg.name == "NAN" {
+                span_lint(
+                    cx,
+                    CMP_NAN,
+                    expr.span,
+                    "doomed comparison with NAN, use `std::{f32,f64}::is_nan()` instead",
+                );
+            }
         });
     }
 }
 
-fn is_allowed(cx: &LateContext, expr: &Expr) -> bool {
+fn is_allowed<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) -> bool {
     let parent_item = cx.tcx.hir.get_parent(expr.id);
     let parent_def_id = cx.tcx.hir.local_def_id(parent_item);
     let substs = Substs::identity_for_item(cx.tcx, parent_def_id);
     let res = ConstContext::new(cx.tcx, cx.param_env.and(substs), cx.tables).eval(expr);
-    if let Ok(ConstVal::Float(val)) = res {
+    if let Ok(&ty::Const {
+        val: ConstVal::Float(val),
+        ..
+    }) = res
+    {
         use std::cmp::Ordering;
         match val.ty {
             FloatTy::F32 => {
@@ -443,8 +451,8 @@ fn is_allowed(cx: &LateContext, expr: &Expr) -> bool {
                     bits: u128::from(::std::f32::NEG_INFINITY.to_bits()),
                 };
 
-                val.try_cmp(zero) == Ok(Ordering::Equal) || val.try_cmp(infinity) == Ok(Ordering::Equal) ||
-                    val.try_cmp(neg_infinity) == Ok(Ordering::Equal)
+                val.try_cmp(zero) == Ok(Ordering::Equal) || val.try_cmp(infinity) == Ok(Ordering::Equal)
+                    || val.try_cmp(neg_infinity) == Ok(Ordering::Equal)
             },
             FloatTy::F64 => {
                 let zero = ConstFloat {
@@ -462,8 +470,8 @@ fn is_allowed(cx: &LateContext, expr: &Expr) -> bool {
                     bits: u128::from(::std::f64::NEG_INFINITY.to_bits()),
                 };
 
-                val.try_cmp(zero) == Ok(Ordering::Equal) || val.try_cmp(infinity) == Ok(Ordering::Equal) ||
-                    val.try_cmp(neg_infinity) == Ok(Ordering::Equal)
+                val.try_cmp(zero) == Ok(Ordering::Equal) || val.try_cmp(infinity) == Ok(Ordering::Equal)
+                    || val.try_cmp(neg_infinity) == Ok(Ordering::Equal)
             },
         }
     } else {
@@ -484,22 +492,20 @@ fn check_to_owned(cx: &LateContext, expr: &Expr, other: &Expr) {
                 return;
             }
         },
-        ExprCall(ref path, ref v) if v.len() == 1 => {
-            if let ExprPath(ref path) = path.node {
-                if match_qpath(path, &["String", "from_str"]) || match_qpath(path, &["String", "from"]) {
-                    (cx.tables.expr_ty_adjusted(&v[0]), snippet(cx, v[0].span, ".."))
-                } else {
-                    return;
-                }
+        ExprCall(ref path, ref v) if v.len() == 1 => if let ExprPath(ref path) = path.node {
+            if match_qpath(path, &["String", "from_str"]) || match_qpath(path, &["String", "from"]) {
+                (cx.tables.expr_ty_adjusted(&v[0]), snippet(cx, v[0].span, ".."))
             } else {
                 return;
             }
+        } else {
+            return;
         },
         _ => return,
     };
 
     let other_ty = cx.tables.expr_ty_adjusted(other);
-    let partial_eq_trait_id = match cx.tcx.lang_items.eq_trait() {
+    let partial_eq_trait_id = match cx.tcx.lang_items().eq_trait() {
         Some(id) => id,
         None => return,
     };
@@ -554,8 +560,7 @@ fn check_to_owned(cx: &LateContext, expr: &Expr, other: &Expr) {
 fn is_used(cx: &LateContext, expr: &Expr) -> bool {
     if let Some(parent) = get_parent_expr(cx, expr) {
         match parent.node {
-            ExprAssign(_, ref rhs) |
-            ExprAssignOp(_, _, ref rhs) => **rhs == *expr,
+            ExprAssign(_, ref rhs) | ExprAssignOp(_, _, ref rhs) => **rhs == *expr,
             _ => is_used(cx, parent),
         }
     } else {
@@ -567,38 +572,34 @@ fn is_used(cx: &LateContext, expr: &Expr) -> bool {
 /// generated by
 /// `#[derive(...)`] or the like).
 fn in_attributes_expansion(expr: &Expr) -> bool {
-    expr.span.ctxt().outer().expn_info().map_or(
-        false,
-        |info| matches!(info.callee.format, ExpnFormat::MacroAttribute(_)),
-    )
+    expr.span
+        .ctxt()
+        .outer()
+        .expn_info()
+        .map_or(false, |info| matches!(info.callee.format, ExpnFormat::MacroAttribute(_)))
 }
 
 /// Test whether `def` is a variable defined outside a macro.
 fn non_macro_local(cx: &LateContext, def: &def::Def) -> bool {
     match *def {
-        def::Def::Local(def_id) |
-        def::Def::Upvar(def_id, _, _) => {
-            let id = cx.tcx.hir.as_local_node_id(def_id).expect(
-                "local variables should be found in the same crate",
-            );
-            !in_macro(cx.tcx.hir.span(id))
-        },
+        def::Def::Local(id) | def::Def::Upvar(id, _, _) => !in_macro(cx.tcx.hir.span(id)),
         _ => false,
     }
 }
 
 fn check_cast(cx: &LateContext, span: Span, e: &Expr, ty: &Ty) {
-    if_let_chain! {[
-        let TyPtr(MutTy { mutbl, .. }) = ty.node,
-        let ExprLit(ref lit) = e.node,
-        let LitKind::Int(value, ..) = lit.node,
-        value == 0,
-        !in_constant(cx, e.id)
-    ], {
-        let msg = match mutbl {
-            Mutability::MutMutable => "`0 as *mut _` detected. Consider using `ptr::null_mut()`",
-            Mutability::MutImmutable => "`0 as *const _` detected. Consider using `ptr::null()`",
-        };
-        span_lint(cx, ZERO_PTR, span, msg);
-    }}
+    if_chain! {
+        if let TyPtr(MutTy { mutbl, .. }) = ty.node;
+        if let ExprLit(ref lit) = e.node;
+        if let LitKind::Int(value, ..) = lit.node;
+        if value == 0;
+        if !in_constant(cx, e.id);
+        then {
+            let msg = match mutbl {
+                Mutability::MutMutable => "`0 as *mut _` detected. Consider using `ptr::null_mut()`",
+                Mutability::MutImmutable => "`0 as *const _` detected. Consider using `ptr::null()`",
+            };
+            span_lint(cx, ZERO_PTR, span, msg);
+        }
+    }
 }

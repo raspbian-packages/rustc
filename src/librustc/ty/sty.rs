@@ -14,6 +14,7 @@ use hir::def_id::DefId;
 
 use middle::const_val::ConstVal;
 use middle::region;
+use rustc_data_structures::indexed_vec::Idx;
 use ty::subst::{Substs, Subst};
 use ty::{self, AdtDef, TypeFlags, Ty, TyCtxt, TypeFoldable};
 use ty::{Slice, TyS};
@@ -24,7 +25,6 @@ use std::cmp::Ordering;
 use syntax::abi;
 use syntax::ast::{self, Name};
 use syntax::symbol::keywords;
-use util::nodemap::FxHashMap;
 
 use serialize;
 
@@ -104,6 +104,8 @@ pub enum TypeVariants<'tcx> {
     /// variables. This happens when the `TyAdt` corresponds to an ADT
     /// definition and not a concrete use of it.
     TyAdt(&'tcx AdtDef, &'tcx Substs<'tcx>),
+
+    TyForeign(DefId),
 
     /// The pointee of a string slice. Written as `str`.
     TyStr,
@@ -759,7 +761,7 @@ impl<'a, 'gcx, 'tcx> ParamTy {
 /// is the outer fn.
 ///
 /// [dbi]: http://en.wikipedia.org/wiki/De_Bruijn_index
-#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug, Copy)]
+#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug, Copy, PartialOrd, Ord)]
 pub struct DebruijnIndex {
     /// We maintain the invariant that this is never 0. So 1 indicates
     /// the innermost binder. To ensure this, create with `DebruijnIndex::new`.
@@ -824,7 +826,7 @@ pub type Region<'tcx> = &'tcx RegionKind;
 ///
 /// [1] http://smallcultfollowing.com/babysteps/blog/2013/10/29/intermingled-parameter-lists/
 /// [2] http://smallcultfollowing.com/babysteps/blog/2013/11/04/intermingled-parameter-lists/
-#[derive(Clone, PartialEq, Eq, Hash, Copy, RustcEncodable, RustcDecodable)]
+#[derive(Clone, PartialEq, Eq, Hash, Copy, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub enum RegionKind {
     // Region bound in a type or fn declaration which will be
     // substituted 'early' -- that is, at the same time when type
@@ -870,7 +872,7 @@ pub enum RegionKind {
 
 impl<'tcx> serialize::UseSpecializedDecodable for Region<'tcx> {}
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, Debug, PartialOrd, Ord)]
 pub struct EarlyBoundRegion {
     pub def_id: DefId,
     pub index: u32,
@@ -892,12 +894,24 @@ pub struct FloatVid {
     pub index: u32,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy, PartialOrd, Ord)]
 pub struct RegionVid {
     pub index: u32,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
+// FIXME: We could convert this to use `newtype_index!`
+impl Idx for RegionVid {
+    fn new(value: usize) -> Self {
+        assert!(value < ::std::u32::MAX as usize);
+        RegionVid { index: value as u32 }
+    }
+
+    fn index(self) -> usize {
+        self.index as usize
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub struct SkolemizedRegionVid {
     pub index: u32,
 }
@@ -1036,6 +1050,35 @@ impl RegionKind {
 
         flags
     }
+
+    /// Given an early-bound or free region, returns the def-id where it was bound.
+    /// For example, consider the regions in this snippet of code:
+    ///
+    /// ```
+    /// impl<'a> Foo {
+    ///      ^^ -- early bound, declared on an impl
+    ///
+    ///     fn bar<'b, 'c>(x: &self, y: &'b u32, z: &'c u64) where 'static: 'c
+    ///            ^^  ^^     ^ anonymous, late-bound
+    ///            |   early-bound, appears in where-clauses
+    ///            late-bound, appears only in fn args
+    ///     {..}
+    /// }
+    /// ```
+    ///
+    /// Here, `free_region_binding_scope('a)` would return the def-id
+    /// of the impl, and for all the other highlighted regions, it
+    /// would return the def-id of the function. In other cases (not shown), this
+    /// function might return the def-id of a closure.
+    pub fn free_region_binding_scope(&self, tcx: TyCtxt<'_, '_, '_>) -> DefId {
+        match self {
+            ty::ReEarlyBound(br) => {
+                tcx.parent_def_id(br.def_id).unwrap()
+            }
+            ty::ReFree(fr) => fr.scope,
+            _ => bug!("free_region_binding_scope invoked on inappropriate region: {:?}", self),
+        }
+    }
 }
 
 /// Type utilities
@@ -1068,54 +1111,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyTuple(_, true) => true,
             _ => false,
         }
-    }
-
-    /// Checks whether a type is visibly uninhabited from a particular module.
-    /// # Example
-    /// ```rust
-    /// enum Void {}
-    /// mod a {
-    ///     pub mod b {
-    ///         pub struct SecretlyUninhabited {
-    ///             _priv: !,
-    ///         }
-    ///     }
-    /// }
-    ///
-    /// mod c {
-    ///     pub struct AlsoSecretlyUninhabited {
-    ///         _priv: Void,
-    ///     }
-    ///     mod d {
-    ///     }
-    /// }
-    ///
-    /// struct Foo {
-    ///     x: a::b::SecretlyUninhabited,
-    ///     y: c::AlsoSecretlyUninhabited,
-    /// }
-    /// ```
-    /// In this code, the type `Foo` will only be visibly uninhabited inside the
-    /// modules b, c and d. This effects pattern-matching on `Foo` or types that
-    /// contain `Foo`.
-    ///
-    /// # Example
-    /// ```rust
-    /// let foo_result: Result<T, Foo> = ... ;
-    /// let Ok(t) = foo_result;
-    /// ```
-    /// This code should only compile in modules where the uninhabitedness of Foo is
-    /// visible.
-    pub fn is_uninhabited_from(&self, module: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> bool {
-        let mut visited = FxHashMap::default();
-        let forest = self.uninhabited_from(&mut visited, tcx);
-
-        // To check whether this type is uninhabited at all (not just from the
-        // given node) you could check whether the forest is empty.
-        // ```
-        // forest.is_empty()
-        // ```
-        forest.contains(tcx, module)
     }
 
     pub fn is_primitive(&self) -> bool {
@@ -1163,13 +1158,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
                 _ => false,
             },
             _ => false
-        }
-    }
-
-    pub fn is_structural(&self) -> bool {
-        match self.sty {
-            TyAdt(..) | TyTuple(..) | TyArray(..) | TyClosure(..) => true,
-            _ => self.is_slice() | self.is_trait(),
         }
     }
 
@@ -1396,6 +1384,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         match self.sty {
             TyDynamic(ref tt, ..) => tt.principal().map(|p| p.def_id()),
             TyAdt(def, _) => Some(def.did),
+            TyForeign(did) => Some(did),
             TyClosure(id, _) => Some(id),
             _ => None,
         }
@@ -1445,6 +1434,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyRawPtr(_) |
             TyNever |
             TyTuple(..) |
+            TyForeign(..) |
             TyParam(_) |
             TyInfer(_) |
             TyError => {

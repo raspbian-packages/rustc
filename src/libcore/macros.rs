@@ -120,6 +120,9 @@ macro_rules! assert_eq {
             }
         }
     });
+    ($left:expr, $right:expr,) => ({
+        assert_eq!($left, $right)
+    });
     ($left:expr, $right:expr, $($arg:tt)+) => ({
         match (&($left), &($right)) {
             (left_val, right_val) => {
@@ -168,6 +171,9 @@ macro_rules! assert_ne {
             }
         }
     });
+    ($left:expr, $right:expr,) => {
+        assert_ne!($left, $right)
+    };
     ($left:expr, $right:expr, $($arg:tt)+) => ({
         match (&($left), &($right)) {
             (left_val, right_val) => {
@@ -682,7 +688,7 @@ mod builtin {
     #[cfg(dox)]
     macro_rules! file { () => ({ /* compiler built-in */ }) }
 
-    /// A macro which stringifies its argument.
+    /// A macro which stringifies its arguments.
     ///
     /// For more information, see the documentation for [`std::stringify!`].
     ///
@@ -690,7 +696,7 @@ mod builtin {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[macro_export]
     #[cfg(dox)]
-    macro_rules! stringify { ($t:tt) => ({ /* compiler built-in */ }) }
+    macro_rules! stringify { ($($t:tt)*) => ({ /* compiler built-in */ }) }
 
     /// Includes a utf8-encoded file as a string.
     ///

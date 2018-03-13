@@ -127,6 +127,14 @@ s! {
         pub shm_dtime: ::time_t,
         pub shm_ctime: ::time_t,
     }
+
+    pub struct xucred {
+        pub cr_version: ::c_uint,
+        pub cr_uid: ::uid_t,
+        pub cr_ngroups: ::c_short,
+        pub cr_groups: [::gid_t;16],
+        __cr_unused1: *mut ::c_void,
+    }
 }
 
 pub const SIGEV_THREAD_ID: ::c_int = 4;
@@ -402,6 +410,11 @@ pub const SO_PROTOCOL: ::c_int = 0x1016;
 pub const SO_PROTOTYPE: ::c_int = SO_PROTOCOL;
 pub const SO_VENDOR: ::c_int = 0x80000000;
 
+pub const LOCAL_PEERCRED: ::c_int = 1;
+pub const LOCAL_CREDS: ::c_int = 2;
+pub const LOCAL_CONNWAIT: ::c_int = 4;
+pub const LOCAL_VENDOR: ::c_int = SO_VENDOR;
+
 pub const AF_SLOW: ::c_int = 33;
 pub const AF_SCLUSTER: ::c_int = 34;
 pub const AF_ARP: ::c_int = 35;
@@ -651,6 +664,8 @@ pub const IPPROTO_DIVERT: ::c_int = 258;
 /// SeND pseudo-protocol
 pub const IPPROTO_SEND: ::c_int = 259;
 
+pub const IP_BINDANY: ::c_int = 24;
+
 pub const PF_SLOW: ::c_int = AF_SLOW;
 pub const PF_SCLUSTER: ::c_int = AF_SCLUSTER;
 pub const PF_ARP: ::c_int = AF_ARP;
@@ -763,6 +778,9 @@ pub const TAB3: ::tcflag_t = 0x00000004;
 pub const _PC_ACL_NFS4: ::c_int = 64;
 
 pub const _SC_CPUSET_SIZE: ::c_int = 122;
+
+pub const XU_NGROUPS: ::c_int = 16;
+pub const XUCRED_VERSION: ::c_uint = 0;
 
 extern {
     pub fn __error() -> *mut ::c_int;

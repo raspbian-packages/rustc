@@ -11,10 +11,7 @@ pub type ino64_t = u64;
 pub type off64_t = i64;
 pub type blkcnt64_t = i64;
 pub type rlim64_t = u64;
-pub type shmatt_t = ::c_ulong;
 pub type mqd_t = ::c_int;
-pub type msgqnum_t = ::c_ulong;
-pub type msglen_t = ::c_ulong;
 pub type nfds_t = ::c_ulong;
 pub type nl_item = ::c_int;
 pub type idtype_t = ::c_uint;
@@ -74,21 +71,33 @@ s! {
     }
 
     pub struct pthread_mutex_t {
-        #[cfg(any(target_arch = "mips", target_arch = "arm",
-                  target_arch = "powerpc"))]
+        #[cfg(any(target_arch = "mips",
+                  target_arch = "arm",
+                  target_arch = "powerpc",
+                  all(target_arch = "x86_64",
+                      target_pointer_width = "32")))]
         __align: [::c_long; 0],
-        #[cfg(not(any(target_arch = "mips", target_arch = "arm",
-                      target_arch = "powerpc")))]
+        #[cfg(not(any(target_arch = "mips",
+                      target_arch = "arm",
+                      target_arch = "powerpc",
+                      all(target_arch = "x86_64",
+                          target_pointer_width = "32"))))]
         __align: [::c_longlong; 0],
         size: [u8; __SIZEOF_PTHREAD_MUTEX_T],
     }
 
     pub struct pthread_rwlock_t {
-        #[cfg(any(target_arch = "mips", target_arch = "arm",
-                  target_arch = "powerpc"))]
+        #[cfg(any(target_arch = "mips",
+                  target_arch = "arm",
+                  target_arch = "powerpc",
+                  all(target_arch = "x86_64",
+                      target_pointer_width = "32")))]
         __align: [::c_long; 0],
-        #[cfg(not(any(target_arch = "mips", target_arch = "arm",
-                      target_arch = "powerpc")))]
+        #[cfg(not(any(target_arch = "mips",
+                      target_arch = "arm",
+                      target_arch = "powerpc",
+                      all(target_arch = "x86_64",
+                          target_pointer_width = "32"))))]
         __align: [::c_longlong; 0],
         size: [u8; __SIZEOF_PTHREAD_RWLOCK_T],
     }
@@ -100,8 +109,12 @@ s! {
         __align: [::c_int; 0],
         #[cfg(not(any(target_arch = "x86_64", target_arch = "powerpc64",
                       target_arch = "mips64", target_arch = "s390x",
-                      target_arch = "sparc64")))]
+                      target_arch = "sparc64", target_arch = "aarch64")))]
         __align: [::c_long; 0],
+        #[cfg(all(target_arch = "aarch64", target_env = "gnu"))]
+        __align: [::c_long; 0],
+        #[cfg(all(target_arch = "aarch64", target_env = "musl"))]
+        __align: [::c_int; 0],
         size: [u8; __SIZEOF_PTHREAD_MUTEXATTR_T],
     }
 
@@ -159,7 +172,7 @@ s! {
         pub f_favail: ::fsfilcnt_t,
         #[cfg(target_endian = "little")]
         pub f_fsid: ::c_ulong,
-        #[cfg(target_pointer_width = "32")]
+        #[cfg(all(target_pointer_width = "32", not(target_arch = "x86_64")))]
         __f_unused: ::c_int,
         #[cfg(target_endian = "big")]
         pub f_fsid: ::c_ulong,
@@ -209,18 +222,38 @@ s! {
         __val: [::c_int; 2],
     }
 
+    // x32 compatibility
+    // See https://sourceware.org/bugzilla/show_bug.cgi?id=21279
     pub struct mq_attr {
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pub mq_flags: i64,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pub mq_maxmsg: i64,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pub mq_msgsize: i64,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pub mq_curmsgs: i64,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pad: [i64; 4],
+
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
         pub mq_flags: ::c_long,
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
         pub mq_maxmsg: ::c_long,
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
         pub mq_msgsize: ::c_long,
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
         pub mq_curmsgs: ::c_long,
-        pad: [::c_long; 4]
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
+        pad: [::c_long; 4],
     }
 
     pub struct cpu_set_t {
-        #[cfg(target_pointer_width = "32")]
+        #[cfg(all(target_pointer_width = "32",
+                  not(target_arch = "x86_64")))]
         bits: [u32; 32],
-        #[cfg(target_pointer_width = "64")]
+        #[cfg(not(all(target_pointer_width = "32",
+                      not(target_arch = "x86_64"))))]
         bits: [u64; 16],
     }
 
@@ -669,6 +702,10 @@ pub const PTHREAD_PROCESS_PRIVATE: ::c_int = 0;
 pub const PTHREAD_PROCESS_SHARED: ::c_int = 1;
 pub const __SIZEOF_PTHREAD_COND_T: usize = 48;
 
+pub const RENAME_NOREPLACE: ::c_int = 1;
+pub const RENAME_EXCHANGE: ::c_int = 2;
+pub const RENAME_WHITEOUT: ::c_int = 4;
+
 pub const SCHED_OTHER: ::c_int = 0;
 pub const SCHED_FIFO: ::c_int = 1;
 pub const SCHED_RR: ::c_int = 2;
@@ -737,14 +774,10 @@ pub const AF_IB: ::c_int = 27;
 pub const AF_MPLS: ::c_int = 28;
 pub const AF_NFC: ::c_int = 39;
 pub const AF_VSOCK: ::c_int = 40;
-#[doc(hidden)]
-pub const AF_MAX: ::c_int = 42;
 pub const PF_IB: ::c_int = AF_IB;
 pub const PF_MPLS: ::c_int = AF_MPLS;
 pub const PF_NFC: ::c_int = AF_NFC;
 pub const PF_VSOCK: ::c_int = AF_VSOCK;
-#[doc(hidden)]
-pub const PF_MAX: ::c_int = AF_MAX;
 
 // System V IPC
 pub const IPC_PRIVATE: ::key_t = 0;
@@ -1407,6 +1440,7 @@ extern {
                            oldset: *mut sigset_t) -> ::c_int;
     pub fn sem_open(name: *const ::c_char, oflag: ::c_int, ...) -> *mut sem_t;
     pub fn getgrnam(name: *const ::c_char) -> *mut ::group;
+    pub fn pthread_cancel(thread: ::pthread_t) -> ::c_int;
     pub fn pthread_kill(thread: ::pthread_t, sig: ::c_int) -> ::c_int;
     pub fn sem_unlink(name: *const ::c_char) -> ::c_int;
     pub fn daemon(nochdir: ::c_int, noclose: ::c_int) -> ::c_int;

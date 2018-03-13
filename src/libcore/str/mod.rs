@@ -76,9 +76,12 @@ pub trait FromStr: Sized {
 
     /// Parses a string `s` to return a value of this type.
     ///
-    /// If parsing succeeds, return the value inside `Ok`, otherwise
+    /// If parsing succeeds, return the value inside [`Ok`], otherwise
     /// when the string is ill-formatted return an error specific to the
-    /// inside `Err`. The error type is specific to implementation of the trait.
+    /// inside [`Err`]. The error type is specific to implementation of the trait.
+    ///
+    /// [`Ok`]: ../../std/result/enum.Result.html#variant.Ok
+    /// [`Err`]: ../../std/result/enum.Result.html#variant.Err
     ///
     /// # Examples
     ///
@@ -1406,16 +1409,6 @@ impl<'a> DoubleEndedIterator for LinesAny<'a> {
 impl<'a> FusedIterator for LinesAny<'a> {}
 
 /*
-Section: Comparing strings
-*/
-
-/// Bytewise slice equality
-#[inline]
-fn eq_slice(a: &str, b: &str) -> bool {
-    a.as_bytes() == b.as_bytes()
-}
-
-/*
 Section: UTF-8 validation
 */
 
@@ -1590,7 +1583,6 @@ mod traits {
     use cmp::Ordering;
     use ops;
     use slice::{self, SliceIndex};
-    use str::eq_slice;
 
     /// Implements ordering of strings.
     ///
@@ -1611,7 +1603,7 @@ mod traits {
     impl PartialEq for str {
         #[inline]
         fn eq(&self, other: &str) -> bool {
-            eq_slice(self, other)
+            self.as_bytes() == other.as_bytes()
         }
         #[inline]
         fn ne(&self, other: &str) -> bool { !(*self).eq(other) }

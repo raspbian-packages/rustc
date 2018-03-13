@@ -20,12 +20,9 @@ progressing in splitting them out.
 
 Here below the remaining ones, with the technical reasons.
 
- * jemalloc from https://github.com/rust-lang/jemalloc
-   -> system-wide one can't be used due to rust using a "je_" prefix.
-
-   This is intentional upstream design and won't change soon, see:
-    - https://github.com/rust-lang/rust/pull/18678
-    - http://smallcultfollowing.com/babysteps/blog/2014/11/14/allocators-in-rust/
+ * binaryen from https://github.com/alexcrichton/binaryen.git
+   -> temporary until LLVM lld is available
+   - see issue upstream: TODO waiting for alexcrichton to create one
 
  * compiler-rt from https://github.com/rust-lang/compiler-rt
    -> system-wide compiler-rt fails during linkage
@@ -35,7 +32,6 @@ Here below the remaining ones, with the technical reasons.
     - https://github.com/rust-lang/rust/issues/15708
 
 As a summary, we plan to:
- * keep embedding jemalloc (probably forever)
  * work with upstream to fix compiler-rt linkage soon.
 
  -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200
@@ -146,6 +142,8 @@ Maintaining this package
 
 Import of a new upstream version
 --------------------------------
+
+# Make sure you apply the patch mentioned in #855464 to /usr/bin/mk-origtargz
 
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 or X.YY.0~beta probably

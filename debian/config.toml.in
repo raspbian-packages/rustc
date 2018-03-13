@@ -2,6 +2,7 @@
 submodules = false
 vendor = true
 locked-deps = false
+verbose = 2
 
 rustc = "RUST_DESTDIR/usr/bin/rustc"
 cargo = "RUST_DESTDIR/usr/bin/cargo"

@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use rustc::ty::{self, TyCtxt};
-use rustc_errors::DiagnosticBuilder;
+use rustc_errors::{DiagnosticBuilder, DiagnosticId};
 use syntax_pos::{MultiSpan, Span};
 
 use std::fmt;
@@ -41,7 +41,7 @@ pub trait BorrowckErrors {
     fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(&'a self,
                                                          sp: S,
                                                          msg: &str,
-                                                         code: &str)
+                                                         code: DiagnosticId)
                                                          -> DiagnosticBuilder<'a>;
 
     fn struct_span_err<'a, S: Into<MultiSpan>>(&'a self,
@@ -93,7 +93,7 @@ pub trait BorrowckErrors {
                                       opt_via: &str,
                                       old_loan_span: Span,
                                       old_opt_via: &str,
-                                      old_load_end_span:Span,
+                                      old_load_end_span: Option<Span>,
                                       o: Origin)
                                       -> DiagnosticBuilder
     {
@@ -106,13 +106,17 @@ pub trait BorrowckErrors {
             err.span_label(new_loan_span,
                            format!("mutable borrow starts here in previous \
                                     iteration of loop{}", opt_via));
-            err.span_label(old_load_end_span, "mutable borrow ends here");
+            if let Some(old_load_end_span) = old_load_end_span {
+                err.span_label(old_load_end_span, "mutable borrow ends here");
+            }
         } else {
             err.span_label(old_loan_span,
                            format!("first mutable borrow occurs here{}", old_opt_via));
             err.span_label(new_loan_span,
                            format!("second mutable borrow occurs here{}", opt_via));
-            err.span_label(old_load_end_span, "first borrow ends here");
+            if let Some(old_load_end_span) = old_load_end_span {
+                err.span_label(old_load_end_span, "first borrow ends here");
+            }
         }
         err
     }
@@ -121,7 +125,7 @@ pub trait BorrowckErrors {
                                               new_loan_span: Span,
                                               desc: &str,
                                               old_loan_span: Span,
-                                              old_load_end_span: Span,
+                                              old_load_end_span: Option<Span>,
                                               o: Origin)
                                               -> DiagnosticBuilder
     {
@@ -134,9 +138,11 @@ pub trait BorrowckErrors {
         err.span_label(
             new_loan_span,
             "second closure is constructed here");
-        err.span_label(
-            old_load_end_span,
-            "borrow from first closure ends here");
+        if let Some(old_load_end_span) = old_load_end_span {
+            err.span_label(
+                old_load_end_span,
+                "borrow from first closure ends here");
+        }
         err
     }
 
@@ -147,7 +153,7 @@ pub trait BorrowckErrors {
                                              old_loan_span: Span,
                                              noun_old: &str,
                                              old_opt_via: &str,
-                                             previous_end_span: Span,
+                                             previous_end_span: Option<Span>,
                                              o: Origin)
                                              -> DiagnosticBuilder
     {
@@ -158,7 +164,9 @@ pub trait BorrowckErrors {
                        format!("closure construction occurs here{}", opt_via));
         err.span_label(old_loan_span,
                        format!("borrow occurs here{}", old_opt_via));
-        err.span_label(previous_end_span, "borrow ends here");
+        if let Some(previous_end_span) = previous_end_span {
+            err.span_label(previous_end_span, "borrow ends here");
+        }
         err
     }
 
@@ -169,7 +177,7 @@ pub trait BorrowckErrors {
                                                  kind_new: &str,
                                                  old_loan_span: Span,
                                                  old_opt_via: &str,
-                                                 previous_end_span: Span,
+                                                 previous_end_span: Option<Span>,
                                                  o: Origin)
                                                  -> DiagnosticBuilder
     {
@@ -181,7 +189,9 @@ pub trait BorrowckErrors {
                        format!("borrow occurs here{}", opt_via));
         err.span_label(old_loan_span,
                        format!("closure construction occurs here{}", old_opt_via));
-        err.span_label(previous_end_span, "borrow from closure ends here");
+        if let Some(previous_end_span) = previous_end_span {
+            err.span_label(previous_end_span, "borrow from closure ends here");
+        }
         err
     }
 
@@ -194,7 +204,7 @@ pub trait BorrowckErrors {
                                         noun_old: &str,
                                         kind_old: &str,
                                         msg_old: &str,
-                                        old_load_end_span: Span,
+                                        old_load_end_span: Option<Span>,
                                         o: Origin)
                                         -> DiagnosticBuilder
     {
@@ -203,7 +213,9 @@ pub trait BorrowckErrors {
                          desc_new, msg_new, kind_new, noun_old, kind_old, msg_old, OGN=o);
         err.span_label(span, format!("{} borrow occurs here{}", kind_new, msg_new));
         err.span_label(old_span, format!("{} borrow occurs here{}", kind_old, msg_old));
-        err.span_label(old_load_end_span, format!("{} borrow ends here", kind_old));
+        if let Some(old_load_end_span) = old_load_end_span {
+            err.span_label(old_load_end_span, format!("{} borrow ends here", kind_old));
+        }
         err
     }
 
@@ -232,7 +244,7 @@ pub trait BorrowckErrors {
                                  -> DiagnosticBuilder
     {
         struct_span_err!(self, span, E0384,
-                         "re-assignment of immutable variable `{}`{OGN}",
+                         "cannot assign twice to immutable variable `{}`{OGN}",
                          desc, OGN=o)
     }
 
@@ -294,13 +306,146 @@ pub trait BorrowckErrors {
         err.span_label(move_from_span, "cannot move out of here");
         err
     }
+
+    fn cannot_act_on_moved_value(&self,
+                                 use_span: Span,
+                                 verb: &str,
+                                 optional_adverb_for_moved: &str,
+                                 moved_path: &str,
+                                 o: Origin)
+                                 -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self, use_span, E0382,
+                                   "{} of {}moved value: `{}`{OGN}",
+                                   verb, optional_adverb_for_moved, moved_path, OGN=o);
+        err
+    }
+
+    fn cannot_partially_reinit_an_uninit_struct(&self,
+                                                span: Span,
+                                                uninit_path: &str,
+                                                o: Origin)
+                                                -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self,
+                                   span,
+                                   E0383,
+                                   "partial reinitialization of uninitialized structure `{}`{OGN}",
+                                   uninit_path, OGN=o);
+        err
+    }
+
+    fn closure_cannot_assign_to_borrowed(&self,
+                                         span: Span,
+                                         descr: &str,
+                                         o: Origin)
+                                         -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self, span, E0595, "closure cannot assign to {}{OGN}",
+                                   descr, OGN=o);
+        err
+    }
+
+    fn cannot_borrow_path_as_mutable(&self,
+                                     span: Span,
+                                     path: &str,
+                                     o: Origin)
+                                     -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self, span, E0596, "cannot borrow {} as mutable{OGN}",
+                                   path, OGN=o);
+        err
+    }
+
+    fn cannot_borrow_across_generator_yield(&self,
+                                            span: Span,
+                                            yield_span: Span,
+                                            o: Origin)
+                                            -> DiagnosticBuilder
+    {
+        let mut err = struct_span_err!(self,
+                                       span,
+                                       E0626,
+                                       "borrow may still be in use when generator yields{OGN}",
+                                       OGN=o);
+        err.span_label(yield_span, "possible yield occurs here");
+        err
+    }
+
+    fn path_does_not_live_long_enough(&self,
+                                      span: Span,
+                                      path: &str,
+                                      o: Origin)
+                                      -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self, span, E0597, "{} does not live long enough{OGN}",
+                                   path, OGN=o);
+        err
+    }
+
+    fn lifetime_too_short_for_reborrow(&self,
+                                       span: Span,
+                                       path: &str,
+                                       o: Origin)
+                                       -> DiagnosticBuilder
+    {
+        let err = struct_span_err!(self, span, E0598,
+                                   "lifetime of {} is too short to guarantee \
+                                    its contents can be safely reborrowed{OGN}",
+                                   path, OGN=o);
+        err
+    }
+
+    fn cannot_act_on_capture_in_sharable_fn(&self,
+                                            span: Span,
+                                            bad_thing: &str,
+                                            help: (Span, &str),
+                                            o: Origin)
+                                            -> DiagnosticBuilder
+    {
+        let (help_span, help_msg) = help;
+        let mut err = struct_span_err!(self, span, E0387,
+                                       "{} in a captured outer variable in an `Fn` closure{OGN}",
+                                       bad_thing, OGN=o);
+        err.span_help(help_span, help_msg);
+        err
+    }
+
+    fn cannot_assign_into_immutable_reference(&self,
+                                              span: Span,
+                                              bad_thing: &str,
+                                              o: Origin)
+                                              -> DiagnosticBuilder
+    {
+        let mut err = struct_span_err!(self, span, E0389, "{} in a `&` reference{OGN}",
+                                       bad_thing, OGN=o);
+        err.span_label(span, "assignment into an immutable reference");
+        err
+    }
+
+    fn cannot_capture_in_long_lived_closure(&self,
+                                            closure_span: Span,
+                                            borrowed_path: &str,
+                                            capture_span: Span,
+                                            o: Origin)
+                                            -> DiagnosticBuilder
+    {
+        let mut err = struct_span_err!(self, closure_span, E0373,
+                                       "closure may outlive the current function, \
+                                        but it borrows {}, \
+                                        which is owned by the current function{OGN}",
+                                       borrowed_path, OGN=o);
+        err.span_label(capture_span, format!("{} is borrowed here", borrowed_path))
+            .span_label(closure_span, format!("may outlive borrowed value {}", borrowed_path));
+        err
+    }
 }
 
-impl<'b, 'tcx, 'gcx> BorrowckErrors for TyCtxt<'b, 'tcx, 'gcx> {
+impl<'b, 'gcx, 'tcx> BorrowckErrors for TyCtxt<'b, 'gcx, 'tcx> {
     fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(&'a self,
                                                          sp: S,
                                                          msg: &str,
-                                                         code: &str)
+                                                         code: DiagnosticId)
                                                          -> DiagnosticBuilder<'a>
     {
         self.sess.struct_span_err_with_code(sp, msg, code)

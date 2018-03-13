@@ -460,6 +460,16 @@ impl Value {
     ///
     /// // The boolean `false` is not a string.
     /// assert_eq!(v["b"].as_str(), None);
+    ///
+    /// // JSON values are printed in JSON representation, so strings are in quotes.
+    /// //
+    /// //    The value is: "some string"
+    /// println!("The value is: {}", v["a"]);
+    ///
+    /// // Rust strings are printed without quotes.
+    /// //
+    /// //    The value is: some string
+    /// println!("The value is: {}", v["a"].as_str().unwrap());
     /// # }
     /// ```
     pub fn as_str(&self) -> Option<&str> {
@@ -975,7 +985,6 @@ mod de;
 ///     println!("{}", serde_json::to_value(map).unwrap_err());
 /// }
 /// ```
-#[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
 // Taking by value is more friendly to iterator adapters, option and result
 // consumers, etc. See https://github.com/serde-rs/json/pull/149.
 pub fn to_value<T>(value: T) -> Result<Value, Error>

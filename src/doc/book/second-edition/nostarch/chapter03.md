@@ -52,23 +52,24 @@ Save and run the program using `cargo run`. You should receive an error
 message, as shown in this output:
 
 ```
-error[E0384]: re-assignment of immutable variable `x`
+error[E0384]: cannot assign twice to immutable variable `x`
  --> src/main.rs:4:5
   |
 2 |     let x = 5;
   |         - first assignment to `x`
 3 |     println!("The value of x is: {}", x);
 4 |     x = 6;
-  |     ^^^^^ re-assignment of immutable variable
+  |     ^^^^^ cannot assign twice to immutable variable
 ```
 
 This example shows how the compiler helps you find errors in your programs.
 Even though compiler errors can be frustrating, they only mean your program
 isn’t safely doing what you want it to do yet; they do *not* mean that you’re
-not a good programmer! Experienced Rustaceans still get compiler errors. The
-error indicates that the cause of the error is `re-assignment of immutable
-variable`, because we tried to assign a second value to the immutable `x`
-variable.
+not a good programmer! Experienced Rustaceans still get compiler errors.
+
+The error indicates that the cause of the error is that we `cannot assign twice
+to immutable variable x`, because we tried to assign a second value to the
+immutable `x` variable.
 
 It’s important that we get compile-time errors when we attempt to change a
 value that we previously designated as immutable because this very situation
@@ -225,15 +226,14 @@ and the second `spaces` variable, which is a brand-new variable that happens to
 have the same name as the first one, is a number type. Shadowing thus spares us
 from having to come up with different names, like `spaces_str` and
 `spaces_num`; instead, we can reuse the simpler `spaces` name. However, if we
-try to use `mut` for this, as shown here:
+try to use `mut` for this, as shown here, we’ll get a compile-time error:
 
 ```
 let mut spaces = "   ";
 spaces = spaces.len();
 ```
 
-we’ll get a compile-time error because we’re not allowed to mutate a variable’s
-type:
+The error says we’re not allowed to mutate a variable’s type:
 
 ```
 error[E0308]: mismatched types
@@ -576,8 +576,9 @@ get the value `2` from index `[1]` in the array.
 
 ##### Invalid Array Element Access
 
-What happens if we try to access an element of an array that is past the end of
-the array? Say we change the example to the following:
+What happens if you try to access an element of an array that is past the end
+of the array? Say you change the example to the following code, which will
+compile but exit with an error when it runs:
 
 Filename: src/main.rs
 
@@ -735,7 +736,7 @@ types. The function then prints out the values in both of its parameters. Note
 that function parameters don’t all need to be the same type, they just happen
 to be in this example.
 
-Let’s try running this code. Replace the program currently in your *function*
+Let’s try running this code. Replace the program currently in your *functions*
 project’s *src/main.rs* file with the preceding example, and run it using
 `cargo run`:
 
@@ -768,7 +769,7 @@ instructions that perform some action and do not return a value. *Expressions*
 evaluate to a resulting value. Let’s look at some examples.
 
 Creating a variable and assigning a value to it with the `let` keyword is a
-statement. In Listing 3-3, `let y = 6;` is a statement:
+statement. In Listing 3-1, `let y = 6;` is a statement:
 
 Filename: src/main.rs
 
@@ -778,13 +779,13 @@ fn main() {
 }
 ```
 
-Listing 3-3: A `main` function declaration containing one statement.
+Listing 3-1: A `main` function declaration containing one statement.
 
 Function definitions are also statements; the entire preceding example is a
 statement in itself.
 
 Statements do not return values. Therefore, you can’t assign a `let` statement
-to another variable, as the following code tries to do:
+to another variable, as the following code tries to do; you’ll get an error:
 
 Filename: src/main.rs
 
@@ -794,7 +795,7 @@ fn main() {
 }
 ```
 
-When you run this program, you’ll get an error like this:
+When you run this program, the error you’ll get looks like this:
 
 ```
 $ cargo run
@@ -817,7 +818,7 @@ not the case in Rust.
 Expressions evaluate to something and make up most of the rest of the code that
 you’ll write in Rust. Consider a simple math operation, such as `5 + 6`, which
 is an expression that evaluates to the value `11`. Expressions can be part of
-statements: in Listing 3-3 that had the statement `let y = 6;`, `6` is an
+statements: in Listing 3-1 that had the statement `let y = 6;`, `6` is an
 expression that evaluates to the value `6`. Calling a function is an
 expression. Calling a macro is an expression. The block that we use to create
 new scopes, `{}`, is an expression, for example:
@@ -921,7 +922,7 @@ fn plus_one(x: i32) -> i32 {
 
 Running this code will print `The value of x is: 6`. What happens if we place a
 semicolon at the end of the line containing `x + 1`, changing it from an
-expression to a statement?
+expression to a statement? We’ll get an error:
 
 Filename: src/main.rs
 
@@ -1083,9 +1084,9 @@ $ cargo run
 condition was false
 ```
 
-It’s also worth noting that the condition in this code *must* be a `bool`. To
-see what happens if the condition isn’t a `bool`, try running the following
-code:
+It’s also worth noting that the condition in this code *must* be a `bool`. If
+the condition isn’t a `bool`, we’ll get an error. For example, try running the
+following code:
 
 Filename: src/main.rs
 
@@ -1182,7 +1183,7 @@ Rust branching construct called `match` for these cases.
 #### Using `if` in a `let` statement
 
 Because `if` is an expression, we can use it on the right side of a `let`
-statement, for instance in Listing 3-4:
+statement, for instance in Listing 3-2:
 
 Filename: src/main.rs
 
@@ -1199,7 +1200,7 @@ fn main() {
 }
 ```
 
-Listing 3-4: Assigning the result of an `if` expression
+Listing 3-2: Assigning the result of an `if` expression
 to a variable
 
 The `number` variable will be bound to a value based on the outcome of the `if`
@@ -1217,9 +1218,9 @@ Remember that blocks of code evaluate to the last expression in them, and
 numbers by themselves are also expressions. In this case, the value of the
 whole `if` expression depends on which block of code executes. This means the
 values that have the potential to be results from each arm of the `if` must be
-the same type; in Listing 3-4, the results of both the `if` arm and the `else`
-arm were `i32` integers. But what happens if the types are mismatched, as in
-the following example?
+the same type; in Listing 3-2, the results of both the `if` arm and the `else`
+arm were `i32` integers. If the types are mismatched, as in the following
+example, we’ll get an error:
 
 Filename: src/main.rs
 
@@ -1356,7 +1357,7 @@ true, the code runs; otherwise, it exits the loop.
 #### Looping Through a Collection with `for`
 
 You could use the `while` construct to loop over the elements of a collection,
-such as an array. For example, let’s look at Listing 3-5:
+such as an array. For example, let’s look at Listing 3-3:
 
 Filename: src/main.rs
 
@@ -1373,7 +1374,7 @@ fn main() {
 }
 ```
 
-Listing 3-5: Looping through each element of a collection
+Listing 3-3: Looping through each element of a collection
 using a `while` loop
 
 Here, the code counts up through the elements in the array. It starts at index
@@ -1402,8 +1403,8 @@ index length is incorrect. It’s also slow, because the compiler adds runtime
 code to perform the conditional check on every element on every iteration
 through the loop.
 
-As a more efficient alternative, you can use a `for` loop and execute some code
-for each item in a collection. A `for` loop looks like this code in Listing 3-6:
+As a more concise alternative, you can use a `for` loop and execute some code
+for each item in a collection. A `for` loop looks like this code in Listing 3-4:
 
 Filename: src/main.rs
 
@@ -1417,15 +1418,15 @@ fn main() {
 }
 ```
 
-Listing 3-6: Looping through each element of a collection
+Listing 3-4: Looping through each element of a collection
 using a `for` loop
 
-When we run this code, we’ll see the same output as in Listing 3-5. More
+When we run this code, we’ll see the same output as in Listing 3-3. More
 importantly, we’ve now increased the safety of the code and eliminated the
 chance of bugs that might result from going beyond the end of the array or not
 going far enough and missing some items.
 
-For example, in the code in Listing 3-5, if you removed an item from the `a`
+For example, in the code in Listing 3-3, if you removed an item from the `a`
 array but forgot to update the condition to `while index < 4`, the code would
 panic. Using the `for` loop, you don’t need to remember to change any other
 code if you changed the number of values in the array.
@@ -1433,7 +1434,7 @@ code if you changed the number of values in the array.
 The safety and conciseness of `for` loops make them the most commonly used loop
 construct in Rust. Even in situations in which you want to run some code a
 certain number of times, as in the countdown example that used a `while` loop
-in Listing 3-5, most Rustaceans would use a `for` loop. The way to do that
+in Listing 3-3, most Rustaceans would use a `for` loop. The way to do that
 would be to use a `Range`, which is a type provided by the standard library
 that generates all numbers in sequence starting from one number and ending
 before another number.

@@ -57,7 +57,7 @@ directive. To use this first add this to your Cargo.toml:
 
 ```toml
 rand = "0.3"
-rand-derive = "0.3"
+rand_derive = "0.3"
 ```
 
 Next in your crate:
@@ -82,7 +82,6 @@ fn main() {
 # License
 
 `rand` is primarily distributed under the terms of both the MIT
-license and the Apache License (Version 2.0), with portions covered by various
-BSD-like licenses.
+license and the Apache License (Version 2.0).
 
 See LICENSE-APACHE, and LICENSE-MIT for details.

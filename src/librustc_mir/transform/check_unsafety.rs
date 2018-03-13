@@ -14,9 +14,7 @@ use rustc_data_structures::indexed_vec::IndexVec;
 use rustc::ty::maps::Providers;
 use rustc::ty::{self, TyCtxt};
 use rustc::hir;
-use rustc::hir::def::Def;
 use rustc::hir::def_id::DefId;
-use rustc::hir::map::{DefPathData, Node};
 use rustc::lint::builtin::{SAFE_EXTERN_STATICS, UNUSED_UNSAFE};
 use rustc::mir::*;
 use rustc::mir::visit::{LvalueContext, Visitor};
@@ -75,7 +73,8 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
             TerminatorKind::GeneratorDrop |
             TerminatorKind::Resume |
             TerminatorKind::Return |
-            TerminatorKind::Unreachable => {
+            TerminatorKind::Unreachable |
+            TerminatorKind::FalseEdges { .. } => {
                 // safe (at least as emitted during MIR construction)
             }
 
@@ -187,7 +186,7 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
                 // locals are safe
             }
             &Lvalue::Static(box Static { def_id, ty: _ }) => {
-                if self.is_static_mut(def_id) {
+                if self.tcx.is_static_mut(def_id) {
                     self.require_unsafe("use of mutable static");
                 } else if self.tcx.is_foreign_item(def_id) {
                     let source_info = self.source_info;
@@ -206,24 +205,6 @@ impl<'a, 'tcx> Visitor<'tcx> for UnsafetyChecker<'a, 'tcx> {
 }
 
 impl<'a, 'tcx> UnsafetyChecker<'a, 'tcx> {
-    fn is_static_mut(&self, def_id: DefId) -> bool {
-        if let Some(node) = self.tcx.hir.get_if_local(def_id) {
-            match node {
-                Node::NodeItem(&hir::Item {
-                    node: hir::ItemStatic(_, hir::MutMutable, _), ..
-                }) => true,
-                Node::NodeForeignItem(&hir::ForeignItem {
-                    node: hir::ForeignItemStatic(_, mutbl), ..
-                }) => mutbl,
-                _ => false
-            }
-        } else {
-            match self.tcx.describe_def(def_id) {
-                Some(Def::Static(_, mutbl)) => mutbl,
-                _ => false
-            }
-        }
-    }
     fn require_unsafe(&mut self,
                       description: &'static str)
     {
@@ -379,11 +360,11 @@ fn report_unused_unsafe(tcx: TyCtxt, used_unsafe: &FxHashSet<ast::NodeId>, id: a
 
 pub fn check_unsafety<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) {
     debug!("check_unsafety({:?})", def_id);
-    match tcx.def_key(def_id).disambiguated_data.data {
-        // closures are handled by their parent fn.
-        DefPathData::ClosureExpr => return,
-        _ => {}
-    };
+
+    // closures are handled by their parent fn.
+    if tcx.is_closure(def_id) {
+        return;
+    }
 
     let UnsafetyCheckResult {
         violations,

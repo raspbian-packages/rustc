@@ -98,6 +98,23 @@
 //! # }
 //! ```
 //!
+//! The result of square bracket indexing like `v["name"]` is a borrow of the
+//! data at that index, so the type is `&Value`. A JSON map can be indexed with
+//! string keys, while a JSON array can be indexed with integer keys. If the
+//! type of the data is not right for the type with which it is being indexed,
+//! or if a map does not contain the key being indexed, or if the index into a
+//! vector is out of bounds, the returned element is `Value::Null`.
+//!
+//! When a `Value` is printed, it is printed as a JSON string. So in the code
+//! above, the output looks like `Please call "John Doe" at the number "+44
+//! 1234567"`. The quotation marks appear because `v["name"]` is a `&Value`
+//! containing a JSON string and its JSON representation is `"John Doe"`.
+//! Printing as a plain string without quotation marks involves converting from
+//! a JSON string to a Rust string with [`as_str()`] or avoiding the use of
+//! `Value` as described in the following section.
+//!
+//! [`as_str()`]: https://docs.serde.rs/serde_json/enum.Value.html#method.as_str
+//!
 //! The `Value` representation is sufficient for very basic tasks but can be
 //! tedious to work with for anything more significant. Error handling is
 //! verbose to implement correctly, for example imagine trying to detect the
@@ -292,10 +309,13 @@
 //! [to_writer]: https://docs.serde.rs/serde_json/ser/fn.to_writer.html
 //! [macro]: https://docs.serde.rs/serde_json/macro.json.html
 
-#![doc(html_root_url = "https://docs.rs/serde_json/1.0.3")]
+#![doc(html_root_url = "https://docs.rs/serde_json/1.0.6")]
 #![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
-// Because of "JavaScript"... fixed in Manishearth/rust-clippy#1071
-#![cfg_attr(feature = "cargo-clippy", allow(doc_markdown))]
+// Whitelisted clippy lints
+#![cfg_attr(feature = "cargo-clippy", allow(
+    doc_markdown,
+    needless_pass_by_value,
+))]
 // Whitelisted clippy_pedantic lints
 #![cfg_attr(feature = "cargo-clippy", allow(
 // Deserializer::from_str, into_iter

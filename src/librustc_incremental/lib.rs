@@ -15,13 +15,16 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 #![deny(warnings)]
 
-#![feature(rand)]
 #![feature(conservative_impl_trait)]
+#![feature(i128_type)]
+#![feature(inclusive_range_syntax)]
+#![feature(specialization)]
 
 extern crate graphviz;
 #[macro_use] extern crate rustc;
 extern crate rustc_data_structures;
 extern crate serialize as rustc_serialize;
+extern crate rand;
 
 #[macro_use] extern crate log;
 extern crate syntax;
@@ -31,8 +34,9 @@ mod assert_dep_graph;
 mod persist;
 
 pub use assert_dep_graph::assert_dep_graph;
-pub use persist::load_dep_graph;
 pub use persist::dep_graph_tcx_init;
+pub use persist::load_dep_graph;
+pub use persist::load_query_result_cache;
 pub use persist::save_dep_graph;
 pub use persist::save_trans_partition;
 pub use persist::save_work_products;

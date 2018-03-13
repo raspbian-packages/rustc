@@ -206,7 +206,13 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         all_loans,
         param_env,
     };
-    euv::ExprUseVisitor::new(&mut clcx, bccx.tcx, param_env, &bccx.region_scope_tree, bccx.tables)
+    let rvalue_promotable_map = bccx.tcx.rvalue_promotable_map(def_id);
+    euv::ExprUseVisitor::new(&mut clcx,
+                             bccx.tcx,
+                             param_env,
+                             &bccx.region_scope_tree,
+                             bccx.tables,
+                             Some(rvalue_promotable_map))
         .consume_body(body);
 }
 
@@ -389,10 +395,21 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
         assert!(self.bccx.region_scope_tree.scopes_intersect(old_loan.kill_scope,
                                                        new_loan.kill_scope));
 
-        self.report_error_if_loan_conflicts_with_restriction(
-            old_loan, new_loan, old_loan, new_loan) &&
-        self.report_error_if_loan_conflicts_with_restriction(
-            new_loan, old_loan, old_loan, new_loan)
+        let err_old_new = self.report_error_if_loan_conflicts_with_restriction(
+            old_loan, new_loan, old_loan, new_loan).err();
+        let err_new_old = self.report_error_if_loan_conflicts_with_restriction(
+            new_loan, old_loan, old_loan, new_loan).err();
+
+        match (err_old_new, err_new_old) {
+            (Some(mut err), None) | (None, Some(mut err)) => err.emit(),
+            (Some(mut err_old), Some(mut err_new)) => {
+                err_old.emit();
+                err_new.cancel();
+            }
+            (None, None) => return true,
+        }
+
+        false
     }
 
     pub fn report_error_if_loan_conflicts_with_restriction(&self,
@@ -400,7 +417,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                                                            loan2: &Loan<'tcx>,
                                                            old_loan: &Loan<'tcx>,
                                                            new_loan: &Loan<'tcx>)
-                                                           -> bool {
+                                                           -> Result<(), DiagnosticBuilder<'a>> {
         //! Checks whether the restrictions introduced by `loan1` would
         //! prohibit `loan2`. Returns false if an error is reported.
 
@@ -410,7 +427,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                loan2);
 
         if compatible_borrow_kinds(loan1.kind, loan2.kind) {
-            return true;
+            return Ok(());
         }
 
         let loan2_base_path = owned_ptr_base_path_rc(&loan2.loan_path);
@@ -467,7 +484,8 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             // 3. Where does old loan expire.
 
             let previous_end_span =
-                old_loan.kill_scope.span(self.tcx(), &self.bccx.region_scope_tree).end_point();
+                Some(old_loan.kill_scope.span(self.tcx(), &self.bccx.region_scope_tree)
+                     .end_point());
 
             let mut err = match (new_loan.kind, old_loan.kind) {
                 (ty::MutBorrow, ty::MutBorrow) =>
@@ -514,11 +532,10 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                 _ => { }
             }
 
-            err.emit();
-            return false;
+            return Err(err);
         }
 
-        true
+        Ok(())
     }
 
     fn consume_common(&self,
@@ -659,7 +676,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
         debug!("check_if_path_is_moved(id={:?}, use_kind={:?}, lp={:?})",
                id, use_kind, lp);
 
-        // FIXME (22079): if you find yourself tempted to cut and paste
+        // FIXME: if you find yourself tempted to cut and paste
         // the body below and then specializing the error reporting,
         // consider refactoring this instead!
 
@@ -720,7 +737,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                         // the path must be initialized to prevent a case of
                         // partial reinitialization
                         //
-                        // FIXME (22079): could refactor via hypothetical
+                        // FIXME: could refactor via hypothetical
                         // generalized check_if_path_is_moved
                         let loan_path = owned_ptr_base_path_rc(lp_base);
                         self.move_data.each_move_of(id, &loan_path, |_, _| {
@@ -770,7 +787,8 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             let lp = opt_loan_path(&assignee_cmt).unwrap();
             self.move_data.each_assignment_of(assignment_id, &lp, |assign| {
                 if assignee_cmt.mutbl.is_mutable() {
-                    self.tcx().used_mut_nodes.borrow_mut().insert(local_id);
+                    let hir_id = self.bccx.tcx.hir.node_to_hir_id(local_id);
+                    self.bccx.used_mut_nodes.borrow_mut().insert(hir_id);
                 } else {
                     self.bccx.report_reassigned_immutable_variable(
                         assignment_span,

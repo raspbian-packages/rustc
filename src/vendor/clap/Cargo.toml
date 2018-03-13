@@ -12,7 +12,7 @@
 
 [package]
 name = "clap"
-version = "2.26.2"
+version = "2.27.1"
 authors = ["Kevin K. <kbknapp@gmail.com>"]
 exclude = ["examples/*", "clap-test/*", "tests/*", "benches/*", "*.png", "clap-perf/*", "*.dot"]
 description = "A simple to use, efficient, and full featured  Command Line Argument Parser\n"
@@ -62,59 +62,63 @@ lto = true
 debug = false
 debug-assertions = false
 rpath = false
+[dependencies.bitflags]
+version = "0.9"
+
 [dependencies.clippy]
-version = "~0.0.131"
-optional = true
-
-[dependencies.vec_map]
-version = "0.8"
-
-[dependencies.textwrap]
-version = "0.8.0"
-
-[dependencies.atty]
-version = "0.2.2"
-optional = true
-
-[dependencies.yaml-rust]
-version = "0.3.5"
-optional = true
-
-[dependencies.unicode-width]
-version = "0.1.4"
-
-[dependencies.strsim]
-version = "0.6.0"
+version = "~0.0.166"
 optional = true
 
 [dependencies.ansi_term]
 version = "0.9.0"
 optional = true
 
+[dependencies.vec_map]
+version = "0.8"
+optional = true
+
+[dependencies.strsim]
+version = "0.6.0"
+optional = true
+
+[dependencies.atty]
+version = "0.2.2"
+optional = true
+
+[dependencies.unicode-width]
+version = "0.1.4"
+
+[dependencies.textwrap]
+version = "0.9.0"
+
 [dependencies.term_size]
 version = "0.3.0"
 optional = true
 
-[dependencies.bitflags]
-version = "0.9"
-[dev-dependencies.lazy_static]
-version = "0.2"
-
+[dependencies.yaml-rust]
+version = "0.3.5"
+optional = true
 [dev-dependencies.regex]
 version = "0.2"
 
+[dev-dependencies.lazy_static]
+version = "0.2"
+
+[dev-dependencies.version-sync]
+version = "0.3"
+
 [features]
-default = ["suggestions", "color", "wrap_help"]
-doc = ["yaml"]
-yaml = ["yaml-rust"]
-no_cargo = []
-nightly = []
-unstable = []
-suggestions = ["strsim"]
-lints = ["clippy"]
-wrap_help = ["term_size"]
-color = ["ansi_term", "atty"]
 debug = []
+no_cargo = []
+yaml = ["yaml-rust"]
+nightly = []
+color = ["ansi_term", "atty"]
+suggestions = ["strsim"]
+default = ["suggestions", "color", "vec_map"]
+wrap_help = ["term_size", "textwrap/term_size"]
+lints = ["clippy"]
+unstable = []
+doc = ["yaml"]
 [badges.appveyor]
 repository = "kbknapp/clap-rs"
 

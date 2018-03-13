@@ -346,6 +346,24 @@ pub const SO_TIMESTAMP: ::c_int = 0x2000;
 pub const SO_OVERFLOWED: ::c_int = 0x1009;
 pub const SO_NOHEADER: ::c_int = 0x100a;
 
+// https://github.com/NetBSD/src/blob/trunk/sys/net/if.h#L373
+pub const IFF_UP: ::c_int = 0x0001; // interface is up
+pub const IFF_BROADCAST: ::c_int = 0x0002; // broadcast address valid
+pub const IFF_DEBUG: ::c_int = 0x0004; // turn on debugging
+pub const IFF_LOOPBACK: ::c_int = 0x0008; // is a loopback net
+pub const IFF_POINTOPOINT: ::c_int = 0x0010; // interface is point-to-point link
+pub const IFF_NOTRAILERS: ::c_int = 0x0020; // avoid use of trailers
+pub const IFF_RUNNING: ::c_int = 0x0040; // resources allocated
+pub const IFF_NOARP: ::c_int = 0x0080; // no address resolution protocol
+pub const IFF_PROMISC: ::c_int = 0x0100; // receive all packets
+pub const IFF_ALLMULTI: ::c_int = 0x0200; // receive all multicast packets
+pub const IFF_OACTIVE: ::c_int = 0x0400; // transmission in progress
+pub const IFF_SIMPLEX: ::c_int = 0x0800; // can't hear own transmissions
+pub const IFF_LINK0: ::c_int = 0x1000; // per link layer defined bit
+pub const IFF_LINK1: ::c_int = 0x2000; // per link layer defined bit
+pub const IFF_LINK2: ::c_int = 0x4000; // per link layer defined bit
+pub const IFF_MULTICAST: ::c_int = 0x8000; // supports multicast
+
 // sys/netinet/in.h
 // Protocols (RFC 1700)
 // NOTE: These are in addition to the constants defined in src/unix/mod.rs
@@ -464,6 +482,65 @@ pub const MAP_RENAME : ::c_int = 0x20;
 pub const MAP_NORESERVE : ::c_int = 0x40;
 pub const MAP_HASSEMAPHORE : ::c_int = 0x200;
 pub const MAP_WIRED: ::c_int = 0x800;
+
+pub const DCCP_TYPE_REQUEST: ::c_int = 0;
+pub const DCCP_TYPE_RESPONSE: ::c_int = 1;
+pub const DCCP_TYPE_DATA: ::c_int = 2;
+pub const DCCP_TYPE_ACK: ::c_int = 3;
+pub const DCCP_TYPE_DATAACK: ::c_int =  4;
+pub const DCCP_TYPE_CLOSEREQ: ::c_int = 5;
+pub const DCCP_TYPE_CLOSE: ::c_int = 6;
+pub const DCCP_TYPE_RESET: ::c_int = 7;
+pub const DCCP_TYPE_MOVE: ::c_int = 8;
+
+pub const DCCP_FEATURE_CC: ::c_int = 1;
+pub const DCCP_FEATURE_ECN: ::c_int = 2;
+pub const DCCP_FEATURE_ACKRATIO: ::c_int =  3;
+pub const DCCP_FEATURE_ACKVECTOR: ::c_int = 4;
+pub const DCCP_FEATURE_MOBILITY: ::c_int =  5;
+pub const DCCP_FEATURE_LOSSWINDOW: ::c_int = 6;
+pub const DCCP_FEATURE_CONN_NONCE: ::c_int = 8;
+pub const DCCP_FEATURE_IDENTREG: ::c_int =  7;
+
+pub const DCCP_OPT_PADDING: ::c_int = 0;
+pub const DCCP_OPT_DATA_DISCARD: ::c_int = 1;
+pub const DCCP_OPT_SLOW_RECV: ::c_int = 2;
+pub const DCCP_OPT_BUF_CLOSED: ::c_int = 3;
+pub const DCCP_OPT_CHANGE_L: ::c_int = 32;
+pub const DCCP_OPT_CONFIRM_L: ::c_int = 33;
+pub const DCCP_OPT_CHANGE_R: ::c_int = 34;
+pub const DCCP_OPT_CONFIRM_R: ::c_int = 35;
+pub const DCCP_OPT_INIT_COOKIE: ::c_int = 36;
+pub const DCCP_OPT_NDP_COUNT: ::c_int = 37;
+pub const DCCP_OPT_ACK_VECTOR0: ::c_int = 38;
+pub const DCCP_OPT_ACK_VECTOR1: ::c_int = 39;
+pub const DCCP_OPT_RECV_BUF_DROPS: ::c_int = 40;
+pub const DCCP_OPT_TIMESTAMP: ::c_int = 41;
+pub const DCCP_OPT_TIMESTAMP_ECHO: ::c_int = 42;
+pub const DCCP_OPT_ELAPSEDTIME: ::c_int = 43;
+pub const DCCP_OPT_DATACHECKSUM: ::c_int = 44;
+
+pub const DCCP_REASON_UNSPEC: ::c_int = 0;
+pub const DCCP_REASON_CLOSED: ::c_int = 1;
+pub const DCCP_REASON_INVALID: ::c_int = 2;
+pub const DCCP_REASON_OPTION_ERR: ::c_int = 3;
+pub const DCCP_REASON_FEA_ERR: ::c_int = 4;
+pub const DCCP_REASON_CONN_REF: ::c_int = 5;
+pub const DCCP_REASON_BAD_SNAME: ::c_int = 6;
+pub const DCCP_REASON_BAD_COOKIE: ::c_int = 7;
+pub const DCCP_REASON_INV_MOVE: ::c_int = 8;
+pub const DCCP_REASON_UNANSW_CH: ::c_int = 10;
+pub const DCCP_REASON_FRUITLESS_NEG: ::c_int = 11;
+
+pub const DCCP_CCID: ::c_int = 1;
+pub const DCCP_CSLEN: ::c_int = 2;
+pub const DCCP_MAXSEG: ::c_int = 4;
+pub const DCCP_SERVICE: ::c_int = 8;
+
+pub const DCCP_NDP_LIMIT: ::c_int = 16;
+pub const DCCP_SEQ_NUM_LIMIT: ::c_int = 16777216;
+pub const DCCP_MAX_OPTIONS: ::c_int = 32;
+pub const DCCP_MAX_PKTS: ::c_int = 100;
 
 pub const _PC_LINK_MAX : ::c_int = 1;
 pub const _PC_MAX_CANON : ::c_int = 2;
@@ -590,13 +667,13 @@ pub const PTHREAD_MUTEX_ERRORCHECK: ::c_int = 1;
 pub const PTHREAD_MUTEX_RECURSIVE: ::c_int = 2;
 pub const PTHREAD_MUTEX_DEFAULT: ::c_int = PTHREAD_MUTEX_NORMAL;
 
-pub const EVFILT_AIO: ::int32_t = 2;
-pub const EVFILT_PROC: ::int32_t = 4;
-pub const EVFILT_READ: ::int32_t = 0;
-pub const EVFILT_SIGNAL: ::int32_t = 5;
-pub const EVFILT_TIMER: ::int32_t = 6;
-pub const EVFILT_VNODE: ::int32_t = 3;
-pub const EVFILT_WRITE: ::int32_t = 1;
+pub const EVFILT_AIO: ::uint32_t = 2;
+pub const EVFILT_PROC: ::uint32_t = 4;
+pub const EVFILT_READ: ::uint32_t = 0;
+pub const EVFILT_SIGNAL: ::uint32_t = 5;
+pub const EVFILT_TIMER: ::uint32_t = 6;
+pub const EVFILT_VNODE: ::uint32_t = 3;
+pub const EVFILT_WRITE: ::uint32_t = 1;
 
 pub const EV_ADD: ::uint32_t = 0x1;
 pub const EV_DELETE: ::uint32_t = 0x2;
@@ -779,6 +856,11 @@ pub const KERN_PROC_UID: ::c_int = 5;
 pub const KERN_PROC_RUID: ::c_int = 6;
 pub const KERN_PROC_GID: ::c_int = 7;
 pub const KERN_PROC_RGID: ::c_int = 8;
+pub const KERN_PROC_ARGV: ::c_int = 1;
+pub const KERN_PROC_NARGV: ::c_int = 2;
+pub const KERN_PROC_ENV: ::c_int = 3;
+pub const KERN_PROC_NENV: ::c_int = 4;
+pub const KERN_PROC_PATHNAME: ::c_int = 5;
 
 pub const EAI_SYSTEM: ::c_int = 11;
 

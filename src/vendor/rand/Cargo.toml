@@ -12,7 +12,7 @@
 
 [package]
 name = "rand"
-version = "0.3.16"
+version = "0.3.18"
 authors = ["The Rust Project Developers"]
 description = "Random number generators and other randomness functionality.\n"
 homepage = "https://github.com/rust-lang-nursery/rand"
@@ -30,5 +30,5 @@ version = "0.3.0"
 [features]
 nightly = ["i128_support"]
 i128_support = []
-[target."cfg(target_os = \"fuchsia\")".dependencies.magenta]
-version = "^0.1.1"
+[target."cfg(target_os = \"fuchsia\")".dependencies.fuchsia-zircon]
+version = "^0.2.1"

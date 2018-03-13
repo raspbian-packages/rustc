@@ -9,6 +9,7 @@ fn main() {
     let aarch64 = target.contains("aarch64");
     let i686 = target.contains("i686");
     let x86_64 = target.contains("x86_64");
+    let x32 = target.ends_with("gnux32");
     let windows = target.contains("windows");
     let mingw = target.contains("windows-gnu");
     let linux = target.contains("unknown-linux");
@@ -135,14 +136,14 @@ fn main() {
             cfg.header("sys/quota.h");
         }
 
-        if !musl {
+        if !musl && !x32 {
             cfg.header("sys/sysctl.h");
         }
+
         if !musl && !uclibc {
 
             if !netbsd && !openbsd && !uclibc {
                 cfg.header("execinfo.h");
-                cfg.header("xlocale.h");
             }
 
             if openbsd {
@@ -158,6 +159,7 @@ fn main() {
         cfg.header("mach/mach_time.h");
         cfg.header("malloc/malloc.h");
         cfg.header("util.h");
+        cfg.header("xlocale.h");
         cfg.header("sys/xattr.h");
         cfg.header("sys/sys_domain.h");
         if target.starts_with("x86") {
@@ -190,7 +192,6 @@ fn main() {
         cfg.header("sys/msg.h");
         cfg.header("sys/shm.h");
         cfg.header("sys/user.h");
-        cfg.header("sys/fsuid.h");
         cfg.header("sys/timerfd.h");
         cfg.header("shadow.h");
         if !emscripten {
@@ -226,6 +227,7 @@ fn main() {
         cfg.header("sys/reboot.h");
         if !emscripten {
             cfg.header("linux/netfilter_ipv4.h");
+            cfg.header("linux/fs.h");
         }
         if !musl {
             cfg.header("asm/mman.h");
@@ -237,6 +239,25 @@ fn main() {
                 cfg.header("linux/quota.h");
             }
         }
+    }
+
+    if linux || android {
+        cfg.header("sys/fsuid.h");
+
+        // DCCP support
+        if !uclibc && !musl && !emscripten {
+            cfg.header("linux/dccp.h");
+        }
+
+        if !musl || mips {
+            cfg.header("linux/memfd.h");
+        }
+    }
+
+    if linux {
+        cfg.header("linux/random.h");
+        cfg.header("elf.h");
+        cfg.header("link.h");
     }
 
     if freebsd {
@@ -253,6 +274,9 @@ fn main() {
         cfg.header("ufs/ufs/quota.h");
         cfg.header("ufs/ufs/quota1.h");
         cfg.header("sys/ioctl_compat.h");
+
+        // DCCP support
+        cfg.header("netinet/dccp.h");
     }
 
     if openbsd {
@@ -279,7 +303,9 @@ fn main() {
             "FILE" |
             "fd_set" |
             "Dl_info" |
-            "DIR" => ty.to_string(),
+            "DIR" |
+            "Elf32_Phdr" |
+            "Elf64_Phdr" => ty.to_string(),
 
             // Fixup a few types on windows that don't actually exist.
             "time64_t" if windows => "__time64_t".to_string(),
@@ -366,6 +392,10 @@ fn main() {
             // FIXME: unskip it for next major release
             "stat" | "stat64" if android => true,
 
+            // These are tested as part of the linux_fcntl tests since there are
+            // header conflicts when including them with all the other structs.
+            "termios2" => true,
+
             _ => false
         }
     });
@@ -399,6 +429,7 @@ fn main() {
             "ERROR_NOTHING_TO_TERMINATE" if mingw => true,
 
             "SIG_IGN" => true, // sighandler_t weirdness
+            "SIGUNUSED" => true, // removed in glibc 2.26
 
             // types on musl are defined a little differently
             n if musl && n.contains("__SIZEOF_PTHREAD") => true,
@@ -453,7 +484,12 @@ fn main() {
 
             // Musl uses old, patched kernel headers
             "FALLOC_FL_COLLAPSE_RANGE" | "FALLOC_FL_ZERO_RANGE" |
-            "FALLOC_FL_INSERT_RANGE" | "FALLOC_FL_UNSHARE_RANGE" if musl => true,
+            "FALLOC_FL_INSERT_RANGE" | "FALLOC_FL_UNSHARE_RANGE" |
+            "RENAME_NOREPLACE" | "RENAME_EXCHANGE" | "RENAME_WHITEOUT" if musl => true,
+
+            // Both android and musl use old kernel headers
+            // These are constants used in getrandom syscall
+            "GRND_NONBLOCK" | "GRND_RANDOM" if musl || android => true,
 
             // Defined by libattr not libc on linux (hard to test).
             // See constant definition for more details.
@@ -476,7 +512,9 @@ fn main() {
             "F_CANCELLK" | "F_ADD_SEALS" | "F_GET_SEALS" => true,
             "F_SEAL_SEAL" | "F_SEAL_SHRINK" | "F_SEAL_GROW" | "F_SEAL_WRITE" => true,
             "QFMT_VFS_OLD" | "QFMT_VFS_V0" | "QFMT_VFS_V1" if mips && linux => true, // Only on MIPS
+            "BOTHER" => true,
 
+            "MFD_CLOEXEC" | "MFD_ALLOW_SEALING" if !mips && musl => true,
             _ => false,
         }
     });
@@ -657,8 +695,7 @@ fn main() {
     // fails on a lot of platforms.
     let mut cfg = ctest::TestGenerator::new();
     cfg.skip_type(|_| true)
-        .skip_struct(|_| true)
-        .skip_fn(|_| true);
+       .skip_fn(|_| true);
     if android || linux {
         // musl defines these directly in `fcntl.h`
         if musl {
@@ -671,16 +708,28 @@ fn main() {
             cfg.header("linux/if.h");
         }
         cfg.header("linux/quota.h");
+        cfg.header("asm/termbits.h");
         cfg.skip_const(move |name| {
             match name {
                 "F_CANCELLK" | "F_ADD_SEALS" | "F_GET_SEALS" => false,
                 "F_SEAL_SEAL" | "F_SEAL_SHRINK" | "F_SEAL_GROW" | "F_SEAL_WRITE" => false,
                 "QFMT_VFS_OLD" | "QFMT_VFS_V0" | "QFMT_VFS_V1" if mips && linux => false,
+                "BOTHER" => false,
                 _ => true,
+            }
+        });
+        cfg.skip_struct(|s| {
+            s != "termios2"
+        });
+        cfg.type_name(move |ty, is_struct| {
+            match ty {
+                t if is_struct => format!("struct {}", t),
+                t => t.to_string(),
             }
         });
     } else {
         cfg.skip_const(|_| true);
+        cfg.skip_struct(|_| true);
     }
     cfg.generate("../src/lib.rs", "linux_fcntl.rs");
 }

@@ -401,16 +401,6 @@ fn bar(x: &str, y: &str) -> &str { }
 fn baz<'a>(x: &'a str, y: &str) -> &str { }
 ```
 
-Here's an example that is currently an error, but may work in a future version
-of Rust:
-
-```compile_fail,E0106
-struct Foo<'a>(&'a str);
-
-trait Quux { }
-impl Quux for Foo { }
-```
-
 Lifetime elision in implementation headers was part of the lifetime elision
 RFC. It is, however, [currently unimplemented][iss15872].
 
@@ -1780,6 +1770,46 @@ If you want to get command-line arguments, use `std::env::args`. To exit with a
 specified exit code, use `std::process::exit`.
 "##,
 
+E0562: r##"
+Abstract return types (written `impl Trait` for some trait `Trait`) are only
+allowed as function return types.
+
+Erroneous code example:
+
+```compile_fail,E0562
+#![feature(conservative_impl_trait)]
+
+fn main() {
+    let count_to_ten: impl Iterator<Item=usize> = 0..10;
+    // error: `impl Trait` not allowed outside of function and inherent method
+    //        return types
+    for i in count_to_ten {
+        println!("{}", i);
+    }
+}
+```
+
+Make sure `impl Trait` only appears in return-type position.
+
+```
+#![feature(conservative_impl_trait)]
+
+fn count_to_n(n: usize) -> impl Iterator<Item=usize> {
+    0..n
+}
+
+fn main() {
+    for i in count_to_n(10) {  // ok!
+        println!("{}", i);
+    }
+}
+```
+
+See [RFC 1522] for more details.
+
+[RFC 1522]: https://github.com/rust-lang/rfcs/blob/master/text/1522-conservative-impl-trait.md
+"##,
+
 E0591: r##"
 Per [RFC 401][rfc401], if you have a function declaration `foo`:
 
@@ -1875,7 +1905,7 @@ fn main() {
 "##,
 
 E0601: r##"
-No `main` function was found in a binary crate. To fix this error, just add a
+No `main` function was found in a binary crate. To fix this error, add a
 `main` function. For example:
 
 ```

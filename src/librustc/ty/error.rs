@@ -54,6 +54,8 @@ pub enum TypeError<'tcx> {
     ProjectionBoundsLength(ExpectedFound<usize>),
     TyParamDefaultMismatch(ExpectedFound<type_variable::Default<'tcx>>),
     ExistentialMismatch(ExpectedFound<&'tcx ty::Slice<ty::ExistentialPredicate<'tcx>>>),
+
+    OldStyleLUB(Box<TypeError<'tcx>>),
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Debug, Copy)]
@@ -170,6 +172,9 @@ impl<'tcx> fmt::Display for TypeError<'tcx> {
                 report_maybe_different(f, format!("trait `{}`", values.expected),
                                        format!("trait `{}`", values.found))
             }
+            OldStyleLUB(ref err) => {
+                write!(f, "{}", err)
+            }
         }
     }
 }
@@ -182,6 +187,7 @@ impl<'a, 'gcx, 'lcx, 'tcx> ty::TyS<'tcx> {
             ty::TyTuple(ref tys, _) if tys.is_empty() => self.to_string(),
 
             ty::TyAdt(def, _) => format!("{} `{}`", def.descr(), tcx.item_path_str(def.did)),
+            ty::TyForeign(def_id) => format!("extern type `{}`", tcx.item_path_str(def_id)),
             ty::TyArray(_, n) => {
                 if let ConstVal::Integral(ConstInt::Usize(n)) = n.val {
                     format!("array of {} elements", n)
@@ -291,6 +297,12 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
                 db.span_note(found.origin_span,
                              "...that also applies to the same type variable here");
+            }
+            OldStyleLUB(err) => {
+                db.note("this was previously accepted by the compiler but has been phased out");
+                db.note("for more information, see https://github.com/rust-lang/rust/issues/45852");
+
+                self.note_and_explain_type_err(db, &err, sp);
             }
             _ => {}
         }

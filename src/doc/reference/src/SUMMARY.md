@@ -3,8 +3,6 @@
 [Introduction](introduction.md)
 
 - [Notation](notation.md)
-    - [Unicode productions](unicode-productions.md)
-    - [String table productions](string-table-productions.md)
 
 - [Lexical structure](lexical-structure.md)
     - [Input format](input-format.md)
@@ -66,6 +64,7 @@
     - [Interior mutability](interior-mutability.md)
     - [Subtyping](subtyping.md)
     - [Type coercions](type-coercions.md)
+    - [Destructors](destructors.md)
 
 - [Special traits](special-traits.md)
     - [The Copy trait](the-copy-trait.md)
@@ -92,4 +91,4 @@
 
 [Appendix: As-yet-undocumented Features](undocumented.md)
 
-[Appendix: Glossory](glossory.md)
+[Appendix: Glossary](glossary.md)

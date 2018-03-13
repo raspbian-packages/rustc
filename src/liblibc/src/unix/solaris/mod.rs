@@ -591,6 +591,9 @@ pub const WSTOPPED: ::c_int = WUNTRACED;
 pub const WCONTINUED: ::c_int = 0x08;
 pub const WNOWAIT: ::c_int = 0x80;
 
+pub const AT_FDCWD: ::c_int = 0xffd19553;
+pub const AT_SYMLINK_NOFOLLOW: ::c_int = 0x1000;
+
 // Solaris defines a great many more of these; we only expose the
 // standardized ones.
 pub const P_PID: idtype_t = 0;
@@ -766,6 +769,13 @@ pub const GLOB_NOSPACE : ::c_int = -2;
 pub const GLOB_ABORTED : ::c_int = -1;
 pub const GLOB_NOMATCH : ::c_int = -3;
 
+pub const POLLIN: ::c_short = 0x1;
+pub const POLLPRI: ::c_short = 0x2;
+pub const POLLOUT: ::c_short = 0x4;
+pub const POLLERR: ::c_short = 0x8;
+pub const POLLHUP: ::c_short = 0x10;
+pub const POLLNVAL: ::c_short = 0x20;
+
 pub const POSIX_MADV_NORMAL: ::c_int = 0;
 pub const POSIX_MADV_RANDOM: ::c_int = 1;
 pub const POSIX_MADV_SEQUENTIAL: ::c_int = 2;
@@ -857,7 +867,48 @@ pub const SO_TYPE: ::c_int = 0x1008;
 
 pub const MSG_PEEK: ::c_int = 0x2;
 
-pub const IFF_LOOPBACK: ::c_int = 0x8;
+// https://docs.oracle.com/cd/E23824_01/html/821-1475/if-7p.html
+pub const IFF_UP: ::c_int = 0x0000000001; // Address is up
+pub const IFF_BROADCAST: ::c_int = 0x0000000002; // Broadcast address valid
+pub const IFF_DEBUG: ::c_int = 0x0000000004; // Turn on debugging
+pub const IFF_LOOPBACK: ::c_int = 0x0000000008; // Loopback net
+pub const IFF_POINTOPOINT: ::c_int = 0x0000000010; // Interface is p-to-p
+pub const IFF_NOTRAILERS: ::c_int = 0x0000000020; // Avoid use of trailers
+pub const IFF_RUNNING: ::c_int = 0x0000000040; // Resources allocated
+pub const IFF_NOARP: ::c_int = 0x0000000080; // No address res. protocol
+pub const IFF_PROMISC: ::c_int = 0x0000000100; // Receive all packets
+pub const IFF_ALLMULTI: ::c_int = 0x0000000200; // Receive all multicast pkts
+pub const IFF_INTELLIGENT: ::c_int = 0x0000000400; // Protocol code on board
+pub const IFF_MULTICAST: ::c_int = 0x0000000800; // Supports multicast
+// Multicast using broadcst. add.
+pub const IFF_MULTI_BCAST: ::c_int = 0x0000001000;
+pub const IFF_UNNUMBERED: ::c_int = 0x0000002000; // Non-unique address
+pub const IFF_DHCPRUNNING: ::c_int = 0x0000004000; // DHCP controls interface
+pub const IFF_PRIVATE: ::c_int = 0x0000008000; // Do not advertise
+pub const IFF_NOXMIT: ::c_int = 0x0000010000; // Do not transmit pkts
+// No address - just on-link subnet
+pub const IFF_NOLOCAL: ::c_int = 0x0000020000;
+pub const IFF_DEPRECATED: ::c_int = 0x0000040000; // Address is deprecated
+pub const IFF_ADDRCONF: ::c_int = 0x0000080000; // Addr. from stateless addrconf
+pub const IFF_ROUTER: ::c_int = 0x0000100000; // Router on interface
+pub const IFF_NONUD: ::c_int = 0x0000200000; // No NUD on interface
+pub const IFF_ANYCAST: ::c_int = 0x0000400000; // Anycast address
+pub const IFF_NORTEXCH: ::c_int = 0x0000800000; // Don't xchange rout. info
+pub const IFF_IPV4: ::c_int = 0x0001000000; // IPv4 interface
+pub const IFF_IPV6: ::c_int = 0x0002000000; // IPv6 interface
+pub const IFF_NOFAILOVER: ::c_int = 0x0008000000; // in.mpathd test address
+pub const IFF_FAILED: ::c_int = 0x0010000000; // Interface has failed
+pub const IFF_STANDBY: ::c_int = 0x0020000000; // Interface is a hot-spare
+pub const IFF_INACTIVE: ::c_int = 0x0040000000; // Functioning but not used
+pub const IFF_OFFLINE: ::c_int = 0x0080000000; // Interface is offline
+// If CoS marking is supported
+pub const IFF_COS_ENABLED: ::c_int = 0x0200000000;
+pub const IFF_PREFERRED: ::c_int = 0x0400000000; // Prefer as source address
+pub const IFF_TEMPORARY: ::c_int = 0x0800000000; // RFC3041
+pub const IFF_FIXEDMTU: ::c_int = 0x1000000000; // MTU set with SIOCSLIFMTU
+pub const IFF_VIRTUAL: ::c_int = 0x2000000000; // Cannot send/receive pkts
+pub const IFF_DUPLICATE: ::c_int = 0x4000000000; // Local address in use
+pub const IFF_IPMP: ::c_int = 0x8000000000; // IPMP IP interface
 
 pub const SHUT_RD: ::c_int = 0;
 pub const SHUT_WR: ::c_int = 1;
@@ -1100,6 +1151,7 @@ pub const RTLD_DEFAULT: *mut ::c_void = -2isize as *mut ::c_void;
 pub const RTLD_SELF: *mut ::c_void = -3isize as *mut ::c_void;
 pub const RTLD_PROBE: *mut ::c_void = -4isize as *mut ::c_void;
 
+pub const RTLD_LAZY: ::c_int = 0x1;
 pub const RTLD_NOW: ::c_int = 0x2;
 pub const RTLD_NOLOAD: ::c_int = 0x4;
 pub const RTLD_GLOBAL: ::c_int = 0x100;
@@ -1256,6 +1308,8 @@ extern {
                     addrlen: *mut ::socklen_t) -> ::ssize_t;
     pub fn mkstemps(template: *mut ::c_char, suffixlen: ::c_int) -> ::c_int;
     pub fn futimes(fd: ::c_int, times: *const ::timeval) -> ::c_int;
+    pub fn utimensat(dirfd: ::c_int, path: *const ::c_char,
+                     times: *const ::timespec, flag: ::c_int) -> ::c_int;
     pub fn nl_langinfo(item: ::nl_item) -> *mut ::c_char;
 
     pub fn bind(socket: ::c_int, address: *const ::sockaddr,

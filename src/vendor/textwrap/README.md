@@ -15,7 +15,7 @@ the [Python textwrap module][py-textwrap].
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-textwrap = "0.8"
+textwrap = "0.9"
 ```
 
 and this to your crate root:
@@ -27,7 +27,15 @@ If you would like to have automatic hyphenation, specify the
 dependency as:
 ```toml
 [dependencies]
-textwrap = { version: "0.8", features: ["hyphenation"] }
+textwrap = { version = "0.9", features = ["hyphenation"] }
+```
+
+To conveniently wrap text at the current terminal width, enable the
+`term_size` feature:
+
+```toml
+[dependencies]
+textwrap = { version = "0.9", features = ["term_size"] }
 ```
 
 ## Documentation
@@ -173,6 +181,21 @@ cost abstractions.
 
 This section lists the largest changes per release.
 
+### Version 0.9.0 — October 5th, 2017
+
+The dependency on `term_size` is now optional, and by default this
+feature is not enabled. This is a *breaking change* for users of
+`Wrapper::with_termwidth`. Enable the `term_size` feature to restore
+the old functionality.
+
+Added a regression test for case where width is set to usize::MAX.
+Thanks @Fraser999! All public structs now implement `Debug`.
+
+Issues closed:
+
+* Fixed [#101][issue-101]: Remove `term_size` as a (hard required)
+  dependency.
+
 ### Version 0.8.0 — September 4th, 2017
 
 The `Wrapper` stuct is now generic over the type of word splitter
@@ -284,14 +307,17 @@ Contributions will be accepted under the same license.
 [py-textwrap]: https://docs.python.org/library/textwrap
 [patterns]: https://github.com/tapeinosyne/hyphenation/tree/master/patterns-tex
 [api-docs]: https://docs.rs/textwrap/
-[issue-13]: ../../issues/13
-[issue-14]: ../../issues/14
-[issue-19]: ../../issues/19
-[issue-25]: ../../issues/25
-[issue-26]: ../../issues/26
-[issue-28]: ../../issues/28
-[issue-36]: ../../issues/36
-[issue-39]: ../../issues/39
-[issue-58]: ../../issues/58
-[issue-61]: ../../issues/61
+[issue-13]: https://github.com/mgeisler/textwrap/issues/13
+[issue-14]: https://github.com/mgeisler/textwrap/issues/14
+[issue-19]: https://github.com/mgeisler/textwrap/issues/19
+[issue-25]: https://github.com/mgeisler/textwrap/issues/25
+[issue-26]: https://github.com/mgeisler/textwrap/issues/26
+[issue-28]: https://github.com/mgeisler/textwrap/issues/28
+[issue-36]: https://github.com/mgeisler/textwrap/issues/36
+[issue-39]: https://github.com/mgeisler/textwrap/issues/39
+[issue-58]: https://github.com/mgeisler/textwrap/issues/58
+[issue-59]: https://github.com/mgeisler/textwrap/issues/59
+[issue-61]: https://github.com/mgeisler/textwrap/issues/61
+[issue-81]: https://github.com/mgeisler/textwrap/issues/81
+[issue-101]: https://github.com/mgeisler/textwrap/issues/101
 [mit]: LICENSE

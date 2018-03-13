@@ -29,12 +29,17 @@ fn foo(i: i32) {
 }
 
 // END RUST SOURCE
-// START rustc.node4.SimplifyCfg-qualify-consts.after.mir
+// START rustc.main.SimplifyCfg-qualify-consts.after.mir
 //     let mut _0: ();
+//     ...
 //     let _1: D;
+//     ...
 //     let _2: i32;
+//     ...
 //     let _3: &'26_2rs i32;
+//     ...
 //     let _6: &'26_4rs i32;
+//     ...
 //     let mut _4: ();
 //     let mut _5: i32;
 //     bb0: {
@@ -71,4 +76,4 @@ fn foo(i: i32) {
 //         StorageDead(_1);
 //         return;
 //     }
-// END rustc.node4.SimplifyCfg-qualify-consts.after.mir
+// END rustc.main.SimplifyCfg-qualify-consts.after.mir

@@ -2,9 +2,10 @@ use itertools::Itertools;
 use pulldown_cmark;
 use rustc::lint::*;
 use syntax::ast;
-use syntax::codemap::{Span, BytePos};
+use syntax::codemap::{BytePos, Span};
 use syntax_pos::Pos;
 use utils::span_lint;
+use url::Url;
 
 /// **What it does:** Checks for the presence of `_`, `::` or camel-case words
 /// outside ticks in documentation.
@@ -37,7 +38,9 @@ pub struct Doc {
 
 impl Doc {
     pub fn new(valid_idents: Vec<String>) -> Self {
-        Self { valid_idents: valid_idents }
+        Self {
+            valid_idents: valid_idents,
+        }
     }
 }
 
@@ -85,7 +88,7 @@ impl<'a> Iterator for Parser<'a> {
 #[allow(cast_possible_truncation)]
 pub fn strip_doc_comment_decoration(comment: &str, span: Span) -> (String, Vec<(usize, Span)>) {
     // one-line comments lose their prefix
-    const ONELINERS: &'static [&'static str] = &["///!", "///", "//!", "//"];
+    const ONELINERS: &[&str] = &["///!", "///", "//!", "//"];
     for prefix in ONELINERS {
         if comment.starts_with(*prefix) {
             let doc = &comment[prefix.len()..];
@@ -193,20 +196,26 @@ fn check_doc<'a, Events: Iterator<Item = (usize, pulldown_cmark::Event<'a>)>>(
     use pulldown_cmark::Tag::*;
 
     let mut in_code = false;
+    let mut in_link = None;
 
     for (offset, event) in docs {
         match event {
-            Start(CodeBlock(_)) |
-            Start(Code) => in_code = true,
-            End(CodeBlock(_)) |
-            End(Code) => in_code = false,
-            Start(_tag) | End(_tag) => (), // We don't care about other tags
-            Html(_html) |
-            InlineHtml(_html) => (), // HTML is weird, just ignore it
+            Start(CodeBlock(_)) | Start(Code) => in_code = true,
+            End(CodeBlock(_)) | End(Code) => in_code = false,
+            Start(Link(link, _)) => in_link = Some(link),
+            End(Link(_, _)) => in_link = None,
+            Start(_tag) | End(_tag) => (),         // We don't care about other tags
+            Html(_html) | InlineHtml(_html) => (), // HTML is weird, just ignore it
             SoftBreak => (),
             HardBreak => (),
-            FootnoteReference(text) |
-            Text(text) => {
+            FootnoteReference(text) | Text(text) => {
+                if Some(&text) == in_link.as_ref() {
+                    // Probably a link of the form `<http://example.com>`
+                    // Which are represented as a link to "http://example.com" with
+                    // text "http://example.com" by pulldown-cmark
+                    continue;
+                }
+
                 if !in_code {
                     let index = match spans.binary_search_by(|c| c.0.cmp(&offset)) {
                         Ok(o) => o,
@@ -215,7 +224,7 @@ fn check_doc<'a, Events: Iterator<Item = (usize, pulldown_cmark::Event<'a>)>>(
 
                     let (begin, span) = spans[index];
 
-                    // Adjust for the begining of the current `Event`
+                    // Adjust for the beginning of the current `Event`
                     let span = span.with_lo(span.lo() + BytePos::from_usize(offset - begin));
 
                     check_text(cx, valid_idents, &text, span);
@@ -264,12 +273,26 @@ fn check_word(cx: &EarlyContext, word: &str, span: Span) {
             s
         };
 
-        s.chars().all(char::is_alphanumeric) && s.chars().filter(|&c| c.is_uppercase()).take(2).count() > 1 &&
-            s.chars().filter(|&c| c.is_lowercase()).take(1).count() > 0
+        s.chars().all(char::is_alphanumeric) && s.chars().filter(|&c| c.is_uppercase()).take(2).count() > 1
+            && s.chars().filter(|&c| c.is_lowercase()).take(1).count() > 0
     }
 
     fn has_underscore(s: &str) -> bool {
         s != "_" && !s.contains("\\_") && s.contains('_')
+    }
+
+    if let Ok(url) = Url::parse(word) {
+        // try to get around the fact that `foo::bar` parses as a valid URL
+        if !url.cannot_be_a_base() {
+            span_lint(
+                cx,
+                DOC_MARKDOWN,
+                span,
+                "you should put bare URLs between `<`/`>` or make a proper Markdown link",
+            );
+
+            return;
+        }
     }
 
     if has_underscore(word) || word.contains("::") || is_camel_case(word) {

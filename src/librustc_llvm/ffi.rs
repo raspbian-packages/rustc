@@ -359,6 +359,17 @@ pub struct ThinLTOModule {
     pub len: usize,
 }
 
+/// LLVMThreadLocalMode
+#[derive(Copy, Clone)]
+#[repr(C)]
+pub enum ThreadLocalMode {
+  NotThreadLocal,
+  GeneralDynamic,
+  LocalDynamic,
+  InitialExec,
+  LocalExec
+}
+
 // Opaque pointer types
 #[allow(missing_copy_implementations)]
 pub enum Module_opaque {}
@@ -709,6 +720,7 @@ extern "C" {
     pub fn LLVMGetInitializer(GlobalVar: ValueRef) -> ValueRef;
     pub fn LLVMSetInitializer(GlobalVar: ValueRef, ConstantVal: ValueRef);
     pub fn LLVMSetThreadLocal(GlobalVar: ValueRef, IsThreadLocal: Bool);
+    pub fn LLVMSetThreadLocalMode(GlobalVar: ValueRef, Mode: ThreadLocalMode);
     pub fn LLVMIsGlobalConstant(GlobalVar: ValueRef) -> Bool;
     pub fn LLVMSetGlobalConstant(GlobalVar: ValueRef, IsConstant: Bool);
     pub fn LLVMRustGetNamedValue(M: ModuleRef, Name: *const c_char) -> ValueRef;
@@ -1593,7 +1605,9 @@ extern "C" {
                                        UseSoftFP: bool,
                                        PositionIndependentExecutable: bool,
                                        FunctionSections: bool,
-                                       DataSections: bool)
+                                       DataSections: bool,
+                                       TrapUnreachable: bool,
+                                       Singlethread: bool)
                                        -> TargetMachineRef;
     pub fn LLVMRustDisposeTargetMachine(T: TargetMachineRef);
     pub fn LLVMRustAddAnalysisPasses(T: TargetMachineRef, PM: PassManagerRef, M: ModuleRef);

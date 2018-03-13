@@ -243,7 +243,7 @@ impl AtomicBool {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[cfg_attr(not(stage0), rustc_const_unstable(feature = "const_atomic_bool_new"))]
+    #[rustc_const_unstable(feature = "const_atomic_bool_new")]
     pub const fn new(v: bool) -> AtomicBool {
         AtomicBool { v: UnsafeCell::new(v as u8) }
     }
@@ -657,7 +657,7 @@ impl<T> AtomicPtr<T> {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[cfg_attr(not(stage0), rustc_const_unstable(feature = "const_atomic_ptr_new"))]
+    #[rustc_const_unstable(feature = "const_atomic_ptr_new")]
     pub const fn new(p: *mut T) -> AtomicPtr<T> {
         AtomicPtr { p: UnsafeCell::new(p) }
     }
@@ -928,6 +928,13 @@ impl<T> AtomicPtr<T> {
 }
 
 #[cfg(target_has_atomic = "ptr")]
+#[stable(feature = "atomic_from", since = "1.23.0")]
+impl<T> From<*mut T> for AtomicPtr<T> {
+    #[inline]
+    fn from(p: *mut T) -> Self { Self::new(p) }
+}
+
+#[cfg(target_has_atomic = "ptr")]
 macro_rules! atomic_int {
     ($stable:meta, $const_unstable:meta,
      $stable_cxchg:meta,
@@ -967,6 +974,12 @@ macro_rules! atomic_int {
             }
         }
 
+        #[stable(feature = "atomic_from", since = "1.23.0")]
+        impl From<$int_type> for $atomic_type {
+            #[inline]
+            fn from(v: $int_type) -> Self { Self::new(v) }
+        }
+
         #[$stable_debug]
         impl fmt::Debug for $atomic_type {
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -992,7 +1005,7 @@ macro_rules! atomic_int {
             /// ```
             #[inline]
             #[$stable]
-            #[cfg_attr(not(stage0), $const_unstable)]
+            #[$const_unstable]
             pub const fn new(v: $int_type) -> Self {
                 $atomic_type {v: UnsafeCell::new(v)}
             }

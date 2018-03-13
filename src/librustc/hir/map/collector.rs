@@ -12,6 +12,7 @@ use super::*;
 
 use dep_graph::{DepGraph, DepKind, DepNodeIndex};
 use hir::intravisit::{Visitor, NestedVisitorMap};
+use session::CrateDisambiguator;
 use std::iter::repeat;
 use syntax::ast::{NodeId, CRATE_NODE_ID};
 use syntax_pos::Span;
@@ -70,7 +71,7 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
                 impl_items: _,
                 bodies: _,
                 trait_impls: _,
-                trait_default_impl: _,
+                trait_auto_impl: _,
                 body_ids: _,
             } = *krate;
 
@@ -118,7 +119,7 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
     }
 
     pub(super) fn finalize_and_compute_crate_hash(self,
-                                                  crate_disambiguator: &str)
+                                                  crate_disambiguator: CrateDisambiguator)
                                                   -> Vec<MapEntry<'hir>> {
         let mut node_hashes: Vec<_> = self
             .hir_body_nodes
@@ -133,7 +134,7 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
 
         self.dep_graph.with_task(DepNode::new_no_params(DepKind::Krate),
                                  &self.hcx,
-                                 (node_hashes, crate_disambiguator),
+                                 (node_hashes, crate_disambiguator.to_fingerprint()),
                                  identity_fn);
         self.map
     }
@@ -218,7 +219,7 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
                                                  f: F) {
         let prev_owner = self.current_dep_node_owner;
         let prev_signature_dep_index = self.current_signature_dep_index;
-        let prev_full_dep_index = self.current_signature_dep_index;
+        let prev_full_dep_index = self.current_full_dep_index;
         let prev_in_body = self.currently_in_body;
 
         let def_path_hash = self.definitions.def_path_hash(dep_node_owner);

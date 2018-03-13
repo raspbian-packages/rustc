@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --error-format json
-
-// ignore-windows (see Issue #44968)
+// compile-flags: --error-format pretty-json -Zunstable-options
 
 // The output for humans should just highlight the whole span without showing
 // the suggested replacement, but we also want to test that suggested
 // replacement only removes one set of parentheses, rather than naïvely
 // stripping away any starting or ending parenthesis characters—hence this
 // test of the JSON error format.
+
+#![warn(unused_parens)]
 
 fn main() {
     // We want to suggest the properly-balanced expression `1 / (2 + 3)`, not

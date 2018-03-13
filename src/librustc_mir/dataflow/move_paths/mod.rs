@@ -239,8 +239,7 @@ pub(crate) enum IllegalMoveOriginKind<'tcx> {
     Static,
     BorrowedContent,
     InteriorOfTypeWithDestructor { container_ty: ty::Ty<'tcx> },
-    InteriorOfSlice { elem_ty: ty::Ty<'tcx>, is_index: bool, },
-    InteriorOfArray { elem_ty: ty::Ty<'tcx>, is_index: bool, },
+    InteriorOfSliceOrArray { ty: ty::Ty<'tcx>, is_index: bool, },
 }
 
 #[derive(Debug)]
@@ -256,10 +255,10 @@ impl<'tcx> MoveError<'tcx> {
     }
 }
 
-impl<'a, 'tcx> MoveData<'tcx> {
+impl<'a, 'gcx, 'tcx> MoveData<'tcx> {
     pub fn gather_moves(mir: &Mir<'tcx>,
-                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                        param_env: ty::ParamEnv<'tcx>)
+                        tcx: TyCtxt<'a, 'gcx, 'tcx>,
+                        param_env: ty::ParamEnv<'gcx>)
                         -> Result<Self, (Self, Vec<MoveError<'tcx>>)> {
         builder::gather_moves(mir, tcx, param_env)
     }

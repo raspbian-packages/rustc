@@ -1,4 +1,4 @@
-rustc (1.22.1+dfsg1-2+rpi1) buster-staging; urgency=medium
+rustc (1.23.0+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Fix clean target.
@@ -6,7 +6,20 @@ rustc (1.22.1+dfsg1-2+rpi1) buster-staging; urgency=medium
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Sun, 07 Jan 2018 18:13:16 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Tue, 13 Mar 2018 02:30:48 +0000
+
+rustc (1.23.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 19 Jan 2018 11:49:31 +0100
+
+rustc (1.23.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update to latest Standards-Version; no changes required.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 14 Jan 2018 00:08:17 +0100
 
 rustc (1.22.1+dfsg1-2) unstable; urgency=medium
 

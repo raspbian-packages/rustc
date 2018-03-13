@@ -19,9 +19,10 @@ use hir::def_id::{CrateNum, DefId, DefIndex, LOCAL_CRATE, DefIndexAddressSpace,
                   CRATE_DEF_INDEX};
 use ich::Fingerprint;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::indexed_vec::IndexVec;
+use rustc_data_structures::indexed_vec::{IndexVec, Idx};
 use rustc_data_structures::stable_hasher::StableHasher;
 use serialize::{Encodable, Decodable, Encoder, Decoder};
+use session::CrateDisambiguator;
 use std::fmt::Write;
 use std::hash::Hash;
 use syntax::ast;
@@ -231,7 +232,9 @@ impl DefKey {
         DefPathHash(hasher.finish())
     }
 
-    fn root_parent_stable_hash(crate_name: &str, crate_disambiguator: &str) -> DefPathHash {
+    fn root_parent_stable_hash(crate_name: &str,
+                               crate_disambiguator: CrateDisambiguator)
+                               -> DefPathHash {
         let mut hasher = StableHasher::new();
         // Disambiguate this from a regular DefPath hash,
         // see compute_stable_hash() above.
@@ -309,6 +312,29 @@ impl DefPath {
                 .unwrap();
         }
 
+        s
+    }
+
+    /// Return filename friendly string of the DefPah without
+    /// the crate-prefix. This method is useful if you don't have
+    /// a TyCtxt available.
+    pub fn to_filename_friendly_no_crate(&self) -> String {
+        let mut s = String::with_capacity(self.data.len() * 16);
+
+        let mut opt_delimiter = None;
+        for component in &self.data {
+            opt_delimiter.map(|d| s.push(d));
+            opt_delimiter = Some('-');
+            if component.disambiguator == 0 {
+                write!(s, "{}", component.data.as_interned_str()).unwrap();
+            } else {
+                write!(s,
+                       "{}[{}]",
+                       component.data.as_interned_str(),
+                       component.disambiguator)
+                    .unwrap();
+            }
+        }
         s
     }
 }
@@ -467,7 +493,7 @@ impl Definitions {
     /// Add a definition with a parent definition.
     pub fn create_root_def(&mut self,
                            crate_name: &str,
-                           crate_disambiguator: &str)
+                           crate_disambiguator: CrateDisambiguator)
                            -> DefIndex {
         let key = DefKey {
             parent: None,

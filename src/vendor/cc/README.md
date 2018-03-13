@@ -11,6 +11,9 @@ A simple library meant to be used as a build dependency with Cargo packages in
 order to build a set of C/C++ files into a static archive. This crate calls out
 to the most relevant compiler for a platform, for example using `cl` on MSVC.
 
+> **Note**: this crate was recently renamed from the `gcc` crate, so if you're
+> looking for the `gcc` crate you're in the right spot!
+
 ## Using cc-rs
 
 First, you'll want to both add a build script for your crate (`build.rs`) and
@@ -93,6 +96,8 @@ and `HOST` variables.
 [cargo]: http://doc.crates.io/build-script.html#inputs-to-the-build-script
 
 ## Optional features
+
+### Parallel
 
 Currently cc-rs supports parallel compilation (think `make -jN`) but this
 feature is turned off by default. To enable cc-rs to compile C/C++ in parallel,

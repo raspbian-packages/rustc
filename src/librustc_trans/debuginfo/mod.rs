@@ -56,6 +56,7 @@ mod source_loc;
 pub use self::create_scope_map::{create_mir_scopes, MirDebugScope};
 pub use self::source_loc::start_emitting_source_locations;
 pub use self::metadata::create_global_var_metadata;
+pub use self::metadata::create_vtable_metadata;
 pub use self::metadata::extend_scope_to_file;
 pub use self::source_loc::set_source_location;
 
@@ -376,7 +377,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
                 name_to_append_suffix_to.push_str(",");
             }
 
-            let actual_type = cx.tcx().normalize_associated_type(&actual_type);
+            let actual_type = cx.tcx().fully_normalize_associated_types_in(&actual_type);
             // Add actual type name to <...> clause of function name
             let actual_type_name = compute_debuginfo_type_name(cx,
                                                                actual_type,
@@ -389,7 +390,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CrateContext<'a, 'tcx>,
         let template_params: Vec<_> = if cx.sess().opts.debuginfo == FullDebugInfo {
             let names = get_type_parameter_names(cx, generics);
             substs.types().zip(names).map(|(ty, name)| {
-                let actual_type = cx.tcx().normalize_associated_type(&ty);
+                let actual_type = cx.tcx().fully_normalize_associated_types_in(&ty);
                 let actual_type_metadata = type_metadata(cx, actual_type, syntax_pos::DUMMY_SP);
                 let name = CString::new(name.as_str().as_bytes()).unwrap();
                 unsafe {

@@ -35,7 +35,6 @@ use visit::{self, FnKind, Visitor};
 use parse::ParseSess;
 use symbol::Symbol;
 
-use std::ascii::AsciiExt;
 use std::env;
 
 macro_rules! set {
@@ -276,6 +275,9 @@ declare_features! (
     // Allows `impl Trait` in function return types.
     (active, conservative_impl_trait, "1.12.0", Some(34511)),
 
+    // Allows `impl Trait` in function arguments.
+    (active, universal_impl_trait, "1.23.0", Some(34511)),
+
     // The `!` type
     (active, never_type, "1.13.0", Some(35121)),
 
@@ -386,6 +388,9 @@ declare_features! (
     // allow '|' at beginning of match arms (RFC 1925)
     (active, match_beginning_vert, "1.21.0", Some(44101)),
 
+    // Future-proofing enums/structs with #[non_exhaustive] attribute (RFC 2008)
+    (active, non_exhaustive, "1.22.0", Some(44109)),
+
     // Copy/Clone closures (RFC 2132)
     (active, clone_closures, "1.22.0", Some(44490)),
     (active, copy_closures, "1.22.0", Some(44490)),
@@ -398,6 +403,21 @@ declare_features! (
 
     // Default match binding modes (RFC 2005)
     (active, match_default_bindings, "1.22.0", Some(42640)),
+
+    // Trait object syntax with `dyn` prefix
+    (active, dyn_trait, "1.22.0", Some(44662)),
+
+    // `crate` as visibility modifier, synonymous to `pub(crate)`
+    (active, crate_visibility_modifier, "1.23.0", Some(45388)),
+
+    // extern types
+    (active, extern_types, "1.23.0", Some(43467)),
+
+    // Allow trait methods with arbitrary self types
+    (active, arbitrary_self_types, "1.23.0", Some(44874)),
+
+    // #![wasm_import_memory] attribute
+    (active, wasm_import_memory, "1.22.0", None),
 );
 
 declare_features! (
@@ -604,6 +624,12 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                             "the semantics of constant patterns is \
                                              not yet settled",
                                             cfg_fn!(structural_match))),
+
+    // RFC #2008
+    ("non_exhaustive", Whitelisted, Gated(Stability::Unstable,
+                                          "non_exhaustive",
+                                          "non exhaustive is an experimental feature",
+                                          cfg_fn!(non_exhaustive))),
 
     ("plugin", CrateLevel, Gated(Stability::Unstable,
                                  "plugin",
@@ -898,6 +924,17 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                  "allow_fail",
                                  "allow_fail attribute is currently unstable",
                                  cfg_fn!(allow_fail))),
+
+    ("rustc_std_internal_symbol", Whitelisted, Gated(Stability::Unstable,
+                                     "rustc_attrs",
+                                     "this is an internal attribute that will \
+                                      never be stable",
+                                     cfg_fn!(rustc_attrs))),
+
+    ("wasm_import_memory", Whitelisted, Gated(Stability::Unstable,
+                                 "wasm_import_memory",
+                                 "wasm_import_memory attribute is currently unstable",
+                                 cfg_fn!(wasm_import_memory))),
 
     // Crate level attributes
     ("crate_name", CrateLevel, Ungated),
@@ -1348,10 +1385,10 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 }
             }
 
-            ast::ItemKind::DefaultImpl(..) => {
+            ast::ItemKind::AutoImpl(..) => {
                 gate_feature_post!(&self, optin_builtin_traits,
                                    i.span,
-                                   "default trait implementations are experimental \
+                                   "auto trait implementations are experimental \
                                     and possibly buggy");
             }
 
@@ -1380,6 +1417,12 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 }
             }
 
+            ast::ItemKind::Trait(ast::IsAuto::Yes, ..) => {
+                gate_feature_post!(&self, optin_builtin_traits,
+                                   i.span,
+                                   "auto traits are experimental and possibly buggy");
+            }
+
             ast::ItemKind::MacroDef(ast::MacroDef { legacy: false, .. }) => {
                 let msg = "`macro` is experimental";
                 gate_feature_post!(&self, decl_macro, i.span, msg);
@@ -1392,13 +1435,23 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
     }
 
     fn visit_foreign_item(&mut self, i: &'a ast::ForeignItem) {
-        let links_to_llvm = match attr::first_attr_value_str_by_name(&i.attrs, "link_name") {
-            Some(val) => val.as_str().starts_with("llvm."),
-            _ => false
-        };
-        if links_to_llvm {
-            gate_feature_post!(&self, link_llvm_intrinsics, i.span,
-                              "linking to LLVM intrinsics is experimental");
+        match i.node {
+            ast::ForeignItemKind::Fn(..) |
+            ast::ForeignItemKind::Static(..) => {
+                let link_name = attr::first_attr_value_str_by_name(&i.attrs, "link_name");
+                let links_to_llvm = match link_name {
+                    Some(val) => val.as_str().starts_with("llvm."),
+                    _ => false
+                };
+                if links_to_llvm {
+                    gate_feature_post!(&self, link_llvm_intrinsics, i.span,
+                                       "linking to LLVM intrinsics is experimental");
+                }
+            }
+            ast::ForeignItemKind::Ty => {
+                    gate_feature_post!(&self, extern_types, i.span,
+                                       "extern types are experimental");
+            }
         }
 
         visit::walk_foreign_item(self, i)
@@ -1409,14 +1462,14 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             ast::TyKind::BareFn(ref bare_fn_ty) => {
                 self.check_abi(bare_fn_ty.abi, ty.span);
             }
-            ast::TyKind::ImplTrait(..) => {
-                gate_feature_post!(&self, conservative_impl_trait, ty.span,
-                                   "`impl Trait` is experimental");
-            }
             ast::TyKind::Never => {
                 gate_feature_post!(&self, never_type, ty.span,
                                    "The `!` type is experimental");
             },
+            ast::TyKind::TraitObject(_, ast::TraitObjectSyntax::Dyn) => {
+                gate_feature_post!(&self, dyn_trait, ty.span,
+                                   "`dyn Trait` syntax is unstable");
+            }
             _ => {}
         }
         visit::walk_ty(self, ty)
@@ -1519,7 +1572,7 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 span: Span,
                 _node_id: NodeId) {
         // check for const fn declarations
-        if let FnKind::ItemFn(_, _, _, Spanned { node: ast::Constness::Const, .. }, _, _, _) =
+        if let FnKind::ItemFn(_, _, Spanned { node: ast::Constness::Const, .. }, _, _, _) =
             fn_kind {
             gate_feature_post!(&self, const_fn, span, "const fn is unstable");
         }
@@ -1529,7 +1582,7 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
         // point.
 
         match fn_kind {
-            FnKind::ItemFn(_, _, _, _, abi, _, _) |
+            FnKind::ItemFn(_, _, _, abi, _, _) |
             FnKind::Method(_, &ast::MethodSig { abi, .. }, _, _) => {
                 self.check_abi(abi, span);
             }
@@ -1573,6 +1626,14 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             _ => {}
         }
         visit::walk_impl_item(self, ii);
+    }
+
+    fn visit_vis(&mut self, vis: &'a ast::Visibility) {
+        if let ast::Visibility::Crate(span, ast::CrateSugar::JustCrate) = *vis {
+            gate_feature_post!(&self, crate_visibility_modifier, span,
+                               "`crate` visibility modifier is experimental");
+        }
+        visit::walk_vis(self, vis);
     }
 
     fn visit_generics(&mut self, g: &'a ast::Generics) {

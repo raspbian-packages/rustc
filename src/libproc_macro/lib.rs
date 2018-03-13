@@ -177,9 +177,10 @@ impl TokenStream {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub struct Span(syntax_pos::Span);
 
-#[unstable(feature = "proc_macro", issue = "38356")]
-impl Default for Span {
-    fn default() -> Span {
+impl Span {
+    /// A span that resolves at the macro definition site.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn def_site() -> Span {
         ::__internal::with_sess(|(_, mark)| {
             let call_site = mark.expn_info().unwrap().call_site;
             Span(call_site.with_ctxt(SyntaxContext::empty().apply_mark(mark)))
@@ -191,7 +192,7 @@ impl Default for Span {
 /// This is needed to implement a custom quoter.
 #[unstable(feature = "proc_macro", issue = "38356")]
 pub fn quote_span(span: Span) -> TokenStream {
-    TokenStream(quote::Quote::quote(&span.0))
+    quote::Quote::quote(span)
 }
 
 macro_rules! diagnostic_method {
@@ -351,7 +352,7 @@ pub struct TokenTree {
 #[unstable(feature = "proc_macro", issue = "38356")]
 impl From<TokenNode> for TokenTree {
     fn from(kind: TokenNode) -> TokenTree {
-        TokenTree { span: Span::default(), kind: kind }
+        TokenTree { span: Span::def_site(), kind: kind }
     }
 }
 
@@ -488,7 +489,7 @@ impl Literal {
     pub fn string(string: &str) -> Literal {
         let mut escaped = String::new();
         for ch in string.chars() {
-            escaped.extend(ch.escape_unicode());
+            escaped.extend(ch.escape_debug());
         }
         Literal(token::Literal(token::Lit::Str_(Symbol::intern(&escaped)), None))
     }
@@ -728,7 +729,7 @@ impl TokenTree {
 #[unstable(feature = "proc_macro_internals", issue = "27812")]
 #[doc(hidden)]
 pub mod __internal {
-    pub use quote::{Quoter, __rt};
+    pub use quote::{LiteralKind, Quoter, unquote};
 
     use std::cell::Cell;
 

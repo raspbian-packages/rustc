@@ -42,6 +42,15 @@ impl<'a> AstValidator<'a> {
         }
     }
 
+    fn invalid_non_exhaustive_attribute(&self, variant: &Variant) {
+        let has_non_exhaustive = variant.node.attrs.iter()
+            .any(|attr| attr.check_name("non_exhaustive"));
+        if has_non_exhaustive {
+            self.err_handler().span_err(variant.span,
+                                        "#[non_exhaustive] is not yet supported on variants");
+        }
+    }
+
     fn invalid_visibility(&self, vis: &Visibility, span: Span, note: Option<&str>) {
         if vis != &Visibility::Inherited {
             let mut err = struct_span_err!(self.session,
@@ -63,7 +72,8 @@ impl<'a> AstValidator<'a> {
             match arg.pat.node {
                 PatKind::Ident(BindingMode::ByValue(Mutability::Immutable), _, None) |
                 PatKind::Wild => {}
-                PatKind::Ident(..) => report_err(arg.pat.span, true),
+                PatKind::Ident(BindingMode::ByValue(Mutability::Mutable), _, None) =>
+                    report_err(arg.pat.span, true),
                 _ => report_err(arg.pat.span, false),
             }
         }
@@ -142,17 +152,11 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
         match ty.node {
             TyKind::BareFn(ref bfty) => {
                 self.check_decl_no_pat(&bfty.decl, |span, _| {
-                    let mut err = struct_span_err!(self.session,
-                                                   span,
-                                                   E0561,
-                                                   "patterns aren't allowed in function pointer \
-                                                    types");
-                    err.span_note(span,
-                                  "this is a recent error, see issue #35203 for more details");
-                    err.emit();
+                    struct_span_err!(self.session, span, E0561,
+                                     "patterns aren't allowed in function pointer types").emit();
                 });
             }
-            TyKind::TraitObject(ref bounds) => {
+            TyKind::TraitObject(ref bounds, ..) => {
                 let mut any_lifetime_bounds = false;
                 for bound in bounds {
                     if let RegionTyParamBound(ref lifetime) = *bound {
@@ -213,7 +217,7 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
                                         item.span,
                                         Some("place qualifiers on individual impl items instead"));
             }
-            ItemKind::DefaultImpl(..) => {
+            ItemKind::AutoImpl(..) => {
                 self.invalid_visibility(&item.vis, item.span, None);
             }
             ItemKind::ForeignMod(..) => {
@@ -224,23 +228,43 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             }
             ItemKind::Enum(ref def, _) => {
                 for variant in &def.variants {
+                    self.invalid_non_exhaustive_attribute(variant);
                     for field in variant.node.data.fields() {
                         self.invalid_visibility(&field.vis, field.span, None);
                     }
                 }
             }
-            ItemKind::Trait(.., ref bounds, ref trait_items) => {
+            ItemKind::Trait(is_auto, _, ref generics, ref bounds, ref trait_items) => {
+                if is_auto == IsAuto::Yes {
+                    // Auto traits cannot have generics, super traits nor contain items.
+                    if !generics.ty_params.is_empty() {
+                        self.err_handler().span_err(item.span,
+                                                    "auto traits cannot have generics");
+                    }
+                    if !bounds.is_empty() {
+                        self.err_handler().span_err(item.span,
+                                                    "auto traits cannot have super traits");
+                    }
+                    if !trait_items.is_empty() {
+                        self.err_handler().span_err(item.span,
+                                                    "auto traits cannot contain items");
+                    }
+                }
                 self.no_questions_in_bounds(bounds, "supertraits", true);
                 for trait_item in trait_items {
                     if let TraitItemKind::Method(ref sig, ref block) = trait_item.node {
                         self.check_trait_fn_not_const(sig.constness);
                         if block.is_none() {
-                            self.check_decl_no_pat(&sig.decl, |span, _| {
-                                self.session.buffer_lint(
-                                    lint::builtin::PATTERNS_IN_FNS_WITHOUT_BODY,
-                                    trait_item.id, span,
-                                    "patterns aren't allowed in methods \
-                                     without bodies");
+                            self.check_decl_no_pat(&sig.decl, |span, mut_ident| {
+                                if mut_ident {
+                                    self.session.buffer_lint(
+                                        lint::builtin::PATTERNS_IN_FNS_WITHOUT_BODY,
+                                        trait_item.id, span,
+                                        "patterns aren't allowed in methods without bodies");
+                                } else {
+                                    struct_span_err!(self.session, span, E0642,
+                                        "patterns aren't allowed in methods without bodies").emit();
+                                }
                             });
                         }
                     }
@@ -274,21 +298,13 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
     fn visit_foreign_item(&mut self, fi: &'a ForeignItem) {
         match fi.node {
             ForeignItemKind::Fn(ref decl, _) => {
-                self.check_decl_no_pat(decl, |span, is_recent| {
-                    let mut err = struct_span_err!(self.session,
-                                                   span,
-                                                   E0130,
-                                                   "patterns aren't allowed in foreign function \
-                                                    declarations");
-                    err.span_label(span, "pattern not allowed in foreign function");
-                    if is_recent {
-                        err.span_note(span,
-                                      "this is a recent error, see issue #35203 for more details");
-                    }
-                    err.emit();
+                self.check_decl_no_pat(decl, |span, _| {
+                    struct_span_err!(self.session, span, E0130,
+                                     "patterns aren't allowed in foreign function declarations")
+                        .span_label(span, "pattern not allowed in foreign function").emit();
                 });
             }
-            ForeignItemKind::Static(..) => {}
+            ForeignItemKind::Static(..) | ForeignItemKind::Ty => {}
         }
 
         visit::walk_foreign_item(self, fi)

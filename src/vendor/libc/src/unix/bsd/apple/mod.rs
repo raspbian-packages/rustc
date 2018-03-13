@@ -14,6 +14,7 @@ pub type rlim_t = u64;
 pub type mach_timebase_info_data_t = mach_timebase_info;
 pub type pthread_key_t = c_ulong;
 pub type sigset_t = u32;
+pub type clockid_t = ::c_uint;
 pub type fsblkcnt_t = ::c_uint;
 pub type fsfilcnt_t = ::c_uint;
 pub type speed_t = ::c_ulong;
@@ -410,6 +411,13 @@ s! {
         pub xsu_pagesize: u32,
         pub xsu_encrypted: ::boolean_t,
     }
+
+    pub struct xucred {
+        pub cr_version: ::c_uint,
+        pub cr_uid: ::uid_t,
+        pub cr_ngroups: ::c_short,
+        pub cr_groups: [::gid_t;16]
+    }
 }
 
 pub const _UTX_USERSIZE: usize = 256;
@@ -492,6 +500,11 @@ pub const ABMON_9: ::nl_item = 41;
 pub const ABMON_10: ::nl_item = 42;
 pub const ABMON_11: ::nl_item = 43;
 pub const ABMON_12: ::nl_item = 44;
+
+pub const CLOCK_REALTIME: ::clockid_t = 0;
+pub const CLOCK_MONOTONIC: ::clockid_t = 6;
+pub const CLOCK_PROCESS_CPUTIME_ID: ::clockid_t = 12;
+pub const CLOCK_THREAD_CPUTIME_ID: ::clockid_t = 16;
 
 pub const ERA: ::nl_item = 45;
 pub const ERA_D_FMT: ::nl_item = 46;
@@ -1365,6 +1378,15 @@ pub const IPV6_LEAVE_GROUP: ::c_int = 13;
 
 pub const TCP_NODELAY: ::c_int = 0x01;
 pub const TCP_KEEPALIVE: ::c_int = 0x10;
+
+pub const SOL_LOCAL: ::c_int = 0;
+
+pub const LOCAL_PEERCRED: ::c_int = 0x001;
+pub const LOCAL_PEERPID: ::c_int = 0x002;
+pub const LOCAL_PEEREPID: ::c_int = 0x003;
+pub const LOCAL_PEERUUID: ::c_int = 0x004;
+pub const LOCAL_PEEREUUID: ::c_int = 0x005;
+
 pub const SOL_SOCKET: ::c_int = 0xffff;
 
 pub const SO_DEBUG: ::c_int = 0x01;
@@ -1943,6 +1965,8 @@ pub const PROC_PIDTHREADINFO: ::c_int = 5;
 pub const MAXCOMLEN: usize = 16;
 pub const MAXTHREADNAMESIZE: usize = 64;
 
+pub const XUCRED_VERSION: ::c_uint = 0;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -1976,6 +2000,8 @@ extern {
     pub fn aio_suspend(aiocb_list: *const *const aiocb, nitems: ::c_int,
                        timeout: *const ::timespec) -> ::c_int;
     pub fn aio_cancel(fd: ::c_int, aiocbp: *mut aiocb) -> ::c_int;
+    pub fn clock_getres(clk_id: ::clockid_t, tp: *mut ::timespec) -> ::c_int;
+    pub fn clock_gettime(clk_id: ::clockid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn lio_listio(mode: ::c_int, aiocb_list: *const *mut aiocb,
                       nitems: ::c_int, sevp: *mut sigevent) -> ::c_int;
 

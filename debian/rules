@@ -195,8 +195,8 @@ override_dh_auto_configure: debian/config.toml
 
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
-	$(RM) -rf $(SRC_CLEAN) debian/config.toml debian/rust-src.install debian/rust-src.links
-	$(RM) -f config.toml src/vendor/backtrace-sys/src/libbacktrace
+	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links
+	$(RM) -rf $(SRC_CLEAN) config.toml src/vendor/backtrace-sys/src/libbacktrace
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
@@ -313,6 +313,8 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/cssparser/docs/*.html
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/kuchiki/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/url/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
 
 override_dh_installchangelogs:
 	dh_missing --list-missing || true

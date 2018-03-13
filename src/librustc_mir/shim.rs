@@ -13,7 +13,6 @@ use rustc::hir::def_id::DefId;
 use rustc::infer;
 use rustc::middle::const_val::ConstVal;
 use rustc::mir::*;
-use rustc::mir::transform::MirSource;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::subst::{Kind, Subst, Substs};
 use rustc::ty::maps::Providers;
@@ -198,7 +197,6 @@ fn build_drop_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ),
         ClearOnDecode::Clear,
         IndexVec::new(),
-        sig.output(),
         None,
         local_decls_for_sig(&sig, span),
         sig.inputs().len(),
@@ -346,7 +344,6 @@ impl<'a, 'tcx> CloneShimBuilder<'a, 'tcx> {
             ),
             ClearOnDecode::Clear,
             IndexVec::new(),
-            self.sig.output(),
             None,
             self.local_decls,
             self.sig.inputs().len(),
@@ -809,7 +806,6 @@ fn build_call_shim<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ),
         ClearOnDecode::Clear,
         IndexVec::new(),
-        sig.output(),
         None,
         local_decls,
         sig.inputs().len(),
@@ -826,7 +822,7 @@ pub fn build_adt_ctor<'a, 'gcx, 'tcx>(infcx: &infer::InferCtxt<'a, 'gcx, 'tcx>,
                                       ctor_id: ast::NodeId,
                                       fields: &[hir::StructField],
                                       span: Span)
-                                      -> (Mir<'tcx>, MirSource)
+                                      -> Mir<'tcx>
 {
     let tcx = infcx.tcx;
     let def_id = tcx.hir.local_def_id(ctor_id);
@@ -875,19 +871,17 @@ pub fn build_adt_ctor<'a, 'gcx, 'tcx>(infcx: &infer::InferCtxt<'a, 'gcx, 'tcx>,
         is_cleanup: false
     };
 
-    let mir = Mir::new(
+    Mir::new(
         IndexVec::from_elem_n(start_block, 1),
         IndexVec::from_elem_n(
             VisibilityScopeData { span: span, parent_scope: None }, 1
         ),
         ClearOnDecode::Clear,
         IndexVec::new(),
-        sig.output(),
         None,
         local_decls,
         sig.inputs().len(),
         vec![],
         span
-    );
-    (mir, MirSource::Fn(ctor_id))
+    )
 }

@@ -301,14 +301,15 @@ same trait object.
 ## Assignment expressions
 
 An _assignment expression_ consists of an
-[lvalue](expressions.html#lvalues-and-rvalues) expression followed
-by an equals sign (`=`) and an
-[rvalue](expressions.html#lvalues-and-rvalues) expression.
+[lvalue](expressions.html#lvalues-and-rvalues) expression followed by an equals
+sign (`=`) and an [rvalue](expressions.html#lvalues-and-rvalues) expression.
 
-Evaluating an assignment expression [either copies or
-moves](expressions.html#moved-and-copied-types) its right-hand operand to its left-hand
-operand. The left-hand operand must be an lvalue: using an rvalue results in a
-compiler error, rather than promoting it to a temporary.
+Evaluating an assignment expression [drops](destructors.html) the left-hand
+operand, unless it's an unitialized local variable or field of a local variable,
+and [either copies or moves](expressions.html#moved-and-copied-types) its
+right-hand operand to its left-hand operand. The left-hand operand must be an
+lvalue: using an rvalue results in a compiler error, rather than promoting it
+to a temporary.
 
 ```rust
 # let mut x = 0;
@@ -331,29 +332,3 @@ let mut x = 10;
 x += 4;
 assert_eq!(x, 14);
 ```
-
-## Operator precedence
-
-The precedence of Rust operators is ordered as follows, going from strong to
-weak. Binary Operators at the same precedence level are evaluated in the order
-given by their associativity.
-
-
-| Operator                    | Associativity       |
-|-----------------------------|---------------------|
-| `?`                         |                     |
-| Unary `-` `*` `!` `&` `&mut` |                    |
-| `as` `:`                    | left to right       |
-| `*` `/` `%`                 | left to right       |
-| `+` `-`                     | left to right       |
-| `<<` `>>`                   | left to right       |
-| `&`                         | left to right       |
-| `^`                         | left to right       |
-| <code>&#124;</code>         | left to right       |
-| `==` `!=` `<` `>` `<=` `>=` | Require parentheses |
-| `&&`                        | left to right       |
-| <code>&#124;&#124;</code>   | left to right       |
-| `..` `...`                  | Require parentheses |
-| `<-`                        | right to left       |
-| `=` `+=` `-=` `*=` `/=` `%=` <br> `&=` <code>&#124;=</code> `^=` `<<=` `>>=` | right to left |
-

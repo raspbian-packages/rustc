@@ -10,8 +10,10 @@
 
 //! misc. type-system utilities too small to deserve their own file
 
+use hir::def::Def;
 use hir::def_id::{DefId, LOCAL_CRATE};
-use hir::map::DefPathData;
+use hir::map::{DefPathData, Node};
+use hir;
 use ich::NodeIdHashingMode;
 use middle::const_val::ConstVal;
 use traits::{self, Reveal};
@@ -553,7 +555,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         let result = match ty.sty {
             ty::TyBool | ty::TyChar | ty::TyInt(_) | ty::TyUint(_) |
-            ty::TyFloat(_) | ty::TyStr | ty::TyNever |
+            ty::TyFloat(_) | ty::TyStr | ty::TyNever | ty::TyForeign(..) |
             ty::TyRawPtr(..) | ty::TyRef(..) | ty::TyFnDef(..) | ty::TyFnPtr(_) => {
                 // these types never have a destructor
                 Ok(ty::DtorckConstraint::empty())
@@ -619,9 +621,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         result
     }
 
+    pub fn is_closure(self, def_id: DefId) -> bool {
+        self.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr
+    }
+
     pub fn closure_base_def_id(self, def_id: DefId) -> DefId {
         let mut def_id = def_id;
-        while self.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr {
+        while self.is_closure(def_id) {
             def_id = self.parent_def_id(def_id).unwrap_or_else(|| {
                 bug!("closure {:?} has no parent", def_id);
             });
@@ -645,6 +651,26 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32(val as u32)),
             ast::UintTy::U64 => ConstInt::Usize(ConstUsize::Us64(val as u64)),
             _ => bug!(),
+        }
+    }
+
+    /// Check if the node pointed to by def_id is a mutable static item
+    pub fn is_static_mut(&self, def_id: DefId) -> bool {
+        if let Some(node) = self.hir.get_if_local(def_id) {
+            match node {
+                Node::NodeItem(&hir::Item {
+                    node: hir::ItemStatic(_, hir::MutMutable, _), ..
+                }) => true,
+                Node::NodeForeignItem(&hir::ForeignItem {
+                    node: hir::ForeignItemStatic(_, mutbl), ..
+                }) => mutbl,
+                _ => false
+            }
+        } else {
+            match self.describe_def(def_id) {
+                Some(Def::Static(_, mutbl)) => mutbl,
+                _ => false
+            }
         }
     }
 }
@@ -714,6 +740,7 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             TyAnon(def_id, _) |
             TyFnDef(def_id, _) => self.def_id(def_id),
             TyAdt(d, _) => self.def_id(d.did),
+            TyForeign(def_id) => self.def_id(def_id),
             TyFnPtr(f) => {
                 self.hash(f.unsafety());
                 self.hash(f.abi());
@@ -1109,6 +1136,9 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ty::TyFnDef(..) | ty::TyFnPtr(_) | ty::TyChar |
         ty::TyRawPtr(_) | ty::TyRef(..) | ty::TyStr => false,
 
+        // Foreign types can never have destructors
+        ty::TyForeign(..) => false,
+
         // Issue #22536: We first query type_moves_by_default.  It sees a
         // normalized version of the type, and therefore will definitely
         // know whether the type implements Copy (and thus needs no
@@ -1172,6 +1202,58 @@ fn layout_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     tcx.layout_depth.set(depth);
 
     layout
+}
+
+pub enum ExplicitSelf<'tcx> {
+    ByValue,
+    ByReference(ty::Region<'tcx>, hir::Mutability),
+    ByBox,
+    Other
+}
+
+impl<'tcx> ExplicitSelf<'tcx> {
+    /// Categorizes an explicit self declaration like `self: SomeType`
+    /// into either `self`, `&self`, `&mut self`, `Box<self>`, or
+    /// `Other`.
+    /// This is mainly used to require the arbitrary_self_types feature
+    /// in the case of `Other`, to improve error messages in the common cases,
+    /// and to make `Other` non-object-safe.
+    ///
+    /// Examples:
+    ///
+    /// ```
+    /// impl<'a> Foo for &'a T {
+    ///     // Legal declarations:
+    ///     fn method1(self: &&'a T); // ExplicitSelf::ByReference
+    ///     fn method2(self: &'a T); // ExplicitSelf::ByValue
+    ///     fn method3(self: Box<&'a T>); // ExplicitSelf::ByBox
+    ///     fn method4(self: Rc<&'a T>); // ExplicitSelf::Other
+    ///
+    ///     // Invalid cases will be caught by `check_method_receiver`:
+    ///     fn method_err1(self: &'a mut T); // ExplicitSelf::Other
+    ///     fn method_err2(self: &'static T) // ExplicitSelf::ByValue
+    ///     fn method_err3(self: &&T) // ExplicitSelf::ByReference
+    /// }
+    /// ```
+    ///
+    pub fn determine<P>(
+        self_arg_ty: Ty<'tcx>,
+        is_self_ty: P
+    ) -> ExplicitSelf<'tcx>
+    where
+        P: Fn(Ty<'tcx>) -> bool
+    {
+        use self::ExplicitSelf::*;
+
+        match self_arg_ty.sty {
+            _ if is_self_ty(self_arg_ty) => ByValue,
+            ty::TyRef(region, ty::TypeAndMut { ty, mutbl}) if is_self_ty(ty) => {
+                ByReference(region, mutbl)
+            }
+            ty::TyAdt(def, _) if def.is_box() && is_self_ty(self_arg_ty.boxed_ty()) => ByBox,
+            _ => Other
+        }
+    }
 }
 
 pub fn provide(providers: &mut ty::maps::Providers) {

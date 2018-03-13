@@ -17,7 +17,8 @@ pub use self::fold::TypeFoldable;
 
 use hir::{map as hir_map, FreevarMap, TraitMap};
 use hir::def::{Def, CtorKind, ExportMap};
-use hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX, LOCAL_CRATE};
+use hir::def_id::{CrateNum, DefId, DefIndex, LocalDefId, CRATE_DEF_INDEX, LOCAL_CRATE};
+use hir::map::DefPathData;
 use ich::StableHashingContext;
 use middle::const_val::ConstVal;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
@@ -25,6 +26,7 @@ use middle::privacy::AccessLevels;
 use middle::resolve_lifetime::ObjectLifetimeDefault;
 use mir::Mir;
 use mir::GeneratorLayout;
+use session::CrateDisambiguator;
 use traits;
 use ty;
 use ty::subst::{Subst, Substs};
@@ -54,7 +56,6 @@ use rustc_const_math::ConstInt;
 use rustc_data_structures::accumulate_vec::IntoIter as AccIntoIter;
 use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
                                            HashStable};
-use rustc_data_structures::transitive_relation::TransitiveRelation;
 
 use hir;
 
@@ -88,7 +89,10 @@ pub use self::maps::queries;
 pub mod adjustment;
 pub mod binding;
 pub mod cast;
+#[macro_use]
+pub mod codec;
 pub mod error;
+mod erase_regions;
 pub mod fast_reject;
 pub mod fold;
 pub mod inhabitedness;
@@ -141,6 +145,15 @@ pub enum AssociatedItemContainer {
 }
 
 impl AssociatedItemContainer {
+    /// Asserts that this is the def-id of an associated item declared
+    /// in a trait, and returns the trait def-id.
+    pub fn assert_trait(&self) -> DefId {
+        match *self {
+            TraitContainer(id) => id,
+            _ => bug!("associated item has wrong container type: {:?}", self)
+        }
+    }
+
     pub fn id(&self) -> DefId {
         match *self {
             TraitContainer(id) => id,
@@ -311,11 +324,6 @@ pub enum Variance {
 /// `tcx.variances_of()` to get the variance for a *particular*
 /// item.
 pub struct CrateVariancesMap {
-    /// This relation tracks the dependencies between the variance of
-    /// various items. In particular, if `a < b`, then the variance of
-    /// `a` depends on the sources of `b`.
-    pub dependencies: TransitiveRelation<DefId>,
-
     /// For each item with generics, maps to a vector of the variance
     /// of its generics.  If an item has no generics, it will have no
     /// entry.
@@ -575,7 +583,7 @@ impl<T> Slice<T> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub struct UpvarId {
     pub var_id: hir::HirId,
-    pub closure_expr_id: DefIndex,
+    pub closure_expr_id: LocalDefId,
 }
 
 #[derive(Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable, Copy)]
@@ -897,6 +905,12 @@ pub enum Predicate<'tcx> {
     ConstEvaluatable(DefId, &'tcx Substs<'tcx>),
 }
 
+impl<'tcx> AsRef<Predicate<'tcx>> for Predicate<'tcx> {
+    fn as_ref(&self) -> &Predicate<'tcx> {
+        self
+    }
+}
+
 impl<'a, 'gcx, 'tcx> Predicate<'tcx> {
     /// Performs a substitution suitable for going from a
     /// poly-trait-ref to supertraits that must hold if that
@@ -1202,6 +1216,25 @@ impl<'tcx> Predicate<'tcx> {
             }
         }
     }
+
+    pub fn to_opt_type_outlives(&self) -> Option<PolyTypeOutlivesPredicate<'tcx>> {
+        match *self {
+            Predicate::TypeOutlives(data) => {
+                Some(data)
+            }
+            Predicate::Trait(..) |
+            Predicate::Projection(..) |
+            Predicate::Equate(..) |
+            Predicate::Subtype(..) |
+            Predicate::RegionOutlives(..) |
+            Predicate::WellFormed(..) |
+            Predicate::ObjectSafe(..) |
+            Predicate::ClosureKind(..) |
+            Predicate::ConstEvaluatable(..) => {
+                None
+            }
+        }
+    }
 }
 
 /// Represents the bounds declared on a particular set of type
@@ -1328,6 +1361,12 @@ bitflags! {
         const IS_FUNDAMENTAL      = 1 << 2;
         const IS_UNION            = 1 << 3;
         const IS_BOX              = 1 << 4;
+        /// Indicates whether this abstract data type will be expanded on in future (new
+        /// fields/variants) and as such, whether downstream crates must match exhaustively on the
+        /// fields/variants of this data type.
+        ///
+        /// See RFC 2008 (https://github.com/rust-lang/rfcs/pull/2008).
+        const IS_NON_EXHAUSTIVE   = 1 << 5;
     }
 }
 
@@ -1528,6 +1567,9 @@ impl<'a, 'gcx, 'tcx> AdtDef {
         if Some(did) == tcx.lang_items().owned_box() {
             flags = flags | AdtFlags::IS_BOX;
         }
+        if tcx.has_attr(did, "non_exhaustive") {
+            flags = flags | AdtFlags::IS_NON_EXHAUSTIVE;
+        }
         match kind {
             AdtKind::Enum => flags = flags | AdtFlags::IS_ENUM,
             AdtKind::Union => flags = flags | AdtFlags::IS_UNION,
@@ -1554,6 +1596,11 @@ impl<'a, 'gcx, 'tcx> AdtDef {
     #[inline]
     pub fn is_enum(&self) -> bool {
         self.flags.intersects(AdtFlags::IS_ENUM)
+    }
+
+    #[inline]
+    pub fn is_non_exhaustive(&self) -> bool {
+        self.flags.intersects(AdtFlags::IS_NON_EXHAUSTIVE)
     }
 
     /// Returns the kind of the ADT - Struct or Enum.
@@ -1787,7 +1834,7 @@ impl<'a, 'gcx, 'tcx> AdtDef {
                 vec![]
             }
 
-            TyStr | TyDynamic(..) | TySlice(_) | TyError => {
+            TyStr | TyDynamic(..) | TySlice(_) | TyForeign(..) | TyError => {
                 // these are never sized - return the target type
                 vec![ty]
             }
@@ -2232,6 +2279,20 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    /// Given a `VariantDef`, returns the def-id of the `AdtDef` of which it is a part.
+    pub fn adt_def_id_of_variant(self, variant_def: &'tcx VariantDef) -> DefId {
+        let def_key = self.def_key(variant_def.did);
+        match def_key.disambiguated_data.data {
+            // for enum variants and tuple structs, the def-id of the ADT itself
+            // is the *parent* of the variant
+            DefPathData::EnumVariant(..) | DefPathData::StructCtor =>
+                DefId { krate: variant_def.did.krate, index: def_key.parent.unwrap() },
+
+            // otherwise, for structs and unions, they share a def-id
+            _ => variant_def.did,
+        }
+    }
+
     pub fn item_name(self, id: DefId) -> InternedString {
         if let Some(id) = self.hir.as_local_node_id(id) {
             self.hir.name(id).as_str()
@@ -2296,8 +2357,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.get_attrs(did).iter().any(|item| item.check_name(attr))
     }
 
-    pub fn trait_has_default_impl(self, trait_def_id: DefId) -> bool {
-        self.trait_def(trait_def_id).has_default_impl
+    /// Returns true if this is an `auto trait`.
+    ///
+    /// NB. For a limited time, also returns true if `impl Trait for .. { }` is in the code-base.
+    pub fn trait_is_auto(self, trait_def_id: DefId) -> bool {
+        self.trait_def(trait_def_id).has_auto_impl
     }
 
     pub fn generator_layout(self, def_id: DefId) -> &'tcx GeneratorLayout<'tcx> {
@@ -2546,7 +2610,7 @@ fn param_env<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 fn crate_disambiguator<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                 crate_num: CrateNum) -> Symbol {
+                                 crate_num: CrateNum) -> CrateDisambiguator {
     assert_eq!(crate_num, LOCAL_CRATE);
     tcx.sess.local_crate_disambiguator()
 }
@@ -2560,6 +2624,7 @@ fn original_crate_name<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 pub fn provide(providers: &mut ty::maps::Providers) {
     util::provide(providers);
     context::provide(providers);
+    erase_regions::provide(providers);
     *providers = ty::maps::Providers {
         associated_item,
         associated_item_def_ids,
@@ -2574,17 +2639,6 @@ pub fn provide(providers: &mut ty::maps::Providers) {
         ..*providers
     };
 }
-
-pub fn provide_extern(providers: &mut ty::maps::Providers) {
-    *providers = ty::maps::Providers {
-        adt_sized_constraint,
-        adt_dtorck_constraint,
-        trait_impls_of: trait_def::trait_impls_of_provider,
-        param_env,
-        ..*providers
-    };
-}
-
 
 /// A map for the local crate mapping each type to a vector of its
 /// inherent impls. This is not meant to be used outside of coherence;

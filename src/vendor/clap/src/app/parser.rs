@@ -9,9 +9,6 @@ use std::path::PathBuf;
 use std::slice::Iter;
 use std::iter::Peekable;
 
-// Third Party
-use vec_map::{self, VecMap};
-
 // Internal
 use INTERNAL_ERROR_MSG;
 use INVALID_UTF8;
@@ -32,6 +29,7 @@ use suggestions;
 use app::settings::AppSettings as AS;
 use app::validator::Validator;
 use app::usage;
+use map::{self, VecMap};
 
 #[derive(Debug, PartialEq, Copy, Clone)]
 #[doc(hidden)]
@@ -98,12 +96,12 @@ impl<'a, 'b> Parser<'a, 'b>
     }
 
     pub fn gen_completions_to<W: Write>(&mut self, for_shell: Shell, buf: &mut W) {
-        if !self.is_set(AS::Propogated) {
-            self.propogate_help_version();
+        if !self.is_set(AS::Propagated) {
+            self.propagate_help_version();
             self.build_bin_names();
-            self.propogate_globals();
-            self.propogate_settings();
-            self.set(AS::Propogated);
+            self.propagate_globals();
+            self.propagate_settings();
+            self.set(AS::Propagated);
         }
 
         ComplGen::new(self).generate(for_shell, buf)
@@ -368,12 +366,12 @@ impl<'a, 'b> Parser<'a, 'b>
         self.subcommands.push(subcmd);
     }
 
-    pub fn propogate_settings(&mut self) {
-        debugln!("Parser::propogate_settings: self={}, g_settings={:#?}",
+    pub fn propagate_settings(&mut self) {
+        debugln!("Parser::propagate_settings: self={}, g_settings={:#?}",
                  self.meta.name,
                  self.g_settings);
         for sc in &mut self.subcommands {
-            debugln!("Parser::propogate_settings: sc={}, settings={:#?}, g_settings={:#?}",
+            debugln!("Parser::propagate_settings: sc={}, settings={:#?}, g_settings={:#?}",
                      sc.p.meta.name,
                      sc.p.settings,
                      sc.p.g_settings);
@@ -395,7 +393,7 @@ impl<'a, 'b> Parser<'a, 'b>
                 sc.p.meta.term_w = self.meta.term_w;
                 sc.p.meta.max_w = self.meta.max_w;
             }
-            sc.p.propogate_settings();
+            sc.p.propagate_settings();
         }
     }
 
@@ -609,7 +607,7 @@ impl<'a, 'b> Parser<'a, 'b>
         true
     }
 
-    pub fn propogate_globals(&mut self) {
+    pub fn propagate_globals(&mut self) {
         for sc in &mut self.subcommands {
             // We have to create a new scope in order to tell rustc the borrow of `sc` is
             // done and to recursively call this method
@@ -618,7 +616,7 @@ impl<'a, 'b> Parser<'a, 'b>
                     sc.p.add_arg_ref(a);
                 }
             }
-            sc.p.propogate_globals();
+            sc.p.propagate_globals();
         }
     }
 
@@ -850,17 +848,22 @@ impl<'a, 'b> Parser<'a, 'b>
             if !self.is_set(AS::TrailingValues) {
                 // Does the arg match a subcommand name, or any of it's aliases (if defined)
                 {
-                    let (is_match, sc_name) = self.possible_subcommand(&arg_os);
-                    debugln!("Parser::get_matches_with: possible_sc={:?}, sc={:?}",
-                             is_match,
-                             sc_name);
-                    if is_match {
-                        let sc_name = sc_name.expect(INTERNAL_ERROR_MSG);
-                        if sc_name == "help" && self.is_set(AS::NeedsSubcommandHelp) {
-                            self.parse_help_subcommand(it)?;
+                    match needs_val_of {
+                        ParseResult::Opt(_) | ParseResult::Pos(_) =>(),
+                        _ => {
+                            let (is_match, sc_name) = self.possible_subcommand(&arg_os);
+                            debugln!("Parser::get_matches_with: possible_sc={:?}, sc={:?}",
+                                    is_match,
+                                    sc_name);
+                            if is_match {
+                                let sc_name = sc_name.expect(INTERNAL_ERROR_MSG);
+                                if sc_name == "help" && self.is_set(AS::NeedsSubcommandHelp) {
+                                    self.parse_help_subcommand(it)?;
+                                }
+                                subcmd_name = Some(sc_name.to_owned());
+                                break;
+                            }
                         }
-                        subcmd_name = Some(sc_name.to_owned());
-                        break;
                     }
                 }
 
@@ -1012,8 +1015,8 @@ impl<'a, 'b> Parser<'a, 'b>
                                        name: sc_name,
                                        matches: sc_m.into(),
                                    });
-            } else if !(self.is_set(AS::AllowLeadingHyphen) ||
-                        self.is_set(AS::AllowNegativeNumbers)) &&
+            } else if !((self.is_set(AS::AllowLeadingHyphen) ||
+                        self.is_set(AS::AllowNegativeNumbers)) && arg_os.starts_with(b"-")) &&
                       !self.is_set(AS::InferSubcommands) {
                 return Err(Error::unknown_argument(&*arg_os.to_string_lossy(),
                                                    "",
@@ -1044,6 +1047,13 @@ impl<'a, 'b> Parser<'a, 'b>
                                                                   .unwrap_or(&self.meta.name),
                                                               self.color()));
                 }
+            } else {
+                return Err(Error::unknown_argument(&*arg_os.to_string_lossy(),
+                                                   "",
+                                                   &*usage::create_error_usage(self,
+                                                                               matcher,
+                                                                               None),
+                                                   self.color()));
             }
         }
 
@@ -1077,11 +1087,11 @@ impl<'a, 'b> Parser<'a, 'b>
     }
 
 
-    fn propogate_help_version(&mut self) {
-        debugln!("Parser::propogate_help_version;");
+    fn propagate_help_version(&mut self) {
+        debugln!("Parser::propagate_help_version;");
         self.create_help_and_version();
         for sc in &mut self.subcommands {
-            sc.p.propogate_help_version();
+            sc.p.propagate_help_version();
         }
     }
 
@@ -1334,17 +1344,14 @@ impl<'a, 'b> Parser<'a, 'b>
         Ok(())
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(let_and_return))]
     fn use_long_help(&self) -> bool {
-        let ul = self.meta.long_about.is_some() ||
+        self.meta.long_about.is_some() ||
                  self.flags.iter().any(|f| f.b.long_help.is_some()) ||
                  self.opts.iter().any(|o| o.b.long_help.is_some()) ||
                  self.positionals.values().any(|p| p.b.long_help.is_some()) ||
                  self.subcommands
                      .iter()
-                     .any(|s| s.p.meta.long_about.is_some());
-        debugln!("Parser::use_long_help: ret={:?}", ul);
-        ul
+                     .any(|s| s.p.meta.long_about.is_some())
     }
 
     fn _help(&self, mut use_long: bool) -> Error {
@@ -1354,7 +1361,7 @@ impl<'a, 'b> Parser<'a, 'b>
         match Help::write_parser_help(&mut buf, self, use_long) {
             Err(e) => e,
             _ => Error {
-                message: unsafe { String::from_utf8_unchecked(buf) },
+                message: String::from_utf8(buf).unwrap_or_default(),
                 kind: ErrorKind::HelpDisplayed,
                 info: None,
             }
@@ -1568,7 +1575,7 @@ impl<'a, 'b> Parser<'a, 'b>
         if no_val && min_vals_zero && !has_eq && needs_eq {
             debugln!("Parser::parse_opt: More arg vals not required...");
             return Ok(ParseResult::ValuesDone);
-        } else if no_val || (mult && !needs_delim) && !has_eq && matcher.needs_more_vals(opt) { 
+        } else if no_val || (mult && !needs_delim) && !has_eq && matcher.needs_more_vals(opt) {
             debugln!("Parser::parse_opt: More arg vals required...");
             return Ok(ParseResult::Opt(opt.b.name));
         }
@@ -1728,17 +1735,24 @@ impl<'a, 'b> Parser<'a, 'b>
     }
 
     pub fn add_defaults(&mut self, matcher: &mut ArgMatcher<'a>) -> ClapResult<()> {
+        debugln!("Parser::add_defaults;");
         macro_rules! add_val {
             (@default $_self:ident, $a:ident, $m:ident) => {
                 if let Some(ref val) = $a.v.default_val {
+                    debugln!("Parser::add_defaults:iter:{}: has default vals", $a.b.name);
                     if $m.get($a.b.name).map(|ma| ma.vals.len()).map(|len| len == 0).unwrap_or(false) {
+                        debugln!("Parser::add_defaults:iter:{}: has no user defined vals", $a.b.name);
                         $_self.add_val_to_arg($a, OsStr::new(val), $m)?;
 
                         if $_self.cache.map_or(true, |name| name != $a.name()) {
                             arg_post_processing!($_self, $a, $m);
                             $_self.cache = Some($a.name());
                         }
+                    } else if $m.get($a.b.name).is_some() {
+                        debugln!("Parser::add_defaults:iter:{}: has user defined vals", $a.b.name);
                     } else {
+                        debugln!("Parser::add_defaults:iter:{}: wasn't used", $a.b.name);
+
                         $_self.add_val_to_arg($a, OsStr::new(val), $m)?;
 
                         if $_self.cache.map_or(true, |name| name != $a.name()) {
@@ -1746,10 +1760,13 @@ impl<'a, 'b> Parser<'a, 'b>
                             $_self.cache = Some($a.name());
                         }
                     }
+                } else {
+                    debugln!("Parser::add_defaults:iter:{}: doesn't have default vals", $a.b.name);
                 }
             };
             ($_self:ident, $a:ident, $m:ident) => {
                 if let Some(ref vm) = $a.v.default_vals_ifs {
+                    sdebugln!(" has conditional defaults");
                     let mut done = false;
                     if $m.get($a.b.name).is_none() {
                         for &(arg, val, default) in vm.values() {
@@ -1777,8 +1794,48 @@ impl<'a, 'b> Parser<'a, 'b>
                     if done {
                         continue; // outer loop (outside macro)
                     }
+                } else {
+                    sdebugln!(" doesn't have conditional defaults");
                 }
                 add_val!(@default $_self, $a, $m)
+            };
+        }
+
+        for o in &self.opts {
+            debug!("Parser::add_defaults:iter:{}:", o.b.name);
+            add_val!(self, o, matcher);
+        }
+        for p in self.positionals.values() {
+            debug!("Parser::add_defaults:iter:{}:", p.b.name);
+            add_val!(self, p, matcher);
+        }
+        Ok(())
+    }
+    
+    pub fn add_env(&mut self, matcher: &mut ArgMatcher<'a>) -> ClapResult<()> {
+        macro_rules! add_val {
+            ($_self:ident, $a:ident, $m:ident) => {
+                if let Some(ref val) = $a.v.env {
+                    if $m.get($a.b.name).map(|ma| ma.vals.len()).map(|len| len == 0).unwrap_or(false) {
+                        if let Some(ref val) = val.1 {
+                            $_self.add_val_to_arg($a, OsStr::new(val), $m)?;
+
+                            if $_self.cache.map_or(true, |name| name != $a.name()) {
+                                arg_post_processing!($_self, $a, $m);
+                                $_self.cache = Some($a.name());
+                            }
+                        }
+                    } else {
+                        if let Some(ref val) = val.1 {
+                            $_self.add_val_to_arg($a, OsStr::new(val), $m)?;
+
+                            if $_self.cache.map_or(true, |name| name != $a.name()) {
+                                arg_post_processing!($_self, $a, $m);
+                                $_self.cache = Some($a.name());
+                            }
+                        }
+                    }
+                }
             };
         }
 
@@ -1795,7 +1852,7 @@ impl<'a, 'b> Parser<'a, 'b>
 
     pub fn opts(&self) -> Iter<OptBuilder<'a, 'b>> { self.opts.iter() }
 
-    pub fn positionals(&self) -> vec_map::Values<PosBuilder<'a, 'b>> { self.positionals.values() }
+    pub fn positionals(&self) -> map::Values<PosBuilder<'a, 'b>> { self.positionals.values() }
 
     pub fn subcommands(&self) -> Iter<App> { self.subcommands.iter() }
 

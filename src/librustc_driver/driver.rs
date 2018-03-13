@@ -14,7 +14,7 @@ use rustc::hir::lowering::lower_crate;
 use rustc::ich::Fingerprint;
 use rustc_data_structures::stable_hasher::StableHasher;
 use rustc_mir as mir;
-use rustc::session::{Session, CompileResult};
+use rustc::session::{Session, CompileResult, CrateDisambiguator};
 use rustc::session::CompileIncomplete;
 use rustc::session::config::{self, Input, OutputFilenames, OutputType};
 use rustc::session::search_paths::PathKind;
@@ -22,7 +22,6 @@ use rustc::lint;
 use rustc::middle::{self, stability, reachable};
 use rustc::middle::cstore::CrateStore;
 use rustc::middle::privacy::AccessLevels;
-use rustc::mir::transform::{MIR_CONST, MIR_VALIDATED, MIR_OPTIMIZED, Passes};
 use rustc::ty::{self, TyCtxt, Resolutions, GlobalArenas};
 use rustc::traits;
 use rustc::util::common::{ErrorReported, time};
@@ -38,7 +37,7 @@ use rustc_typeck as typeck;
 use rustc_privacy;
 use rustc_plugin::registry::Registry;
 use rustc_plugin as plugin;
-use rustc_passes::{ast_validation, no_asm, loops, consts, static_recursion, hir_stats};
+use rustc_passes::{self, ast_validation, no_asm, loops, consts, static_recursion, hir_stats};
 use rustc_const_eval::{self, check_match};
 use super::Compilation;
 use ::DefaultTransCrate;
@@ -58,7 +57,6 @@ use syntax::{ast, diagnostics, visit};
 use syntax::attr;
 use syntax::ext::base::ExtCtxt;
 use syntax::parse::{self, PResult};
-use syntax::symbol::Symbol;
 use syntax::util::node_count::NodeCounter;
 use syntax;
 use syntax_ext;
@@ -208,7 +206,8 @@ pub fn compile_input(sess: &Session,
             None
         };
 
-        phase_3_run_analysis_passes(sess,
+        phase_3_run_analysis_passes(control,
+                                    sess,
                                     cstore,
                                     hir_map,
                                     analysis,
@@ -349,6 +348,13 @@ pub struct CompileController<'a> {
     pub keep_ast: bool,
     // -Zcontinue-parse-after-error
     pub continue_parse_after_error: bool,
+
+    /// Allows overriding default rustc query providers,
+    /// after `default_provide` has installed them.
+    pub provide: Box<Fn(&mut ty::maps::Providers) + 'a>,
+    /// Same as `provide`, but only for non-local crates,
+    /// applied after `default_provide_extern`.
+    pub provide_extern: Box<Fn(&mut ty::maps::Providers) + 'a>,
 }
 
 impl<'a> CompileController<'a> {
@@ -363,6 +369,8 @@ impl<'a> CompileController<'a> {
             make_glob_map: MakeGlobMap::No,
             keep_ast: false,
             continue_parse_after_error: false,
+            provide: box |_| {},
+            provide_extern: box |_| {},
         }
     }
 }
@@ -633,12 +641,12 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
 
     *sess.crate_types.borrow_mut() = collect_crate_types(sess, &krate.attrs);
 
-    let disambiguator = Symbol::intern(&compute_crate_disambiguator(sess));
+    let disambiguator = compute_crate_disambiguator(sess);
     *sess.crate_disambiguator.borrow_mut() = Some(disambiguator);
     rustc_incremental::prepare_session_directory(
         sess,
         &crate_name,
-        &disambiguator.as_str(),
+        disambiguator,
     );
 
     let dep_graph = if sess.opts.build_dep_graph() {
@@ -908,10 +916,33 @@ pub fn phase_2_configure_and_expand<F>(sess: &Session,
     })
 }
 
+pub fn default_provide(providers: &mut ty::maps::Providers) {
+    borrowck::provide(providers);
+    mir::provide(providers);
+    reachable::provide(providers);
+    rustc_privacy::provide(providers);
+    DefaultTransCrate::provide(providers);
+    typeck::provide(providers);
+    ty::provide(providers);
+    traits::provide(providers);
+    reachable::provide(providers);
+    rustc_const_eval::provide(providers);
+    rustc_passes::provide(providers);
+    middle::region::provide(providers);
+    cstore::provide(providers);
+    lint::provide(providers);
+}
+
+pub fn default_provide_extern(providers: &mut ty::maps::Providers) {
+    cstore::provide_extern(providers);
+    DefaultTransCrate::provide_extern(providers);
+}
+
 /// Run the resolution, typechecking, region checking and other
 /// miscellaneous analysis passes on the crate. Return various
 /// structures carrying the results of the analysis.
-pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
+pub fn phase_3_run_analysis_passes<'tcx, F, R>(control: &CompileController,
+                                               sess: &'tcx Session,
                                                cstore: &'tcx CrateStore,
                                                hir_map: hir_map::Map<'tcx>,
                                                mut analysis: ty::CrateAnalysis,
@@ -941,6 +972,10 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
 
     let time_passes = sess.time_passes();
 
+    let query_result_on_disk_cache = time(time_passes,
+        "load query result cache",
+        || rustc_incremental::load_query_result_cache(sess));
+
     let named_region_map = time(time_passes,
                                 "lifetime resolution",
                                 || middle::resolve_lifetime::krate(sess, cstore, &hir_map))?;
@@ -963,78 +998,12 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
               || static_recursion::check_crate(sess, &hir_map))?;
 
     let mut local_providers = ty::maps::Providers::default();
-    borrowck::provide(&mut local_providers);
-    mir::provide(&mut local_providers);
-    reachable::provide(&mut local_providers);
-    rustc_privacy::provide(&mut local_providers);
-    DefaultTransCrate::provide_local(&mut local_providers);
-    typeck::provide(&mut local_providers);
-    ty::provide(&mut local_providers);
-    traits::provide(&mut local_providers);
-    reachable::provide(&mut local_providers);
-    rustc_const_eval::provide(&mut local_providers);
-    middle::region::provide(&mut local_providers);
-    cstore::provide_local(&mut local_providers);
-    lint::provide(&mut local_providers);
+    default_provide(&mut local_providers);
+    (control.provide)(&mut local_providers);
 
-    let mut extern_providers = ty::maps::Providers::default();
-    cstore::provide(&mut extern_providers);
-    DefaultTransCrate::provide_extern(&mut extern_providers);
-    ty::provide_extern(&mut extern_providers);
-    traits::provide_extern(&mut extern_providers);
-    // FIXME(eddyb) get rid of this once we replace const_eval with miri.
-    rustc_const_eval::provide(&mut extern_providers);
-
-    // Setup the MIR passes that we want to run.
-    let mut passes = Passes::new();
-    passes.push_hook(mir::transform::dump_mir::DumpMir);
-
-    // Remove all `EndRegion` statements that are not involved in borrows.
-    passes.push_pass(MIR_CONST, mir::transform::clean_end_regions::CleanEndRegions);
-
-    // What we need to do constant evaluation.
-    passes.push_pass(MIR_CONST, mir::transform::simplify::SimplifyCfg::new("initial"));
-    passes.push_pass(MIR_CONST, mir::transform::type_check::TypeckMir);
-    passes.push_pass(MIR_CONST, mir::transform::rustc_peek::SanityCheck);
-
-    // We compute "constant qualifications" between MIR_CONST and MIR_VALIDATED.
-
-    // What we need to run borrowck etc.
-
-    passes.push_pass(MIR_VALIDATED, mir::transform::qualify_consts::QualifyAndPromoteConstants);
-    passes.push_pass(MIR_VALIDATED, mir::transform::simplify::SimplifyCfg::new("qualify-consts"));
-    passes.push_pass(MIR_VALIDATED, mir::transform::nll::NLL);
-
-    // borrowck runs between MIR_VALIDATED and MIR_OPTIMIZED.
-
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::no_landing_pads::NoLandingPads);
-    passes.push_pass(MIR_OPTIMIZED,
-                     mir::transform::simplify_branches::SimplifyBranches::new("initial"));
-
-    // These next passes must be executed together
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::add_call_guards::CriticalCallEdges);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::elaborate_drops::ElaborateDrops);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::no_landing_pads::NoLandingPads);
-    // AddValidation needs to run after ElaborateDrops and before EraseRegions, and it needs
-    // an AllCallEdges pass right before it.
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::add_call_guards::AllCallEdges);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::add_validation::AddValidation);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::simplify::SimplifyCfg::new("elaborate-drops"));
-    // No lifetime analysis based on borrowing can be done from here on out.
-
-    // From here on out, regions are gone.
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::erase_regions::EraseRegions);
-
-    // Optimizations begin.
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::inline::Inline);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::instcombine::InstCombine);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::deaggregator::Deaggregator);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::copy_prop::CopyPropagation);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::simplify::SimplifyLocals);
-
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::generator::StateTransform);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::add_call_guards::CriticalCallEdges);
-    passes.push_pass(MIR_OPTIMIZED, mir::transform::dump_mir::Marker("PreTrans"));
+    let mut extern_providers = local_providers;
+    default_provide_extern(&mut extern_providers);
+    (control.provide_extern)(&mut extern_providers);
 
     let (tx, rx) = mpsc::channel();
 
@@ -1042,12 +1011,12 @@ pub fn phase_3_run_analysis_passes<'tcx, F, R>(sess: &'tcx Session,
                              cstore,
                              local_providers,
                              extern_providers,
-                             Rc::new(passes),
                              arenas,
                              arena,
                              resolutions,
                              named_region_map,
                              hir_map,
+                             query_result_on_disk_cache,
                              name,
                              tx,
                              output_filenames,
@@ -1311,16 +1280,13 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
         .collect()
 }
 
-pub fn compute_crate_disambiguator(session: &Session) -> String {
+pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
     use std::hash::Hasher;
 
     // The crate_disambiguator is a 128 bit hash. The disambiguator is fed
     // into various other hashes quite a bit (symbol hashes, incr. comp. hashes,
     // debuginfo type IDs, etc), so we don't want it to be too wide. 128 bits
     // should still be safe enough to avoid collisions in practice.
-    // FIXME(mw): It seems that the crate_disambiguator is used everywhere as
-    //            a hex-string instead of raw bytes. We should really use the
-    //            smaller representation.
     let mut hasher = StableHasher::<Fingerprint>::new();
 
     let mut metadata = session.opts.cg.metadata.clone();
@@ -1339,11 +1305,13 @@ pub fn compute_crate_disambiguator(session: &Session) -> String {
         hasher.write(s.as_bytes());
     }
 
-    // If this is an executable, add a special suffix, so that we don't get
-    // symbol conflicts when linking against a library of the same name.
+    // Also incorporate crate type, so that we don't get symbol conflicts when
+    // linking against a library of the same name, if this is an executable.
     let is_exe = session.crate_types.borrow().contains(&config::CrateTypeExecutable);
+    hasher.write(if is_exe { b"exe" } else { b"lib" });
 
-    format!("{}{}", hasher.finish().to_hex(), if is_exe { "-exe" } else {""})
+    CrateDisambiguator::from(hasher.finish())
+
 }
 
 pub fn build_output_filenames(input: &Input,

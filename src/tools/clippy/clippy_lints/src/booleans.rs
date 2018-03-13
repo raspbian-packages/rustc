@@ -1,10 +1,10 @@
-use rustc::lint::{LintArray, LateLintPass, LateContext, LintPass};
+use rustc::lint::{LateContext, LateLintPass, LintArray, LintPass};
 use rustc::hir::*;
 use rustc::hir::intravisit::*;
-use syntax::ast::{LitKind, DUMMY_NODE_ID, NodeId};
-use syntax::codemap::{DUMMY_SP, dummy_spanned, Span};
+use syntax::ast::{LitKind, NodeId, DUMMY_NODE_ID};
+use syntax::codemap::{dummy_spanned, Span, DUMMY_SP};
 use syntax::util::ThinVec;
-use utils::{span_lint_and_then, in_macro, snippet_opt, SpanlessEq};
+use utils::{in_macro, snippet_opt, span_lint_and_then, SpanlessEq};
 
 /// **What it does:** Checks for boolean expressions that can be written more
 /// concisely.
@@ -43,6 +43,12 @@ declare_lint! {
     Warn,
     "boolean expressions that contain terminals which can be eliminated"
 }
+
+// For each pairs, both orders are considered.
+const METHODS_WITH_NEGATION: [(&str, &str); 2] = [
+    ("is_some", "is_none"),
+    ("is_err", "is_ok"),
+];
 
 #[derive(Copy, Clone)]
 pub struct NonminimalBool;
@@ -96,26 +102,23 @@ impl<'a, 'tcx, 'v> Hir2Qmm<'a, 'tcx, 'v> {
         if !in_macro(e.span) {
             match e.node {
                 ExprUnary(UnNot, ref inner) => return Ok(Bool::Not(box self.run(inner)?)),
-                ExprBinary(binop, ref lhs, ref rhs) => {
-                    match binop.node {
-                        BiOr => return Ok(Bool::Or(self.extract(BiOr, &[lhs, rhs], Vec::new())?)),
-                        BiAnd => return Ok(Bool::And(self.extract(BiAnd, &[lhs, rhs], Vec::new())?)),
-                        _ => (),
-                    }
+                ExprBinary(binop, ref lhs, ref rhs) => match binop.node {
+                    BiOr => return Ok(Bool::Or(self.extract(BiOr, &[lhs, rhs], Vec::new())?)),
+                    BiAnd => return Ok(Bool::And(self.extract(BiAnd, &[lhs, rhs], Vec::new())?)),
+                    _ => (),
                 },
-                ExprLit(ref lit) => {
-                    match lit.node {
-                        LitKind::Bool(true) => return Ok(Bool::True),
-                        LitKind::Bool(false) => return Ok(Bool::False),
-                        _ => (),
-                    }
+                ExprLit(ref lit) => match lit.node {
+                    LitKind::Bool(true) => return Ok(Bool::True),
+                    LitKind::Bool(false) => return Ok(Bool::False),
+                    _ => (),
                 },
                 _ => (),
             }
         }
         for (n, expr) in self.terminals.iter().enumerate() {
             if SpanlessEq::new(self.cx).ignore_fn().eq_expr(e, expr) {
-                #[allow(cast_possible_truncation)] return Ok(Bool::Term(n as u8));
+                #[allow(cast_possible_truncation)]
+                return Ok(Bool::Term(n as u8));
             }
             let negated = match e.node {
                 ExprBinary(binop, ref lhs, ref rhs) => {
@@ -141,21 +144,31 @@ impl<'a, 'tcx, 'v> Hir2Qmm<'a, 'tcx, 'v> {
                 _ => continue,
             };
             if SpanlessEq::new(self.cx).ignore_fn().eq_expr(&negated, expr) {
-                #[allow(cast_possible_truncation)] return Ok(Bool::Not(Box::new(Bool::Term(n as u8))));
+                #[allow(cast_possible_truncation)]
+                return Ok(Bool::Not(Box::new(Bool::Term(n as u8))));
             }
         }
         let n = self.terminals.len();
         self.terminals.push(e);
         if n < 32 {
-            #[allow(cast_possible_truncation)] Ok(Bool::Term(n as u8))
+            #[allow(cast_possible_truncation)]
+            Ok(Bool::Term(n as u8))
         } else {
             Err("too many literals".to_owned())
         }
     }
 }
 
-fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> String {
-    fn recurse(brackets: bool, cx: &LateContext, suggestion: &Bool, terminals: &[&Expr], mut s: String) -> String {
+// The boolean part of the return indicates whether some simplifications have been applied.
+fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> (String, bool) {
+    fn recurse(
+        brackets: bool,
+        cx: &LateContext,
+        suggestion: &Bool,
+        terminals: &[&Expr],
+        mut s: String,
+        simplified: &mut bool,
+    ) -> String {
         use quine_mc_cluskey::Bool::*;
         let snip = |e: &Expr| snippet_opt(cx, e.span).expect("don't try to improve booleans created by macros");
         match *suggestion {
@@ -167,56 +180,73 @@ fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> String {
                 s.push_str("false");
                 s
             },
-            Not(ref inner) => {
-                match **inner {
-                    And(_) | Or(_) => {
-                        s.push('!');
-                        recurse(true, cx, inner, terminals, s)
+            Not(ref inner) => match **inner {
+                And(_) | Or(_) => {
+                    s.push('!');
+                    recurse(true, cx, inner, terminals, s, simplified)
+                },
+                Term(n) => match terminals[n as usize].node {
+                    ExprBinary(binop, ref lhs, ref rhs) => {
+                        let op = match binop.node {
+                            BiEq => " != ",
+                            BiNe => " == ",
+                            BiLt => " >= ",
+                            BiGt => " <= ",
+                            BiLe => " > ",
+                            BiGe => " < ",
+                            _ => {
+                                s.push('!');
+                                return recurse(true, cx, inner, terminals, s, simplified);
+                            },
+                        };
+                        *simplified = true;
+                        s.push_str(&snip(lhs));
+                        s.push_str(op);
+                        s.push_str(&snip(rhs));
+                        s
                     },
-                    Term(n) => {
-                        if let ExprBinary(binop, ref lhs, ref rhs) = terminals[n as usize].node {
-                            let op = match binop.node {
-                                BiEq => " != ",
-                                BiNe => " == ",
-                                BiLt => " >= ",
-                                BiGt => " <= ",
-                                BiLe => " > ",
-                                BiGe => " < ",
-                                _ => {
-                                    s.push('!');
-                                    return recurse(true, cx, inner, terminals, s);
-                                },
-                            };
-                            s.push_str(&snip(lhs));
-                            s.push_str(op);
-                            s.push_str(&snip(rhs));
+                    ExprMethodCall(ref path, _, ref args) if args.len() == 1 => {
+                        let negation = METHODS_WITH_NEGATION
+                            .iter().cloned()
+                            .flat_map(|(a, b)| vec![(a, b), (b, a)])
+                            .find(|&(a, _)| a == path.name.as_str());
+                        if let Some((_, negation_method)) = negation {
+                            *simplified = true;
+                            s.push_str(&snip(&args[0]));
+                            s.push('.');
+                            s.push_str(negation_method);
+                            s.push_str("()");
                             s
                         } else {
                             s.push('!');
-                            recurse(false, cx, inner, terminals, s)
+                            recurse(false, cx, inner, terminals, s, simplified)
                         }
                     },
                     _ => {
                         s.push('!');
-                        recurse(false, cx, inner, terminals, s)
+                        recurse(false, cx, inner, terminals, s, simplified)
                     },
-                }
+                },
+                _ => {
+                    s.push('!');
+                    recurse(false, cx, inner, terminals, s, simplified)
+                },
             },
             And(ref v) => {
                 if brackets {
                     s.push('(');
                 }
                 if let Or(_) = v[0] {
-                    s = recurse(true, cx, &v[0], terminals, s);
+                    s = recurse(true, cx, &v[0], terminals, s, simplified);
                 } else {
-                    s = recurse(false, cx, &v[0], terminals, s);
+                    s = recurse(false, cx, &v[0], terminals, s, simplified);
                 }
                 for inner in &v[1..] {
                     s.push_str(" && ");
                     if let Or(_) = *inner {
-                        s = recurse(true, cx, inner, terminals, s);
+                        s = recurse(true, cx, inner, terminals, s, simplified);
                     } else {
-                        s = recurse(false, cx, inner, terminals, s);
+                        s = recurse(false, cx, inner, terminals, s, simplified);
                     }
                 }
                 if brackets {
@@ -228,10 +258,10 @@ fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> String {
                 if brackets {
                     s.push('(');
                 }
-                s = recurse(false, cx, &v[0], terminals, s);
+                s = recurse(false, cx, &v[0], terminals, s, simplified);
                 for inner in &v[1..] {
                     s.push_str(" || ");
-                    s = recurse(false, cx, inner, terminals, s);
+                    s = recurse(false, cx, inner, terminals, s, simplified);
                 }
                 if brackets {
                     s.push(')');
@@ -254,7 +284,9 @@ fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> String {
             },
         }
     }
-    recurse(false, cx, suggestion, terminals, String::new())
+    let mut simplified = false;
+    let s = recurse(false, cx, suggestion, terminals, String::new(), &mut simplified);
+    (s, simplified)
 }
 
 fn simple_negate(b: Bool) -> Bool {
@@ -319,7 +351,6 @@ impl<'a, 'tcx> NonminimalBoolVisitor<'a, 'tcx> {
             cx: self.cx,
         };
         if let Ok(expr) = h2q.run(e) {
-
             if h2q.terminals.len() > 8 {
                 // QMC has exponentially slow behavior as the number of terminals increases
                 // 8 is reasonable, it takes approximately 0.2 seconds.
@@ -360,12 +391,12 @@ impl<'a, 'tcx> NonminimalBoolVisitor<'a, 'tcx> {
                                 db.span_help(
                                     h2q.terminals[i].span,
                                     "this expression can be optimized out by applying boolean operations to the \
-                                          outer expression",
+                                     outer expression",
                                 );
                                 db.span_suggestion(
                                     e.span,
                                     "it would look like the following",
-                                    suggest(self.cx, suggestion, &h2q.terminals),
+                                    suggest(self.cx, suggestion, &h2q.terminals).0,
                                 );
                             },
                         );
@@ -374,30 +405,34 @@ impl<'a, 'tcx> NonminimalBoolVisitor<'a, 'tcx> {
                     }
                     // if the number of occurrences of a terminal decreases or any of the stats
                     // decreases while none increases
-                    improvement |= (stats.terminals[i] > simplified_stats.terminals[i]) ||
-                        (stats.negations > simplified_stats.negations && stats.ops == simplified_stats.ops) ||
-                        (stats.ops > simplified_stats.ops && stats.negations == simplified_stats.negations);
+                    improvement |= (stats.terminals[i] > simplified_stats.terminals[i])
+                        || (stats.negations > simplified_stats.negations && stats.ops == simplified_stats.ops)
+                        || (stats.ops > simplified_stats.ops && stats.negations == simplified_stats.negations);
                 }
                 if improvement {
                     improvements.push(suggestion);
                 }
             }
-            if !improvements.is_empty() {
+            let nonminimal_bool_lint = |suggestions| {
                 span_lint_and_then(
                     self.cx,
                     NONMINIMAL_BOOL,
                     e.span,
                     "this boolean expression can be simplified",
-                    |db| {
-                        db.span_suggestions(
-                            e.span,
-                            "try",
-                            improvements
-                                .into_iter()
-                                .map(|suggestion| suggest(self.cx, suggestion, &h2q.terminals))
-                                .collect(),
-                        );
-                    },
+                    |db| { db.span_suggestions(e.span, "try", suggestions); },
+                );
+            };
+            if improvements.is_empty() {
+                let suggest = suggest(self.cx, &expr, &h2q.terminals);
+                if suggest.1 {
+                    nonminimal_bool_lint(vec![suggest.0])
+                }
+            } else {
+                nonminimal_bool_lint(
+                    improvements
+                        .into_iter()
+                        .map(|suggestion| suggest(self.cx, suggestion, &h2q.terminals).0)
+                        .collect()
                 );
             }
         }
@@ -411,12 +446,10 @@ impl<'a, 'tcx> Visitor<'tcx> for NonminimalBoolVisitor<'a, 'tcx> {
         }
         match e.node {
             ExprBinary(binop, _, _) if binop.node == BiOr || binop.node == BiAnd => self.bool_expr(e),
-            ExprUnary(UnNot, ref inner) => {
-                if self.cx.tables.node_types()[inner.hir_id].is_bool() {
-                    self.bool_expr(e);
-                } else {
-                    walk_expr(self, e);
-                }
+            ExprUnary(UnNot, ref inner) => if self.cx.tables.node_types()[inner.hir_id].is_bool() {
+                self.bool_expr(e);
+            } else {
+                walk_expr(self, e);
             },
             _ => walk_expr(self, e),
         }

@@ -3,8 +3,8 @@
 //! This lint is **warn** by default
 
 use rustc::lint::*;
-use rustc::hir::{MutImmutable, Pat, PatKind, BindingAnnotation};
-use utils::{span_lint_and_then, in_macro, snippet};
+use rustc::hir::{BindingAnnotation, MutImmutable, Pat, PatKind};
+use utils::{in_macro, snippet, span_lint_and_then};
 
 /// **What it does:** Checks for useless borrowed references.
 ///
@@ -64,19 +64,20 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessBorrowedRef {
             return;
         }
 
-        if_let_chain! {[
+        if_chain! {
             // Only lint immutable refs, because `&mut ref T` may be useful.
-            let PatKind::Ref(ref sub_pat, MutImmutable) = pat.node,
+            if let PatKind::Ref(ref sub_pat, MutImmutable) = pat.node;
 
             // Check sub_pat got a `ref` keyword (excluding `ref mut`).
-            let PatKind::Binding(BindingAnnotation::Ref, _, spanned_name, ..) = sub_pat.node,
-        ], {
-            span_lint_and_then(cx, NEEDLESS_BORROWED_REFERENCE, pat.span,
-                               "this pattern takes a reference on something that is being de-referenced",
-                               |db| {
-                                   let hint = snippet(cx, spanned_name.span, "..").into_owned();
-                                   db.span_suggestion(pat.span, "try removing the `&ref` part and just keep", hint);
-                               });
-        }}
+            if let PatKind::Binding(BindingAnnotation::Ref, _, spanned_name, ..) = sub_pat.node;
+            then {
+                span_lint_and_then(cx, NEEDLESS_BORROWED_REFERENCE, pat.span,
+                                   "this pattern takes a reference on something that is being de-referenced",
+                                   |db| {
+                                       let hint = snippet(cx, spanned_name.span, "..").into_owned();
+                                       db.span_suggestion(pat.span, "try removing the `&ref` part and just keep", hint);
+                                   });
+            }
+        }
     }
 }

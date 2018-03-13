@@ -14,7 +14,7 @@
 use rustc::ty::TyCtxt;
 use rustc::mir::*;
 use rustc::mir::visit::MutVisitor;
-use rustc::mir::transform::{MirPass, MirSource};
+use transform::{MirPass, MirSource};
 
 pub struct NoLandingPads;
 
@@ -45,7 +45,8 @@ impl<'tcx> MutVisitor<'tcx> for NoLandingPads {
             TerminatorKind::Unreachable |
             TerminatorKind::GeneratorDrop |
             TerminatorKind::Yield { .. } |
-            TerminatorKind::SwitchInt { .. } => {
+            TerminatorKind::SwitchInt { .. } |
+            TerminatorKind::FalseEdges { .. } => {
                 /* nothing to do */
             },
             TerminatorKind::Call { cleanup: ref mut unwind, .. } |

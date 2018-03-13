@@ -130,6 +130,7 @@ pub fn run(cgcx: &CodegenContext,
         .filter_map(symbol_filter)
         .collect::<Vec<CString>>();
     timeline.record("whitelist");
+    info!("{} symbols to preserve in this crate", symbol_white_list.len());
 
     // If we're performing LTO for the entire crate graph, then for each of our
     // upstream dependencies, find the corresponding rlib and load the bitcode
@@ -342,8 +343,7 @@ fn thin_lto(diag_handler: &Handler,
             info!("local module: {} - {}", i, module.llmod_id);
             let llvm = module.llvm().expect("can't lto pretranslated module");
             let name = CString::new(module.llmod_id.clone()).unwrap();
-            let buffer = llvm::LLVMRustThinLTOBufferCreate(llvm.llmod);
-            let buffer = ThinBuffer(buffer);
+            let buffer = ThinBuffer::new(llvm.llmod);
             thin_modules.push(llvm::ThinLTOModule {
                 identifier: name.as_ptr(),
                 data: buffer.data().as_ptr(),
@@ -437,7 +437,24 @@ fn run_pass_manager(cgcx: &CodegenContext,
         assert!(!pass.is_null());
         llvm::LLVMRustAddPass(pm, pass);
 
-        with_llvm_pmb(llmod, config, &mut |b| {
+        // When optimizing for LTO we don't actually pass in `-O0`, but we force
+        // it to always happen at least with `-O1`.
+        //
+        // With ThinLTO we mess around a lot with symbol visibility in a way
+        // that will actually cause linking failures if we optimize at O0 which
+        // notable is lacking in dead code elimination. To ensure we at least
+        // get some optimizations and correctly link we forcibly switch to `-O1`
+        // to get dead code elimination.
+        //
+        // Note that in general this shouldn't matter too much as you typically
+        // only turn on ThinLTO when you're compiling with optimizations
+        // otherwise.
+        let opt_level = config.opt_level.unwrap_or(llvm::CodeGenOptLevel::None);
+        let opt_level = match opt_level {
+            llvm::CodeGenOptLevel::None => llvm::CodeGenOptLevel::Less,
+            level => level,
+        };
+        with_llvm_pmb(llmod, config, opt_level, &mut |b| {
             if thin {
                 if !llvm::LLVMRustPassManagerBuilderPopulateThinLTOPassManager(b, pm) {
                     panic!("this version of LLVM does not support ThinLTO");
@@ -481,13 +498,13 @@ unsafe impl Send for ModuleBuffer {}
 unsafe impl Sync for ModuleBuffer {}
 
 impl ModuleBuffer {
-    fn new(m: ModuleRef) -> ModuleBuffer {
+    pub fn new(m: ModuleRef) -> ModuleBuffer {
         ModuleBuffer(unsafe {
             llvm::LLVMRustModuleBufferCreate(m)
         })
     }
 
-    fn data(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         unsafe {
             let ptr = llvm::LLVMRustModuleBufferPtr(self.0);
             let len = llvm::LLVMRustModuleBufferLen(self.0);
@@ -527,13 +544,20 @@ impl Drop for ThinData {
     }
 }
 
-struct ThinBuffer(*mut llvm::ThinLTOBuffer);
+pub struct ThinBuffer(*mut llvm::ThinLTOBuffer);
 
 unsafe impl Send for ThinBuffer {}
 unsafe impl Sync for ThinBuffer {}
 
 impl ThinBuffer {
-    fn data(&self) -> &[u8] {
+    pub fn new(m: ModuleRef) -> ThinBuffer {
+        unsafe {
+            let buffer = llvm::LLVMRustThinLTOBufferCreate(m);
+            ThinBuffer(buffer)
+        }
+    }
+
+    pub fn data(&self) -> &[u8] {
         unsafe {
             let ptr = llvm::LLVMRustThinLTOBufferPtr(self.0) as *const _;
             let len = llvm::LLVMRustThinLTOBufferLen(self.0);

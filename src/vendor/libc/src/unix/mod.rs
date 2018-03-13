@@ -34,9 +34,14 @@ s! {
         pub tv_usec: suseconds_t,
     }
 
+    // linux x32 compatibility
+    // See https://sourceware.org/bugzilla/show_bug.cgi?id=16437
     pub struct timespec {
         pub tv_sec: time_t,
-        pub tv_nsec: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        pub tv_nsec: i64,
+        #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
+        pub tv_nsec: ::c_long,
     }
 
     pub struct rlimit {
@@ -48,19 +53,47 @@ s! {
         pub ru_utime: timeval,
         pub ru_stime: timeval,
         pub ru_maxrss: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad1: u32,
         pub ru_ixrss: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad2: u32,
         pub ru_idrss: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad3: u32,
         pub ru_isrss: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad4: u32,
         pub ru_minflt: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad5: u32,
         pub ru_majflt: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad6: u32,
         pub ru_nswap: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad7: u32,
         pub ru_inblock: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad8: u32,
         pub ru_oublock: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad9: u32,
         pub ru_msgsnd: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad10: u32,
         pub ru_msgrcv: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad11: u32,
         pub ru_nsignals: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad12: u32,
         pub ru_nvcsw: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad13: u32,
         pub ru_nivcsw: c_long,
+        #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+        __pad14: u32,
 
         #[cfg(any(target_env = "musl", target_os = "emscripten"))]
         __reserved: [c_long; 16],
@@ -138,6 +171,19 @@ s! {
         pub tms_cutime: ::clock_t,
         pub tms_cstime: ::clock_t,
     }
+
+    pub struct servent {
+        pub s_name: *mut ::c_char,
+        pub s_aliases: *mut *mut ::c_char,
+        pub s_port: ::c_int,
+        pub s_proto: *mut ::c_char,
+    }
+
+    pub struct protoent {
+        pub p_name: *mut ::c_char,
+        pub p_aliases: *mut *mut ::c_char,
+        pub p_proto: ::c_int,
+    }
 }
 
 pub const SIG_DFL: sighandler_t = 0 as sighandler_t;
@@ -163,16 +209,7 @@ pub const S_ISUID: ::c_int = 0x800;
 pub const S_ISGID: ::c_int = 0x400;
 pub const S_ISVTX: ::c_int = 0x200;
 
-pub const POLLIN: ::c_short = 0x1;
-pub const POLLPRI: ::c_short = 0x2;
-pub const POLLOUT: ::c_short = 0x4;
-pub const POLLERR: ::c_short = 0x8;
-pub const POLLHUP: ::c_short = 0x10;
-pub const POLLNVAL: ::c_short = 0x20;
-
 pub const IF_NAMESIZE: ::size_t = 16;
-
-pub const RTLD_LAZY: ::c_int = 0x1;
 
 pub const LOG_EMERG: ::c_int = 0;
 pub const LOG_ALERT: ::c_int = 1;
@@ -735,6 +772,10 @@ extern {
                  dev: ::dev_t) -> ::c_int;
     pub fn uname(buf: *mut ::utsname) -> ::c_int;
     pub fn gethostname(name: *mut ::c_char, len: ::size_t) -> ::c_int;
+    pub fn getservbyname(name: *const ::c_char,
+                         proto: *const ::c_char) -> *mut servent;
+    pub fn getprotobyname(name: *const ::c_char) -> *mut protoent;
+    pub fn getprotobynumber(proto: ::c_int) -> *mut protoent;
     pub fn chroot(name: *const ::c_char) -> ::c_int;
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "usleep$UNIX2003")]

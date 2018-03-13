@@ -34,10 +34,8 @@ pub fn indexing(slice: &[u8]) -> u8 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn indexing(slice: &[u8]) -> u8 {
@@ -52,10 +50,8 @@ pub fn arithmetic_overflow_plus(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn arithmetic_overflow_plus(val: i32) -> i32 {
@@ -70,10 +66,8 @@ pub fn arithmetic_overflow_minus(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn arithmetic_overflow_minus(val: i32) -> i32 {
@@ -88,10 +82,8 @@ pub fn arithmetic_overflow_mult(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn arithmetic_overflow_mult(val: i32) -> i32 {
@@ -106,10 +98,8 @@ pub fn arithmetic_overflow_negation(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn arithmetic_overflow_negation(val: i32) -> i32 {
@@ -124,10 +114,8 @@ pub fn division_by_zero(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn division_by_zero(val: i32) -> i32 {
@@ -141,10 +129,8 @@ pub fn mod_by_zero(val: i32) -> i32 {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_dirty(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn mod_by_zero(val: i32) -> i32 {
@@ -152,24 +138,53 @@ pub fn mod_by_zero(val: i32) -> i32 {
 }
 
 
+// shift left ------------------------------------------------------------------
+#[cfg(cfail1)]
+pub fn shift_left(val: i32, shift: usize) -> i32 {
+    val << shift
+}
+
+#[cfg(not(cfail1))]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
+#[rustc_metadata_clean(cfg="cfail2")]
+#[rustc_metadata_clean(cfg="cfail3")]
+pub fn shift_left(val: i32, shift: usize) -> i32 {
+    val << shift
+}
+
+
+// shift right ------------------------------------------------------------------
+#[cfg(cfail1)]
+pub fn shift_right(val: i32, shift: usize) -> i32 {
+    val >> shift
+}
+
+#[cfg(not(cfail1))]
+#[rustc_clean(cfg="cfail2", except="HirBody,MirValidated,MirOptimized")]
+#[rustc_clean(cfg="cfail3")]
+#[rustc_metadata_clean(cfg="cfail2")]
+#[rustc_metadata_clean(cfg="cfail3")]
+pub fn shift_right(val: i32, shift: usize) -> i32 {
+    val >> shift
+}
+
 
 // THE FOLLOWING ITEMS SHOULD NOT BE INFLUENCED BY THEIR SOURCE LOCATION
 
 // bitwise ---------------------------------------------------------------------
 #[cfg(cfail1)]
 pub fn bitwise(val: i32) -> i32 {
-    !val & 0x101010101 | 0x45689 ^ 0x2372382 << 1 >> 1
+    !val & 0x101010101 | 0x45689 ^ 0x2372382
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_clean(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn bitwise(val: i32) -> i32 {
-    !val & 0x101010101 | 0x45689 ^ 0x2372382 << 1 >> 1
+    !val & 0x101010101 | 0x45689 ^ 0x2372382
 }
 
 
@@ -180,10 +195,8 @@ pub fn logical(val1: bool, val2: bool, val3: bool) -> bool {
 }
 
 #[cfg(not(cfail1))]
-#[rustc_clean(label="Hir", cfg="cfail2")]
-#[rustc_clean(label="Hir", cfg="cfail3")]
-#[rustc_clean(label="HirBody", cfg="cfail2")]
-#[rustc_clean(label="HirBody", cfg="cfail3")]
+#[rustc_clean(cfg="cfail2")]
+#[rustc_clean(cfg="cfail3")]
 #[rustc_metadata_clean(cfg="cfail2")]
 #[rustc_metadata_clean(cfg="cfail3")]
 pub fn logical(val1: bool, val2: bool, val3: bool) -> bool {
