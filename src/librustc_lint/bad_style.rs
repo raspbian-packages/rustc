@@ -126,8 +126,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonCamelCaseTypes {
         self.check_case(cx, "variant", v.node.name, v.span);
     }
 
-    fn check_generics(&mut self, cx: &LateContext, it: &hir::Generics) {
-        for gen in it.ty_params.iter() {
+    fn check_generic_param(&mut self, cx: &LateContext, param: &hir::GenericParam) {
+        if let hir::GenericParam::Type(ref gen) = *param {
             self.check_case(cx, "type parameter", gen.name, gen.span);
         }
     }
@@ -221,14 +221,23 @@ impl LintPass for NonSnakeCase {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonSnakeCase {
     fn check_crate(&mut self, cx: &LateContext, cr: &hir::Crate) {
-        let attr_crate_name = cr.attrs
-            .iter()
-            .find(|at| at.check_name("crate_name"))
+        let attr_crate_name = attr::find_by_name(&cr.attrs, "crate_name")
             .and_then(|at| at.value_str().map(|s| (at, s)));
         if let Some(ref name) = cx.tcx.sess.opts.crate_name {
             self.check_snake_case(cx, "crate", name, None);
         } else if let Some((attr, name)) = attr_crate_name {
             self.check_snake_case(cx, "crate", &name.as_str(), Some(attr.span));
+        }
+    }
+
+    fn check_generic_param(&mut self, cx: &LateContext, param: &hir::GenericParam) {
+        if let hir::GenericParam::Lifetime(ref ld) = *param {
+            self.check_snake_case(
+                cx,
+                "lifetime",
+                &ld.lifetime.name.name().as_str(),
+                Some(ld.lifetime.span)
+            );
         }
     }
 
@@ -278,13 +287,6 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonSnakeCase {
                 self.check_snake_case(cx, "variable", &name.node.as_str(), Some(name.span));
             }
         }
-    }
-
-    fn check_lifetime_def(&mut self, cx: &LateContext, t: &hir::LifetimeDef) {
-        self.check_snake_case(cx,
-                              "lifetime",
-                              &t.lifetime.name.name().as_str(),
-                              Some(t.lifetime.span));
     }
 
     fn check_pat(&mut self, cx: &LateContext, p: &hir::Pat) {

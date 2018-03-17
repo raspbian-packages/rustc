@@ -478,7 +478,17 @@ pub const SIGEV_NONE: ::c_int = 0;
 pub const SIGEV_SIGNAL: ::c_int = 1;
 pub const SIGEV_THREAD: ::c_int = 2;
 
+pub const EAI_AGAIN: ::c_int = 2;
+pub const EAI_BADFLAGS: ::c_int = 3;
+pub const EAI_FAIL: ::c_int = 4;
+pub const EAI_FAMILY: ::c_int = 5;
+pub const EAI_MEMORY: ::c_int = 6;
+pub const EAI_NODATA: ::c_int = 7;
+pub const EAI_NONAME: ::c_int = 8;
+pub const EAI_SERVICE: ::c_int = 9;
+pub const EAI_SOCKTYPE: ::c_int = 10;
 pub const EAI_SYSTEM: ::c_int = 11;
+pub const EAI_OVERFLOW: ::c_int = 14;
 
 pub const PROT_NONE: ::c_int = 0;
 pub const PROT_READ: ::c_int = 1;
@@ -1112,6 +1122,7 @@ extern {
                     addrlen: *mut ::socklen_t) -> ::ssize_t;
     pub fn mkstemps(template: *mut ::c_char, suffixlen: ::c_int) -> ::c_int;
     pub fn futimes(fd: ::c_int, times: *const ::timeval) -> ::c_int;
+    pub fn lutimes(file: *const ::c_char, times: *const ::timeval) -> ::c_int;
     pub fn nl_langinfo(item: ::nl_item) -> *mut ::c_char;
 
     pub fn bind(socket: ::c_int, address: *const ::sockaddr,

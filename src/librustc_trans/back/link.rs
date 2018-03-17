@@ -26,7 +26,7 @@ use {CrateTranslation, CrateInfo};
 use rustc::util::common::time;
 use rustc::util::fs::fix_windows_verbatim_for_gcc;
 use rustc::hir::def_id::CrateNum;
-use rustc_back::tempdir::TempDir;
+use tempdir::TempDir;
 use rustc_back::{PanicStrategy, RelroLevel, LinkerFlavor};
 use context::get_reloc_model;
 use llvm;
@@ -36,8 +36,8 @@ use std::char;
 use std::env;
 use std::ffi::OsString;
 use std::fmt;
-use std::fs::{self, File};
-use std::io::{self, Write, BufWriter};
+use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::str;
@@ -57,7 +57,7 @@ pub use rustc_trans_utils::link::{find_crate_name, filename_for_input, default_o
 // The third parameter is for env vars, used on windows to set up the
 // path for MSVC to find its DLLs, and gcc to find its bundled
 // toolchain
-pub fn get_linker(sess: &Session) -> (String, Command, Vec<(OsString, OsString)>) {
+pub fn get_linker(sess: &Session) -> (PathBuf, Command, Vec<(OsString, OsString)>) {
     let envs = vec![("PATH".into(), command_path(sess))];
 
     // If our linker looks like a batch script on Windows then to execute this
@@ -68,24 +68,24 @@ pub fn get_linker(sess: &Session) -> (String, Command, Vec<(OsString, OsString)>
     // This worked historically but is needed manually since #42436 (regression
     // was tagged as #42791) and some more info can be found on #44443 for
     // emscripten itself.
-    let cmd = |linker: &str| {
-        if cfg!(windows) && linker.ends_with(".bat") {
-            let mut cmd = Command::new("cmd");
-            cmd.arg("/c").arg(linker);
-            cmd
-        } else {
-            Command::new(linker)
+    let cmd = |linker: &Path| {
+        if let Some(linker) = linker.to_str() {
+            if cfg!(windows) && linker.ends_with(".bat") {
+                return Command::bat_script(linker)
+            }
         }
+        Command::new(linker)
     };
 
     if let Some(ref linker) = sess.opts.cg.linker {
         (linker.clone(), cmd(linker), envs)
     } else if sess.target.target.options.is_like_msvc {
         let (cmd, envs) = msvc_link_exe_cmd(sess);
-        ("link.exe".to_string(), cmd, envs)
+        (PathBuf::from("link.exe"), cmd, envs)
     } else {
-        let linker = &sess.target.target.options.linker;
-        (linker.clone(), cmd(linker), envs)
+        let linker = PathBuf::from(&sess.target.target.options.linker);
+        let cmd = cmd(&linker);
+        (linker, cmd, envs)
     }
 }
 
@@ -696,7 +696,7 @@ fn link_natively(sess: &Session,
                 let mut output = prog.stderr.clone();
                 output.extend_from_slice(&prog.stdout);
                 sess.struct_err(&format!("linking with `{}` failed: {}",
-                                         pname,
+                                         pname.display(),
                                          prog.status))
                     .note(&format!("{:?}", &cmd))
                     .note(&escape_string(&output))
@@ -707,10 +707,25 @@ fn link_natively(sess: &Session,
             info!("linker stdout:\n{}", escape_string(&prog.stdout));
         },
         Err(e) => {
-            sess.struct_err(&format!("could not exec the linker `{}`: {}", pname, e))
-                .note(&format!("{:?}", &cmd))
-                .emit();
-            if sess.target.target.options.is_like_msvc && e.kind() == io::ErrorKind::NotFound {
+            let linker_not_found = e.kind() == io::ErrorKind::NotFound;
+
+            let mut linker_error = {
+                if linker_not_found {
+                    sess.struct_err(&format!("linker `{}` not found", pname.display()))
+                } else {
+                    sess.struct_err(&format!("could not exec the linker `{}`", pname.display()))
+                }
+            };
+
+            linker_error.note(&format!("{}", e));
+
+            if !linker_not_found {
+                linker_error.note(&format!("{:?}", &cmd));
+            }
+
+            linker_error.emit();
+
+            if sess.target.target.options.is_like_msvc && linker_not_found {
                 sess.note_without_error("the msvc targets depend on the msvc linker \
                     but `link.exe` was not found");
                 sess.note_without_error("please ensure that VS 2013 or VS 2015 was installed \
@@ -743,26 +758,38 @@ fn exec_linker(sess: &Session, cmd: &mut Command, tmpdir: &Path)
     // that contains all the arguments. The theory is that this is then
     // accepted on all linkers and the linker will read all its options out of
     // there instead of looking at the command line.
-    match cmd.command().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
-        Ok(child) => return child.wait_with_output(),
-        Err(ref e) if command_line_too_big(e) => {}
-        Err(e) => return Err(e)
+    if !cmd.very_likely_to_exceed_some_spawn_limit() {
+        match cmd.command().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
+            Ok(child) => return child.wait_with_output(),
+            Err(ref e) if command_line_too_big(e) => {}
+            Err(e) => return Err(e)
+        }
     }
 
-    let file = tmpdir.join("linker-arguments");
-    let mut cmd2 = Command::new(cmd.get_program());
-    cmd2.arg(format!("@{}", file.display()));
-    for &(ref k, ref v) in cmd.get_env() {
-        cmd2.env(k, v);
-    }
-    let mut f = BufWriter::new(File::create(&file)?);
-    for arg in cmd.get_args() {
-        writeln!(f, "{}", Escape {
+    let mut cmd2 = cmd.clone();
+    let mut args = String::new();
+    for arg in cmd2.take_args() {
+        args.push_str(&Escape {
             arg: arg.to_str().unwrap(),
             is_like_msvc: sess.target.target.options.is_like_msvc,
-        })?;
+        }.to_string());
+        args.push_str("\n");
     }
-    f.into_inner()?;
+    let file = tmpdir.join("linker-arguments");
+    let bytes = if sess.target.target.options.is_like_msvc {
+        let mut out = vec![];
+        // start the stream with a UTF-16 BOM
+        for c in vec![0xFEFF].into_iter().chain(args.encode_utf16()) {
+            // encode in little endian
+            out.push(c as u8);
+            out.push((c >> 8) as u8);
+        }
+        out
+    } else {
+        args.into_bytes()
+    };
+    fs::write(&file, &bytes)?;
+    cmd2.arg(format!("@{}", file.display()));
     return cmd2.output();
 
     #[cfg(unix)]

@@ -11,7 +11,9 @@ build = "DEB_BUILD_RUST_TYPE"
 host = ["DEB_HOST_RUST_TYPE"]
 target = ["DEB_TARGET_RUST_TYPE"]
 
-full-bootstrap = true # work around https://github.com/rust-lang/rust/issues/45317
+#full-bootstrap = true
+# originally needed to work around #45317 but no longer necessary
+# currently we have to omit it because it breaks #48319
 
 docs = BUILD_DOCS
 

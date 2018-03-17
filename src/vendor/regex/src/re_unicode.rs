@@ -73,6 +73,12 @@ impl<'t> Match<'t> {
     }
 }
 
+impl<'t> From<Match<'t>> for &'t str {
+    fn from(m: Match<'t>) -> &'t str {
+        m.as_str()
+    }
+}
+
 /// A compiled regular expression for matching Unicode strings.
 ///
 /// It is represented as either a sequence of bytecode instructions (dynamic)
@@ -325,7 +331,7 @@ impl Regex {
     /// with a `usize`.
     ///
     /// The `0`th capture group is always unnamed, so it must always be
-    /// accessed with `at(0)` or `[0]`.
+    /// accessed with `get(0)` or `[0]`.
     pub fn captures<'t>(&self, text: &'t str) -> Option<Captures<'t>> {
         let mut locs = self.locations();
         self.read_captures_at(&mut locs, text, 0).map(|_| Captures {
@@ -577,18 +583,19 @@ impl Regex {
         //      replacements inside the replacement string. We just push it
         //      at each match and be done with it.
         if let Some(rep) = rep.no_expansion() {
+            let mut it = self.find_iter(text).enumerate().peekable();
+            if it.peek().is_none() {
+                return Cow::Borrowed(text);
+            }
             let mut new = String::with_capacity(text.len());
             let mut last_match = 0;
-            for (i, m) in self.find_iter(text).enumerate() {
+            for (i, m) in it {
                 if limit > 0 && i >= limit {
                     break
                 }
                 new.push_str(&text[last_match..m.start()]);
                 new.push_str(&rep);
                 last_match = m.end();
-            }
-            if last_match == 0 {
-                return Cow::Borrowed(text);
             }
             new.push_str(&text[last_match..]);
             return Cow::Owned(new);
@@ -731,7 +738,7 @@ impl Regex {
     pub fn as_str(&self) -> &str {
         match self.0 {
             _Regex::Dynamic(ref exec) => &exec.regex_strings()[0],
-            _Regex::Plugin(ref plug) => &plug.original,
+            _Regex::Plugin(ref plug) => plug.original,
         }
     }
 
@@ -868,7 +875,7 @@ enum NamedGroups {
 impl NamedGroups {
     fn from_regex(regex: &Regex) -> NamedGroups {
         match regex.0 {
-            _Regex::Plugin(ref plug) => NamedGroups::Plugin(&plug.groups),
+            _Regex::Plugin(ref plug) => NamedGroups::Plugin(plug.groups),
             _Regex::Dynamic(ref exec) => {
                 NamedGroups::Dynamic(exec.capture_name_idx().clone())
             }
@@ -882,12 +889,12 @@ impl NamedGroups {
                       .ok().map(|i| groups[i].1)
             },
             NamedGroups::Dynamic(ref groups) => {
-                groups.get(name).map(|i| *i)
+                groups.get(name).cloned()
             },
         }
     }
 
-    fn iter<'n>(&'n self) -> NamedGroupsIter<'n> {
+    fn iter(& self) -> NamedGroupsIter {
         match *self {
             NamedGroups::Plugin(g) => NamedGroupsIter::Plugin(g.iter()),
             NamedGroups::Dynamic(ref g) => NamedGroupsIter::Dynamic(g.iter()),
@@ -905,7 +912,7 @@ impl<'n> Iterator for NamedGroupsIter<'n> {
 
     fn next(&mut self) -> Option<Self::Item> {
         match *self {
-            NamedGroupsIter::Plugin(ref mut it) => it.next().map(|&v| v),
+            NamedGroupsIter::Plugin(ref mut it) => it.next().cloned(),
             NamedGroupsIter::Dynamic(ref mut it) => {
                 it.next().map(|(s, i)| (s.as_ref(), *i))
             }
@@ -1019,7 +1026,7 @@ impl<'c, 't> fmt::Debug for CapturesDebug<'c, 't> {
         let mut map = f.debug_map();
         for (slot, m) in self.0.locs.iter().enumerate() {
             let m = m.map(|(s, e)| &self.0.text[s..e]);
-            if let Some(ref name) = slot_to_name.get(&slot) {
+            if let Some(name) = slot_to_name.get(&slot) {
                 map.entry(&name, &m);
             } else {
                 map.entry(&slot, &m);
@@ -1202,7 +1209,7 @@ impl<'a> Replacer for &'a str {
         caps.expand(*self, dst);
     }
 
-    fn no_expansion<'r>(&'r mut self) -> Option<Cow<'r, str>> {
+    fn no_expansion(&mut self) -> Option<Cow<str>> {
         match memchr(b'$', self.as_bytes()) {
             Some(_) => None,
             None => Some(Cow::Borrowed(*self)),
@@ -1216,7 +1223,7 @@ impl<F> Replacer for F where F: FnMut(&Captures) -> String {
     }
 }
 
-/// NoExpand indicates literal string replacement.
+/// `NoExpand` indicates literal string replacement.
 ///
 /// It can be used with `replace` and `replace_all` to do a literal string
 /// replacement without expanding `$name` to their corresponding capture
@@ -1231,7 +1238,7 @@ impl<'t> Replacer for NoExpand<'t> {
         dst.push_str(self.0);
     }
 
-    fn no_expansion<'r>(&'r mut self) -> Option<Cow<'r, str>> {
+    fn no_expansion(&mut self) -> Option<Cow<str>> {
         Some(Cow::Borrowed(self.0))
     }
 }

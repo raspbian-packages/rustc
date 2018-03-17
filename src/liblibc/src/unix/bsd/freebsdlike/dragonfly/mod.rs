@@ -72,6 +72,13 @@ s! {
         pub node: [u8; 6],
     }
 
+    pub struct mq_attr {
+        pub mq_flags: ::c_long,
+        pub mq_maxmsg: ::c_long,
+        pub mq_msgsize: ::c_long,
+        pub mq_curmsgs: ::c_long,
+    }
+
     pub struct sigevent {
         pub sigev_notify: ::c_int,
         // The union is 8-byte in size, so it is aligned at a 8-byte offset.
@@ -168,12 +175,26 @@ s! {
         pub ifm_index: ::c_ushort,
         pub ifm_data: if_data,
     }
+
+    pub struct sockaddr_dl {
+        pub sdl_len: ::c_uchar,
+        pub sdl_family: ::c_uchar,
+        pub sdl_index: ::c_ushort,
+        pub sdl_type: ::c_uchar,
+        pub sdl_nlen: ::c_uchar,
+        pub sdl_alen: ::c_uchar,
+        pub sdl_slen: ::c_uchar,
+        pub sdl_data: [::c_char; 12],
+        pub sdl_rcf: ::c_ushort,
+        pub sdl_route: [::c_ushort; 16],
+    }
 }
 
 pub const RAND_MAX: ::c_int = 0x7fff_ffff;
 pub const PTHREAD_STACK_MIN: ::size_t = 16384;
 pub const SIGSTKSZ: ::size_t = 40960;
 pub const MADV_INVAL: ::c_int = 10;
+pub const MADV_SETMAP: ::c_int = 11;
 pub const O_CLOEXEC: ::c_int = 0x00020000;
 pub const O_DIRECTORY: ::c_int = 0x08000000;
 pub const F_GETLK: ::c_int = 7;
@@ -712,6 +733,9 @@ pub const _SC_V7_LP64_OFF64: ::c_int = 124;
 pub const _SC_V7_LPBIG_OFFBIG: ::c_int = 125;
 pub const _SC_THREAD_ROBUST_PRIO_INHERIT: ::c_int = 126;
 pub const _SC_THREAD_ROBUST_PRIO_PROTECT: ::c_int = 127;
+
+pub const WCONTINUED: ::c_int = 4;
+pub const WSTOPPED: ::c_int = 0o177;
 
 extern {
     pub fn mprotect(addr: *mut ::c_void, len: ::size_t, prot: ::c_int)

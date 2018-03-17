@@ -1,0 +1,341 @@
+From 36fcfd117373283de7c052cf361a705d611d47fa Mon Sep 17 00:00:00 2001
+From: Josh Stone <jistone@redhat.com>
+Date: Wed, 31 Jan 2018 11:41:29 -0800
+Subject: [PATCH 2/2] Use a range to identify SIGSEGV in stack guards
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Previously, the `guard::init()` and `guard::current()` functions were
+returning a `usize` address representing the top of the stack guard,
+respectively for the main thread and for spawned threads.  The `SIGSEGV`
+handler on `unix` targets checked if a fault was within one page below
+that address, if so reporting it as a stack overflow.
+
+Now `unix` targets report a `Range<usize>` representing the guard
+memory, so it can cover arbitrary guard sizes.  Non-`unix` targets which
+always return `None` for guards now do so with `Option<!>`, so they
+don't pay any overhead.
+
+For `linux-gnu` in particular, the previous guard upper-bound was
+`stackaddr + guardsize`, as the protected memory was *inside* the stack.
+This was a glibc bug, and starting from 2.27 they are moving the guard
+*past* the end of the stack.  However, there's no simple way for us to
+know where the guard page actually lies, so now we declare it as the
+whole range of `stackaddr ± guardsize`, and any fault therein will be
+called a stack overflow.  This fixes #47863.
+---
+ src/libstd/sys/redox/thread.rs        |   5 +-
+ src/libstd/sys/unix/stack_overflow.rs |   9 +--
+ src/libstd/sys/unix/thread.rs         | 115 +++++++++++++++++++++-------------
+ src/libstd/sys/wasm/thread.rs         |   5 +-
+ src/libstd/sys/windows/thread.rs      |   5 +-
+ src/libstd/sys_common/thread_info.rs  |   9 +--
+ 6 files changed, 86 insertions(+), 62 deletions(-)
+
+diff --git a/src/libstd/sys/redox/thread.rs b/src/libstd/sys/redox/thread.rs
+index c4aad8d86f8b..c4719a94c7e9 100644
+--- a/src/libstd/sys/redox/thread.rs
++++ b/src/libstd/sys/redox/thread.rs
+@@ -88,6 +88,7 @@ impl Thread {
+ }
+ 
+ pub mod guard {
+-    pub unsafe fn current() -> Option<usize> { None }
+-    pub unsafe fn init() -> Option<usize> { None }
++    pub type Guard = !;
++    pub unsafe fn current() -> Option<Guard> { None }
++    pub unsafe fn init() -> Option<Guard> { None }
+ }
+diff --git a/src/libstd/sys/unix/stack_overflow.rs b/src/libstd/sys/unix/stack_overflow.rs
+index 51adbc24ae04..40453f9b8a15 100644
+--- a/src/libstd/sys/unix/stack_overflow.rs
++++ b/src/libstd/sys/unix/stack_overflow.rs
+@@ -57,9 +57,6 @@ mod imp {
+     use sys_common::thread_info;
+ 
+ 
+-    // This is initialized in init() and only read from after
+-    static mut PAGE_SIZE: usize = 0;
+-
+     #[cfg(any(target_os = "linux", target_os = "android"))]
+     unsafe fn siginfo_si_addr(info: *mut libc::siginfo_t) -> usize {
+         #[repr(C)]
+@@ -102,12 +99,12 @@ mod imp {
+                                     _data: *mut libc::c_void) {
+         use sys_common::util::report_overflow;
+ 
+-        let guard = thread_info::stack_guard().unwrap_or(0);
++        let guard = thread_info::stack_guard().unwrap_or(0..0);
+         let addr = siginfo_si_addr(info);
+ 
+         // If the faulting address is within the guard page, then we print a
+         // message saying so and abort.
+-        if guard != 0 && guard - PAGE_SIZE <= addr && addr < guard {
++        if guard.start <= addr && addr < guard.end {
+             report_overflow();
+             rtabort!("stack overflow");
+         } else {
+@@ -123,8 +120,6 @@ mod imp {
+     static mut MAIN_ALTSTACK: *mut libc::c_void = ptr::null_mut();
+ 
+     pub unsafe fn init() {
+-        PAGE_SIZE = ::sys::os::page_size();
+-
+         let mut action: sigaction = mem::zeroed();
+         action.sa_flags = SA_SIGINFO | SA_ONSTACK;
+         action.sa_sigaction = signal_handler as sighandler_t;
+diff --git a/src/libstd/sys/unix/thread.rs b/src/libstd/sys/unix/thread.rs
+index cb249af42540..72cdb9440b8e 100644
+--- a/src/libstd/sys/unix/thread.rs
++++ b/src/libstd/sys/unix/thread.rs
+@@ -205,8 +205,10 @@ impl Drop for Thread {
+           not(target_os = "solaris")))]
+ #[cfg_attr(test, allow(dead_code))]
+ pub mod guard {
+-    pub unsafe fn current() -> Option<usize> { None }
+-    pub unsafe fn init() -> Option<usize> { None }
++    use ops::Range;
++    pub type Guard = Range<usize>;
++    pub unsafe fn current() -> Option<Guard> { None }
++    pub unsafe fn init() -> Option<Guard> { None }
+ }
+ 
+ 
+@@ -222,14 +224,43 @@ pub mod guard {
+     use libc;
+     use libc::mmap;
+     use libc::{PROT_NONE, MAP_PRIVATE, MAP_ANON, MAP_FAILED, MAP_FIXED};
++    use ops::Range;
+     use sys::os;
+ 
+-    #[cfg(any(target_os = "macos",
+-              target_os = "bitrig",
+-              target_os = "openbsd",
+-              target_os = "solaris"))]
++    // This is initialized in init() and only read from after
++    static mut PAGE_SIZE: usize = 0;
++
++    pub type Guard = Range<usize>;
++
++    #[cfg(target_os = "solaris")]
++    unsafe fn get_stack_start() -> Option<*mut libc::c_void> {
++        let mut current_stack: libc::stack_t = ::mem::zeroed();
++        assert_eq!(libc::stack_getbounds(&mut current_stack), 0);
++        Some(current_stack.ss_sp)
++    }
++
++    #[cfg(target_os = "macos")]
+     unsafe fn get_stack_start() -> Option<*mut libc::c_void> {
+-        current().map(|s| s as *mut libc::c_void)
++        let stackaddr = libc::pthread_get_stackaddr_np(libc::pthread_self()) as usize -
++             libc::pthread_get_stacksize_np(libc::pthread_self());
++        Some(stackaddr as *mut libc::c_void)
++    }
++
++    #[cfg(any(target_os = "openbsd", target_os = "bitrig"))]
++    unsafe fn get_stack_start() -> Option<*mut libc::c_void> {
++        let mut current_stack: libc::stack_t = ::mem::zeroed();
++        assert_eq!(libc::pthread_stackseg_np(libc::pthread_self(),
++                                             &mut current_stack), 0);
++
++        let extra = if cfg!(target_os = "bitrig") {3} else {1} * PAGE_SIZE;
++        let stackaddr = if libc::pthread_main_np() == 1 {
++            // main thread
++            current_stack.ss_sp as usize - current_stack.ss_size + extra
++        } else {
++            // new thread
++            current_stack.ss_sp as usize - current_stack.ss_size
++        };
++        Some(stackaddr as *mut libc::c_void)
+     }
+ 
+     #[cfg(any(target_os = "android", target_os = "freebsd",
+@@ -253,8 +284,9 @@ pub mod guard {
+         ret
+     }
+ 
+-    pub unsafe fn init() -> Option<usize> {
+-        let psize = os::page_size();
++    pub unsafe fn init() -> Option<Guard> {
++        PAGE_SIZE = os::page_size();
++
+         let mut stackaddr = get_stack_start()?;
+ 
+         // Ensure stackaddr is page aligned! A parent process might
+@@ -263,9 +295,9 @@ pub mod guard {
+         // stackaddr < stackaddr + stacksize, so if stackaddr is not
+         // page-aligned, calculate the fix such that stackaddr <
+         // new_page_aligned_stackaddr < stackaddr + stacksize
+-        let remainder = (stackaddr as usize) % psize;
++        let remainder = (stackaddr as usize) % PAGE_SIZE;
+         if remainder != 0 {
+-            stackaddr = ((stackaddr as usize) + psize - remainder)
++            stackaddr = ((stackaddr as usize) + PAGE_SIZE - remainder)
+                 as *mut libc::c_void;
+         }
+ 
+@@ -280,60 +312,42 @@ pub mod guard {
+             // Instead, we'll just note where we expect rlimit to start
+             // faulting, so our handler can report "stack overflow", and
+             // trust that the kernel's own stack guard will work.
+-            Some(stackaddr as usize)
++            let stackaddr = stackaddr as usize;
++            Some(stackaddr - PAGE_SIZE..stackaddr)
+         } else {
+             // Reallocate the last page of the stack.
+             // This ensures SIGBUS will be raised on
+             // stack overflow.
+-            let result = mmap(stackaddr, psize, PROT_NONE,
++            let result = mmap(stackaddr, PAGE_SIZE, PROT_NONE,
+                               MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0);
+ 
+             if result != stackaddr || result == MAP_FAILED {
+                 panic!("failed to allocate a guard page");
+             }
+ 
++            let guardaddr = stackaddr as usize;
+             let offset = if cfg!(target_os = "freebsd") {
+                 2
+             } else {
+                 1
+             };
+ 
+-            Some(stackaddr as usize + offset * psize)
++            Some(guardaddr..guardaddr + offset * PAGE_SIZE)
+         }
+     }
+ 
+-    #[cfg(target_os = "solaris")]
+-    pub unsafe fn current() -> Option<usize> {
+-        let mut current_stack: libc::stack_t = ::mem::zeroed();
+-        assert_eq!(libc::stack_getbounds(&mut current_stack), 0);
+-        Some(current_stack.ss_sp as usize)
+-    }
+-
+-    #[cfg(target_os = "macos")]
+-    pub unsafe fn current() -> Option<usize> {
+-        Some((libc::pthread_get_stackaddr_np(libc::pthread_self()) as usize -
+-              libc::pthread_get_stacksize_np(libc::pthread_self())))
+-    }
+-
+-    #[cfg(any(target_os = "openbsd", target_os = "bitrig"))]
+-    pub unsafe fn current() -> Option<usize> {
+-        let mut current_stack: libc::stack_t = ::mem::zeroed();
+-        assert_eq!(libc::pthread_stackseg_np(libc::pthread_self(),
+-                                             &mut current_stack), 0);
+-
+-        let extra = if cfg!(target_os = "bitrig") {3} else {1} * os::page_size();
+-        Some(if libc::pthread_main_np() == 1 {
+-            // main thread
+-            current_stack.ss_sp as usize - current_stack.ss_size + extra
+-        } else {
+-            // new thread
+-            current_stack.ss_sp as usize - current_stack.ss_size
+-        })
++    #[cfg(any(target_os = "macos",
++              target_os = "bitrig",
++              target_os = "openbsd",
++              target_os = "solaris"))]
++    pub unsafe fn current() -> Option<Guard> {
++        let stackaddr = get_stack_start()? as usize;
++        Some(stackaddr - PAGE_SIZE..stackaddr)
+     }
+ 
+     #[cfg(any(target_os = "android", target_os = "freebsd",
+               target_os = "linux", target_os = "netbsd", target_os = "l4re"))]
+-    pub unsafe fn current() -> Option<usize> {
++    pub unsafe fn current() -> Option<Guard> {
+         let mut ret = None;
+         let mut attr: libc::pthread_attr_t = ::mem::zeroed();
+         assert_eq!(libc::pthread_attr_init(&mut attr), 0);
+@@ -352,12 +366,23 @@ pub mod guard {
+             assert_eq!(libc::pthread_attr_getstack(&attr, &mut stackaddr,
+                                                    &mut size), 0);
+ 
++            let stackaddr = stackaddr as usize;
+             ret = if cfg!(target_os = "freebsd") {
+-                Some(stackaddr as usize - guardsize)
++                // FIXME does freebsd really fault *below* the guard addr?
++                let guardaddr = stackaddr - guardsize;
++                Some(guardaddr - PAGE_SIZE..guardaddr)
+             } else if cfg!(target_os = "netbsd") {
+-                Some(stackaddr as usize)
++                Some(stackaddr - guardsize..stackaddr)
++            } else if cfg!(all(target_os = "linux", target_env = "gnu")) {
++                // glibc used to include the guard area within the stack, as noted in the BUGS
++                // section of `man pthread_attr_getguardsize`.  This has been corrected starting
++                // with glibc 2.27, and in some distro backports, so the guard is now placed at the
++                // end (below) the stack.  There's no easy way for us to know which we have at
++                // runtime, so we'll just match any fault in the range right above or below the
++                // stack base to call that fault a stack overflow.
++                Some(stackaddr - guardsize..stackaddr + guardsize)
+             } else {
+-                Some(stackaddr as usize + guardsize)
++                Some(stackaddr..stackaddr + guardsize)
+             };
+         }
+         assert_eq!(libc::pthread_attr_destroy(&mut attr), 0);
+diff --git a/src/libstd/sys/wasm/thread.rs b/src/libstd/sys/wasm/thread.rs
+index 13980e0cc19d..6a066509b492 100644
+--- a/src/libstd/sys/wasm/thread.rs
++++ b/src/libstd/sys/wasm/thread.rs
+@@ -43,6 +43,7 @@ impl Thread {
+ }
+ 
+ pub mod guard {
+-    pub unsafe fn current() -> Option<usize> { None }
+-    pub unsafe fn init() -> Option<usize> { None }
++    pub type Guard = !;
++    pub unsafe fn current() -> Option<Guard> { None }
++    pub unsafe fn init() -> Option<Guard> { None }
+ }
+diff --git a/src/libstd/sys/windows/thread.rs b/src/libstd/sys/windows/thread.rs
+index 74786d092855..43abfbb1f645 100644
+--- a/src/libstd/sys/windows/thread.rs
++++ b/src/libstd/sys/windows/thread.rs
+@@ -93,6 +93,7 @@ impl Thread {
+ 
+ #[cfg_attr(test, allow(dead_code))]
+ pub mod guard {
+-    pub unsafe fn current() -> Option<usize> { None }
+-    pub unsafe fn init() -> Option<usize> { None }
++    pub type Guard = !;
++    pub unsafe fn current() -> Option<Guard> { None }
++    pub unsafe fn init() -> Option<Guard> { None }
+ }
+diff --git a/src/libstd/sys_common/thread_info.rs b/src/libstd/sys_common/thread_info.rs
+index 7970042b1d67..6a2b6742367a 100644
+--- a/src/libstd/sys_common/thread_info.rs
++++ b/src/libstd/sys_common/thread_info.rs
+@@ -11,10 +11,11 @@
+ #![allow(dead_code)] // stack_guard isn't used right now on all platforms
+ 
+ use cell::RefCell;
++use sys::thread::guard::Guard;
+ use thread::Thread;
+ 
+ struct ThreadInfo {
+-    stack_guard: Option<usize>,
++    stack_guard: Option<Guard>,
+     thread: Thread,
+ }
+ 
+@@ -38,11 +39,11 @@ pub fn current_thread() -> Option<Thread> {
+     ThreadInfo::with(|info| info.thread.clone())
+ }
+ 
+-pub fn stack_guard() -> Option<usize> {
+-    ThreadInfo::with(|info| info.stack_guard).and_then(|o| o)
++pub fn stack_guard() -> Option<Guard> {
++    ThreadInfo::with(|info| info.stack_guard.clone()).and_then(|o| o)
+ }
+ 
+-pub fn set(stack_guard: Option<usize>, thread: Thread) {
++pub fn set(stack_guard: Option<Guard>, thread: Thread) {
+     THREAD_INFO.with(|c| assert!(c.borrow().is_none()));
+     THREAD_INFO.with(move |c| *c.borrow_mut() = Some(ThreadInfo{
+         stack_guard,
+-- 
+2.14.3
+

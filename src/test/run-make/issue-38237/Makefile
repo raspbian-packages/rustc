@@ -7,5 +7,5 @@ all:
 else
 all:
 	$(RUSTC) foo.rs; $(RUSTC) bar.rs
-	$(HOST_RPATH_ENV) '$(RUSTDOC)' baz.rs -L $(TMPDIR) -o $(TMPDIR)
+	$(RUSTDOC) baz.rs -L $(TMPDIR) -o $(TMPDIR)
 endif

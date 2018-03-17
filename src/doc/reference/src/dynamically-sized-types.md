@@ -2,7 +2,7 @@
 
 Most types have a fixed size that is known at compile time and implement the
 trait [`Sized`][sized]. A type with a size that is known only at run-time is
-called a _dynamically sized type_ (_DST_) or (informally) an unsized type.
+called a _dynamically sized type_ (_DST_) or, informally, an unsized type.
 [Slices] and [trait objects] are two examples of <abbr title="dynamically sized
 types">DSTs</abbr>. Such types can only be used in certain cases:
 
@@ -23,7 +23,7 @@ types">DSTs</abbr>. Such types can only be used in certain cases:
 Notably: [variables], function parameters, [const] and [static] items must be
 `Sized`.
 
-[sized]: the-sized-trait.html
+[sized]: special-types-and-traits.html#sized
 [Slices]: types.html#array-and-slice-types
 [trait objects]: types.html#trait-objects
 [Pointer types]: types.html#pointer-types

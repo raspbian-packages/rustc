@@ -1,6 +1,15 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## 0.0.174
+* Rustup to *rustc 1.23.0-nightly (63739ab7b 2017-11-21)*
+
+## 0.0.173
+* Rustup to *rustc 1.23.0-nightly (33374fa9d 2017-11-20)*
+
+## 0.0.172
+* Rustup to *rustc 1.23.0-nightly (d0f8e2913 2017-11-16)*
+
 ## 0.0.171
 * Rustup to *rustc 1.23.0-nightly (ff0f5de3b 2017-11-14)*
 
@@ -535,6 +544,7 @@ All notable changes to this project will be documented in this file.
 [`filter_next`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#filter_next
 [`float_arithmetic`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#float_arithmetic
 [`float_cmp`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#float_cmp
+[`float_cmp_const`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#float_cmp_const
 [`for_kv_map`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#for_kv_map
 [`for_loop_over_option`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#for_loop_over_option
 [`for_loop_over_result`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#for_loop_over_result

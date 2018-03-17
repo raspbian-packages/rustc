@@ -12,7 +12,7 @@
 
 [package]
 name = "compiletest_rs"
-version = "0.3.1"
+version = "0.3.3"
 authors = ["The Rust Project Developers", "Thomas Bracht Laumann Jespersen <laumann.thomas@gmail.com>", "Manish Goregaokar <manishsmail@gmail.com>"]
 description = "The compiletest utility from the Rust compiler as a standalone testing harness"
 readme = "README.md"
@@ -25,24 +25,28 @@ name = "compiletest_rs"
 [dependencies.diff]
 version = "0.1.10"
 
-[dependencies.rustc-serialize]
-version = "0.3"
+[dependencies.filetime]
+version = "0.1"
 
 [dependencies.getopts]
 version = "0.2"
+
+[dependencies.log]
+version = "0.3"
+
+[dependencies.rustc-serialize]
+version = "0.3"
 
 [dependencies.tempdir]
 version = "0.3"
 optional = true
 
-[dependencies.log]
-version = "0.3"
-
-[dependencies.libc]
-version = "0.2"
-
-[dependencies.filetime]
-version = "0.1"
-
 [features]
 tmp = ["tempdir"]
+[target."cfg(unix)".dependencies.libc]
+version = "0.2"
+[target."cfg(windows)".dependencies.miow]
+version = "0.2"
+
+[target."cfg(windows)".dependencies.winapi]
+version = "0.2"

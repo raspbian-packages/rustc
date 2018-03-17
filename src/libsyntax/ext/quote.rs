@@ -18,7 +18,6 @@ use parse::token;
 use ptr::P;
 use tokenstream::{TokenStream, TokenTree};
 
-
 /// Quasiquoting works via token trees.
 ///
 /// This is registered as a set of expression syntax extension called quote!
@@ -38,7 +37,7 @@ pub mod rt {
     use tokenstream::{self, TokenTree, TokenStream};
 
     pub use parse::new_parser_from_tts;
-    pub use syntax_pos::{BytePos, Span, DUMMY_SP};
+    pub use syntax_pos::{BytePos, Span, DUMMY_SP, FileName};
     pub use codemap::{dummy_spanned};
 
     pub trait ToTokens {
@@ -188,6 +187,12 @@ pub mod rt {
         fn to_tokens(&self, _cx: &ExtCtxt) -> Vec<TokenTree> {
             let nt = token::NtBlock(self.clone());
             vec![TokenTree::Token(DUMMY_SP, Token::interpolated(nt))]
+        }
+    }
+
+    impl ToTokens for ast::Lifetime {
+        fn to_tokens(&self, _cx: &ExtCtxt) -> Vec<TokenTree> {
+            vec![TokenTree::Token(DUMMY_SP, token::Lifetime(self.ident))]
         }
     }
 
@@ -343,27 +348,27 @@ pub mod rt {
     impl<'a> ExtParseUtils for ExtCtxt<'a> {
         fn parse_item(&self, s: String) -> P<ast::Item> {
             panictry!(parse::parse_item_from_source_str(
-                "<quote expansion>".to_string(),
+                FileName::QuoteExpansion,
                 s,
                 self.parse_sess())).expect("parse error")
         }
 
         fn parse_stmt(&self, s: String) -> ast::Stmt {
             panictry!(parse::parse_stmt_from_source_str(
-                "<quote expansion>".to_string(),
+                FileName::QuoteExpansion,
                 s,
                 self.parse_sess())).expect("parse error")
         }
 
         fn parse_expr(&self, s: String) -> P<ast::Expr> {
             panictry!(parse::parse_expr_from_source_str(
-                "<quote expansion>".to_string(),
+                FileName::QuoteExpansion,
                 s,
                 self.parse_sess()))
         }
 
         fn parse_tts(&self, s: String) -> Vec<TokenTree> {
-            let source_name = "<quote expansion>".to_owned();
+            let source_name = FileName::QuoteExpansion;
             parse::parse_stream_from_source_str(source_name, s, self.parse_sess(), None)
                 .into_trees().collect()
         }
@@ -670,7 +675,11 @@ fn expr_mk_token(cx: &ExtCtxt, sp: Span, tok: &token::Token) -> P<ast::Expr> {
                                 vec![mk_name(cx, sp, ast::Ident::with_empty_ctxt(ident))]);
         }
 
-        token::Interpolated(_) => panic!("quote! with interpolated token"),
+        token::Interpolated(_) => {
+            cx.span_err(sp, "quote! with interpolated token");
+            // Use dummy name.
+            "Interpolated"
+        }
 
         token::Eq           => "Eq",
         token::Lt           => "Lt",

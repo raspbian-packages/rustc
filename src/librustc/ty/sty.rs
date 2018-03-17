@@ -174,16 +174,26 @@ pub enum TypeVariants<'tcx> {
 
 /// A closure can be modeled as a struct that looks like:
 ///
-///     struct Closure<'l0...'li, T0...Tj, U0...Uk> {
+///     struct Closure<'l0...'li, T0...Tj, CK, CS, U0...Uk> {
 ///         upvar0: U0,
 ///         ...
 ///         upvark: Uk
 ///     }
 ///
-/// where 'l0...'li and T0...Tj are the lifetime and type parameters
-/// in scope on the function that defined the closure, and U0...Uk are
-/// type parameters representing the types of its upvars (borrowed, if
-/// appropriate).
+/// where:
+///
+/// - 'l0...'li and T0...Tj are the lifetime and type parameters
+///   in scope on the function that defined the closure,
+/// - CK represents the *closure kind* (Fn vs FnMut vs FnOnce). This
+///   is rather hackily encoded via a scalar type. See
+///   `TyS::to_opt_closure_kind` for details.
+/// - CS represents the *closure signature*, representing as a `fn()`
+///   type. For example, `fn(u32, u32) -> u32` would mean that the closure
+///   implements `CK<(u32, u32), Output = u32>`, where `CK` is the trait
+///   specified above.
+/// - U0...Uk are type parameters representing the types of its upvars
+///   (borrowed, if appropriate; that is, if Ui represents a by-ref upvar,
+///    and the up-var has the type `Foo`, then `Ui = &Foo`).
 ///
 /// So, for example, given this function:
 ///
@@ -246,6 +256,17 @@ pub enum TypeVariants<'tcx> {
 /// closure C wind up influencing the decisions we ought to make for
 /// closure C (which would then require fixed point iteration to
 /// handle). Plus it fixes an ICE. :P
+///
+/// ## Generators
+///
+/// Perhaps surprisingly, `ClosureSubsts` are also used for
+/// generators.  In that case, what is written above is only half-true
+/// -- the set of type parameters is similar, but the role of CK and
+/// CS are different.  CK represents the "yield type" and CS
+/// represents the "return type" of the generator.
+///
+/// It'd be nice to split this struct into ClosureSubsts and
+/// GeneratorSubsts, I believe. -nmatsakis
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct ClosureSubsts<'tcx> {
     /// Lifetime and type parameters from the enclosing function,
@@ -256,14 +277,101 @@ pub struct ClosureSubsts<'tcx> {
     pub substs: &'tcx Substs<'tcx>,
 }
 
-impl<'a, 'gcx, 'acx, 'tcx> ClosureSubsts<'tcx> {
+/// Struct returned by `split()`. Note that these are subslices of the
+/// parent slice and not canonical substs themselves.
+struct SplitClosureSubsts<'tcx> {
+    closure_kind_ty: Ty<'tcx>,
+    closure_sig_ty: Ty<'tcx>,
+    upvar_kinds: &'tcx [Kind<'tcx>],
+}
+
+impl<'tcx> ClosureSubsts<'tcx> {
+    /// Divides the closure substs into their respective
+    /// components. Single source of truth with respect to the
+    /// ordering.
+    fn split(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> SplitClosureSubsts<'tcx> {
+        let generics = tcx.generics_of(def_id);
+        let parent_len = generics.parent_count();
+        SplitClosureSubsts {
+            closure_kind_ty: self.substs[parent_len].as_type().expect("CK should be a type"),
+            closure_sig_ty: self.substs[parent_len + 1].as_type().expect("CS should be a type"),
+            upvar_kinds: &self.substs[parent_len + 2..],
+        }
+    }
+
     #[inline]
-    pub fn upvar_tys(self, def_id: DefId, tcx: TyCtxt<'a, 'gcx, 'acx>) ->
+    pub fn upvar_tys(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) ->
         impl Iterator<Item=Ty<'tcx>> + 'tcx
     {
-        let generics = tcx.generics_of(def_id);
-        self.substs[self.substs.len()-generics.own_count()..].iter().map(
-            |t| t.as_type().expect("unexpected region in upvars"))
+        let SplitClosureSubsts { upvar_kinds, .. } = self.split(def_id, tcx);
+        upvar_kinds.iter().map(|t| t.as_type().expect("upvar should be type"))
+    }
+
+    /// Returns the closure kind for this closure; may return a type
+    /// variable during inference. To get the closure kind during
+    /// inference, use `infcx.closure_kind(def_id, substs)`.
+    pub fn closure_kind_ty(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> Ty<'tcx> {
+        self.split(def_id, tcx).closure_kind_ty
+    }
+
+    /// Returns the type representing the closure signature for this
+    /// closure; may contain type variables during inference. To get
+    /// the closure signature during inference, use
+    /// `infcx.fn_sig(def_id)`.
+    pub fn closure_sig_ty(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> Ty<'tcx> {
+        self.split(def_id, tcx).closure_sig_ty
+    }
+
+    /// Returns the type representing the yield type of the generator.
+    pub fn generator_yield_ty(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> Ty<'tcx> {
+        self.closure_kind_ty(def_id, tcx)
+    }
+
+    /// Returns the type representing the return type of the generator.
+    pub fn generator_return_ty(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> Ty<'tcx> {
+        self.closure_sig_ty(def_id, tcx)
+    }
+
+    /// Return the "generator signature", which consists of its yield
+    /// and return types.
+    ///
+    /// NB. Some bits of the code prefers to see this wrapped in a
+    /// binder, but it never contains bound regions. Probably this
+    /// function should be removed.
+    pub fn generator_poly_sig(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> PolyGenSig<'tcx> {
+        ty::Binder(self.generator_sig(def_id, tcx))
+    }
+
+    /// Return the "generator signature", which consists of its yield
+    /// and return types.
+    pub fn generator_sig(self, def_id: DefId, tcx: TyCtxt<'_, '_, '_>) -> GenSig<'tcx> {
+        ty::GenSig {
+            yield_ty: self.generator_yield_ty(def_id, tcx),
+            return_ty: self.generator_return_ty(def_id, tcx),
+        }
+    }
+}
+
+impl<'tcx> ClosureSubsts<'tcx> {
+    /// Returns the closure kind for this closure; only usable outside
+    /// of an inference context, because in that context we know that
+    /// there are no type variables.
+    ///
+    /// If you have an inference context, use `infcx.closure_kind()`.
+    pub fn closure_kind(self, def_id: DefId, tcx: TyCtxt<'_, 'tcx, 'tcx>) -> ty::ClosureKind {
+        self.split(def_id, tcx).closure_kind_ty.to_opt_closure_kind().unwrap()
+    }
+
+    /// Extracts the signature from the closure; only usable outside
+    /// of an inference context, because in that context we know that
+    /// there are no type variables.
+    ///
+    /// If you have an inference context, use `infcx.closure_sig()`.
+    pub fn closure_sig(self, def_id: DefId, tcx: TyCtxt<'_, 'tcx, 'tcx>) -> ty::PolyFnSig<'tcx> {
+        match self.closure_sig_ty(def_id, tcx).sty {
+            ty::TyFnPtr(sig) => sig,
+            ref t => bug!("closure_sig_ty is not a fn-ptr: {:?}", t),
+        }
     }
 }
 
@@ -542,6 +650,17 @@ impl<'tcx> PolyExistentialTraitRef<'tcx> {
 pub struct Binder<T>(pub T);
 
 impl<T> Binder<T> {
+    /// Wraps `value` in a binder, asserting that `value` does not
+    /// contain any bound regions that would be bound by the
+    /// binder. This is commonly used to 'inject' a value T into a
+    /// different binding level.
+    pub fn dummy<'tcx>(value: T) -> Binder<T>
+        where T: TypeFoldable<'tcx>
+    {
+        assert!(!value.has_escaping_regions());
+        Binder(value)
+    }
+
     /// Skips the binder and returns the "bound" value. This is a
     /// risky thing to do because it's easy to get confused about
     /// debruijn indices and the like. It is usually better to
@@ -554,6 +673,7 @@ impl<T> Binder<T> {
     /// accounting.
     ///
     /// Some examples where `skip_binder` is reasonable:
+    ///
     /// - extracting the def-id from a PolyTraitRef;
     /// - comparing the self type of a PolyTraitRef to see if it is equal to
     ///   a type parameter `X`, since the type `X`  does not reference any regions
@@ -575,6 +695,52 @@ impl<T> Binder<T> {
         where F: FnOnce(T) -> U
     {
         ty::Binder(f(self.0))
+    }
+
+    /// Unwraps and returns the value within, but only if it contains
+    /// no bound regions at all. (In other words, if this binder --
+    /// and indeed any enclosing binder -- doesn't bind anything at
+    /// all.) Otherwise, returns `None`.
+    ///
+    /// (One could imagine having a method that just unwraps a single
+    /// binder, but permits late-bound regions bound by enclosing
+    /// binders, but that would require adjusting the debruijn
+    /// indices, and given the shallow binding structure we often use,
+    /// would not be that useful.)
+    pub fn no_late_bound_regions<'tcx>(self) -> Option<T>
+        where T : TypeFoldable<'tcx>
+    {
+        if self.skip_binder().has_escaping_regions() {
+            None
+        } else {
+            Some(self.skip_binder().clone())
+        }
+    }
+
+    /// Given two things that have the same binder level,
+    /// and an operation that wraps on their contents, execute the operation
+    /// and then wrap its result.
+    ///
+    /// `f` should consider bound regions at depth 1 to be free, and
+    /// anything it produces with bound regions at depth 1 will be
+    /// bound in the resulting return value.
+    pub fn fuse<U,F,R>(self, u: Binder<U>, f: F) -> Binder<R>
+        where F: FnOnce(T, U) -> R
+    {
+        ty::Binder(f(self.0, u.0))
+    }
+
+    /// Split the contents into two things that share the same binder
+    /// level as the original, returning two distinct binders.
+    ///
+    /// `f` should consider bound regions at depth 1 to be free, and
+    /// anything it produces with bound regions at depth 1 will be
+    /// bound in the resulting return values.
+    pub fn split<U,V,F>(self, f: F) -> (Binder<U>, Binder<V>)
+        where F: FnOnce(T) -> (U, V)
+    {
+        let (u, v) = f(self.0);
+        (ty::Binder(u), ty::Binder(v))
     }
 }
 
@@ -674,6 +840,9 @@ impl<'tcx> PolyFnSig<'tcx> {
     }
     pub fn input(&self, index: usize) -> ty::Binder<Ty<'tcx>> {
         self.map_bound_ref(|fn_sig| fn_sig.inputs()[index])
+    }
+    pub fn inputs_and_output(&self) -> ty::Binder<&'tcx Slice<Ty<'tcx>>> {
+        self.map_bound_ref(|fn_sig| fn_sig.inputs_and_output)
     }
     pub fn output(&self) -> ty::Binder<Ty<'tcx>> {
         self.map_bound_ref(|fn_sig| fn_sig.output().clone())
@@ -824,8 +993,8 @@ pub type Region<'tcx> = &'tcx RegionKind;
 /// happen, you can use `leak_check`. This is more clearly explained
 /// by infer/higher_ranked/README.md.
 ///
-/// [1] http://smallcultfollowing.com/babysteps/blog/2013/10/29/intermingled-parameter-lists/
-/// [2] http://smallcultfollowing.com/babysteps/blog/2013/11/04/intermingled-parameter-lists/
+/// [1]: http://smallcultfollowing.com/babysteps/blog/2013/10/29/intermingled-parameter-lists/
+/// [2]: http://smallcultfollowing.com/babysteps/blog/2013/11/04/intermingled-parameter-lists/
 #[derive(Clone, PartialEq, Eq, Hash, Copy, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub enum RegionKind {
     // Region bound in a type or fn declaration which will be
@@ -868,6 +1037,12 @@ pub enum RegionKind {
 
     /// Erased region, used by trait selection, in MIR and during trans.
     ReErased,
+
+    /// These are regions bound in the "defining type" for a
+    /// closure. They are used ONLY as part of the
+    /// `ClosureRegionRequirements` that are produced by MIR borrowck.
+    /// See `ClosureRegionRequirements` for more details.
+    ReClosureBound(RegionVid),
 }
 
 impl<'tcx> serialize::UseSpecializedDecodable for Region<'tcx> {}
@@ -894,22 +1069,11 @@ pub struct FloatVid {
     pub index: u32,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy, PartialOrd, Ord)]
-pub struct RegionVid {
-    pub index: u32,
-}
-
-// FIXME: We could convert this to use `newtype_index!`
-impl Idx for RegionVid {
-    fn new(value: usize) -> Self {
-        assert!(value < ::std::u32::MAX as usize);
-        RegionVid { index: value as u32 }
-    }
-
-    fn index(self) -> usize {
-        self.index as usize
-    }
-}
+newtype_index!(RegionVid
+    {
+        pub idx
+        DEBUG_FORMAT = custom,
+    });
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub struct SkolemizedRegionVid {
@@ -1027,18 +1191,32 @@ impl RegionKind {
 
         match *self {
             ty::ReVar(..) => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
                 flags = flags | TypeFlags::HAS_RE_INFER;
                 flags = flags | TypeFlags::KEEP_IN_LOCAL_TCX;
             }
             ty::ReSkolemized(..) => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
                 flags = flags | TypeFlags::HAS_RE_INFER;
                 flags = flags | TypeFlags::HAS_RE_SKOL;
                 flags = flags | TypeFlags::KEEP_IN_LOCAL_TCX;
             }
             ty::ReLateBound(..) => { }
-            ty::ReEarlyBound(..) => { flags = flags | TypeFlags::HAS_RE_EARLY_BOUND; }
-            ty::ReStatic | ty::ReErased => { }
-            _ => { flags = flags | TypeFlags::HAS_FREE_REGIONS; }
+            ty::ReEarlyBound(..) => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
+                flags = flags | TypeFlags::HAS_RE_EARLY_BOUND;
+            }
+            ty::ReEmpty |
+            ty::ReStatic |
+            ty::ReFree { .. } |
+            ty::ReScope { .. } => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
+            }
+            ty::ReErased => {
+            }
+            ty::ReClosureBound(..) => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
+            }
         }
 
         match *self {
@@ -1083,13 +1261,6 @@ impl RegionKind {
 
 /// Type utilities
 impl<'a, 'gcx, 'tcx> TyS<'tcx> {
-    pub fn as_opt_param_ty(&self) -> Option<ty::ParamTy> {
-        match self.sty {
-            ty::TyParam(ref d) => Some(d.clone()),
-            _ => None,
-        }
-    }
-
     pub fn is_nil(&self) -> bool {
         match self.sty {
             TyTuple(ref tys, _) => tys.is_empty(),
@@ -1261,9 +1432,25 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
+    pub fn is_enum(&self) -> bool {
+        match self.sty {
+            TyAdt(adt_def, _) => {
+                adt_def.is_enum()
+            }
+            _ => false,
+        }
+    }
+
     pub fn is_closure(&self) -> bool {
         match self.sty {
             TyClosure(..) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_generator(&self) -> bool {
+        match self.sty {
+            TyGenerator(..) => true,
             _ => false,
         }
     }
@@ -1272,6 +1459,13 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         match self.sty {
             TyInfer(IntVar(_)) | TyInt(_) | TyUint(_) => true,
             _ => false
+        }
+    }
+
+    pub fn is_fresh_ty(&self) -> bool {
+        match self.sty {
+            TyInfer(FreshTy(_)) => true,
+            _ => false,
         }
     }
 
@@ -1386,6 +1580,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyAdt(def, _) => Some(def.did),
             TyForeign(did) => Some(did),
             TyClosure(id, _) => Some(id),
+            TyFnDef(id, _) => Some(id),
             _ => None,
         }
     }
@@ -1440,6 +1635,35 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             TyError => {
                 vec![]
             }
+        }
+    }
+
+    /// When we create a closure, we record its kind (i.e., what trait
+    /// it implements) into its `ClosureSubsts` using a type
+    /// parameter. This is kind of a phantom type, except that the
+    /// most convenient thing for us to are the integral types. This
+    /// function converts such a special type into the closure
+    /// kind. To go the other way, use
+    /// `tcx.closure_kind_ty(closure_kind)`.
+    ///
+    /// Note that during type checking, we use an inference variable
+    /// to represent the closure kind, because it has not yet been
+    /// inferred. Once upvar inference (in `src/librustc_typeck/check/upvar.rs`)
+    /// is complete, that type variable will be unified.
+    pub fn to_opt_closure_kind(&self) -> Option<ty::ClosureKind> {
+        match self.sty {
+            TyInt(int_ty) => match int_ty {
+                ast::IntTy::I8 => Some(ty::ClosureKind::Fn),
+                ast::IntTy::I16 => Some(ty::ClosureKind::FnMut),
+                ast::IntTy::I32 => Some(ty::ClosureKind::FnOnce),
+                _ => bug!("cannot convert type `{:?}` to a closure kind", self),
+            },
+
+            TyInfer(_) => None,
+
+            TyError => Some(ty::ClosureKind::Fn),
+
+            _ => bug!("cannot convert type `{:?}` to a closure kind", self),
         }
     }
 }

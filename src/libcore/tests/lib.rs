@@ -28,6 +28,7 @@
 #![feature(iter_rfind)]
 #![feature(iter_rfold)]
 #![feature(nonzero)]
+#![feature(pattern)]
 #![feature(raw)]
 #![feature(refcell_replace_swap)]
 #![feature(sip_hash_13)]
@@ -41,10 +42,6 @@
 #![feature(try_from)]
 #![feature(try_trait)]
 #![feature(unique)]
-
-#![feature(const_atomic_bool_new)]
-#![feature(const_atomic_usize_new)]
-#![feature(const_atomic_isize_new)]
 
 extern crate core;
 extern crate test;
@@ -65,6 +62,7 @@ mod nonzero;
 mod num;
 mod ops;
 mod option;
+mod pattern;
 mod ptr;
 mod result;
 mod slice;

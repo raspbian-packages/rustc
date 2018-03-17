@@ -34,14 +34,11 @@ use super::prev::PreviousDepGraph;
 pub struct DepGraph {
     data: Option<Rc<DepGraphData>>,
 
-    // At the moment we are using DepNode as key here. In the future it might
-    // be possible to use an IndexVec<DepNodeIndex, _> here. At the moment there
-    // are a few problems with that:
-    // - Some fingerprints are needed even if incr. comp. is disabled -- yet
-    //   we need to have a dep-graph to generate DepNodeIndices.
-    // - The architecture is still in flux and it's not clear what how to best
-    //   implement things.
-    fingerprints: Rc<RefCell<FxHashMap<DepNode, Fingerprint>>>
+    // A vector mapping depnodes from the current graph to their associated
+    // result value fingerprints. Do not rely on the length of this vector
+    // being the same as the number of nodes in the graph. The vector can
+    // contain an arbitrary number of zero-entries at the end.
+    fingerprints: Rc<RefCell<IndexVec<DepNodeIndex, Fingerprint>>>
 }
 
 
@@ -97,6 +94,11 @@ struct DepGraphData {
 impl DepGraph {
 
     pub fn new(prev_graph: PreviousDepGraph) -> DepGraph {
+        // Pre-allocate the fingerprints array. We over-allocate a little so
+        // that we hopefully don't have to re-allocate during this compilation
+        // session.
+        let fingerprints = IndexVec::from_elem_n(Fingerprint::ZERO,
+                                                 (prev_graph.node_count() * 115) / 100);
         DepGraph {
             data: Some(Rc::new(DepGraphData {
                 previous_work_products: RefCell::new(FxHashMap()),
@@ -107,14 +109,14 @@ impl DepGraph {
                 colors: RefCell::new(FxHashMap()),
                 loaded_from_cache: RefCell::new(FxHashMap()),
             })),
-            fingerprints: Rc::new(RefCell::new(FxHashMap())),
+            fingerprints: Rc::new(RefCell::new(fingerprints)),
         }
     }
 
     pub fn new_disabled() -> DepGraph {
         DepGraph {
             data: None,
-            fingerprints: Rc::new(RefCell::new(FxHashMap())),
+            fingerprints: Rc::new(RefCell::new(IndexVec::new())),
         }
     }
 
@@ -156,8 +158,8 @@ impl DepGraph {
     /// what state they have access to. In particular, we want to
     /// prevent implicit 'leaks' of tracked state into the task (which
     /// could then be read without generating correct edges in the
-    /// dep-graph -- see the [README] for more details on the
-    /// dep-graph). To this end, the task function gets exactly two
+    /// dep-graph -- see the module-level [README] for more details on
+    /// the dep-graph). To this end, the task function gets exactly two
     /// pieces of state: the context `cx` and an argument `arg`. Both
     /// of these bits of state must be of some type that implements
     /// `DepGraphSafe` and hence does not leak.
@@ -176,7 +178,7 @@ impl DepGraph {
     /// - If you need 3+ arguments, use a tuple for the
     ///   `arg` parameter.
     ///
-    /// [README]: README.md
+    /// [README]: https://github.com/rust-lang/rust/blob/master/src/librustc/dep_graph/README.md
     pub fn with_task<C, A, R, HCX>(&self,
                                    key: DepNode,
                                    cx: C,
@@ -231,12 +233,16 @@ impl DepGraph {
 
             // Store the current fingerprint
             {
-                let old_value = self.fingerprints
-                                    .borrow_mut()
-                                    .insert(key, current_fingerprint);
-                debug_assert!(old_value.is_none(),
+                let mut fingerprints = self.fingerprints.borrow_mut();
+
+                if dep_node_index.index() >= fingerprints.len() {
+                    fingerprints.resize(dep_node_index.index() + 1, Fingerprint::ZERO);
+                }
+
+                debug_assert!(fingerprints[dep_node_index] == Fingerprint::ZERO,
                               "DepGraph::with_task() - Duplicate fingerprint \
                                insertion for {:?}", key);
+                fingerprints[dep_node_index] = current_fingerprint;
             }
 
             // Determine the color of the new DepNode.
@@ -262,13 +268,15 @@ impl DepGraph {
                 let result = task(cx, arg);
                 let mut stable_hasher = StableHasher::new();
                 result.hash_stable(&mut hcx, &mut stable_hasher);
-                let old_value = self.fingerprints
-                                    .borrow_mut()
-                                    .insert(key, stable_hasher.finish());
-                debug_assert!(old_value.is_none(),
-                              "DepGraph::with_task() - Duplicate fingerprint \
-                               insertion for {:?}", key);
-                (result, DepNodeIndex::INVALID)
+                let fingerprint = stable_hasher.finish();
+
+                let mut fingerprints = self.fingerprints.borrow_mut();
+                let dep_node_index = DepNodeIndex::new(fingerprints.len());
+                fingerprints.push(fingerprint);
+                debug_assert!(fingerprints[dep_node_index] == fingerprint,
+                              "DepGraph::with_task() - Assigned fingerprint to \
+                               unexpected index for {:?}", key);
+                (result, dep_node_index)
             } else {
                 (task(cx, arg), DepNodeIndex::INVALID)
             }
@@ -328,11 +336,29 @@ impl DepGraph {
     }
 
     #[inline]
-    pub fn fingerprint_of(&self, dep_node: &DepNode) -> Fingerprint {
-        match self.fingerprints.borrow().get(dep_node) {
+    pub fn dep_node_index_of(&self, dep_node: &DepNode) -> DepNodeIndex {
+        self.data
+            .as_ref()
+            .unwrap()
+            .current
+            .borrow_mut()
+            .node_to_node_index
+            .get(dep_node)
+            .cloned()
+            .unwrap()
+    }
+
+    #[inline]
+    pub fn fingerprint_of(&self, dep_node_index: DepNodeIndex) -> Fingerprint {
+        match self.fingerprints.borrow().get(dep_node_index) {
             Some(&fingerprint) => fingerprint,
             None => {
-                bug!("Could not find current fingerprint for {:?}", dep_node)
+                if let Some(ref data) = self.data {
+                    let dep_node = data.current.borrow().nodes[dep_node_index];
+                    bug!("Could not find current fingerprint for {:?}", dep_node)
+                } else {
+                    bug!("Could not find current fingerprint for {:?}", dep_node_index)
+                }
             }
         }
     }
@@ -420,14 +446,17 @@ impl DepGraph {
     }
 
     pub fn serialize(&self) -> SerializedDepGraph {
-        let fingerprints = self.fingerprints.borrow();
+        let mut fingerprints = self.fingerprints.borrow_mut();
         let current_dep_graph = self.data.as_ref().unwrap().current.borrow();
 
-        let nodes: IndexVec<_, _> = current_dep_graph.nodes.iter().map(|dep_node| {
-            let fingerprint = fingerprints.get(dep_node)
-                                          .cloned()
-                                          .unwrap_or(Fingerprint::zero());
-            (*dep_node, fingerprint)
+        // Make sure we don't run out of bounds below.
+        if current_dep_graph.nodes.len() > fingerprints.len() {
+            fingerprints.resize(current_dep_graph.nodes.len(), Fingerprint::ZERO);
+        }
+
+        let nodes: IndexVec<_, (DepNode, Fingerprint)> =
+            current_dep_graph.nodes.iter_enumerated().map(|(idx, &dep_node)| {
+            (dep_node, fingerprints[idx])
         }).collect();
 
         let total_edge_count: usize = current_dep_graph.edges.iter()
@@ -461,10 +490,10 @@ impl DepGraph {
         self.data.as_ref().and_then(|data| data.colors.borrow().get(dep_node).cloned())
     }
 
-    pub fn try_mark_green(&self,
-                          tcx: TyCtxt,
-                          dep_node: &DepNode)
-                          -> Option<DepNodeIndex> {
+    pub fn try_mark_green<'tcx>(&self,
+                                tcx: TyCtxt<'_, 'tcx, 'tcx>,
+                                dep_node: &DepNode)
+                                -> Option<DepNodeIndex> {
         debug!("try_mark_green({:?}) - BEGIN", dep_node);
         let data = self.data.as_ref().unwrap();
 
@@ -610,18 +639,25 @@ impl DepGraph {
 
         // ... copying the fingerprint from the previous graph too, so we don't
         // have to recompute it ...
-        let fingerprint = data.previous.fingerprint_by_index(prev_dep_node_index);
-        let old_fingerprint = self.fingerprints
-                                  .borrow_mut()
-                                  .insert(*dep_node, fingerprint);
-        debug_assert!(old_fingerprint.is_none(),
-                      "DepGraph::try_mark_green() - Duplicate fingerprint \
-                      insertion for {:?}", dep_node);
+        {
+            let fingerprint = data.previous.fingerprint_by_index(prev_dep_node_index);
+            let mut fingerprints = self.fingerprints.borrow_mut();
+
+            if dep_node_index.index() >= fingerprints.len() {
+                fingerprints.resize(dep_node_index.index() + 1, Fingerprint::ZERO);
+            }
+
+            debug_assert!(fingerprints[dep_node_index] == Fingerprint::ZERO,
+                "DepGraph::try_mark_green() - Duplicate fingerprint \
+                insertion for {:?}", dep_node);
+
+            fingerprints[dep_node_index] = fingerprint;
+        }
 
         // ... emitting any stored diagnostic ...
         {
             let diagnostics = tcx.on_disk_query_result_cache
-                                 .load_diagnostics(prev_dep_node_index);
+                                 .load_diagnostics(tcx, prev_dep_node_index);
 
             if diagnostics.len() > 0 {
                 let handle = tcx.sess.diagnostic();
@@ -657,6 +693,39 @@ impl DepGraph {
                 DepNodeColor::Green(_) => true,
             }
         }).unwrap_or(false)
+    }
+
+    // This method loads all on-disk cacheable query results into memory, so
+    // they can be written out to the new cache file again. Most query results
+    // will already be in memory but in the case where we marked something as
+    // green but then did not need the value, that value will never have been
+    // loaded from disk.
+    //
+    // This method will only load queries that will end up in the disk cache.
+    // Other queries will not be executed.
+    pub fn exec_cache_promotions<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) {
+        let green_nodes: Vec<DepNode> = {
+            let data = self.data.as_ref().unwrap();
+            data.colors.borrow().iter().filter_map(|(dep_node, color)| match color {
+                DepNodeColor::Green(_) => {
+                    if dep_node.cache_on_disk(tcx) {
+                        Some(*dep_node)
+                    } else {
+                        None
+                    }
+                }
+                DepNodeColor::Red => {
+                    // We can skip red nodes because a node can only be marked
+                    // as red if the query result was recomputed and thus is
+                    // already in memory.
+                    None
+                }
+            }).collect()
+        };
+
+        for dep_node in green_nodes {
+            dep_node.load_from_on_disk_cache(tcx);
+        }
     }
 
     pub fn mark_loaded_from_cache(&self, dep_node_index: DepNodeIndex, state: bool) {

@@ -6,8 +6,8 @@
 # * All crates built in metadata-only mode (`cargo check`)
 all:
 	# cc https://github.com/rust-lang/rust/issues/40623
-	$(BARE_RUSTC) baz.rs --emit=metadata --out-dir=$(TMPDIR)
-	$(BARE_RUSTC) bar.rs --emit=metadata --extern baz=$(TMPDIR)/libbaz.rmeta --out-dir=$(TMPDIR)
-	$(BARE_RUSTC) foo.rs --emit=metadata --extern bar=$(TMPDIR)/libbar.rmeta --out-dir=$(TMPDIR) 2>&1 | \
-	grep -vq "unexpectedly panicked"
+	$(RUSTC) baz.rs --emit=metadata
+	$(RUSTC) bar.rs --emit=metadata --extern baz=$(TMPDIR)/libbaz.rmeta
+	$(RUSTC) foo.rs --emit=metadata --extern bar=$(TMPDIR)/libbar.rmeta 2>&1 | \
+		$(CGREP) -v "unexpectedly panicked"
 	# ^ Succeeds if it doesn't find the ICE message

@@ -1,21 +1,23 @@
 # Constant items
 
+> **<sup>Syntax</sup>**
+> _ConstantItem_ :
+> &nbsp;&nbsp; `const` [IDENTIFIER] `:` [_Type_] `=` [_Expression_] `;`
+
 A *constant item* is a named _[constant value]_ which is not associated with a
 specific memory location in the program. Constants are essentially inlined
 wherever they are used, meaning that they are copied directly into the relevant
 context when used. References to the same constant are not necessarily
 guaranteed to refer to the same memory address.
 
-Constant values must not have destructors, and otherwise permit most forms of
-data. Constants may refer to the address of other constants, in which case the
+Constants must be explicitly typed. The type must have a `'static` lifetime: any
+references it contains must have `'static` lifetimes.
+
+Constants may refer to the address of other constants, in which case the
 address will have elided lifetimes where applicable, otherwise – in most cases
-– defaulting to the `static` lifetime. (See below on [static lifetime
+– defaulting to the `static` lifetime. (See [static lifetime
 elision].) The compiler is, however, still at liberty to translate the constant
 many times, so the address referred to may not be stable.
-
-Constants must be explicitly typed. The type may be any type that doesn't
-implement [`Drop`] and has a `'static` lifetime: any references it contains
-must have `'static` lifetimes.
 
 ```rust
 const BIT1: u32 = 1 << 0;
@@ -35,6 +37,32 @@ const BITS_N_STRINGS: BitsNStrings<'static> = BitsNStrings {
 };
 ```
 
+## Constants with Destructors
+
+Constants can contain destructors. Destructors are ran when the value goes out
+of scope.
+
+```rust
+struct TypeWithDestructor(i32);
+
+impl Drop for TypeWithDestructor {
+    fn drop(&mut self) {
+        println!("Dropped. Held {}.", self.0);
+    }
+}
+
+const ZERO_WITH_DESTRUCTOR: TypeWithDestructor = TypeWithDestructor(0);
+
+fn create_and_drop_zero_with_destructor() {
+    let x = ZERO_WITH_DESTRUCTOR;
+    // x gets dropped at end of function, calling drop.
+    // prints "Dropped. Held 0.".
+}
+```
+
 [constant value]: expressions.html#constant-expressions
 [static lifetime elision]: items/static-items.html#static-lifetime-elision
-[`Drop`]: the-drop-trait.html
+[`Drop`]: special-types-and-traits.html#drop
+[IDENTIFIER]: identifiers.html
+[_Type_]: types.html
+[_Expression_]: expressions.html

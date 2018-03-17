@@ -26,6 +26,7 @@ use syntax_pos::Span;
 
 use hir::*;
 use hir::print::Nested;
+use hir::svh::Svh;
 use util::nodemap::{DefIdMap, FxHashMap};
 
 use arena::TypedArena;
@@ -240,6 +241,9 @@ pub struct Map<'hir> {
     /// Same as the dep_graph in forest, just available with one fewer
     /// deref. This is a gratuitous micro-optimization.
     pub dep_graph: DepGraph,
+
+    /// The SVH of the local crate.
+    pub crate_hash: Svh,
 
     /// NodeIds are sequential integers from 0, so we can be
     /// super-compact by storing them in a vector. Not everything with
@@ -978,9 +982,8 @@ impl<'a, 'hir> NodesMatchingSuffix<'a, 'hir> {
         // chain, then returns `None`.
         fn find_first_mod_parent<'a>(map: &'a Map, mut id: NodeId) -> Option<(NodeId, Name)> {
             loop {
-                match map.find(id) {
-                    None => return None,
-                    Some(NodeItem(item)) if item_is_mod(&item) =>
+                match map.find(id)? {
+                    NodeItem(item) if item_is_mod(&item) =>
                         return Some((id, item.name)),
                     _ => {}
                 }
@@ -1049,7 +1052,7 @@ pub fn map_crate<'hir>(sess: &::session::Session,
                        forest: &'hir mut Forest,
                        definitions: &'hir Definitions)
                        -> Map<'hir> {
-    let map = {
+    let (map, crate_hash) = {
         let hcx = ::ich::StableHashingContext::new(sess, &forest.krate, definitions, cstore);
 
         let mut collector = NodeCollector::root(&forest.krate,
@@ -1059,10 +1062,13 @@ pub fn map_crate<'hir>(sess: &::session::Session,
         intravisit::walk_crate(&mut collector, &forest.krate);
 
         let crate_disambiguator = sess.local_crate_disambiguator();
-        collector.finalize_and_compute_crate_hash(crate_disambiguator)
+        let cmdline_args = sess.opts.dep_tracking_hash();
+        collector.finalize_and_compute_crate_hash(crate_disambiguator,
+                                                  cstore,
+                                                  cmdline_args)
     };
 
-    if log_enabled!(::log::LogLevel::Debug) {
+    if log_enabled!(::log::Level::Debug) {
         // This only makes sense for ordered stores; note the
         // enumerate to count the number of entries.
         let (entries_less_1, _) = map.iter().filter(|&x| {
@@ -1085,6 +1091,7 @@ pub fn map_crate<'hir>(sess: &::session::Session,
     let map = Map {
         forest,
         dep_graph: forest.dep_graph.clone(),
+        crate_hash,
         map,
         hir_to_node_id,
         definitions,
@@ -1183,6 +1190,7 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
                 ItemStruct(..) => "struct",
                 ItemUnion(..) => "union",
                 ItemTrait(..) => "trait",
+                ItemTraitAlias(..) => "trait alias",
                 ItemImpl(..) => "impl",
                 ItemAutoImpl(..) => "default impl",
             };

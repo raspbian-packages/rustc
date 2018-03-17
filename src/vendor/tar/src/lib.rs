@@ -21,10 +21,13 @@
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 
+#[cfg(unix)]
 extern crate libc;
 extern crate filetime;
 #[cfg(all(unix, feature = "xattr"))]
 extern crate xattr;
+#[cfg(target_os = "redox")]
+extern crate syscall;
 
 use std::io::{Error, ErrorKind};
 use std::ops::{Deref, DerefMut};

@@ -130,11 +130,12 @@ extern crate cc;
 extern crate getopts;
 extern crate num_cpus;
 extern crate toml;
+extern crate time;
 
 #[cfg(unix)]
 extern crate libc;
 
-use std::cell::RefCell;
+use std::cell::{RefCell, Cell};
 use std::collections::{HashSet, HashMap};
 use std::env;
 use std::fs::{self, File};
@@ -143,8 +144,7 @@ use std::path::{PathBuf, Path};
 use std::process::{self, Command};
 use std::slice;
 
-use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime,
-                   BuildExpectation};
+use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime};
 
 use util::{exe, libdir, OutputFolder, CiEnv};
 
@@ -190,6 +190,7 @@ mod job {
 pub use config::Config;
 use flags::Subcommand;
 use cache::{Interned, INTERNER};
+use toolstate::ToolState;
 
 /// A structure representing a Rust compiler.
 ///
@@ -250,6 +251,7 @@ pub struct Build {
     is_sudo: bool,
     ci_env: CiEnv,
     delayed_failures: RefCell<Vec<String>>,
+    prerelease_version: Cell<Option<u32>>,
 }
 
 #[derive(Debug)]
@@ -335,6 +337,7 @@ impl Build {
             is_sudo,
             ci_env: CiEnv::current(),
             delayed_failures: RefCell::new(Vec::new()),
+            prerelease_version: Cell::new(None),
         }
     }
 
@@ -568,31 +571,24 @@ impl Build {
             .join(libdir(&self.config.build))
     }
 
-    /// Runs a command, printing out nice contextual information if its build
-    /// status is not the expected one
-    fn run_expecting(&self, cmd: &mut Command, expect: BuildExpectation) {
-        self.verbose(&format!("running: {:?}", cmd));
-        run_silent(cmd, expect)
-    }
-
     /// Runs a command, printing out nice contextual information if it fails.
     fn run(&self, cmd: &mut Command) {
-        self.run_expecting(cmd, BuildExpectation::None)
+        self.verbose(&format!("running: {:?}", cmd));
+        run_silent(cmd)
     }
 
     /// Runs a command, printing out nice contextual information if it fails.
     fn run_quiet(&self, cmd: &mut Command) {
         self.verbose(&format!("running: {:?}", cmd));
-        run_suppressed(cmd, BuildExpectation::None)
+        run_suppressed(cmd)
     }
 
-    /// Runs a command, printing out nice contextual information if its build
-    /// status is not the expected one.
-    /// Exits if the command failed to execute at all, otherwise returns whether
-    /// the expectation was met
-    fn try_run(&self, cmd: &mut Command, expect: BuildExpectation) -> bool {
+    /// Runs a command, printing out nice contextual information if it fails.
+    /// Exits if the command failed to execute at all, otherwise returns its
+    /// `status.success()`.
+    fn try_run(&self, cmd: &mut Command) -> bool {
         self.verbose(&format!("running: {:?}", cmd));
-        try_run_silent(cmd, expect)
+        try_run_silent(cmd)
     }
 
     /// Runs a command, printing out nice contextual information if it fails.
@@ -600,7 +596,7 @@ impl Build {
     /// `status.success()`.
     fn try_run_quiet(&self, cmd: &mut Command) -> bool {
         self.verbose(&format!("running: {:?}", cmd));
-        try_run_suppressed(cmd, BuildExpectation::None)
+        try_run_suppressed(cmd)
     }
 
     pub fn is_verbose(&self) -> bool {
@@ -725,6 +721,11 @@ impl Build {
         self.config.python.as_ref().unwrap()
     }
 
+    /// Temporary directory that extended error information is emitted to.
+    fn extended_error_dir(&self) -> PathBuf {
+        self.out.join("tmp/extended-error-metadata")
+    }
+
     /// Tests whether the `compiler` compiling for `target` should be forced to
     /// use a stage1 compiler instead.
     ///
@@ -776,10 +777,61 @@ impl Build {
     fn release(&self, num: &str) -> String {
         match &self.config.channel[..] {
             "stable" => num.to_string(),
-            "beta" => format!("{}-beta{}", num, channel::CFG_PRERELEASE_VERSION),
+            "beta" => if self.rust_info.is_git() {
+                format!("{}-beta.{}", num, self.beta_prerelease_version())
+            } else {
+                format!("{}-beta", num)
+            },
             "nightly" => format!("{}-nightly", num),
             _ => format!("{}-dev", num),
         }
+    }
+
+    fn beta_prerelease_version(&self) -> u32 {
+        if let Some(s) = self.prerelease_version.get() {
+            return s
+        }
+
+        let beta = output(
+            Command::new("git")
+                .arg("ls-remote")
+                .arg("origin")
+                .arg("beta")
+                .current_dir(&self.src)
+        );
+        let beta = beta.trim().split_whitespace().next().unwrap();
+        let master = output(
+            Command::new("git")
+                .arg("ls-remote")
+                .arg("origin")
+                .arg("master")
+                .current_dir(&self.src)
+        );
+        let master = master.trim().split_whitespace().next().unwrap();
+
+        // Figure out where the current beta branch started.
+        let base = output(
+            Command::new("git")
+                .arg("merge-base")
+                .arg(beta)
+                .arg(master)
+                .current_dir(&self.src),
+        );
+        let base = base.trim();
+
+        // Next figure out how many merge commits happened since we branched off
+        // beta. That's our beta number!
+        let count = output(
+            Command::new("git")
+                .arg("rev-list")
+                .arg("--count")
+                .arg("--merges")
+                .arg(format!("{}...HEAD", base))
+                .current_dir(&self.src),
+        );
+        let n = count.trim().parse().unwrap();
+        self.prerelease_version.set(Some(n));
+        return n
     }
 
     /// Returns the value of `release` above for Rust itself.
@@ -871,6 +923,30 @@ impl Build {
             Some(OutputFolder::new(name().into()))
         } else {
             None
+        }
+    }
+
+    /// Updates the actual toolstate of a tool.
+    ///
+    /// The toolstates are saved to the file specified by the key
+    /// `rust.save-toolstates` in `config.toml`. If unspecified, nothing will be
+    /// done. The file is updated immediately after this function completes.
+    pub fn save_toolstate(&self, tool: &str, state: ToolState) {
+        use std::io::{Seek, SeekFrom};
+
+        if let Some(ref path) = self.config.save_toolstates {
+            let mut file = t!(fs::OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .open(path));
+
+            let mut current_toolstates: HashMap<Box<str>, ToolState> =
+                serde_json::from_reader(&mut file).unwrap_or_default();
+            current_toolstates.insert(tool.into(), state);
+            t!(file.seek(SeekFrom::Start(0)));
+            t!(file.set_len(0));
+            t!(serde_json::to_writer(file, &current_toolstates));
         }
     }
 

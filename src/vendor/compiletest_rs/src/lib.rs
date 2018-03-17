@@ -12,10 +12,11 @@
 
 #![feature(rustc_private)]
 #![feature(test)]
+#![feature(slice_rotate)]
 
 #![deny(unused_imports)]
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(unix)]
 extern crate libc;
 extern crate test;
 extern crate rustc;
@@ -40,20 +41,15 @@ use test::TestPaths;
 use self::header::EarlyProps;
 
 pub mod uidiff;
-pub mod json;
 pub mod util;
+mod json;
 pub mod header;
 pub mod runtest;
 pub mod common;
 pub mod errors;
+mod read2;
 
 pub use common::Config;
-
-#[deprecated(since="0.2.9",
-             note="Use Config::default() instead. This method will be removed in version 0.3.0")]
-pub fn default_config() -> Config {
-    Config::default()
-}
 
 pub fn run_tests(config: &Config) {
     if config.target.contains("android") {

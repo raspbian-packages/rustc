@@ -17,8 +17,7 @@ use schema;
 use rustc::ty::maps::QueryConfig;
 use rustc::middle::cstore::{CrateStore, DepKind,
                             MetadataLoader, LinkMeta,
-                            LoadedMacro, EncodedMetadata,
-                            EncodedMetadataHashes, NativeLibraryKind};
+                            LoadedMacro, EncodedMetadata, NativeLibraryKind};
 use rustc::middle::stability::DeprecationEntry;
 use rustc::hir::def;
 use rustc::session::{CrateDisambiguator, Session};
@@ -38,7 +37,7 @@ use syntax::attr;
 use syntax::ext::base::SyntaxExtension;
 use syntax::parse::filemap_to_stream;
 use syntax::symbol::Symbol;
-use syntax_pos::{Span, NO_EXPANSION};
+use syntax_pos::{Span, NO_EXPANSION, FileName};
 use rustc_data_structures::indexed_set::IdxSetBuf;
 use rustc::hir;
 
@@ -136,12 +135,10 @@ provide! { <'tcx> tcx, def_id, other, cdata,
 
         mir
     }
-    generator_sig => { cdata.generator_sig(def_id.index, tcx) }
     mir_const_qualif => {
         (cdata.mir_const_qualif(def_id.index), Rc::new(IdxSetBuf::new_empty(0)))
     }
     typeck_tables_of => { cdata.item_body_tables(def_id.index, tcx) }
-    closure_kind => { cdata.closure_kind(def_id.index) }
     fn_sig => { cdata.fn_sig(def_id.index, tcx) }
     inherent_impls => { Rc::new(cdata.get_inherent_implementations_for_type(def_id.index)) }
     is_const_fn => { cdata.is_const_fn(def_id.index) }
@@ -297,6 +294,18 @@ pub fn provide<'tcx>(providers: &mut Providers<'tcx>) {
             assert_eq!(cnum, LOCAL_CRATE);
             let mut visible_parent_map: DefIdMap<DefId> = DefIdMap();
 
+            // Issue 46112: We want the map to prefer the shortest
+            // paths when reporting the path to an item. Therefore we
+            // build up the map via a breadth-first search (BFS),
+            // which naturally yields minimal-length paths.
+            //
+            // Note that it needs to be a BFS over the whole forest of
+            // crates, not just each individual crate; otherwise you
+            // only get paths that are locally minimal with respect to
+            // whatever crate we happened to encounter first in this
+            // traversal, but not globally minimal across all crates.
+            let bfs_queue = &mut VecDeque::new();
+
             // Preferring shortest paths alone does not guarantee a
             // deterministic result; so sort by crate num to avoid
             // hashtable iteration non-determinism. This only makes
@@ -313,16 +322,23 @@ pub fn provide<'tcx>(providers: &mut Providers<'tcx>) {
                     continue
                 }
 
-                let bfs_queue = &mut VecDeque::new();
+                bfs_queue.push_back(DefId {
+                    krate: cnum,
+                    index: CRATE_DEF_INDEX
+                });
+            }
+
+            // (restrict scope of mutable-borrow of `visible_parent_map`)
+            {
                 let visible_parent_map = &mut visible_parent_map;
                 let mut add_child = |bfs_queue: &mut VecDeque<_>,
                                      child: &def::Export,
                                      parent: DefId| {
-                    let child = child.def.def_id();
-
-                    if tcx.visibility(child) != ty::Visibility::Public {
+                    if child.vis != ty::Visibility::Public {
                         return;
                     }
+
+                    let child = child.def.def_id();
 
                     match visible_parent_map.entry(child) {
                         Entry::Occupied(mut entry) => {
@@ -339,10 +355,6 @@ pub fn provide<'tcx>(providers: &mut Providers<'tcx>) {
                     }
                 };
 
-                bfs_queue.push_back(DefId {
-                    krate: cnum,
-                    index: CRATE_DEF_INDEX
-                });
                 while let Some(def) = bfs_queue.pop_front() {
                     for child in tcx.item_children(def).iter() {
                         add_child(bfs_queue, child, def);
@@ -459,7 +471,7 @@ impl CrateStore for cstore::CStore {
         }
 
         let (name, def) = data.get_macro(id.index);
-        let source_name = format!("<{} macros>", name);
+        let source_name = FileName::Macros(name.to_string());
 
         let filemap = sess.parse_sess.codemap().new_filemap(source_name, def.body);
         let local_span = Span::new(filemap.start_pos, filemap.end_pos, NO_EXPANSION);
@@ -510,7 +522,7 @@ impl CrateStore for cstore::CStore {
                                  tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                  link_meta: &LinkMeta,
                                  reachable: &NodeSet)
-                                 -> (EncodedMetadata, EncodedMetadataHashes)
+                                 -> EncodedMetadata
     {
         encoder::encode_metadata(tcx, link_meta, reachable)
     }

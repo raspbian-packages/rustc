@@ -11,7 +11,7 @@
 //! misc. type-system utilities too small to deserve their own file
 
 use hir::def::Def;
-use hir::def_id::{DefId, LOCAL_CRATE};
+use hir::def_id::DefId;
 use hir::map::{DefPathData, Node};
 use hir;
 use ich::NodeIdHashingMode;
@@ -19,7 +19,6 @@ use middle::const_val::ConstVal;
 use traits::{self, Reveal};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::fold::TypeVisitor;
-use ty::layout::{Layout, LayoutError};
 use ty::subst::{Subst, Kind};
 use ty::TypeVariants::*;
 use util::common::ErrorReported;
@@ -428,7 +427,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             return None;
         };
 
-        self.coherent_trait((LOCAL_CRATE, drop_trait));
+        ty::maps::queries::coherent_trait::ensure(self, drop_trait);
 
         let mut dtor_did = None;
         let ty = self.type_of(adt_did);
@@ -440,12 +439,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             }
         });
 
-        let dtor_did = match dtor_did {
-            Some(dtor) => dtor,
-            None => return None,
-        };
-
-        Some(ty::Destructor { did: dtor_did })
+        Some(ty::Destructor { did: dtor_did? })
     }
 
     /// Return the set of types that are required to be alive in
@@ -625,6 +619,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr
     }
 
+    /// Given the `DefId` of a fn or closure, returns the `DefId` of
+    /// the innermost fn item that the closure is contained within.
+    /// This is a significant def-id because, when we do
+    /// type-checking, we type-check this fn item and all of its
+    /// (transitive) closures together.  Therefore, when we fetch the
+    /// `typeck_tables_of` the closure, for example, we really wind up
+    /// fetching the `typeck_tables_of` the enclosing fn item.
     pub fn closure_base_def_id(self, def_id: DefId) -> DefId {
         let mut def_id = def_id;
         while self.is_closure(def_id) {
@@ -633,6 +634,33 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             });
         }
         def_id
+    }
+
+    /// Given the def-id and substs a closure, creates the type of
+    /// `self` argument that the closure expects. For example, for a
+    /// `Fn` closure, this would return a reference type `&T` where
+    /// `T=closure_ty`.
+    ///
+    /// Returns `None` if this closure's kind has not yet been inferred.
+    /// This should only be possible during type checking.
+    ///
+    /// Note that the return value is a late-bound region and hence
+    /// wrapped in a binder.
+    pub fn closure_env_ty(self,
+                          closure_def_id: DefId,
+                          closure_substs: ty::ClosureSubsts<'tcx>)
+                          -> Option<ty::Binder<Ty<'tcx>>>
+    {
+        let closure_ty = self.mk_closure(closure_def_id, closure_substs);
+        let env_region = ty::ReLateBound(ty::DebruijnIndex::new(1), ty::BrEnv);
+        let closure_kind_ty = closure_substs.closure_kind_ty(closure_def_id, self);
+        let closure_kind = closure_kind_ty.to_opt_closure_kind()?;
+        let env_ty = match closure_kind {
+            ty::ClosureKind::Fn => self.mk_imm_ref(self.mk_region(env_region), closure_ty),
+            ty::ClosureKind::FnMut => self.mk_mut_ref(self.mk_region(env_region), closure_ty),
+            ty::ClosureKind::FnOnce => closure_ty,
+        };
+        Some(ty::Binder(env_ty))
     }
 
     /// Given the def-id of some item that has no type parameters, make
@@ -794,6 +822,8 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
             ty::ReEarlyBound(ty::EarlyBoundRegion { def_id, .. }) => {
                 self.def_id(def_id);
             }
+
+            ty::ReClosureBound(..) |
             ty::ReLateBound(..) |
             ty::ReFree(..) |
             ty::ReScope(..) |
@@ -851,30 +881,6 @@ impl<'a, 'tcx> ty::TyS<'tcx> {
                       -> bool {
         tcx.needs_drop_raw(param_env.and(self))
     }
-
-    /// Computes the layout of a type. Note that this implicitly
-    /// executes in "reveal all" mode.
-    #[inline]
-    pub fn layout<'lcx>(&'tcx self,
-                        tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                        param_env: ty::ParamEnv<'tcx>)
-                        -> Result<&'tcx Layout, LayoutError<'tcx>> {
-        let ty = tcx.erase_regions(&self);
-        let layout = tcx.layout_raw(param_env.reveal_all().and(ty));
-
-        // NB: This recording is normally disabled; when enabled, it
-        // can however trigger recursive invocations of `layout()`.
-        // Therefore, we execute it *after* the main query has
-        // completed, to avoid problems around recursive structures
-        // and the like. (Admitedly, I wasn't able to reproduce a problem
-        // here, but it seems like the right thing to do. -nmatsakis)
-        if let Ok(l) = layout {
-            Layout::record_layout_for_printing(tcx, ty, param_env, l);
-        }
-
-        layout
-    }
-
 
     /// Check whether a type is representable. This means it cannot contain unboxed
     /// structural recursion. This check is needed for structs and enums.
@@ -1184,29 +1190,10 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn layout_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                        query: ty::ParamEnvAnd<'tcx, Ty<'tcx>>)
-                        -> Result<&'tcx Layout, LayoutError<'tcx>>
-{
-    let (param_env, ty) = query.into_parts();
-
-    let rec_limit = tcx.sess.recursion_limit.get();
-    let depth = tcx.layout_depth.get();
-    if depth > rec_limit {
-        tcx.sess.fatal(
-            &format!("overflow representing the type `{}`", ty));
-    }
-
-    tcx.layout_depth.set(depth+1);
-    let layout = Layout::compute_uncached(tcx, param_env, ty);
-    tcx.layout_depth.set(depth);
-
-    layout
-}
-
 pub enum ExplicitSelf<'tcx> {
     ByValue,
     ByReference(ty::Region<'tcx>, hir::Mutability),
+    ByRawPointer(hir::Mutability),
     ByBox,
     Other
 }
@@ -1247,10 +1234,15 @@ impl<'tcx> ExplicitSelf<'tcx> {
 
         match self_arg_ty.sty {
             _ if is_self_ty(self_arg_ty) => ByValue,
-            ty::TyRef(region, ty::TypeAndMut { ty, mutbl}) if is_self_ty(ty) => {
+            ty::TyRef(region, ty::TypeAndMut { ty, mutbl }) if is_self_ty(ty) => {
                 ByReference(region, mutbl)
             }
-            ty::TyAdt(def, _) if def.is_box() && is_self_ty(self_arg_ty.boxed_ty()) => ByBox,
+            ty::TyRawPtr(ty::TypeAndMut { ty, mutbl }) if is_self_ty(ty) => {
+                ByRawPointer(mutbl)
+            }
+            ty::TyAdt(def, _) if def.is_box() && is_self_ty(self_arg_ty.boxed_ty()) => {
+                ByBox
+            }
             _ => Other
         }
     }
@@ -1262,7 +1254,6 @@ pub fn provide(providers: &mut ty::maps::Providers) {
         is_sized_raw,
         is_freeze_raw,
         needs_drop_raw,
-        layout_raw,
         ..*providers
     };
 }

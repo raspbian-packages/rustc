@@ -279,7 +279,7 @@ macro_rules! define_dep_nodes {
 
                             DepNode {
                                 kind: DepKind::$variant,
-                                hash: Fingerprint::zero(),
+                                hash: Fingerprint::ZERO,
                             }
                         }
                     )*
@@ -308,7 +308,7 @@ macro_rules! define_dep_nodes {
                 assert!(!kind.has_params());
                 DepNode {
                     kind,
-                    hash: Fingerprint::zero(),
+                    hash: Fingerprint::ZERO,
                 }
             }
 
@@ -479,6 +479,7 @@ define_dep_nodes!( <'tcx>
     [] BorrowCheck(DefId),
     [] MirBorrowCheck(DefId),
     [] UnsafetyCheckResult(DefId),
+    [] UnsafeDeriveOnReprPacked(DefId),
 
     [] Reachability,
     [] MirKeys,
@@ -498,9 +499,7 @@ define_dep_nodes!( <'tcx>
     [] IsAutoImpl(DefId),
     [] ImplTraitRef(DefId),
     [] ImplPolarity(DefId),
-    [] ClosureKind(DefId),
     [] FnSignature(DefId),
-    [] GenSignature(DefId),
     [] CoerceUnsizedInfo(DefId),
 
     [] ItemVarianceConstraints(DefId),
@@ -518,6 +517,7 @@ define_dep_nodes!( <'tcx>
     [] UsedTraitImports(DefId),
     [] HasTypeckTables(DefId),
     [] ConstEval { param_env: ParamEnvAnd<'tcx, (DefId, &'tcx Substs<'tcx>)> },
+    [] CheckMatch(DefId),
     [] SymbolName(DefId),
     [] InstanceSymbolName { instance: Instance<'tcx> },
     [] SpecializationGraph(DefId),
@@ -562,7 +562,7 @@ define_dep_nodes!( <'tcx>
     [] IsPanicRuntime(CrateNum),
     [] IsCompilerBuiltins(CrateNum),
     [] HasGlobalAllocator(CrateNum),
-    [] ExternCrate(DefId),
+    [input] ExternCrate(DefId),
     [eval_always] LintLevels,
     [] Specializes { impl1: DefId, impl2: DefId },
     [input] InScopeTraits(DefIndex),
@@ -588,12 +588,13 @@ define_dep_nodes!( <'tcx>
     [] NativeLibraryKind(DefId),
     [input] LinkArgs,
 
-    [input] NamedRegion(DefIndex),
-    [input] IsLateBound(DefIndex),
-    [input] ObjectLifetimeDefaults(DefIndex),
+    [] ResolveLifetimes(CrateNum),
+    [] NamedRegion(DefIndex),
+    [] IsLateBound(DefIndex),
+    [] ObjectLifetimeDefaults(DefIndex),
 
     [] Visibility(DefId),
-    [] DepKind(CrateNum),
+    [input] DepKind(CrateNum),
     [input] CrateName(CrateNum),
     [] ItemChildren(DefId),
     [] ExternModStmtCnum(DefId),
@@ -602,8 +603,8 @@ define_dep_nodes!( <'tcx>
     [] MissingLangItems(CrateNum),
     [] ExternConstBody(DefId),
     [] VisibleParentMap,
-    [] MissingExternCrateItem(CrateNum),
-    [] UsedCrateSource(CrateNum),
+    [input] MissingExternCrateItem(CrateNum),
+    [input] UsedCrateSource(CrateNum),
     [input] PostorderCnums,
     [input] HasCloneClosures(CrateNum),
     [input] HasCopyClosures(CrateNum),
@@ -619,7 +620,7 @@ define_dep_nodes!( <'tcx>
     [input] Freevars(DefId),
     [input] MaybeUnusedTraitImport(DefId),
     [input] MaybeUnusedExternCrates,
-    [] StabilityIndex,
+    [eval_always] StabilityIndex,
     [input] AllCrateNums,
     [] ExportedSymbols(CrateNum),
     [eval_always] CollectAndPartitionTranslationItems,

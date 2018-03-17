@@ -243,6 +243,22 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             id: LintId::of(LATE_BOUND_LIFETIME_ARGUMENTS),
             reference: "issue #42868 <https://github.com/rust-lang/rust/issues/42868>",
         },
+        FutureIncompatibleInfo {
+            id: LintId::of(SAFE_PACKED_BORROWS),
+            reference: "issue #46043 <https://github.com/rust-lang/rust/issues/46043>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(INCOHERENT_FUNDAMENTAL_IMPLS),
+            reference: "issue #46205 <https://github.com/rust-lang/rust/issues/46205>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(COERCE_NEVER),
+            reference: "issue #46325 <https://github.com/rust-lang/rust/issues/46325>",
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(TYVAR_BEHIND_RAW_POINTER),
+            reference: "issue #46906 <https://github.com/rust-lang/rust/issues/46906>",
+        },
         ]);
 
     // Register renamed and removed lints

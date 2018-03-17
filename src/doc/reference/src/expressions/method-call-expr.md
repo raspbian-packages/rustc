@@ -1,7 +1,7 @@
 # Method-call expressions
 
 A _method call_ consists of an expression followed by a single dot, an
-[identifier](identifiers.html), and a parenthesized expression-list. Method
+[identifier], and a parenthesized expression-list. Method
 calls are resolved to methods on specific traits, either statically dispatching
 to a method if the exact `self`-type of the left-hand-side is known, or
 dynamically dispatching if the left-hand-side expression is an indirect [trait
@@ -16,7 +16,10 @@ let log_pi = pi.unwrap_or(1.0).log(2.72);
 
 When resolving method calls on an expression of type `A`, Rust will use the
 following order, only looking at methods that are
-[visible](visibility-and-privacy.html) and traits that are in scope:
+[visible](visibility-and-privacy.html). If the type of `A` is a type parameter
+or `Self` in a trait definitition then steps 2-4 first consider traits from
+bounds on the type paramter, then the traits that are in scope. For other
+types, only the traits that are in scope are considered.
 
 1. Inherent methods, with receiver of type `A`, `&A`, `&mut A`.
 1. Trait methods with receiver of type `A`.
@@ -50,3 +53,5 @@ generic methods or traits are considered the same), then it is a compiler
 error. These cases require a [more specific
 syntax.](expressions/call-expr.html#disambiguating-function-calls) for method
 and function invocation.
+
+[IDENTIFIER]: identifiers.html

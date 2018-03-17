@@ -848,6 +848,9 @@ pub const NETLINK_NO_ENOBUFS: ::c_int = 5;
 pub const NETLINK_RX_RING: ::c_int = 6;
 pub const NETLINK_TX_RING: ::c_int = 7;
 
+pub const GRND_NONBLOCK: ::c_uint = 0x0001;
+pub const GRND_RANDOM: ::c_uint = 0x0002;
+
 pub const NLA_F_NESTED: ::c_int = 1 << 15;
 pub const NLA_F_NET_BYTEORDER: ::c_int = 1 << 14;
 pub const NLA_TYPE_MASK: ::c_int = !(NLA_F_NESTED | NLA_F_NET_BYTEORDER);
@@ -881,6 +884,9 @@ pub const SO_ORIGINAL_DST: ::c_int = 80;
 pub const IUTF8: ::tcflag_t = 0x00004000;
 pub const CMSPAR: ::tcflag_t = 0o10000000000;
 pub const O_TMPFILE: ::c_int = 0o20000000 | O_DIRECTORY;
+
+pub const MFD_CLOEXEC: ::c_uint = 0x0001;
+pub const MFD_ALLOW_SEALING: ::c_uint = 0x0002;
 
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
@@ -1121,6 +1127,7 @@ extern {
                           attr: *const ::pthread_attr_t,
                           f: extern fn(*mut ::c_void) -> *mut ::c_void,
                           value: *mut ::c_void) -> ::c_int;
+    pub fn __errno() -> *mut ::c_int;
 }
 
 cfg_if! {

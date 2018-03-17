@@ -17,6 +17,7 @@
 #![feature(repr_simd)]
 #![feature(abi_unadjusted)]
 #![feature(linkage)]
+#![feature(lang_items)]
 #![allow(unused_features)]
 #![no_builtins]
 #![unstable(feature = "compiler_builtins_lib",
@@ -51,7 +52,7 @@ pub mod mem;
 #[cfg(target_arch = "arm")]
 pub mod arm;
 
-#[cfg(all(armv5te, target_os = "linux", target_arch = "arm"))]
+#[cfg(all(kernel_user_helpers, target_os = "linux", target_arch = "arm"))]
 pub mod arm_linux;
 
 #[cfg(target_arch = "x86")]

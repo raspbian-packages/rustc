@@ -256,19 +256,11 @@
 #![feature(collections_range)]
 #![feature(compiler_builtins_lib)]
 #![feature(const_fn)]
-#![feature(const_max_value)]
-#![feature(const_atomic_bool_new)]
-#![feature(const_atomic_isize_new)]
-#![feature(const_atomic_usize_new)]
-#![feature(const_unsafe_cell_new)]
-#![feature(const_cell_new)]
-#![feature(const_once_new)]
-#![feature(const_ptr_null)]
-#![feature(const_ptr_null_mut)]
 #![feature(core_float)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
 #![feature(exact_size_is_empty)]
+#![feature(fs_read_write)]
 #![feature(fixed_size_array)]
 #![feature(float_from_str_radix)]
 #![feature(fn_traits)]
@@ -306,17 +298,18 @@
 #![feature(repr_align)]
 #![feature(repr_simd)]
 #![feature(rustc_attrs)]
-#![feature(rustc_const_unstable)]
 #![feature(shared)]
 #![feature(sip_hash_13)]
 #![feature(slice_bytes)]
 #![feature(slice_concat_ext)]
+#![feature(slice_internals)]
 #![feature(slice_patterns)]
 #![feature(staged_api)]
 #![feature(stmt_expr_attributes)]
 #![feature(str_char)]
 #![feature(str_internals)]
 #![feature(str_utf16)]
+#![feature(termination_trait)]
 #![feature(test, rustc_private)]
 #![feature(thread_local)]
 #![feature(toowned_clone_into)]
@@ -329,8 +322,9 @@
 #![feature(vec_push_all)]
 #![feature(doc_cfg)]
 #![feature(doc_masked)]
+#![feature(doc_spotlight)]
 #![cfg_attr(test, feature(update_panic_count))]
-#![cfg_attr(windows, feature(const_atomic_ptr_new))]
+#![cfg_attr(windows, feature(used))]
 
 #![default_lib_allocator]
 
@@ -507,6 +501,11 @@ mod memchr;
 // The runtime entry point and a few unstable public functions used by the
 // compiler
 pub mod rt;
+// The trait to support returning arbitrary types in the main function
+mod termination;
+
+#[unstable(feature = "termination_trait", issue = "43301")]
+pub use self::termination::Termination;
 
 // Include a number of private modules that exist solely to provide
 // the rustdoc documentation for primitive types. Using `include!`

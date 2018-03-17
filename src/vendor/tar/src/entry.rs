@@ -177,7 +177,7 @@ impl<'a, R: Read> Entry<'a, R> {
     /// }
     /// ```
     pub fn unpack<P: AsRef<Path>>(&mut self, dst: P) -> io::Result<()> {
-        self.fields.unpack(dst.as_ref())
+        self.fields.unpack(None, dst.as_ref())
     }
 
     /// Extracts this file under the specified path, avoiding security issues.
@@ -362,13 +362,13 @@ impl<'a> EntryFields<'a> {
 
         // Abort if target (canonical) parent is outside of `dst`
         let canon_parent = try!(parent.canonicalize());
-        let canon_dst = try!(dst.canonicalize());
-        if !canon_parent.starts_with(&canon_dst) {
+        let canon_target = try!(dst.canonicalize());
+        if !canon_parent.starts_with(&canon_target) {
             return Err(TarError::new("trying to unpack outside of destination path",
                           Error::new(ErrorKind::Other, "Invalid argument")).into());
         }
 
-        try!(self.unpack(&file_dst).map_err(|e| {
+        try!(self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`",
                                    file_dst.display()), e)
         }));
@@ -378,6 +378,7 @@ impl<'a> EntryFields<'a> {
 
     /// Returns access to the header of this entry in the archive.
     fn unpack(&mut self,
+              target_base: Option<&Path>,
               dst: &Path) -> io::Result<()> {
         let kind = self.header.entry_type();
         if kind.is_dir() {
@@ -399,7 +400,11 @@ impl<'a> EntryFields<'a> {
             }
 
             return if kind.is_hard_link() {
-                fs::hard_link(&src, dst)
+                let link_src = match target_base {
+                    None => src.into_owned(),
+                    Some(ref p) => p.join(src),
+                };
+                fs::hard_link(&link_src, dst)
             } else {
                 symlink(&src, dst)
             };
@@ -408,7 +413,7 @@ impl<'a> EntryFields<'a> {
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::windows::fs::symlink_file(src, dst)
             }
-            #[cfg(unix)]
+            #[cfg(any(unix, target_os = "redox"))]
             fn symlink(src: &Path, dst: &Path) -> io::Result<()> {
                 ::std::os::unix::fs::symlink(src, dst)
             }
@@ -471,10 +476,8 @@ impl<'a> EntryFields<'a> {
         }
         return Ok(());
 
-        #[cfg(unix)]
-        #[allow(deprecated)] // raw deprecated in 1.8
+        #[cfg(any(unix, target_os = "redox"))]
         fn set_perms(dst: &Path, mode: u32, preserve: bool) -> io::Result<()> {
-            use std::os::unix::raw;
             use std::os::unix::prelude::*;
 
             let mode = if preserve {
@@ -483,7 +486,7 @@ impl<'a> EntryFields<'a> {
                 mode & 0o777
             };
 
-            let perm = fs::Permissions::from_mode(mode as raw::mode_t);
+            let perm = fs::Permissions::from_mode(mode as _);
             fs::set_permissions(dst, perm)
         }
         #[cfg(windows)]
@@ -531,7 +534,7 @@ impl<'a> EntryFields<'a> {
         }
         // Windows does not completely support posix xattrs
         // https://en.wikipedia.org/wiki/Extended_file_attributes#Windows_NT
-        #[cfg(any(windows, not(feature = "xattr")))]
+        #[cfg(any(windows, target_os = "redox", not(feature = "xattr")))]
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }

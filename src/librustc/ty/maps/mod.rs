@@ -23,22 +23,21 @@ use middle::cstore::{NativeLibraryKind, DepKind, CrateSource, ExternConstBody};
 use middle::privacy::AccessLevels;
 use middle::reachable::ReachableSet;
 use middle::region;
-use middle::resolve_lifetime::{Region, ObjectLifetimeDefault};
+use middle::resolve_lifetime::{ResolveLifetimes, Region, ObjectLifetimeDefault};
 use middle::stability::{self, DeprecationEntry};
 use middle::lang_items::{LanguageItems, LangItem};
 use middle::exported_symbols::SymbolExportLevel;
-use middle::trans::{CodegenUnit, Stats};
+use mir::mono::{CodegenUnit, Stats};
 use mir;
 use session::{CompileResult, CrateDisambiguator};
 use session::config::OutputFilenames;
 use traits::Vtable;
 use traits::specialization_graph;
 use ty::{self, CrateInherentImpls, Ty, TyCtxt};
-use ty::layout::{Layout, LayoutError};
 use ty::steal::Steal;
 use ty::subst::Substs;
 use util::nodemap::{DefIdSet, DefIdMap, ItemLocalSet};
-use util::common::{profq_msg, ProfileQueriesMsg};
+use util::common::{profq_msg, ErrorReported, ProfileQueriesMsg};
 
 use rustc_data_structures::indexed_set::IdxSetBuf;
 use rustc_back::PanicStrategy;
@@ -167,19 +166,14 @@ define_maps! { <'tcx>
     /// for trans. This is also the only query that can fetch non-local MIR, at present.
     [] fn optimized_mir: MirOptimized(DefId) -> &'tcx mir::Mir<'tcx>,
 
-    /// Type of each closure. The def ID is the ID of the
-    /// expression defining the closure.
-    [] fn closure_kind: ClosureKind(DefId) -> ty::ClosureKind,
-
     /// The result of unsafety-checking this def-id.
     [] fn unsafety_check_result: UnsafetyCheckResult(DefId) -> mir::UnsafetyCheckResult,
 
+    /// HACK: when evaluated, this reports a "unsafe derive on repr(packed)" error
+    [] fn unsafe_derive_on_repr_packed: UnsafeDeriveOnReprPacked(DefId) -> (),
+
     /// The signature of functions and closures.
     [] fn fn_sig: FnSignature(DefId) -> ty::PolyFnSig<'tcx>,
-
-    /// Records the signature of each generator. The def ID is the ID of the
-    /// expression defining the closure.
-    [] fn generator_sig: GenSignature(DefId) -> Option<ty::PolyGenSig<'tcx>>,
 
     /// Caches CoerceUnsized kinds for impls on custom types.
     [] fn coerce_unsized_info: CoerceUnsizedInfo(DefId)
@@ -193,11 +187,13 @@ define_maps! { <'tcx>
 
     [] fn has_typeck_tables: HasTypeckTables(DefId) -> bool,
 
-    [] fn coherent_trait: coherent_trait_dep_node((CrateNum, DefId)) -> (),
+    [] fn coherent_trait: CoherenceCheckTrait(DefId) -> (),
 
     [] fn borrowck: BorrowCheck(DefId) -> Rc<BorrowCheckResult>,
-    // FIXME: shouldn't this return a `Result<(), BorrowckErrors>` instead?
-    [] fn mir_borrowck: MirBorrowCheck(DefId) -> (),
+
+    /// Borrow checks the function body. If this is a closure, returns
+    /// additional requirements that the closure's creator must verify.
+    [] fn mir_borrowck: MirBorrowCheck(DefId) -> Option<mir::ClosureRegionRequirements<'tcx>>,
 
     /// Gets a complete map from all types to their inherent impls.
     /// Not meant to be used directly outside of coherence.
@@ -213,6 +209,9 @@ define_maps! { <'tcx>
     /// other items (such as enum variant explicit discriminants).
     [] fn const_eval: const_eval_dep_node(ty::ParamEnvAnd<'tcx, (DefId, &'tcx Substs<'tcx>)>)
         -> const_val::EvalResult<'tcx>,
+
+    [] fn check_match: CheckMatch(DefId)
+        -> Result<(), ErrorReported>,
 
     /// Performs the privacy check and computes "access levels".
     [] fn privacy_access_levels: PrivacyAccessLevels(CrateNum) -> Rc<AccessLevels>,
@@ -265,7 +264,8 @@ define_maps! { <'tcx>
     [] fn is_freeze_raw: is_freeze_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>) -> bool,
     [] fn needs_drop_raw: needs_drop_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>) -> bool,
     [] fn layout_raw: layout_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>)
-                                  -> Result<&'tcx Layout, LayoutError<'tcx>>,
+                                  -> Result<&'tcx ty::layout::LayoutDetails,
+                                            ty::layout::LayoutError<'tcx>>,
 
     [] fn dylib_dependency_formats: DylibDepFormats(CrateNum)
                                     -> Rc<Vec<(CrateNum, LinkagePreference)>>,
@@ -306,6 +306,8 @@ define_maps! { <'tcx>
         -> Option<NativeLibraryKind>,
     [] fn link_args: link_args_node(CrateNum) -> Rc<Vec<String>>,
 
+    // Lifetime resolution. See `middle::resolve_lifetimes`.
+    [] fn resolve_lifetimes: ResolveLifetimes(CrateNum) -> Rc<ResolveLifetimes>,
     [] fn named_region_map: NamedRegion(DefIndex) ->
         Option<Rc<FxHashMap<ItemLocalId, Region>>>,
     [] fn is_late_bound_map: IsLateBound(DefIndex) ->
@@ -381,10 +383,6 @@ fn fulfill_obligation_dep_node<'tcx>((param_env, trait_ref):
         param_env,
         trait_ref
     }
-}
-
-fn coherent_trait_dep_node<'tcx>((_, def_id): (CrateNum, DefId)) -> DepConstructor<'tcx> {
-    DepConstructor::CoherenceCheckTrait(def_id)
 }
 
 fn crate_inherent_impls_dep_node<'tcx>(_: CrateNum) -> DepConstructor<'tcx> {

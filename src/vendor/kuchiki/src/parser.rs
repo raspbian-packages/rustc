@@ -167,4 +167,13 @@ impl TreeSink for Sink {
     fn get_template_contents(&mut self, target: &NodeRef) -> NodeRef {
         target.as_element().unwrap().template_contents.clone().unwrap()
     }
+
+    fn append_based_on_parent_node(&mut self, element: &NodeRef,
+                                   prev_element: &NodeRef, child: NodeOrText<NodeRef>) {
+        if self.has_parent_node(element) {
+            self.append_before_sibling(element, child)
+        } else {
+            self.append(prev_element, child)
+        }
+    }
 }

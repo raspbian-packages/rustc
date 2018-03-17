@@ -192,7 +192,9 @@ fn extracting_directories() {
 #[test]
 #[cfg(all(unix, feature = "xattr"))]
 fn xattrs() {
-    let td = t!(TempDir::new("tar-rs"));
+    // If /tmp is a tmpfs, xattr will fail
+    // The xattr crate's unit tests also use /var/tmp for this reason
+    let td = t!(TempDir::new_in("/var/tmp", "tar-rs"));
     let rdr = Cursor::new(tar!("xattrs.tar"));
     let mut ar = Archive::new(rdr);
     ar.set_unpack_xattrs(true);
@@ -348,7 +350,7 @@ fn extracting_malicious_tarball() {
             assert!(header.set_path(path).is_err(),
                     "was ok: {:?}", path);
             {
-                let mut h = header.as_gnu_mut().unwrap();
+                let h = header.as_gnu_mut().unwrap();
                 for (a, b) in h.name.iter_mut().zip(path.as_bytes()) {
                     *a = *b;
                 }
@@ -368,8 +370,10 @@ fn extracting_malicious_tarball() {
         append("./../rel_evil3.txt");
         append("some/../../rel_evil4.txt");
         append("");
-        append("././//./");
-        append(".");
+        append("././//./..");
+        append("..");
+        append("/////////..");
+        append("/////////");
     }
 
     let mut ar = Archive::new(&evil_tar[..]);
@@ -767,6 +771,33 @@ fn path_separators() {
     let entry = t!(entries.next().unwrap());
     assert_eq!(t!(entry.path()), long_path);
     assert!(!entry.path_bytes().contains(&b'\\'));
+
+    assert!(entries.next().is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn append_path_symlink() {
+    use std::os::unix::fs::symlink;
+    use std::env;
+    use std::borrow::Cow;
+
+    let mut ar = Builder::new(Vec::new());
+    ar.follow_symlinks(false);
+    let td = t!(TempDir::new("tar-rs"));
+
+    t!(env::set_current_dir(td.path()));
+    t!(symlink("testdest", "test"));
+    t!(ar.append_path("test"));
+
+    let rd = Cursor::new(t!(ar.into_inner()));
+    let mut ar = Archive::new(rd);
+    let mut entries = t!(ar.entries());
+
+    let entry = t!(entries.next().unwrap());
+    assert_eq!(t!(entry.path()), Path::new("test"));
+    assert_eq!(t!(entry.link_name()), Some(Cow::from(Path::new("testdest"))));
+    assert_eq!(t!(entry.header().size()), 0);
 
     assert!(entries.next().is_none());
 }

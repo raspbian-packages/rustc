@@ -1,4 +1,4 @@
-rustc (1.23.0+dfsg1-1+rpi1) buster-staging; urgency=medium
+rustc (1.24.1+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Fix clean target.
@@ -6,7 +6,40 @@ rustc (1.23.0+dfsg1-1+rpi1) buster-staging; urgency=medium
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Tue, 13 Mar 2018 02:30:48 +0000
+ -- Peter Michael Green <plugwash@raspbian.org>  Fri, 16 Mar 2018 00:05:34 +0000
+
+rustc (1.24.1+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Raise allowed-test-failures to 160 on some non-release arches: powerpc,
+    powerpcspe, sparc64, x32.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 07 Mar 2018 20:07:27 +0100
+
+rustc (1.24.1+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Steal some patches from Fedora to fix some test failures.
+  * Update debian/patches/u-make-tests-work-without-rpath.patch to try to fix
+    some more test failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 05 Mar 2018 16:25:26 +0100
+
+rustc (1.24.1+dfsg1-1~exp1) experimental; urgency=medium
+
+  * More sparc64 CABI fixes. (Closes: #888757)
+  * New upstream release.
+  * Note that s390x baseline was updated in the meantime. (Closes: #851150)
+  * Include Debian-specific patch to disable kernel helpers on armel.
+    (Closes: #891902)
+  * Include missing build-dependencies for pkg.rustc.dlstage0 build profile.
+    (Closes: #891022)
+  * Add architecture.mk mapping for armel => armv5te-unknown-linux-gnueabi.
+    (Closes: #891913)
+  * Enable debuginfo-only-std on armel as well. (Closes: #891961)
+  * Backport upstream patch to support powerpcspe. (Closes: #891542)
+  * Disable full-bootstrap again to work around upstream #48319.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 03 Mar 2018 14:23:29 +0100
 
 rustc (1.23.0+dfsg1-1) unstable; urgency=medium
 

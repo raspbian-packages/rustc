@@ -174,6 +174,7 @@ pub const RAND_MAX: ::c_int = 0x7fff_ffff;
 pub const PTHREAD_STACK_MIN: ::size_t = 16384;
 pub const SIGSTKSZ: ::size_t = 40960;
 pub const MADV_INVAL: ::c_int = 10;
+pub const MADV_SETMAP: ::c_int = 11;
 pub const O_CLOEXEC: ::c_int = 0x00020000;
 pub const O_DIRECTORY: ::c_int = 0x08000000;
 pub const F_GETLK: ::c_int = 7;
@@ -385,6 +386,32 @@ pub const NOTE_CHILD: ::uint32_t = 0x00000004;
 
 pub const SO_SNDSPACE: ::c_int = 0x100a;
 pub const SO_CPUHINT: ::c_int = 0x1030;
+
+// https://github.com/DragonFlyBSD/DragonFlyBSD/blob/master/sys/net/if.h#L101
+pub const IFF_UP: ::c_int = 0x1; // interface is up
+pub const IFF_BROADCAST: ::c_int = 0x2; // broadcast address valid
+pub const IFF_DEBUG: ::c_int = 0x4; // turn on debugging
+pub const IFF_LOOPBACK: ::c_int = 0x8; // is a loopback net
+pub const IFF_POINTOPOINT: ::c_int = 0x10; // interface is point-to-point link
+pub const IFF_SMART: ::c_int = 0x20; // interface manages own routes
+pub const IFF_RUNNING: ::c_int = 0x40; // resources allocated
+pub const IFF_NOARP: ::c_int = 0x80; // no address resolution protocol
+pub const IFF_PROMISC: ::c_int = 0x100; // receive all packets
+pub const IFF_ALLMULTI: ::c_int = 0x200; // receive all multicast packets
+pub const IFF_OACTIVE_COMPAT: ::c_int = 0x400; // was transmission in progress
+pub const IFF_SIMPLEX: ::c_int = 0x800; // can't hear own transmissions
+pub const IFF_LINK0: ::c_int = 0x1000; // per link layer defined bit
+pub const IFF_LINK1: ::c_int = 0x2000; // per link layer defined bit
+pub const IFF_LINK2: ::c_int = 0x4000; // per link layer defined bit
+pub const IFF_ALTPHYS: ::c_int = IFF_LINK2; // use alternate physical connection
+pub const IFF_MULTICAST: ::c_int = 0x8000; // supports multicast
+// was interface is in polling mode
+pub const IFF_POLLING_COMPAT: ::c_int = 0x10000;
+pub const IFF_PPROMISC: ::c_int = 0x20000; // user-requested promisc mode
+pub const IFF_MONITOR: ::c_int = 0x40000; // user-requested monitor mode
+pub const IFF_STATICARP: ::c_int = 0x80000; // static ARP
+pub const IFF_NPOLLING: ::c_int = 0x100000; // interface is in polling mode
+pub const IFF_IDIRECT: ::c_int = 0x200000; // direct input
 
 //
 // sys/netinet/in.h
@@ -686,6 +713,9 @@ pub const _SC_V7_LP64_OFF64: ::c_int = 124;
 pub const _SC_V7_LPBIG_OFFBIG: ::c_int = 125;
 pub const _SC_THREAD_ROBUST_PRIO_INHERIT: ::c_int = 126;
 pub const _SC_THREAD_ROBUST_PRIO_PROTECT: ::c_int = 127;
+
+pub const WCONTINUED: ::c_int = 4;
+pub const WSTOPPED: ::c_int = 0o177;
 
 extern {
     pub fn mprotect(addr: *mut ::c_void, len: ::size_t, prot: ::c_int)

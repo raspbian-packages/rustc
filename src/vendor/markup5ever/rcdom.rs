@@ -265,6 +265,18 @@ impl TreeSink for RcDom {
         parent.children.borrow_mut().insert(i, child);
     }
 
+    fn append_based_on_parent_node(&mut self,
+        element: &Self::Handle,
+        prev_element: &Self::Handle,
+        child: NodeOrText<Self::Handle>) {
+
+        if self.has_parent_node(element) {
+            self.append_before_sibling(element, child);
+        } else {
+            self.append(prev_element, child);
+        }
+    }
+
     fn append_doctype_to_document(&mut self,
                                   name: StrTendril,
                                   public_id: StrTendril,
@@ -326,7 +338,7 @@ impl Default for RcDom {
 impl Serialize for Handle {
     fn serialize<S>(&self, serializer: &mut S, traversal_scope: TraversalScope) -> io::Result<()>
     where S: Serializer {
-        match (traversal_scope, &self.data) {
+        match (&traversal_scope, &self.data) {
             (_, &NodeData::Element { ref name, ref attrs, .. }) => {
                 if traversal_scope == IncludeNode {
                     try!(serializer.start_elem(name.clone(),
@@ -343,28 +355,28 @@ impl Serialize for Handle {
                 Ok(())
             }
 
-            (ChildrenOnly, &NodeData::Document) => {
+            (&ChildrenOnly(_), &NodeData::Document) => {
                 for handle in self.children.borrow().iter() {
                     try!(handle.clone().serialize(serializer, IncludeNode));
                 }
                 Ok(())
             }
 
-            (ChildrenOnly, _) => Ok(()),
+            (&ChildrenOnly(_), _) => Ok(()),
 
-            (IncludeNode, &NodeData::Doctype { ref name, .. }) => {
+            (&IncludeNode, &NodeData::Doctype { ref name, .. }) => {
                 serializer.write_doctype(&name)
             }
-            (IncludeNode, &NodeData::Text { ref contents }) => {
+            (&IncludeNode, &NodeData::Text { ref contents }) => {
                 serializer.write_text(&contents.borrow())
             }
-            (IncludeNode, &NodeData::Comment { ref contents }) => {
+            (&IncludeNode, &NodeData::Comment { ref contents }) => {
                 serializer.write_comment(&contents)
             }
-            (IncludeNode, &NodeData::ProcessingInstruction { ref target, ref contents }) => {
+            (&IncludeNode, &NodeData::ProcessingInstruction { ref target, ref contents }) => {
                 serializer.write_processing_instruction(target, contents)
             },
-            (IncludeNode, &NodeData::Document) => {
+            (&IncludeNode, &NodeData::Document) => {
                 panic!("Can't serialize Document node itself")
             }
         }

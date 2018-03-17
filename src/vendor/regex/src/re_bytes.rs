@@ -250,7 +250,7 @@ impl Regex {
     /// with a `usize`.
     ///
     /// The `0`th capture group is always unnamed, so it must always be
-    /// accessed with `at(0)` or `[0]`.
+    /// accessed with `get(0)` or `[0]`.
     pub fn captures<'t>(&self, text: &'t [u8]) -> Option<Captures<'t>> {
         let mut locs = self.locations();
         self.read_captures_at(&mut locs, text, 0).map(|_| Captures {
@@ -494,18 +494,19 @@ impl Regex {
         mut rep: R,
     ) -> Cow<'t, [u8]> {
         if let Some(rep) = rep.no_expansion() {
+            let mut it = self.find_iter(text).enumerate().peekable();
+            if it.peek().is_none() {
+                return Cow::Borrowed(text);
+            }
             let mut new = Vec::with_capacity(text.len());
             let mut last_match = 0;
-            for (i, m) in self.find_iter(text).enumerate() {
+            for (i, m) in it {
                 if limit > 0 && i >= limit {
                     break
                 }
                 new.extend_from_slice(&text[last_match..m.start()]);
                 new.extend_from_slice(&rep);
                 last_match = m.end();
-            }
-            if last_match == 0 {
-                return Cow::Borrowed(text);
             }
             new.extend_from_slice(&text[last_match..]);
             return Cow::Owned(new);
@@ -889,7 +890,7 @@ impl<'c, 't> fmt::Debug for CapturesDebug<'c, 't> {
         let mut map = f.debug_map();
         for (slot, m) in self.0.locs.iter().enumerate() {
             let m = m.map(|(s, e)| escape_bytes(&self.0.text[s..e]));
-            if let Some(ref name) = slot_to_name.get(&slot) {
+            if let Some(name) = slot_to_name.get(&slot) {
                 map.entry(&name, &m);
             } else {
                 map.entry(&slot, &m);
@@ -996,7 +997,7 @@ impl<'a> Replacer for &'a [u8] {
         caps.expand(*self, dst);
     }
 
-    fn no_expansion<'r>(&'r mut self) -> Option<Cow<'r, [u8]>> {
+    fn no_expansion(&mut self) -> Option<Cow<[u8]>> {
         match memchr(b'$', *self) {
             Some(_) => None,
             None => Some(Cow::Borrowed(*self)),
@@ -1010,7 +1011,7 @@ impl<F> Replacer for F where F: FnMut(&Captures) -> Vec<u8> {
     }
 }
 
-/// NoExpand indicates literal byte string replacement.
+/// `NoExpand` indicates literal byte string replacement.
 ///
 /// It can be used with `replace` and `replace_all` to do a literal byte string
 /// replacement without expanding `$name` to their corresponding capture
@@ -1025,7 +1026,7 @@ impl<'t> Replacer for NoExpand<'t> {
         dst.extend_from_slice(self.0);
     }
 
-    fn no_expansion<'r>(&'r mut self) -> Option<Cow<'r, [u8]>> {
+    fn no_expansion(&mut self) -> Option<Cow<[u8]>> {
         Some(Cow::Borrowed(self.0))
     }
 }

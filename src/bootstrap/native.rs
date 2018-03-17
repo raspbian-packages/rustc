@@ -110,10 +110,7 @@ impl Step for Llvm {
             None => "X86;ARM;AArch64;Mips;PowerPC;SystemZ;JSBackend;MSP430;Sparc;NVPTX;Hexagon",
         };
 
-        let llvm_exp_targets = match build.config.llvm_experimental_targets {
-            Some(ref s) => s,
-            None => "",
-        };
+        let llvm_exp_targets = &build.config.llvm_experimental_targets;
 
         let assertions = if build.config.llvm_assertions {"ON"} else {"OFF"};
 
@@ -319,7 +316,7 @@ impl Step for TestHelpers {
            .warnings(false)
            .debug(false)
            .file(build.src.join("src/rt/rust_test_helpers.c"))
-           .compile("librust_test_helpers.a");
+           .compile("rust_test_helpers");
     }
 }
 
@@ -443,6 +440,7 @@ impl Step for Openssl {
             "mips64el-unknown-linux-gnuabi64" => "linux64-mips64",
             "mipsel-unknown-linux-gnu" => "linux-mips32",
             "powerpc-unknown-linux-gnu" => "linux-ppc",
+            "powerpc-unknown-linux-gnuspe" => "linux-ppc",
             "powerpc64-unknown-linux-gnu" => "linux-ppc64",
             "powerpc64le-unknown-linux-gnu" => "linux-ppc64le",
             "s390x-unknown-linux-gnu" => "linux64-s390x",

@@ -163,7 +163,8 @@ debian/config.toml: debian/config.toml.in
 		"$<" > "$@"
 	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
 	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
-	[ $(DEB_BUILD_ARCH) != armhf ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
+	[ $(DEB_BUILD_ARCH) != armhf -a \
+	  $(DEB_BUILD_ARCH) != armel ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
 
 debian/rust-src.%: debian/rust-src.%.in
 	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \
@@ -217,6 +218,9 @@ endif
 
 TEST_LOG = debian/rustc-tests.log
 FAILURES_ALLOWED = 5
+ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
+  FAILURES_ALLOWED = 160
+endif
 FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
@@ -241,7 +245,6 @@ ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	  echo "Check the logs further above for details."; \
 	  false; \
 	fi
->>>>>>> debpsuedomerge
 # don't continue if RUSTBUILD_TEST_FLAGS is non-empty
 	test -z "$(RUSTBUILD_TEST_FLAGS)"
 endif

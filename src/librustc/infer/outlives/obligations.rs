@@ -88,6 +88,12 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
         body_id: ast::NodeId,
         obligation: RegionObligation<'tcx>,
     ) {
+        debug!(
+            "register_region_obligation(body_id={:?}, obligation={:?})",
+            body_id,
+            obligation
+        );
+
         self.region_obligations
             .borrow_mut()
             .push((body_id, obligation));
@@ -138,6 +144,8 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
             "cannot process registered region obligations in a snapshot"
         );
 
+        debug!("process_registered_region_obligations()");
+
         // pull out the region obligations with the given `body_id` (leaving the rest)
         let mut my_region_obligations = Vec::with_capacity(self.region_obligations.borrow().len());
         {
@@ -156,6 +164,13 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
             cause,
         } in my_region_obligations
         {
+            debug!(
+                "process_registered_region_obligations: sup_type={:?} sub_region={:?} cause={:?}",
+                sup_type,
+                sub_region,
+                cause
+            );
+
             let origin = SubregionOrigin::from_obligation_cause(
                 &cause,
                 || infer::RelateParamBound(cause.span, sup_type),
@@ -179,18 +194,6 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
         let outlives =
             TypeOutlives::new(self, region_bound_pairs, implicit_region_bound, param_env);
         outlives.type_must_outlive(origin, ty, region);
-    }
-
-    /// Ignore the region obligations, not bothering to prove
-    /// them. This function should not really exist; it is used to
-    /// accommodate some older code for the time being.
-    pub fn ignore_region_obligations(&self) {
-        assert!(
-            !self.in_snapshot.get(),
-            "cannot ignore registered region obligations in a snapshot"
-        );
-
-        self.region_obligations.borrow_mut().clear();
     }
 }
 
@@ -615,7 +618,7 @@ impl<'cx, 'gcx, 'tcx> TypeOutlives<'cx, 'gcx, 'tcx> {
         predicates
             .into_iter()
             .filter_map(|p| p.as_ref().to_opt_type_outlives())
-            .filter_map(|p| self.tcx().no_late_bound_regions(&p))
+            .filter_map(|p| p.no_late_bound_regions())
             .filter(|p| p.0 == ty)
             .map(|p| p.1)
             .collect()

@@ -27,14 +27,15 @@ pub trait QueryConfig {
 pub(super) trait QueryDescription<'tcx>: QueryConfig {
     fn describe(tcx: TyCtxt, key: Self::Key) -> String;
 
+    #[inline]
     fn cache_on_disk(_: Self::Key) -> bool {
         false
     }
 
-    fn load_from_disk<'a>(_: TyCtxt<'a, 'tcx, 'tcx>,
+    fn try_load_from_disk(_: TyCtxt<'_, 'tcx, 'tcx>,
                           _: SerializedDepNodeIndex)
-                          -> Self::Value {
-        bug!("QueryDescription::load_from_disk() called for unsupport query.")
+                          -> Option<Self::Value> {
+        bug!("QueryDescription::load_from_disk() called for an unsupported query.")
     }
 }
 
@@ -101,7 +102,7 @@ impl<'tcx> QueryDescription<'tcx> for queries::type_param_predicates<'tcx> {
 }
 
 impl<'tcx> QueryDescription<'tcx> for queries::coherent_trait<'tcx> {
-    fn describe(tcx: TyCtxt, (_, def_id): (CrateNum, DefId)) -> String {
+    fn describe(tcx: TyCtxt, def_id: DefId) -> String {
         format!("coherence checking all impls of trait `{}`",
                 tcx.item_path_str(def_id))
     }
@@ -165,6 +166,18 @@ impl<'tcx> QueryDescription<'tcx> for queries::mir_keys<'tcx> {
 impl<'tcx> QueryDescription<'tcx> for queries::symbol_name<'tcx> {
     fn describe(_tcx: TyCtxt, instance: ty::Instance<'tcx>) -> String {
         format!("computing the symbol for `{}`", instance)
+    }
+
+    #[inline]
+    fn cache_on_disk(_: Self::Key) -> bool {
+        true
+    }
+
+    #[inline]
+    fn try_load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              id: SerializedDepNodeIndex)
+                              -> Option<Self::Value> {
+        tcx.on_disk_query_result_cache.try_load_query_result(tcx, id)
     }
 }
 
@@ -234,6 +247,18 @@ impl<'tcx> QueryDescription<'tcx> for queries::const_is_rvalue_promotable_to_sta
         format!("const checking if rvalue is promotable to static `{}`",
             tcx.item_path_str(def_id))
     }
+
+    #[inline]
+    fn cache_on_disk(_: Self::Key) -> bool {
+        true
+    }
+
+    #[inline]
+    fn try_load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          id: SerializedDepNodeIndex)
+                          -> Option<Self::Value> {
+        tcx.on_disk_query_result_cache.try_load_query_result(tcx, id)
+    }
 }
 
 impl<'tcx> QueryDescription<'tcx> for queries::rvalue_promotable_map<'tcx> {
@@ -253,6 +278,18 @@ impl<'tcx> QueryDescription<'tcx> for queries::is_mir_available<'tcx> {
 impl<'tcx> QueryDescription<'tcx> for queries::trans_fulfill_obligation<'tcx> {
     fn describe(tcx: TyCtxt, key: (ty::ParamEnv<'tcx>, ty::PolyTraitRef<'tcx>)) -> String {
         format!("checking if `{}` fulfills its obligations", tcx.item_path_str(key.1.def_id()))
+    }
+
+    #[inline]
+    fn cache_on_disk(_: Self::Key) -> bool {
+        true
+    }
+
+    #[inline]
+    fn try_load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                              id: SerializedDepNodeIndex)
+                              -> Option<Self::Value> {
+        tcx.on_disk_query_result_cache.try_load_query_result(tcx, id)
     }
 }
 
@@ -406,6 +443,12 @@ impl<'tcx> QueryDescription<'tcx> for queries::link_args<'tcx> {
     }
 }
 
+impl<'tcx> QueryDescription<'tcx> for queries::resolve_lifetimes<'tcx> {
+    fn describe(_tcx: TyCtxt, _: CrateNum) -> String {
+        format!("resolving lifetimes")
+    }
+}
+
 impl<'tcx> QueryDescription<'tcx> for queries::named_region_map<'tcx> {
     fn describe(_tcx: TyCtxt, _: DefIndex) -> String {
         format!("looking up a named region")
@@ -556,12 +599,54 @@ impl<'tcx> QueryDescription<'tcx> for queries::typeck_tables_of<'tcx> {
         def_id.is_local()
     }
 
-    fn load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    fn try_load_from_disk(tcx: TyCtxt<'_, 'tcx, 'tcx>,
                           id: SerializedDepNodeIndex)
-                          -> Self::Value {
-        let typeck_tables: ty::TypeckTables<'tcx> = tcx.on_disk_query_result_cache
-                                                       .load_query_result(tcx, id);
-        tcx.alloc_tables(typeck_tables)
+                          -> Option<Self::Value> {
+        let typeck_tables: Option<ty::TypeckTables<'tcx>> = tcx
+            .on_disk_query_result_cache
+            .try_load_query_result(tcx, id);
+
+        typeck_tables.map(|tables| tcx.alloc_tables(tables))
     }
 }
 
+impl<'tcx> QueryDescription<'tcx> for queries::optimized_mir<'tcx> {
+    #[inline]
+    fn cache_on_disk(def_id: Self::Key) -> bool {
+        def_id.is_local()
+    }
+
+    fn try_load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          id: SerializedDepNodeIndex)
+                          -> Option<Self::Value> {
+        let mir: Option<::mir::Mir<'tcx>> = tcx.on_disk_query_result_cache
+                                               .try_load_query_result(tcx, id);
+        mir.map(|x| tcx.alloc_mir(x))
+    }
+}
+
+macro_rules! impl_disk_cacheable_query(
+    ($query_name:ident, |$key:tt| $cond:expr) => {
+        impl<'tcx> QueryDescription<'tcx> for queries::$query_name<'tcx> {
+            #[inline]
+            fn cache_on_disk($key: Self::Key) -> bool {
+                $cond
+            }
+
+            #[inline]
+            fn try_load_from_disk<'a>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                      id: SerializedDepNodeIndex)
+                                      -> Option<Self::Value> {
+                tcx.on_disk_query_result_cache.try_load_query_result(tcx, id)
+            }
+        }
+    }
+);
+
+impl_disk_cacheable_query!(unsafety_check_result, |def_id| def_id.is_local());
+impl_disk_cacheable_query!(borrowck, |def_id| def_id.is_local());
+impl_disk_cacheable_query!(mir_borrowck, |def_id| def_id.is_local());
+impl_disk_cacheable_query!(mir_const_qualif, |def_id| def_id.is_local());
+impl_disk_cacheable_query!(check_match, |def_id| def_id.is_local());
+impl_disk_cacheable_query!(contains_extern_indicator, |_| true);
+impl_disk_cacheable_query!(def_symbol_name, |_| true);

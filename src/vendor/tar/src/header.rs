@@ -1,4 +1,4 @@
-#[cfg(unix)] use std::os::unix::prelude::*;
+#[cfg(any(unix, target_os = "redox"))] use std::os::unix::prelude::*;
 #[cfg(windows)] use std::os::windows::prelude::*;
 
 use std::borrow::Cow;
@@ -6,6 +6,7 @@ use std::fmt;
 use std::fs;
 use std::io;
 use std::iter::repeat;
+use std::iter;
 use std::mem;
 use std::path::{Path, PathBuf, Component};
 use std::str;
@@ -139,11 +140,12 @@ impl Header {
     /// atime/ctime metadata attributes of files.
     pub fn new_gnu() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        {
-            let gnu = header.cast_mut::<GnuHeader>();
+        unsafe {
+            let gnu = cast_mut::<_, GnuHeader>(&mut header);
             gnu.magic = *b"ustar ";
             gnu.version = *b" \0";
         }
+        header.set_mtime(0);
         header
     }
 
@@ -156,11 +158,12 @@ impl Header {
     /// UStar is also the basis used for pax archives.
     pub fn new_ustar() -> Header {
         let mut header = Header { bytes: [0; 512] };
-        {
-            let gnu = header.cast_mut::<UstarHeader>();
+        unsafe {
+            let gnu = cast_mut::<_, UstarHeader>(&mut header);
             gnu.magic = *b"ustar\0";
             gnu.version = *b"00";
         }
+        header.set_mtime(0);
         header
     }
 
@@ -171,26 +174,18 @@ impl Header {
     /// format limits the path name limit and isn't able to contain extra
     /// metadata like atime/ctime.
     pub fn new_old() -> Header {
-        Header { bytes: [0; 512] }
-    }
-
-    fn cast<T>(&self) -> &T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &*(self as *const Header as *const T) }
-    }
-
-    fn cast_mut<T>(&mut self) -> &mut T {
-        assert_eq!(mem::size_of_val(self), mem::size_of::<T>());
-        unsafe { &mut *(self as *mut Header as *mut T) }
+        let mut header = Header { bytes: [0; 512] };
+        header.set_mtime(0);
+        header
     }
 
     fn is_ustar(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        let ustar = unsafe { cast::<_, UstarHeader>(self) };
         ustar.magic[..] == b"ustar\0"[..] && ustar.version[..] == b"00"[..]
     }
 
     fn is_gnu(&self) -> bool {
-        let ustar = self.cast::<UstarHeader>();
+        let ustar = unsafe { cast::<_, UstarHeader>(self) };
         ustar.magic[..] == b"ustar "[..] && ustar.version[..] == b" \0"[..]
     }
 
@@ -199,12 +194,12 @@ impl Header {
     /// This view will always succeed as all archive header formats will fill
     /// out at least the fields specified in the old header format.
     pub fn as_old(&self) -> &OldHeader {
-        self.cast()
+        unsafe { cast(self) }
     }
 
     /// Same as `as_old`, but the mutable version.
     pub fn as_old_mut(&mut self) -> &mut OldHeader {
-        self.cast_mut()
+        unsafe { cast_mut(self) }
     }
 
     /// View this archive header as a raw UStar archive header.
@@ -217,12 +212,12 @@ impl Header {
     /// magic/version fields of the UStar format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_ustar(&self) -> Option<&UstarHeader> {
-        if self.is_ustar() {Some(self.cast())} else {None}
+        if self.is_ustar() {Some(unsafe { cast(self) })} else {None}
     }
 
     /// Same as `as_ustar_mut`, but the mutable version.
     pub fn as_ustar_mut(&mut self) -> Option<&mut UstarHeader> {
-        if self.is_ustar() {Some(self.cast_mut())} else {None}
+        if self.is_ustar() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
     /// View this archive header as a raw GNU archive header.
@@ -235,12 +230,12 @@ impl Header {
     /// magic/version fields of the GNU format have the appropriate values,
     /// returning `None` if they aren't correct.
     pub fn as_gnu(&self) -> Option<&GnuHeader> {
-        if self.is_gnu() {Some(self.cast())} else {None}
+        if self.is_gnu() {Some(unsafe { cast(self) })} else {None}
     }
 
     /// Same as `as_gnu`, but the mutable version.
     pub fn as_gnu_mut(&mut self) -> Option<&mut GnuHeader> {
-        if self.is_gnu() {Some(self.cast_mut())} else {None}
+        if self.is_gnu() {Some(unsafe { cast_mut(self) })} else {None}
     }
 
     /// Returns a view into this header as a byte array.
@@ -601,15 +596,26 @@ impl Header {
     /// Sets the checksum field of this header based on the current fields in
     /// this header.
     pub fn set_cksum(&mut self) {
-        self.as_old_mut().cksum = *b"        ";
-        let cksum = self.bytes.iter().fold(0, |a, b| a + (*b as u32));
+        let cksum = self.calculate_cksum();
         octal_into(&mut self.as_old_mut().cksum, cksum);
+    }
+
+    fn calculate_cksum(&self) -> u32 {
+        let old = self.as_old();
+        let start = old as *const _ as usize;
+        let cksum_start = old.cksum.as_ptr() as *const _ as usize;
+        let offset = cksum_start - start;
+        let len = old.cksum.len();
+        self.bytes[0..offset].iter()
+            .chain(iter::repeat(&b' ').take(len))
+            .chain(&self.bytes[offset + len..])
+            .fold(0, |a, b| a + (*b as u32))
     }
 
     fn fill_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
         self.fill_platform_from(meta, mode);
         // Set size of directories to zero
-        self.set_size(if meta.is_dir() { 0 } else { meta.len() });
+        self.set_size(if meta.is_dir() || meta.file_type().is_symlink() { 0 } else { meta.len() });
         if let Some(ustar) = self.as_ustar_mut() {
             ustar.set_device_major(0);
             ustar.set_device_minor(0);
@@ -620,10 +626,8 @@ impl Header {
         }
     }
 
-    #[cfg(unix)]
+    #[cfg(any(unix, target_os = "redox"))]
     fn fill_platform_from(&mut self, meta: &fs::Metadata, mode: HeaderMode) {
-        use libc;
-
         match mode {
             HeaderMode::Complete => {
                 self.set_mtime(meta.mtime() as u64);
@@ -658,15 +662,32 @@ impl Header {
         // [1]: https://github.com/alexcrichton/tar-rs/issues/70
 
         // TODO: need to bind more file types
-        self.set_entry_type(match meta.mode() as libc::mode_t & libc::S_IFMT {
-            libc::S_IFREG => EntryType::file(),
-            libc::S_IFLNK => EntryType::symlink(),
-            libc::S_IFCHR => EntryType::character_special(),
-            libc::S_IFBLK => EntryType::block_special(),
-            libc::S_IFDIR => EntryType::dir(),
-            libc::S_IFIFO => EntryType::fifo(),
-            _ => EntryType::new(b' '),
-        });
+        self.set_entry_type(entry_type(meta.mode()));
+
+        #[cfg(not(target_os = "redox"))]
+        fn entry_type(mode: u32) -> EntryType {
+            use libc;
+            match mode as libc::mode_t & libc::S_IFMT {
+                libc::S_IFREG => EntryType::file(),
+                libc::S_IFLNK => EntryType::symlink(),
+                libc::S_IFCHR => EntryType::character_special(),
+                libc::S_IFBLK => EntryType::block_special(),
+                libc::S_IFDIR => EntryType::dir(),
+                libc::S_IFIFO => EntryType::fifo(),
+                _ => EntryType::new(b' '),
+            }
+        }
+
+        #[cfg(target_os = "redox")]
+        fn entry_type(mode: u32) -> EntryType {
+            use syscall;
+            match mode as u16 & syscall::MODE_TYPE {
+                syscall::MODE_FILE => EntryType::file(),
+                syscall::MODE_SYMLINK => EntryType::symlink(),
+                syscall::MODE_DIR => EntryType::dir(),
+                _ => EntryType::new(b' '),
+            }
+        }
     }
 
     #[cfg(windows)]
@@ -720,11 +741,106 @@ impl Header {
             EntryType::new(b' ')
         });
     }
+
+    fn debug_fields(&self, b: &mut fmt::DebugStruct) {
+        if let Ok(entry_size) = self.entry_size() {
+            b.field("entry_size", &entry_size);
+        }
+        if let Ok(size) = self.size() {
+            b.field("size", &size);
+        }
+        if let Ok(path) = self.path() {
+            b.field("path", &path);
+        }
+        if let Ok(link_name) = self.link_name() {
+            b.field("link_name", &link_name);
+        }
+        if let Ok(mode) = self.mode() {
+            b.field("mode", &DebugAsOctal(mode));
+        }
+        if let Ok(uid) = self.uid() {
+            b.field("uid", &uid);
+        }
+        if let Ok(gid) = self.gid() {
+            b.field("gid", &gid);
+        }
+        if let Ok(mtime) = self.mtime() {
+            b.field("mtime", &mtime);
+        }
+        if let Ok(username) = self.username() {
+            b.field("username", &username);
+        }
+        if let Ok(groupname) = self.groupname() {
+            b.field("groupname", &groupname);
+        }
+        if let Ok(device_major) = self.device_major() {
+            b.field("device_major", &device_major);
+        }
+        if let Ok(device_minor) = self.device_minor() {
+            b.field("device_minor", &device_minor);
+        }
+        if let Ok(cksum) = self.cksum() {
+            b.field("cksum", &cksum);
+            b.field("cksum_valid", &(cksum == self.calculate_cksum()));
+        }
+    }
+}
+
+struct DebugAsOctal<T>(T);
+
+impl<T: fmt::Octal> fmt::Debug for DebugAsOctal<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Octal::fmt(&self.0, f)
+    }
+}
+
+unsafe fn cast<T, U>(a: &T) -> &U {
+    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
+    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
+    &*(a as *const T as *const U)
+}
+
+unsafe fn cast_mut<T, U>(a: &mut T) -> &mut U {
+    assert_eq!(mem::size_of_val(a), mem::size_of::<U>());
+    assert_eq!(mem::align_of_val(a), mem::align_of::<U>());
+    &mut *(a as *mut T as *mut U)
 }
 
 impl Clone for Header {
     fn clone(&self) -> Header {
         Header { bytes: self.bytes }
+    }
+}
+
+impl fmt::Debug for Header {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Some(me) = self.as_ustar() {
+            me.fmt(f)
+        } else if let Some(me) = self.as_gnu() {
+            me.fmt(f)
+        } else {
+            self.as_old().fmt(f)
+        }
+    }
+}
+
+impl OldHeader {
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for OldHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("OldHeader");
+        self.as_header().debug_fields(&mut f);
+        f.finish()
     }
 }
 
@@ -823,6 +939,24 @@ impl UstarHeader {
     pub fn set_device_minor(&mut self, minor: u32) {
         octal_into(&mut self.dev_minor, minor);
     }
+
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for UstarHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("UstarHeader");
+        self.as_header().debug_fields(&mut f);
+        f.finish()
+    }
 }
 
 impl GnuHeader {
@@ -908,6 +1042,46 @@ impl GnuHeader {
     pub fn is_extended(&self) -> bool {
         self.isextended[0] == 1
     }
+
+    /// Views this as a normal `Header`
+    pub fn as_header(&self) -> &Header {
+        unsafe { cast(self) }
+    }
+
+    /// Views this as a normal `Header`
+    pub fn as_header_mut(&mut self) -> &mut Header {
+        unsafe { cast_mut(self) }
+    }
+}
+
+impl fmt::Debug for GnuHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("GnuHeader");
+        self.as_header().debug_fields(&mut f);
+        if let Ok(atime) = self.atime() {
+            f.field("atime", &atime);
+        }
+        if let Ok(ctime) = self.ctime() {
+            f.field("ctime", &ctime);
+        }
+        f.field("is_extended", &self.is_extended())
+         .field("sparse", &DebugSparseHeaders(&self.sparse))
+         .finish()
+    }
+}
+
+struct DebugSparseHeaders<'a>(&'a [GnuSparseHeader]);
+
+impl<'a> fmt::Debug for DebugSparseHeaders<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_list();
+        for header in self.0 {
+            if !header.is_empty() {
+                f.entry(header);
+            }
+        }
+        f.finish()
+    }
 }
 
 impl GnuSparseHeader {
@@ -928,6 +1102,19 @@ impl GnuSparseHeader {
     /// Returns `Err` for a malformed `numbytes` field.
     pub fn length(&self) -> io::Result<u64> {
         octal_from(&self.numbytes)
+    }
+}
+
+impl fmt::Debug for GnuSparseHeader {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let mut f = f.debug_struct("GnuSparseHeader");
+        if let Ok(offset) = self.offset() {
+            f.field("offset", &offset);
+        }
+        if let Ok(length) = self.length() {
+            f.field("length", &length);
+        }
+        f.finish()
     }
 }
 
@@ -970,13 +1157,27 @@ impl Default for GnuExtSparseHeader {
 }
 
 fn octal_from(slice: &[u8]) -> io::Result<u64> {
-    let num = match str::from_utf8(truncate(slice)) {
-        Ok(n) => n,
-        Err(_) => return Err(other("numeric field did not have utf-8 text")),
-    };
-    match u64::from_str_radix(num.trim(), 8) {
-        Ok(n) => Ok(n),
-        Err(_) => Err(other("numeric field was not a number"))
+    if slice[0] & 0x80 != 0 {
+        // number is expressed in binary as a GNU numeric extension -
+        // see https://www.freebsd.org/cgi/man.cgi?query=tar&sektion=5&manpath=FreeBSD+8-current
+        // under section "Numeric Extensions"
+        let mut total = (slice[0] ^ 0x80) as u64;
+        let mut index = 1;
+        while index < slice.len() {
+            total <<= 8;
+            total |= slice[index] as u64;
+            index += 1;
+        }
+        Ok(total)
+    } else {
+        let num = match str::from_utf8(truncate(slice)) {
+            Ok(n) => n,
+            Err(_) => return Err(other("numeric field did not have utf-8 text")),
+        };
+        match u64::from_str_radix(num.trim(), 8) {
+            Ok(n) => Ok(n),
+            Err(_) => Err(other("numeric field was not a number"))
+        }
     }
 }
 
@@ -1022,6 +1223,7 @@ fn copy_path_into(mut slot: &mut [u8],
                   path: &Path,
                   is_link_name: bool) -> io::Result<()> {
     let mut emitted = false;
+    let mut needs_slash = false;
     for component in path.components() {
         let bytes = try!(path2bytes(Path::new(component.as_os_str())));
         match (component, is_link_name) {
@@ -1032,12 +1234,14 @@ fn copy_path_into(mut slot: &mut [u8],
             (Component::ParentDir, false) => {
                 return Err(other("paths in archives must not have `..`"))
             }
+            // Allow "./" as the path
+            (Component::CurDir, false) if path.components().count() == 1 => {},
             (Component::CurDir, false) => continue,
             (Component::Normal(_), _) |
             (_, true) => {}
         };
-        if emitted {
-            try!(copy(&mut slot, &[b'/']));
+        if needs_slash {
+            try!(copy(&mut slot, b"/"));
         }
         if bytes.contains(&b'/') {
             if let Component::Normal(..) = component {
@@ -1045,6 +1249,9 @@ fn copy_path_into(mut slot: &mut [u8],
             }
         }
         try!(copy(&mut slot, &*bytes));
+        if &*bytes != b"/" {
+            needs_slash = true;
+        }
         emitted = true;
     }
     if !emitted {
@@ -1069,7 +1276,7 @@ fn ends_with_slash(p: &Path) -> bool {
     last == Some(b'/' as u16) || last == Some(b'\\' as u16)
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "redox"))]
 fn ends_with_slash(p: &Path) -> bool {
     p.as_os_str().as_bytes().ends_with(&[b'/'])
 }
@@ -1094,7 +1301,7 @@ pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     })
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "redox"))]
 pub fn path2bytes(p: &Path) -> io::Result<Cow<[u8]>> {
     Ok(p.as_os_str().as_bytes()).map(Cow::Borrowed)
 }
@@ -1121,7 +1328,7 @@ pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     }
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, target_os = "redox"))]
 pub fn bytes2path(bytes: Cow<[u8]>) -> io::Result<Cow<Path>> {
     use std::ffi::{OsStr, OsString};
 

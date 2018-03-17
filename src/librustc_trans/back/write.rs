@@ -323,6 +323,7 @@ pub struct CodegenContext {
     pub thinlto: bool,
     pub no_landing_pads: bool,
     pub save_temps: bool,
+    pub fewer_names: bool,
     pub exported_symbols: Arc<ExportedSymbols>,
     pub opts: Arc<config::Options>,
     pub crate_types: Vec<config::CrateType>,
@@ -1402,10 +1403,12 @@ fn start_executing_work(tcx: TyCtxt,
         // for doesn't require full LTO. Some targets require one LLVM module
         // (they effectively don't have a linker) so it's up to us to use LTO to
         // link everything together.
-        thinlto: sess.opts.debugging_opts.thinlto &&
-            !sess.target.target.options.requires_lto,
+        thinlto: sess.thinlto() &&
+            !sess.target.target.options.requires_lto &&
+            unsafe { llvm::LLVMRustThinLTOAvailable() },
 
         no_landing_pads: sess.no_landing_pads(),
+        fewer_names: sess.fewer_names(),
         save_temps: sess.opts.cg.save_temps,
         opts: Arc::new(sess.opts.clone()),
         time_passes: sess.time_passes(),
@@ -1954,7 +1957,7 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
                 note.extend_from_slice(&prog.stdout);
 
                 sess.struct_err(&format!("linking with `{}` failed: {}",
-                                         pname,
+                                         pname.display(),
                                          prog.status))
                     .note(&format!("{:?}", &cmd))
                     .note(str::from_utf8(&note[..]).unwrap())
@@ -1963,7 +1966,7 @@ pub fn run_assembler(sess: &Session, outputs: &OutputFilenames) {
             }
         },
         Err(e) => {
-            sess.err(&format!("could not exec the linker `{}`: {}", pname, e));
+            sess.err(&format!("could not exec the linker `{}`: {}", pname.display(), e));
             sess.abort_if_errors();
         }
     }

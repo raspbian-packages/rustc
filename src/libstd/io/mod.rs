@@ -366,16 +366,13 @@ fn append_to_string<F>(buf: &mut String, f: F) -> Result<usize>
 fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> {
     let start_len = buf.len();
     let mut g = Guard { len: buf.len(), buf: buf };
-    let mut new_write_size = 16;
     let ret;
     loop {
         if g.len == g.buf.len() {
-            if new_write_size < DEFAULT_BUF_SIZE {
-                new_write_size *= 2;
-            }
             unsafe {
-                g.buf.reserve(new_write_size);
-                g.buf.set_len(g.len + new_write_size);
+                g.buf.reserve(32);
+                let capacity = g.buf.capacity();
+                g.buf.set_len(capacity);
                 r.initializer().initialize(&mut g.buf[g.len..]);
             }
         }
@@ -419,14 +416,8 @@ fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> 
 ///
 /// [`File`]s implement `Read`:
 ///
-/// [`read()`]: trait.Read.html#tymethod.read
-/// [`std::io`]: ../../std/io/index.html
-/// [`File`]: ../fs/struct.File.html
-/// [`BufRead`]: trait.BufRead.html
-/// [`BufReader`]: struct.BufReader.html
-///
 /// ```
-/// use std::io;
+/// # use std::io;
 /// use std::io::prelude::*;
 /// use std::fs::File;
 ///
@@ -449,7 +440,34 @@ fn read_to_end<R: Read + ?Sized>(r: &mut R, buf: &mut Vec<u8>) -> Result<usize> 
 /// # Ok(())
 /// # }
 /// ```
+///
+/// Read from [`&str`] because [`&[u8]`][slice] implements `Read`:
+///
+/// ```
+/// # use std::io;
+/// use std::io::prelude::*;
+///
+/// # fn foo() -> io::Result<()> {
+/// let mut b = "This string will be read".as_bytes();
+/// let mut buffer = [0; 10];
+///
+/// // read up to 10 bytes
+/// b.read(&mut buffer)?;
+///
+/// // etc... it works exactly as a File does!
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`read()`]: trait.Read.html#tymethod.read
+/// [`std::io`]: ../../std/io/index.html
+/// [`File`]: ../fs/struct.File.html
+/// [`BufRead`]: trait.BufRead.html
+/// [`BufReader`]: struct.BufReader.html
+/// [`&str`]: ../../std/primitive.str.html
+/// [slice]: ../../std/primitive.slice.html
 #[stable(feature = "rust1", since = "1.0.0")]
+#[doc(spotlight)]
 pub trait Read {
     /// Pull some bytes from this source into the specified buffer, returning
     /// how many bytes were read.
@@ -968,6 +986,7 @@ impl Initializer {
 /// # }
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
+#[doc(spotlight)]
 pub trait Write {
     /// Write a buffer into this object, returning how many bytes were written.
     ///
@@ -2001,10 +2020,9 @@ impl<R: Read> Iterator for Chars<R> {
     type Item = result::Result<char, CharsError>;
 
     fn next(&mut self) -> Option<result::Result<char, CharsError>> {
-        let first_byte = match read_one_byte(&mut self.inner) {
-            None => return None,
-            Some(Ok(b)) => b,
-            Some(Err(e)) => return Some(Err(CharsError::Other(e))),
+        let first_byte = match read_one_byte(&mut self.inner)? {
+            Ok(b) => b,
+            Err(e) => return Some(Err(CharsError::Other(e))),
         };
         let width = core_str::utf8_char_width(first_byte);
         if width == 1 { return Some(Ok(first_byte as char)) }

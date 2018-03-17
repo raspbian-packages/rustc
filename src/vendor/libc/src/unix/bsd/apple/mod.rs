@@ -23,6 +23,10 @@ pub type nl_item = ::c_int;
 pub type id_t = ::c_uint;
 pub type sem_t = ::c_int;
 pub type idtype_t = ::c_uint;
+pub type integer_t = ::c_int;
+pub type cpu_type_t = integer_t;
+pub type cpu_subtype_t = integer_t;
+pub type vm_prot_t = ::c_int;
 
 pub enum timezone {}
 
@@ -417,6 +421,60 @@ s! {
         pub cr_uid: ::uid_t,
         pub cr_ngroups: ::c_short,
         pub cr_groups: [::gid_t;16]
+    }
+
+    pub struct mach_header {
+        pub magic: u32,
+        pub cputype: cpu_type_t,
+        pub cpusubtype: cpu_subtype_t,
+        pub filetype: u32,
+        pub ncmds: u32,
+        pub sizeofcmds: u32,
+        pub flags: u32,
+    }
+
+    pub struct mach_header_64 {
+        pub magic: u32,
+        pub cputype: cpu_type_t,
+        pub cpusubtype: cpu_subtype_t,
+        pub filetype: u32,
+        pub ncmds: u32,
+        pub sizeofcmds: u32,
+        pub flags: u32,
+        pub reserved: u32,
+    }
+
+    pub struct segment_command {
+        pub cmd: u32,
+        pub cmdsize: u32,
+        pub segname: [::c_char; 16],
+        pub vmaddr: u32,
+        pub vmsize: u32,
+        pub fileoff: u32,
+        pub filesize: u32,
+        pub maxprot: vm_prot_t,
+        pub initprot: vm_prot_t,
+        pub nsects: u32,
+        pub flags: u32,
+    }
+
+    pub struct segment_command_64 {
+        pub cmd: u32,
+        pub cmdsize: u32,
+        pub segname: [::c_char; 16],
+        pub vmaddr: u64,
+        pub vmsize: u64,
+        pub fileoff: u64,
+        pub filesize: u64,
+        pub maxprot: vm_prot_t,
+        pub initprot: vm_prot_t,
+        pub nsects: u32,
+        pub flags: u32,
+    }
+
+    pub struct load_command {
+        pub cmd: u32,
+        pub cmdsize: u32,
     }
 }
 
@@ -1063,7 +1121,7 @@ pub const IPPROTO_HOPOPTS: ::c_int = 0;
 // IPPROTO_ICMP defined in src/unix/mod.rs
 /// group mgmt protocol
 pub const IPPROTO_IGMP: ::c_int = 2;
-/// gateway^2 (deprecated)
+/// gateway<sup>2</sup> (deprecated)
 pub const IPPROTO_GGP: ::c_int = 3;
 /// for compatibility
 pub const IPPROTO_IPIP: ::c_int = 4;
@@ -1443,7 +1501,24 @@ pub const MSG_RCVMORE: ::c_int = 0x4000;
 pub const SCM_TIMESTAMP: ::c_int = 0x02;
 pub const SCM_CREDS: ::c_int = 0x03;
 
-pub const IFF_LOOPBACK: ::c_int = 0x8;
+/// https://github.com/aosm/xnu/blob/master/bsd/net/if.h#L140-L156
+pub const IFF_UP: ::c_int          = 0x1;  // interface is up
+pub const IFF_BROADCAST: ::c_int   = 0x2;  // broadcast address valid
+pub const IFF_DEBUG: ::c_int       = 0x4;  // turn on debugging
+pub const IFF_LOOPBACK: ::c_int    = 0x8;  // is a loopback net
+pub const IFF_POINTOPOINT: ::c_int = 0x10; // interface is point-to-point link
+pub const IFF_NOTRAILERS: ::c_int  = 0x20; // obsolete: avoid use of trailers
+pub const IFF_RUNNING: ::c_int     = 0x40; // resources allocated
+pub const IFF_NOARP: ::c_int       = 0x80; // no address resolution protocol
+pub const IFF_PROMISC: ::c_int     = 0x100;// receive all packets
+pub const IFF_ALLMULTI: ::c_int    = 0x200;// receive all multicast packets
+pub const IFF_OACTIVE: ::c_int     = 0x400;// transmission in progress
+pub const IFF_SIMPLEX: ::c_int     = 0x800;// can't hear own transmissions
+pub const IFF_LINK0: ::c_int       = 0x1000;// per link layer defined bit
+pub const IFF_LINK1: ::c_int   = 0x2000;// per link layer defined bit
+pub const IFF_LINK2: ::c_int   = 0x4000;// per link layer defined bit
+pub const IFF_ALTPHYS: ::c_int = IFF_LINK2;// use alternate physical connection
+pub const IFF_MULTICAST: ::c_int = 0x8000;// supports multicast
 
 pub const SHUT_RD: ::c_int = 0;
 pub const SHUT_WR: ::c_int = 1;
@@ -1967,6 +2042,12 @@ pub const MAXTHREADNAMESIZE: usize = 64;
 
 pub const XUCRED_VERSION: ::c_uint = 0;
 
+pub const LC_SEGMENT: u32 = 0x1;
+pub const LC_SEGMENT_64: u32 = 0x19;
+
+pub const MH_MAGIC: u32 = 0xfeedface;
+pub const MH_MAGIC_64: u32 = 0xfeedfacf;
+
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {
         status >> 8
@@ -2158,6 +2239,10 @@ extern {
     pub fn brk(addr: *const ::c_void) -> *mut ::c_void;
     pub fn sbrk(increment: ::c_int) -> *mut ::c_void;
     pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
+    pub fn _dyld_image_count() -> u32;
+    pub fn _dyld_get_image_header(image_index: u32) -> *const mach_header;
+    pub fn _dyld_get_image_vmaddr_slide(image_index: u32) -> ::intptr_t;
+    pub fn _dyld_get_image_name(image_index: u32) -> *const ::c_char;
 }
 
 cfg_if! {

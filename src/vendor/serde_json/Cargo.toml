@@ -12,7 +12,7 @@
 
 [package]
 name = "serde_json"
-version = "1.0.6"
+version = "1.0.8"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "A JSON serialization file format"

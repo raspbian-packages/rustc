@@ -8,12 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: -Z borrowck-mir -Z emit-end-regions
+// compile-flags: -Z borrowck=compare
 
 fn main() {
     let mut x = Box::new(0);
     let _u = x; // error shouldn't note this move
     x = Box::new(1);
     drop(x);
-    let _ = (1,x);
+    let _ = (1,x); //~ ERROR use of moved value: `x` (Ast)
+    //~^ ERROR use of moved value: `x` (Mir)
 }

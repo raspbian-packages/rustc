@@ -23,6 +23,7 @@ use std::rc::Rc;
 use term;
 use std::collections::HashMap;
 use std::cmp::min;
+use unicode_width;
 
 /// Emitter trait for emitting errors.
 pub trait Emitter {
@@ -46,7 +47,7 @@ impl Emitter for EmitterWriter {
                sugg.msg.split_whitespace().count() < 10 &&
                // don't display multiline suggestions as labels
                !sugg.substitutions[0].parts[0].snippet.contains('\n') {
-                let substitution = &sugg.substitutions[0].parts[0].snippet;
+                let substitution = &sugg.substitutions[0].parts[0].snippet.trim();
                 let msg = if substitution.len() == 0 || !sugg.show_code_when_inline {
                     // This substitution is only removal or we explicitly don't want to show the
                     // code inline, don't show it
@@ -64,7 +65,10 @@ impl Emitter for EmitterWriter {
             }
         }
 
-        self.fix_multispans_in_std_macros(&mut primary_span, &mut children);
+        self.fix_multispans_in_std_macros(&mut primary_span,
+                                          &mut children,
+                                          db.handler.flags.external_macro_backtrace);
+
         self.emit_messages_default(&db.level,
                                    &db.styled_message(),
                                    &db.code,
@@ -723,7 +727,9 @@ impl EmitterWriter {
     // This "fixes" MultiSpans that contain Spans that are pointing to locations inside of
     // <*macros>. Since these locations are often difficult to read, we move these Spans from
     // <*macros> to their corresponding use site.
-    fn fix_multispan_in_std_macros(&mut self, span: &mut MultiSpan) -> bool {
+    fn fix_multispan_in_std_macros(&mut self,
+                                   span: &mut MultiSpan,
+                                   always_backtrace: bool) -> bool {
         let mut spans_updated = false;
 
         if let Some(ref cm) = self.cm {
@@ -736,22 +742,45 @@ impl EmitterWriter {
                     continue;
                 }
                 let call_sp = cm.call_span_if_macro(*sp);
-                if call_sp != *sp {
-                    before_after.push((sp.clone(), call_sp));
+                if call_sp != *sp && !always_backtrace {
+                    before_after.push((*sp, call_sp));
                 }
-                for trace in sp.macro_backtrace().iter().rev() {
+                let backtrace_len = sp.macro_backtrace().len();
+                for (i, trace) in sp.macro_backtrace().iter().rev().enumerate() {
                     // Only show macro locations that are local
                     // and display them like a span_note
                     if let Some(def_site) = trace.def_site_span {
                         if def_site == DUMMY_SP {
                             continue;
                         }
+                        if always_backtrace {
+                            new_labels.push((def_site,
+                                             format!("in this expansion of `{}`{}",
+                                                     trace.macro_decl_name,
+                                                     if backtrace_len > 2 {
+                                                         // if backtrace_len == 1 it'll be pointed
+                                                         // at by "in this macro invocation"
+                                                         format!(" (#{})", i + 1)
+                                                     } else {
+                                                         "".to_string()
+                                                     })));
+                        }
                         // Check to make sure we're not in any <*macros>
-                        if !cm.span_to_filename(def_site).contains("macros>") &&
-                           !trace.macro_decl_name.starts_with("#[") {
+                        if !cm.span_to_filename(def_site).is_macros() &&
+                           !trace.macro_decl_name.starts_with("#[") ||
+                           always_backtrace {
                             new_labels.push((trace.call_site,
-                                             "in this macro invocation".to_string()));
-                            break;
+                                             format!("in this macro invocation{}",
+                                                     if backtrace_len > 2 && always_backtrace {
+                                                         // only specify order when the macro
+                                                         // backtrace is multiple levels deep
+                                                         format!(" (#{})", i + 1)
+                                                     } else {
+                                                         "".to_string()
+                                                     })));
+                            if !always_backtrace {
+                                break;
+                            }
                         }
                     }
                 }
@@ -763,7 +792,9 @@ impl EmitterWriter {
                 if sp_label.span == DUMMY_SP {
                     continue;
                 }
-                if cm.span_to_filename(sp_label.span.clone()).contains("macros>") {
+                if cm.span_to_filename(sp_label.span.clone()).is_macros() &&
+                    !always_backtrace
+                {
                     let v = sp_label.span.macro_backtrace();
                     if let Some(use_site) = v.last() {
                         before_after.push((sp_label.span.clone(), use_site.call_site.clone()));
@@ -785,16 +816,21 @@ impl EmitterWriter {
     // will change the span to point at the use site.
     fn fix_multispans_in_std_macros(&mut self,
                                     span: &mut MultiSpan,
-                                    children: &mut Vec<SubDiagnostic>) {
-        let mut spans_updated = self.fix_multispan_in_std_macros(span);
+                                    children: &mut Vec<SubDiagnostic>,
+                                    backtrace: bool) {
+        let mut spans_updated = self.fix_multispan_in_std_macros(span, backtrace);
         for child in children.iter_mut() {
-            spans_updated |= self.fix_multispan_in_std_macros(&mut child.span);
+            spans_updated |= self.fix_multispan_in_std_macros(&mut child.span, backtrace);
         }
         if spans_updated {
             children.push(SubDiagnostic {
                 level: Level::Note,
-                message: vec![("this error originates in a macro outside of the current crate"
-                    .to_string(), Style::NoStyle)],
+                message: vec![
+                    ("this error originates in a macro outside of the current crate \
+                      (in Nightly builds, run with -Z external-macro-backtrace \
+                       for more info)".to_string(),
+                     Style::NoStyle),
+                ],
                 span: MultiSpan::new(),
                 render_span: None,
             });
@@ -854,7 +890,7 @@ impl EmitterWriter {
         //       ("see?", Style::Highlight),
         //     ];
         //
-        // the expected output on a note is (* surround the  highlighted text)
+        // the expected output on a note is (* surround the highlighted text)
         //
         //        = note: highlighted multiline
         //                string to
@@ -952,14 +988,20 @@ impl EmitterWriter {
 
                     buffer.prepend(buffer_msg_line_offset, "--> ", Style::LineNumber);
                     buffer.append(buffer_msg_line_offset,
-                                  &format!("{}:{}:{}", loc.file.name, loc.line, loc.col.0 + 1),
+                                  &format!("{}:{}:{}",
+                                           loc.file.name,
+                                           loc.line,
+                                           loc.col.0 + 1),
                                   Style::LineAndColumn);
                     for _ in 0..max_line_num_len {
                         buffer.prepend(buffer_msg_line_offset, " ", Style::NoStyle);
                     }
                 } else {
                     buffer.prepend(0,
-                                   &format!("{}:{}:{} - ", loc.file.name, loc.line, loc.col.0 + 1),
+                                   &format!("{}:{}:{} - ",
+                                            loc.file.name,
+                                            loc.line,
+                                            loc.col.0 + 1),
                                    Style::LineAndColumn);
                 }
             } else if !self.short_message {
@@ -972,7 +1014,7 @@ impl EmitterWriter {
                 // Then, the secondary file indicator
                 buffer.prepend(buffer_msg_line_offset + 1, "::: ", Style::LineNumber);
                 buffer.append(buffer_msg_line_offset + 1,
-                              &annotated_file.file.name,
+                              &annotated_file.file.name.to_string(),
                               Style::LineAndColumn);
                 for _ in 0..max_line_num_len {
                     buffer.prepend(buffer_msg_line_offset + 1, " ", Style::NoStyle);
@@ -1085,6 +1127,7 @@ impl EmitterWriter {
         Ok(())
 
     }
+
     fn emit_suggestion_default(&mut self,
                                suggestion: &CodeSuggestion,
                                level: &Level,
@@ -1140,9 +1183,12 @@ impl EmitterWriter {
                 if show_underline {
                     draw_col_separator(&mut buffer, row_num, max_line_num_len + 1);
                     let start = parts[0].snippet.len() - parts[0].snippet.trim_left().len();
-                    let sub_len = parts[0].snippet.trim().len();
+                    // account for substitutions containing unicode characters
+                    let sub_len = parts[0].snippet.trim().chars().fold(0, |acc, ch| {
+                        acc + unicode_width::UnicodeWidthChar::width(ch).unwrap_or(0)
+                    });
                     let underline_start = span_start_pos.col.0 + start;
-                    let underline_end = span_start_pos.col.0 + sub_len;
+                    let underline_end = span_start_pos.col.0 + start + sub_len;
                     for p in underline_start..underline_end {
                         buffer.putc(row_num,
                                     max_line_num_len + 3 + p,
@@ -1168,6 +1214,7 @@ impl EmitterWriter {
         }
         Ok(())
     }
+
     fn emit_messages_default(&mut self,
                              level: &Level,
                              message: &Vec<(String, Style)>,
@@ -1178,7 +1225,12 @@ impl EmitterWriter {
         let max_line_num = self.get_max_line_num(span, children);
         let max_line_num_len = max_line_num.to_string().len();
 
-        match self.emit_message_default(span, message, code, level, max_line_num_len, false) {
+        match self.emit_message_default(span,
+                                        message,
+                                        code,
+                                        level,
+                                        max_line_num_len,
+                                        false) {
             Ok(()) => {
                 if !children.is_empty() {
                     let mut buffer = StyledBuffer::new();
@@ -1415,7 +1467,7 @@ impl Destination {
                 }
             }
             Style::Quotation => {}
-            Style::HeaderMsg => {
+            Style::OldSchoolNoteText | Style::HeaderMsg => {
                 self.start_attr(term::Attr::Bold)?;
                 if cfg!(windows) {
                     self.start_attr(term::Attr::ForegroundColor(term::color::BRIGHT_WHITE))?;

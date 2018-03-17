@@ -1,13 +1,12 @@
 compiletest-rs
 ==============
 
-This project is an attempt at extracting the `compiletest` utility from the Rust
-compiler.
+This project is an attempt at extracting [the `compiletest` utility][upstream]
+from the Rust compiler.
 
 The `compiletest` utility is useful for library and plugin developers, who want
 to include test programs that should fail to compile, issue warnings or
 otherwise produce compile-time output.
-
 
 To use in your project
 ----------------------
@@ -72,13 +71,35 @@ let mut config = compiletest::Config::default();
 config.link_deps();
 ```
 
+Note that `link_deps()` should not be used if any of the added paths contain
+spaces, as these are currently not handled correctly.
+
 Example
 -------
 See the `test-project` folder for a complete working example using the
 `compiletest-rs` utility. Simply `cd test-project` and `cargo test` to see the
-tests run.
+tests run. The annotation syntax is documented in [rust's test-suite][tests].
 
 TODO
 ----
  - The `run-pass` mode is strictly not necessary since it's baked right into
    Cargo, but I haven't bothered to take it out
+
+Contributing
+------------
+
+Thank you for your interest in improving this utility! Please consider
+submitting your patch to [the upstream source][src] instead, as it will
+be incorporated into this repo in due time. Still, there are some supporting
+files that are specific to this repo, for example:
+
+- src/lib.rs
+- src/uidiff.rs
+- test-project/
+
+If you are unsure, open a pull request anyway and we would be glad to help!
+
+
+[upstream]: https://github.com/rust-lang/rust/tree/master/src/tools/compiletest
+[src]: https://github.com/rust-lang/rust/tree/master/src/tools/compiletest/src
+[tests]: https://github.com/rust-lang/rust/blob/master/src/test/COMPILER_TESTS.md

@@ -100,8 +100,8 @@ impl<'a> PluginLoader<'a> {
     fn load_plugin(&mut self, span: Span, name: &str, args: Vec<ast::NestedMetaItem>) {
         let registrar = self.reader.find_plugin_registrar(span, name);
 
-        if let Some((lib, disambiguator, index)) = registrar {
-            let symbol = self.sess.generate_plugin_registrar_symbol(disambiguator, index);
+        if let Some((lib, disambiguator)) = registrar {
+            let symbol = self.sess.generate_plugin_registrar_symbol(disambiguator);
             let fun = self.dylink_registrar(span, lib, symbol);
             self.plugins.push(PluginRegistrar {
                 fun,
@@ -115,7 +115,7 @@ impl<'a> PluginLoader<'a> {
                         span: Span,
                         path: PathBuf,
                         symbol: String) -> PluginRegistrarFun {
-        use rustc_back::dynamic_lib::DynamicLibrary;
+        use rustc_metadata::dynamic_lib::DynamicLibrary;
 
         // Make sure the path contains a / or the linker will search for it.
         let path = env::current_dir().unwrap().join(&path);

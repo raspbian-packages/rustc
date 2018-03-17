@@ -485,7 +485,7 @@ impl Step for Rustc {
         build.clear_if_dirty(&stage_out, &libtest_stamp(build, compiler, target));
 
         let mut cargo = builder.cargo(compiler, Mode::Librustc, target, "build");
-        rustc_cargo(build, &compiler, target, &mut cargo);
+        rustc_cargo(build, target, &mut cargo);
         run_cargo(build,
                   &mut cargo,
                   &librustc_stamp(build, compiler, target));
@@ -500,7 +500,6 @@ impl Step for Rustc {
 
 /// Same as `std_cargo`, but for libtest
 pub fn rustc_cargo(build: &Build,
-                   compiler: &Compiler,
                    target: Interned<String>,
                    cargo: &mut Command) {
     cargo.arg("--features").arg(build.rustc_features())
@@ -514,13 +513,8 @@ pub fn rustc_cargo(build: &Build,
          .env("CFG_VERSION", build.rust_version())
          .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or_default());
 
-    if compiler.stage == 0 {
-        cargo.env("CFG_LIBDIR_RELATIVE", "lib");
-    } else {
-        let libdir_relative =
-            build.config.libdir_relative.clone().unwrap_or(PathBuf::from("lib"));
-        cargo.env("CFG_LIBDIR_RELATIVE", libdir_relative);
-    }
+    let libdir_relative = build.config.libdir_relative().unwrap_or(Path::new("lib"));
+    cargo.env("CFG_LIBDIR_RELATIVE", libdir_relative);
 
     // If we're not building a compiler with debugging information then remove
     // these two env vars which would be set otherwise.
@@ -550,6 +544,7 @@ pub fn rustc_cargo(build: &Build,
     // Building with a static libstdc++ is only supported on linux right now,
     // not for MSVC or macOS
     if build.config.llvm_static_stdcpp &&
+       !target.contains("freebsd") &&
        !target.contains("windows") &&
        !target.contains("apple") {
         cargo.env("LLVM_STATIC_STDCPP",
@@ -560,6 +555,9 @@ pub fn rustc_cargo(build: &Build,
     }
     if let Some(ref s) = build.config.rustc_default_linker {
         cargo.env("CFG_DEFAULT_LINKER", s);
+    }
+    if build.config.rustc_parallel_queries {
+        cargo.env("RUSTC_PARALLEL_QUERIES", "1");
     }
 }
 

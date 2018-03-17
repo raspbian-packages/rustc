@@ -640,8 +640,6 @@ pub const SO_RCVTIMEO: ::c_int = 0x1006;
 pub const SO_ERROR: ::c_int = 0x1007;
 pub const SO_TYPE: ::c_int = 0x1008;
 
-pub const IFF_LOOPBACK: ::c_int = 0x8;
-
 pub const SHUT_RD: ::c_int = 0;
 pub const SHUT_WR: ::c_int = 1;
 pub const SHUT_RDWR: ::c_int = 2;
@@ -1107,9 +1105,6 @@ extern {
                  timeout: *const ::timespec,
                  sigmask: *const sigset_t) -> ::c_int;
     pub fn settimeofday(tv: *const ::timeval, tz: *const ::timezone) -> ::c_int;
-    pub fn fexecve(fd: ::c_int, argv: *const *const ::c_char,
-                   envp: *const *const ::c_char)
-                   -> ::c_int;
 }
 
 cfg_if! {

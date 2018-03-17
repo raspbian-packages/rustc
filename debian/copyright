@@ -20,12 +20,14 @@ Files-Excluded:
  src/tools/cargo
  src/tools/rls
  src/tools/rustfmt
+ src/tools/miri
 # Embedded C libraries
  src/vendor/backtrace-sys*/src/libbacktrace
  src/vendor/lzma-sys*/xz-*
 # Embedded binary blobs
  src/binaryen/bin/*.js
  src/vendor/dbghelp-sys*/*/*.a
+ src/vendor/winapi-*/*/*.a
  src/vendor/mdbook/src/theme/jquery.js
  src/vendor/mdbook/src/theme/store.js
  src/vendor/mdbook/src/theme/playpen_editor
@@ -36,6 +38,7 @@ Files-Excluded:
  src/vendor/advapi32-sys
  src/vendor/aho-corasick-0.5.3
  src/vendor/bufstream
+ src/vendor/cargo_metadata
  src/vendor/coco
  src/vendor/commoncrypto
  src/vendor/commoncrypto-sys
@@ -48,9 +51,13 @@ Files-Excluded:
  src/vendor/curl-sys
  src/vendor/derive-new
  src/vendor/docopt
+ src/vendor/endian-type
  src/vendor/enum_primitive
  src/vendor/env_logger-0.3.5
+ src/vendor/failure
+ src/vendor/failure_derive
  src/vendor/foreign-types
+ src/vendor/foreign-types-shared
  src/vendor/fs2
  src/vendor/futures
  src/vendor/git2
@@ -61,13 +68,15 @@ Files-Excluded:
  src/vendor/hex
  src/vendor/home
  src/vendor/ignore
+ src/vendor/json
  src/vendor/jsonrpc-core
  src/vendor/languageserver-types
  src/vendor/libgit2-sys
  src/vendor/libssh2-sys
  src/vendor/libz-sys
  src/vendor/memchr-0.1.11
- src/vendor/memchr
+ src/vendor/memchr-1.0.2
+ src/vendor/nibble_vec
  src/vendor/num-bigint
  src/vendor/num
  src/vendor/num-complex
@@ -79,6 +88,7 @@ Files-Excluded:
  src/vendor/openssl-sys
  src/vendor/psapi-sys
  src/vendor/racer
+ src/vendor/radix_trie
  src/vendor/rayon
  src/vendor/rayon-core
  src/vendor/regex-0.1.80
@@ -93,7 +103,7 @@ Files-Excluded:
  src/vendor/serde_ignored
  src/vendor/shell-escape
  src/vendor/socket2
- src/vendor/strings
+ src/vendor/synstructure
  src/vendor/syntex_errors
  src/vendor/syntex_pos
  src/vendor/syntex_syntax
@@ -220,13 +230,15 @@ Files: src/vendor/bitflags/*
        src/vendor/getopts/*
        src/vendor/libc/*
        src/vendor/log/*
+       src/vendor/log-0*/*
        src/vendor/num-traits/*
        src/vendor/rand/*
        src/vendor/regex/*
        src/vendor/regex-syntax/*
        src/vendor/rustc-serialize/*
        src/vendor/tempdir/*
-Copyright: 2014-2017 The Rust Project Developers
+       src/vendor/time/*
+Copyright: 2014-2018 The Rust Project Developers
 License: MIT or Apache-2.0
 Comment:
  This is a collection of external crates embedded here to bootstrap cargo.
@@ -257,6 +269,7 @@ Comment: see https://github.com/servo/
 
 Files: src/vendor/selectors/*
        src/vendor/smallvec/*
+       src/vendor/smallvec-0*/*
 Copyright: 2012-2017 Simon Sapin <simon.sapin@exyr.org>
            2012-2017 Alan Jeffrey <ajeffrey@mozilla.com>
 License: MPL-2.0
@@ -289,7 +302,7 @@ License: MIT
 Comment: see https://github.com/ogham/rust-ansi-term
 
 Files: src/vendor/aho-corasick/*
-       src/vendor/memchr-1.0.2/*
+       src/vendor/memchr/*
        src/vendor/same-file/*
        src/vendor/utf8-ranges/*
        src/vendor/walkdir/*
@@ -312,12 +325,19 @@ Copyright: 2015-2017 softprops <d.tangren@gmail.com>
 License: MIT
 Comment: see https://github.com/softprops/atty
 
-Files: src/vendor/cargo_metadata/*
+Files: src/vendor/byteorder/*
+Copyright: 2015-2017 Andrew Gallant <jamslam@gmail.com>
+License: Unlicense or MIT
+Comment: see https://github.com/BurntSushi/byteorder
+
+Files: src/vendor/cargo_metadata-0*/*
+       src/vendor/log_settings/*
        src/vendor/quine-mc_cluskey/*
 Copyright: 2016-2018 Oliver Schneider <git-spam-no-reply9815368754983@oli-obk.de>
 License: MIT
 Comment: see https://github.com/oli-obk/cargo_metadata
          see https://github.com/oli-obk/quine-mc_cluskey
+         see https://github.com/oli-obk/log_settings
 
 Files: src/vendor/clap/*
 Copyright: 2015-2017 Kevin K. <kbknapp@gmail.com>
@@ -334,11 +354,17 @@ Comment: see https://github.com/laumann/compiletest-rs
 Files: src/vendor/dbghelp-sys/*
        src/vendor/kernel32-sys/*
        src/vendor/winapi/*
+       src/vendor/winapi-0*/*
        src/vendor/winapi-build/*
        src/vendor/ws2_32-sys/*
-Copyright: 2015-2017 Peter Atashian <retep998@gmail.com>
-           2015-2017 winapi-rs developers
+Copyright: 2014-2018 Peter Atashian <retep998@gmail.com>
+           2014-2018 winapi-rs developers
 License: MIT
+Comment: see https://github.com/retep998/winapi-rs
+
+Files: src/vendor/winapi-*-pc-windows-gnu/*
+Copyright: 2014-2018 Peter Atashian <retep998@gmail.com>
+License: MIT or Apache-2.0
 Comment: see https://github.com/retep998/winapi-rs
 
 Files: src/vendor/diff/*
@@ -421,11 +447,10 @@ License: MIT or Apache-2.0
 Comment: see https://github.com/indiv0/lazycell
 
 Files: src/vendor/lazy_static/*
-       src/vendor/owning_ref/*
+       src/vendor/lazy_static-0*/*
 Copyright: 2014-2017 Marvin Löbel <loebel.marvin@gmail.com>
-License: MIT
+License: MIT or Apache-2.0
 Comment: see https://github.com/rust-lang-nursery/lazy-static.rs
-         see https://github.com/Kimundi/owning-ref-rs
 
 Files: src/vendor/mdbook/*
 Copyright: 2015-2017 Mathieu David <mathieudavid@mathieudavid.org>
@@ -460,6 +485,17 @@ Files: src/vendor/os_pipe/*
 Copyright: 2016-2017 Jack O'Connor
 License: MIT
 Comment: see https://github.com/oconnor663/os_pipe.rs
+
+Files: src/vendor/owning_ref/*
+Copyright: 2014-2017 Marvin Löbel <loebel.marvin@gmail.com>
+License: MIT
+Comment: see https://github.com/Kimundi/owning-ref-rs
+
+Files: src/vendor/parking_lot/*
+       src/vendor/parking_lot_core/*
+Copyright: 2016-2018 Amanieu d'Antras <amanieu@gmail.com>
+License: Apache-2.0 or MIT
+Comment: see https://github.com/Amanieu/parking_lot
 
 Files: src/vendor/pest/*
 Copyright: 2016-2017 Dragoș Tiselice <dragostiselice@gmail.com>

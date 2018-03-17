@@ -23,6 +23,17 @@ pub type __s16 = ::c_short;
 pub type __u32 = ::c_uint;
 pub type __s32 = ::c_int;
 
+pub type Elf32_Half = u16;
+pub type Elf32_Word = u32;
+pub type Elf32_Off = u32;
+pub type Elf32_Addr = u32;
+
+pub type Elf64_Half = u16;
+pub type Elf64_Word = u32;
+pub type Elf64_Off = u64;
+pub type Elf64_Addr = u64;
+pub type Elf64_Xword = u64;
+
 pub enum fpos64_t {} // TODO: fill this out with a struct
 
 s! {
@@ -390,6 +401,52 @@ s! {
         pub u: [u64; 4],
         #[cfg(target_pointer_width = "32")]
         pub u: [u32; 7],
+    }
+
+    pub struct dl_phdr_info {
+        #[cfg(target_pointer_width = "64")]
+        pub dlpi_addr: Elf64_Addr,
+        #[cfg(target_pointer_width = "32")]
+        pub dlpi_addr: Elf32_Addr,
+
+        pub dlpi_name: *const ::c_char,
+
+        #[cfg(target_pointer_width = "64")]
+        pub dlpi_phdr: *const Elf64_Phdr,
+        #[cfg(target_pointer_width = "32")]
+        pub dlpi_phdr: *const Elf32_Phdr,
+
+        #[cfg(target_pointer_width = "64")]
+        pub dlpi_phnum: Elf64_Half,
+        #[cfg(target_pointer_width = "32")]
+        pub dlpi_phnum: Elf32_Half,
+
+        pub dlpi_adds: ::c_ulonglong,
+        pub dlpi_subs: ::c_ulonglong,
+        pub dlpi_tls_modid: ::size_t,
+        pub dlpi_tls_data: *mut ::c_void,
+    }
+
+    pub struct Elf32_Phdr {
+        pub p_type: Elf32_Word,
+        pub p_offset: Elf32_Off,
+        pub p_vaddr: Elf32_Addr,
+        pub p_paddr: Elf32_Addr,
+        pub p_filesz: Elf32_Word,
+        pub p_memsz: Elf32_Word,
+        pub p_flags: Elf32_Word,
+        pub p_align: Elf32_Word,
+    }
+
+    pub struct Elf64_Phdr {
+        pub p_type: Elf64_Word,
+        pub p_flags: Elf64_Word,
+        pub p_offset: Elf64_Off,
+        pub p_vaddr: Elf64_Addr,
+        pub p_paddr: Elf64_Addr,
+        pub p_filesz: Elf64_Xword,
+        pub p_memsz: Elf64_Xword,
+        pub p_align: Elf64_Xword,
     }
 }
 
@@ -996,6 +1053,9 @@ pub const PR_CAP_AMBIENT_RAISE: ::c_int = 2;
 pub const PR_CAP_AMBIENT_LOWER: ::c_int = 3;
 pub const PR_CAP_AMBIENT_CLEAR_ALL: ::c_int = 4;
 
+pub const GRND_NONBLOCK: ::c_uint = 0x0001;
+pub const GRND_RANDOM: ::c_uint = 0x0002;
+
 pub const ITIMER_REAL: ::c_int = 0;
 pub const ITIMER_VIRTUAL: ::c_int = 1;
 pub const ITIMER_PROF: ::c_int = 2;
@@ -1024,7 +1084,26 @@ pub const ENOATTR: ::c_int = ::ENODATA;
 pub const SO_ORIGINAL_DST: ::c_int = 80;
 pub const IUTF8: ::tcflag_t = 0x00004000;
 pub const CMSPAR: ::tcflag_t = 0o10000000000;
-pub const O_TMPFILE: ::c_int = 0o20000000 | O_DIRECTORY;
+
+pub const MFD_CLOEXEC: ::c_uint = 0x0001;
+pub const MFD_ALLOW_SEALING: ::c_uint = 0x0002;
+
+// these are used in the p_type field of Elf32_Phdr and Elf64_Phdr, which has
+// the type Elf32Word and Elf64Word respectively. Luckily, both of those are u32
+// so we can use that type here to avoid having to cast.
+pub const PT_NULL: u32 = 0;
+pub const PT_LOAD: u32 = 1;
+pub const PT_DYNAMIC: u32 = 2;
+pub const PT_INTERP: u32 = 3;
+pub const PT_NOTE: u32 = 4;
+pub const PT_SHLIB: u32 = 5;
+pub const PT_PHDR: u32 = 6;
+pub const PT_TLS: u32 = 7;
+pub const PT_NUM: u32 = 8;
+pub const PT_LOOS: u32 = 0x60000000;
+pub const PT_GNU_EH_FRAME: u32 = 0x6474e550;
+pub const PT_GNU_STACK: u32 = 0x6474e551;
+pub const PT_GNU_RELRO: u32 = 0x6474e552;
 
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
@@ -1483,6 +1562,14 @@ extern {
                           attr: *const ::pthread_attr_t,
                           f: extern fn(*mut ::c_void) -> *mut ::c_void,
                           value: *mut ::c_void) -> ::c_int;
+    pub fn dl_iterate_phdr(
+        callback: Option<unsafe extern fn(
+            info: *mut ::dl_phdr_info,
+            size: ::size_t,
+            data: *mut ::c_void
+        ) -> ::c_int>,
+        data: *mut ::c_void
+    ) -> ::c_int;
 }
 
 cfg_if! {

@@ -329,7 +329,6 @@ impl<T> Cell<T> {
     /// let c = Cell::new(5);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[rustc_const_unstable(feature = "const_cell_new")]
     #[inline]
     pub const fn new(value: T) -> Cell<T> {
         Cell {
@@ -544,7 +543,6 @@ impl<T> RefCell<T> {
     /// let c = RefCell::new(5);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[rustc_const_unstable(feature = "const_refcell_new")]
     #[inline]
     pub const fn new(value: T) -> RefCell<T> {
         RefCell {
@@ -586,7 +584,6 @@ impl<T> RefCell<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(refcell_replace_swap)]
     /// use std::cell::RefCell;
     /// let cell = RefCell::new(5);
     /// let old_value = cell.replace(6);
@@ -594,7 +591,7 @@ impl<T> RefCell<T> {
     /// assert_eq!(cell, RefCell::new(6));
     /// ```
     #[inline]
-    #[unstable(feature = "refcell_replace_swap", issue="43570")]
+    #[stable(feature = "refcell_replace", since="1.24.0")]
     pub fn replace(&self, t: T) -> T {
         mem::replace(&mut *self.borrow_mut(), t)
     }
@@ -638,7 +635,6 @@ impl<T> RefCell<T> {
     /// # Examples
     ///
     /// ```
-    /// #![feature(refcell_replace_swap)]
     /// use std::cell::RefCell;
     /// let c = RefCell::new(5);
     /// let d = RefCell::new(6);
@@ -647,7 +643,7 @@ impl<T> RefCell<T> {
     /// assert_eq!(d, RefCell::new(5));
     /// ```
     #[inline]
-    #[unstable(feature = "refcell_replace_swap", issue="43570")]
+    #[stable(feature = "refcell_swap", since="1.24.0")]
     pub fn swap(&self, other: &Self) {
         mem::swap(&mut *self.borrow_mut(), &mut *other.borrow_mut())
     }
@@ -1086,9 +1082,11 @@ impl<'b, T: ?Sized> RefMut<'b, T> {
     pub fn map<U: ?Sized, F>(orig: RefMut<'b, T>, f: F) -> RefMut<'b, U>
         where F: FnOnce(&mut T) -> &mut U
     {
+        // FIXME(nll-rfc#40): fix borrow-check
+        let RefMut { value, borrow } = orig;
         RefMut {
-            value: f(orig.value),
-            borrow: orig.borrow,
+            value: f(value),
+            borrow: borrow,
         }
     }
 }
@@ -1215,7 +1213,6 @@ impl<T> UnsafeCell<T> {
     /// let uc = UnsafeCell::new(5);
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
-    #[rustc_const_unstable(feature = "const_unsafe_cell_new")]
     #[inline]
     pub const fn new(value: T) -> UnsafeCell<T> {
         UnsafeCell { value: value }

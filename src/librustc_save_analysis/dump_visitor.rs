@@ -36,13 +36,18 @@ use syntax::ast::{self, Attribute, NodeId, PatKind, CRATE_NODE_ID};
 use syntax::parse::token;
 use syntax::symbol::keywords;
 use syntax::visit::{self, Visitor};
-use syntax::print::pprust::{bounds_to_string, generics_to_string, path_to_string, ty_to_string};
+use syntax::print::pprust::{
+    bounds_to_string,
+    generic_params_to_string,
+    path_to_string,
+    ty_to_string
+};
 use syntax::ptr::P;
-use syntax::codemap::Spanned;
+use syntax::codemap::{Spanned, DUMMY_SP};
 use syntax_pos::*;
 
 use {escape, generated_code, lower_attributes, PathCollector, SaveContext};
-use json_dumper::{DumpOutput, JsonDumper};
+use json_dumper::{Access, DumpOutput, JsonDumper};
 use span_utils::SpanUtils;
 use sig;
 
@@ -57,6 +62,15 @@ macro_rules! down_cast_data {
             span_bug!($sp, "unexpected data kind: {:?}", $id);
         };
     };
+}
+
+macro_rules! access_from {
+    ($save_ctxt:expr, $item:expr) => {
+        Access {
+            public: $item.vis == ast::Visibility::Public,
+            reachable: $save_ctxt.analysis.access_levels.is_reachable($item.id),
+        }
+    }
 }
 
 pub struct DumpVisitor<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> {
@@ -276,6 +290,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             HirDef::Enum(..) |
             HirDef::TyAlias(..) |
             HirDef::TyForeign(..) |
+            HirDef::TraitAlias(..) |
             HirDef::Trait(_) => {
                 let span = self.span_from_span(sub_span.expect("No span found for type ref"));
                 self.dumper.dump_ref(Ref {
@@ -341,7 +356,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                     let span = self.span_from_span(sub_span.expect("No span found for variable"));
 
                     self.dumper.dump_def(
-                        false,
+                        &Access {
+                            public: false,
+                            reachable: false,
+                        },
                         Def {
                             kind: DefKind::Local,
                             id,
@@ -387,8 +405,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
 
             method_data.value = sig_str;
             method_data.sig = sig::method_signature(id, name, generics, sig, &self.save_ctxt);
-            self.dumper
-                .dump_def(vis == ast::Visibility::Public, method_data);
+            self.dumper.dump_def(
+                &Access {
+                    public: vis == ast::Visibility::Public,
+                    reachable: self.save_ctxt.analysis.access_levels.is_reachable(id),
+                },
+                method_data);
         }
 
         // walk arg and return types
@@ -409,8 +431,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
     fn process_struct_field_def(&mut self, field: &ast::StructField, parent_id: NodeId) {
         let field_data = self.save_ctxt.get_field_data(field, parent_id);
         if let Some(field_data) = field_data {
-            self.dumper
-                .dump_def(field.vis == ast::Visibility::Public, field_data);
+            self.dumper.dump_def(&access_from!(self.save_ctxt, field), field_data);
         }
     }
 
@@ -422,32 +443,37 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         prefix: &str,
         id: NodeId,
     ) {
-        for param in &generics.ty_params {
-            let param_ss = param.span;
-            let name = escape(self.span.snippet(param_ss));
-            // Append $id to name to make sure each one is unique
-            let qualname = format!("{}::{}${}", prefix, name, id);
-            if !self.span.filter_generated(Some(param_ss), full_span) {
-                let id = ::id_from_node_id(param.id, &self.save_ctxt);
-                let span = self.span_from_span(param_ss);
+        for param in &generics.params {
+            if let ast::GenericParam::Type(ref ty_param) = *param {
+                let param_ss = ty_param.span;
+                let name = escape(self.span.snippet(param_ss));
+                // Append $id to name to make sure each one is unique
+                let qualname = format!("{}::{}${}", prefix, name, id);
+                if !self.span.filter_generated(Some(param_ss), full_span) {
+                    let id = ::id_from_node_id(ty_param.id, &self.save_ctxt);
+                    let span = self.span_from_span(param_ss);
 
-                self.dumper.dump_def(
-                    false,
-                    Def {
-                        kind: DefKind::Type,
-                        id,
-                        span,
-                        name,
-                        qualname,
-                        value: String::new(),
-                        parent: None,
-                        children: vec![],
-                        decl_id: None,
-                        docs: String::new(),
-                        sig: None,
-                        attributes: vec![],
-                    },
-                );
+                    self.dumper.dump_def(
+                        &Access {
+                            public: false,
+                            reachable: false,
+                        },
+                        Def {
+                            kind: DefKind::Type,
+                            id,
+                            span,
+                            name,
+                            qualname,
+                            value: String::new(),
+                            parent: None,
+                            children: vec![],
+                            decl_id: None,
+                            docs: String::new(),
+                            sig: None,
+                            attributes: vec![],
+                        },
+                    );
+                }
             }
         }
         self.visit_generics(generics);
@@ -467,8 +493,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                 |v| v.process_formals(&decl.inputs, &fn_data.qualname),
             );
             self.process_generic_params(ty_params, item.span, &fn_data.qualname, item.id);
-            self.dumper
-                .dump_def(item.vis == ast::Visibility::Public, fn_data);
+            self.dumper.dump_def(&access_from!(self.save_ctxt, item), fn_data);
         }
 
         for arg in &decl.inputs {
@@ -491,8 +516,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         self.nest_tables(item.id, |v| {
             if let Some(var_data) = v.save_ctxt.get_item_data(item) {
                 down_cast_data!(var_data, DefData, item.span);
-                v.dumper
-                    .dump_def(item.vis == ast::Visibility::Public, var_data);
+                v.dumper.dump_def(&access_from!(v.save_ctxt, item), var_data);
             }
             v.visit_ty(&typ);
             v.visit_expr(expr);
@@ -516,14 +540,16 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
 
         if !self.span.filter_generated(sub_span, span) {
             let sig = sig::assoc_const_signature(id, name, typ, expr, &self.save_ctxt);
-            let id = ::id_from_node_id(id, &self.save_ctxt);
             let span = self.span_from_span(sub_span.expect("No span found for variable"));
 
             self.dumper.dump_def(
-                vis == ast::Visibility::Public,
+                &Access {
+                    public: vis == ast::Visibility::Public,
+                    reachable: self.save_ctxt.analysis.access_levels.is_reachable(id),
+                },
                 Def {
                     kind: DefKind::Const,
-                    id,
+                    id: ::id_from_node_id(id, &self.save_ctxt),
                     span,
                     name: name.to_string(),
                     qualname,
@@ -596,7 +622,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         if !self.span.filter_generated(sub_span, item.span) {
             let span = self.span_from_span(sub_span.expect("No span found for struct"));
             self.dumper.dump_def(
-                item.vis == ast::Visibility::Public,
+                &access_from!(self.save_ctxt, item),
                 Def {
                     kind,
                     id: ::id_from_node_id(item.id, &self.save_ctxt),
@@ -635,6 +661,8 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         };
         down_cast_data!(enum_data, DefData, item.span);
 
+        let access = access_from!(self.save_ctxt, item);
+
         for variant in &enum_definition.variants {
             let name = variant.node.name.name.to_string();
             let mut qualname = enum_data.qualname.clone();
@@ -660,7 +688,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                         let parent = Some(::id_from_node_id(item.id, &self.save_ctxt));
 
                         self.dumper.dump_def(
-                            item.vis == ast::Visibility::Public,
+                            &access,
                             Def {
                                 kind: DefKind::StructVariant,
                                 id,
@@ -700,7 +728,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                         let parent = Some(::id_from_node_id(item.id, &self.save_ctxt));
 
                         self.dumper.dump_def(
-                            item.vis == ast::Visibility::Public,
+                            &access,
                             Def {
                                 kind: DefKind::TupleVariant,
                                 id,
@@ -730,8 +758,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             }
         }
         self.process_generic_params(ty_params, item.span, &enum_data.qualname, item.id);
-        self.dumper
-            .dump_def(item.vis == ast::Visibility::Public, enum_data);
+        self.dumper.dump_def(&access, enum_data);
     }
 
     fn process_impl(
@@ -767,8 +794,8 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         let name = item.ident.to_string();
         let qualname = format!("::{}", self.tcx.node_path_str(item.id));
         let mut val = name.clone();
-        if !generics.lifetimes.is_empty() || !generics.ty_params.is_empty() {
-            val.push_str(&generics_to_string(generics));
+        if !generics.params.is_empty() {
+            val.push_str(&generic_params_to_string(&generics.params));
         }
         if !trait_refs.is_empty() {
             val.push_str(": ");
@@ -783,7 +810,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                 .map(|i| ::id_from_node_id(i.id, &self.save_ctxt))
                 .collect();
             self.dumper.dump_def(
-                item.vis == ast::Visibility::Public,
+                &access_from!(self.save_ctxt, item),
                 Def {
                     kind: DefKind::Trait,
                     id,
@@ -846,8 +873,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
     fn process_mod(&mut self, item: &ast::Item) {
         if let Some(mod_data) = self.save_ctxt.get_item_data(item) {
             down_cast_data!(mod_data, DefData, item.span);
-            self.dumper
-                .dump_def(item.vis == ast::Visibility::Public, mod_data);
+            self.dumper.dump_def(&access_from!(self.save_ctxt, item), mod_data);
         }
     }
 
@@ -1038,7 +1064,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                 let span = self.span_from_span(sub_span.expect("No span found for variable"));
 
                 self.dumper.dump_def(
-                    false,
+                    &Access {
+                        public: false,
+                        reachable: false,
+                    },
                     Def {
                         kind: DefKind::Local,
                         id,
@@ -1138,7 +1167,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                     let id = ::id_from_node_id(trait_item.id, &self.save_ctxt);
 
                     self.dumper.dump_def(
-                        true,
+                        &Access {
+                            public: true,
+                            reachable: true,
+                        },
                         Def {
                             kind: DefKind::Type,
                             id,
@@ -1205,6 +1237,121 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             ast::ImplItemKind::Macro(_) => {}
         }
     }
+
+    /// Dumps imports in a use tree recursively.
+    ///
+    /// A use tree is an import that may contain nested braces (RFC 2128). The `use_tree` parameter
+    /// is the current use tree under scrutiny, while `id` and `prefix` are its corresponding node
+    /// id and path. `root_item` is the topmost use tree in the hierarchy.
+    ///
+    /// If `use_tree` is a simple or glob import, it is dumped into the analysis data. Otherwise,
+    /// each child use tree is dumped recursively.
+    fn process_use_tree(&mut self,
+                         use_tree: &'l ast::UseTree,
+                         id: NodeId,
+                         root_item: &'l ast::Item,
+                         prefix: &ast::Path) {
+        let path = &use_tree.prefix;
+        let access = access_from!(self.save_ctxt, root_item);
+
+        // The parent def id of a given use tree is always the enclosing item.
+        let parent = self.save_ctxt.tcx.hir.opt_local_def_id(id)
+            .and_then(|id| self.save_ctxt.tcx.parent_def_id(id))
+            .map(::id_from_def_id);
+
+        match use_tree.kind {
+            ast::UseTreeKind::Simple(ident) => {
+                let path = ast::Path {
+                    segments: prefix.segments
+                        .iter()
+                        .chain(path.segments.iter())
+                        .cloned()
+                        .collect(),
+                    span: path.span,
+                };
+
+                let sub_span = self.span.span_for_last_ident(path.span);
+                let mod_id = match self.lookup_def_id(id) {
+                    Some(def_id) => {
+                        self.process_def_kind(id, path.span, sub_span, def_id);
+                        Some(def_id)
+                    }
+                    None => None,
+                };
+
+                // 'use' always introduces an alias, if there is not an explicit
+                // one, there is an implicit one.
+                let sub_span = match self.span.sub_span_after_keyword(use_tree.span,
+                                                                      keywords::As) {
+                    Some(sub_span) => Some(sub_span),
+                    None => sub_span,
+                };
+
+                if !self.span.filter_generated(sub_span, path.span) {
+                    let span =
+                        self.span_from_span(sub_span.expect("No span found for use"));
+                    self.dumper.import(&access, Import {
+                        kind: ImportKind::Use,
+                        ref_id: mod_id.map(|id| ::id_from_def_id(id)),
+                        span,
+                        name: ident.to_string(),
+                        value: String::new(),
+                        parent,
+                    });
+                }
+                self.write_sub_paths_truncated(&path);
+            }
+            ast::UseTreeKind::Glob => {
+                let path = ast::Path {
+                    segments: prefix.segments
+                        .iter()
+                        .chain(path.segments.iter())
+                        .cloned()
+                        .collect(),
+                    span: path.span,
+                };
+
+                // Make a comma-separated list of names of imported modules.
+                let mut names = vec![];
+                let glob_map = &self.save_ctxt.analysis.glob_map;
+                let glob_map = glob_map.as_ref().unwrap();
+                if glob_map.contains_key(&id) {
+                    for n in glob_map.get(&id).unwrap() {
+                        names.push(n.to_string());
+                    }
+                }
+
+                let sub_span = self.span.sub_span_of_token(use_tree.span,
+                                                           token::BinOp(token::Star));
+                if !self.span.filter_generated(sub_span, use_tree.span) {
+                    let span =
+                        self.span_from_span(sub_span.expect("No span found for use glob"));
+                    self.dumper.import(&access, Import {
+                        kind: ImportKind::GlobUse,
+                        ref_id: None,
+                        span,
+                        name: "*".to_owned(),
+                        value: names.join(", "),
+                        parent,
+                    });
+                }
+                self.write_sub_paths(&path);
+            }
+            ast::UseTreeKind::Nested(ref nested_items) => {
+                let prefix = ast::Path {
+                    segments: prefix.segments
+                        .iter()
+                        .chain(path.segments.iter())
+                        .cloned()
+                        .collect(),
+                    span: path.span,
+                };
+                for &(ref tree, id) in nested_items {
+                    self.process_use_tree(tree, id, root_item, &prefix);
+                }
+            }
+        }
+    }
 }
 
 impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tcx, 'll, O> {
@@ -1225,14 +1372,17 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
         let span = self.span_from_span(span);
 
         self.dumper.dump_def(
-            true,
+            &Access {
+                public: true,
+                reachable: true,
+            },
             Def {
                 kind: DefKind::Mod,
                 id: data_id,
                 name: String::new(),
                 qualname,
                 span,
-                value: filename,
+                value: filename.to_string(),
                 children,
                 parent: None,
                 decl_id: None,
@@ -1248,84 +1398,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
         use syntax::ast::ItemKind::*;
         self.process_macro_use(item.span);
         match item.node {
-            Use(ref use_item) => {
-                match use_item.node {
-                    ast::ViewPathSimple(ident, ref path) => {
-                        let sub_span = self.span.span_for_last_ident(path.span);
-                        let mod_id = match self.lookup_def_id(item.id) {
-                            Some(def_id) => {
-                                self.process_def_kind(item.id, path.span, sub_span, def_id);
-                                Some(def_id)
-                            }
-                            None => None,
-                        };
-
-                        // 'use' always introduces an alias, if there is not an explicit
-                        // one, there is an implicit one.
-                        let sub_span = match self.span
-                            .sub_span_after_keyword(use_item.span, keywords::As)
-                        {
-                            Some(sub_span) => Some(sub_span),
-                            None => sub_span,
-                        };
-
-                        if !self.span.filter_generated(sub_span, path.span) {
-                            let span =
-                                self.span_from_span(sub_span.expect("No span found for use"));
-                            self.dumper.import(
-                                item.vis == ast::Visibility::Public,
-                                Import {
-                                    kind: ImportKind::Use,
-                                    ref_id: mod_id.map(|id| ::id_from_def_id(id)),
-                                    span,
-                                    name: ident.to_string(),
-                                    value: String::new(),
-                                },
-                            );
-                        }
-                        self.write_sub_paths_truncated(path);
-                    }
-                    ast::ViewPathGlob(ref path) => {
-                        // Make a comma-separated list of names of imported modules.
-                        let mut names = vec![];
-                        let glob_map = &self.save_ctxt.analysis.glob_map;
-                        let glob_map = glob_map.as_ref().unwrap();
-                        if glob_map.contains_key(&item.id) {
-                            for n in glob_map.get(&item.id).unwrap() {
-                                names.push(n.to_string());
-                            }
-                        }
-
-                        let sub_span = self.span
-                            .sub_span_of_token(item.span, token::BinOp(token::Star));
-                        if !self.span.filter_generated(sub_span, item.span) {
-                            let span =
-                                self.span_from_span(sub_span.expect("No span found for use glob"));
-                            self.dumper.import(
-                                item.vis == ast::Visibility::Public,
-                                Import {
-                                    kind: ImportKind::GlobUse,
-                                    ref_id: None,
-                                    span,
-                                    name: "*".to_owned(),
-                                    value: names.join(", "),
-                                },
-                            );
-                        }
-                        self.write_sub_paths(path);
-                    }
-                    ast::ViewPathList(ref path, ref list) => {
-                        for plid in list {
-                            let id = plid.node.id;
-                            if let Some(def_id) = self.lookup_def_id(id) {
-                                let span = plid.span;
-                                self.process_def_kind(id, span, Some(span), def_id);
-                            }
-                        }
-
-                        self.write_sub_paths(path);
-                    }
-                }
+            Use(ref use_tree) => {
+                let prefix = ast::Path {
+                    segments: vec![],
+                    span: DUMMY_SP,
+                };
+                self.process_use_tree(use_tree, item.id, item, &prefix);
             }
             ExternCrate(_) => {
                 let alias_span = self.span.span_for_last_ident(item.span);
@@ -1333,14 +1411,21 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                 if !self.span.filter_generated(alias_span, item.span) {
                     let span =
                         self.span_from_span(alias_span.expect("No span found for extern crate"));
+                    let parent = self.save_ctxt.tcx.hir.opt_local_def_id(item.id)
+                        .and_then(|id| self.save_ctxt.tcx.parent_def_id(id))
+                        .map(::id_from_def_id);
                     self.dumper.import(
-                        false,
+                        &Access {
+                            public: false,
+                            reachable: false,
+                        },
                         Import {
                             kind: ImportKind::ExternCrate,
                             ref_id: None,
                             span,
                             name: item.ident.to_string(),
                             value: String::new(),
+                            parent,
                         },
                     );
                 }
@@ -1373,7 +1458,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                     let id = ::id_from_node_id(item.id, &self.save_ctxt);
 
                     self.dumper.dump_def(
-                        item.vis == ast::Visibility::Public,
+                        &access_from!(self.save_ctxt, item),
                         Def {
                             kind: DefKind::Type,
                             id,
@@ -1400,14 +1485,16 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
     }
 
     fn visit_generics(&mut self, generics: &'l ast::Generics) {
-        for param in generics.ty_params.iter() {
-            for bound in param.bounds.iter() {
-                if let ast::TraitTyParamBound(ref trait_ref, _) = *bound {
-                    self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
+        for param in &generics.params {
+            if let ast::GenericParam::Type(ref ty_param) = *param {
+                for bound in ty_param.bounds.iter() {
+                    if let ast::TraitTyParamBound(ref trait_ref, _) = *bound {
+                        self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
+                    }
                 }
-            }
-            if let Some(ref ty) = param.default {
-                self.visit_ty(&ty);
+                if let Some(ref ty) = ty_param.default {
+                    self.visit_ty(&ty);
+                }
             }
         }
     }
@@ -1596,7 +1683,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                         let span = self.span_from_span(sp);
 
                         self.dumper.dump_def(
-                            false,
+                            &Access {
+                                public: false,
+                                reachable: false,
+                            },
                             Def {
                                 kind: DefKind::Local,
                                 id,
@@ -1662,6 +1752,8 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
     }
 
     fn visit_foreign_item(&mut self, item: &'l ast::ForeignItem) {
+        let access = access_from!(self.save_ctxt, item);
+
         match item.node {
             ast::ForeignItemKind::Fn(ref decl, ref generics) => {
                 if let Some(fn_data) = self.save_ctxt.get_extern_item_data(item) {
@@ -1672,8 +1764,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                         |v| v.process_formals(&decl.inputs, &fn_data.qualname),
                     );
                     self.process_generic_params(generics, item.span, &fn_data.qualname, item.id);
-                    self.dumper
-                        .dump_def(item.vis == ast::Visibility::Public, fn_data);
+                    self.dumper.dump_def(&access, fn_data);
                 }
 
                 for arg in &decl.inputs {
@@ -1687,8 +1778,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
             ast::ForeignItemKind::Static(ref ty, _) => {
                 if let Some(var_data) = self.save_ctxt.get_extern_item_data(item) {
                     down_cast_data!(var_data, DefData, item.span);
-                    self.dumper
-                        .dump_def(item.vis == ast::Visibility::Public, var_data);
+                    self.dumper.dump_def(&access, var_data);
                 }
 
                 self.visit_ty(ty);
@@ -1696,8 +1786,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
             ast::ForeignItemKind::Ty => {
                 if let Some(var_data) = self.save_ctxt.get_extern_item_data(item) {
                     down_cast_data!(var_data, DefData, item.span);
-                    self.dumper
-                        .dump_def(item.vis == ast::Visibility::Public, var_data);
+                    self.dumper.dump_def(&access, var_data);
                 }
             }
         }

@@ -81,17 +81,18 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // (And cycle errors around impls tend to occur during the
         // collect/coherence phases anyhow.)
         item_path::with_forced_impl_filename_line(|| {
+            let span = self.sess.codemap().def_span(span);
             let mut err =
                 struct_span_err!(self.sess, span, E0391,
                                  "unsupported cyclic reference between types/traits detected");
             err.span_label(span, "cyclic reference");
 
-            err.span_note(stack[0].0, &format!("the cycle begins when {}...",
-                                               stack[0].1.describe(self)));
+            err.span_note(self.sess.codemap().def_span(stack[0].0),
+                          &format!("the cycle begins when {}...", stack[0].1.describe(self)));
 
             for &(span, ref query) in &stack[1..] {
-                err.span_note(span, &format!("...which then requires {}...",
-                                             query.describe(self)));
+                err.span_note(self.sess.codemap().def_span(span),
+                              &format!("...which then requires {}...", query.describe(self)));
             }
 
             err.note(&format!("...which then again requires {}, completing the cycle.",
@@ -144,7 +145,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 if !self.dep_graph.is_fully_enabled() {
                     return None;
                 }
-                match self.dep_graph.try_mark_green(self, &dep_node) {
+                match self.dep_graph.try_mark_green(self.global_tcx(), &dep_node) {
                     Some(dep_node_index) => {
                         debug_assert!(self.dep_graph.is_green(dep_node_index));
                         self.dep_graph.read_index(dep_node_index);
@@ -391,12 +392,31 @@ macro_rules! define_maps {
             {
                 debug_assert!(tcx.dep_graph.is_green(dep_node_index));
 
-                let result = if tcx.sess.opts.debugging_opts.incremental_queries &&
-                                Self::cache_on_disk(key) {
+                // First we try to load the result from the on-disk cache
+                let result = if Self::cache_on_disk(key) &&
+                                tcx.sess.opts.debugging_opts.incremental_queries {
                     let prev_dep_node_index =
                         tcx.dep_graph.prev_dep_node_index_of(dep_node);
-                    Self::load_from_disk(tcx.global_tcx(), prev_dep_node_index)
+                    let result = Self::try_load_from_disk(tcx.global_tcx(),
+                                                          prev_dep_node_index);
+
+                    // We always expect to find a cached result for things that
+                    // can be forced from DepNode.
+                    debug_assert!(!dep_node.kind.can_reconstruct_query_key() ||
+                                  result.is_some(),
+                                  "Missing on-disk cache entry for {:?}",
+                                  dep_node);
+                    result
                 } else {
+                    // Some things are never cached on disk.
+                    None
+                };
+
+                let result = if let Some(result) = result {
+                    result
+                } else {
+                    // We could not load a result from the on-disk cache, so
+                    // recompute.
                     let (result, _ ) = tcx.cycle_check(span, Query::$name(key), || {
                         // The diagnostics for this query have already been
                         // promoted to the current session during
@@ -418,7 +438,7 @@ macro_rules! define_maps {
                     use rustc_data_structures::stable_hasher::{StableHasher, HashStable};
                     use ich::Fingerprint;
 
-                    assert!(Some(tcx.dep_graph.fingerprint_of(dep_node)) ==
+                    assert!(Some(tcx.dep_graph.fingerprint_of(dep_node_index)) ==
                             tcx.dep_graph.prev_fingerprint_of(dep_node),
                             "Fingerprint for green query instance not loaded \
                              from cache: {:?}", dep_node);
@@ -432,7 +452,7 @@ macro_rules! define_maps {
                     let new_hash: Fingerprint = hasher.finish();
                     debug!("END verify_ich({:?})", dep_node);
 
-                    let old_hash = tcx.dep_graph.fingerprint_of(dep_node);
+                    let old_hash = tcx.dep_graph.fingerprint_of(dep_node_index);
 
                     assert!(new_hash == old_hash, "Found unstable fingerprints \
                         for {:?}", dep_node);
@@ -768,6 +788,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::BorrowCheck => { force!(borrowck, def_id!()); }
         DepKind::MirBorrowCheck => { force!(mir_borrowck, def_id!()); }
         DepKind::UnsafetyCheckResult => { force!(unsafety_check_result, def_id!()); }
+        DepKind::UnsafeDeriveOnReprPacked => { force!(unsafe_derive_on_repr_packed, def_id!()); }
         DepKind::Reachability => { force!(reachable_set, LOCAL_CRATE); }
         DepKind::MirKeys => { force!(mir_keys, LOCAL_CRATE); }
         DepKind::CrateVariances => { force!(crate_variances, LOCAL_CRATE); }
@@ -782,9 +803,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::IsAutoImpl => { force!(is_auto_impl, def_id!()); }
         DepKind::ImplTraitRef => { force!(impl_trait_ref, def_id!()); }
         DepKind::ImplPolarity => { force!(impl_polarity, def_id!()); }
-        DepKind::ClosureKind => { force!(closure_kind, def_id!()); }
         DepKind::FnSignature => { force!(fn_sig, def_id!()); }
-        DepKind::GenSignature => { force!(generator_sig, def_id!()); }
         DepKind::CoerceUnsizedInfo => { force!(coerce_unsized_info, def_id!()); }
         DepKind::ItemVariances => { force!(variances_of, def_id!()); }
         DepKind::IsConstFn => { force!(is_const_fn, def_id!()); }
@@ -802,6 +821,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::SpecializationGraph => { force!(specialization_graph_of, def_id!()); }
         DepKind::ObjectSafety => { force!(is_object_safe, def_id!()); }
         DepKind::TraitImpls => { force!(trait_impls_of, def_id!()); }
+        DepKind::CheckMatch => { force!(check_match, def_id!()); }
 
         DepKind::ParamEnv => { force!(param_env, def_id!()); }
         DepKind::DescribeDef => { force!(describe_def, def_id!()); }
@@ -855,6 +875,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::NativeLibraryKind => { force!(native_library_kind, def_id!()); }
         DepKind::LinkArgs => { force!(link_args, LOCAL_CRATE); }
 
+        DepKind::ResolveLifetimes => { force!(resolve_lifetimes, krate!()); }
         DepKind::NamedRegion => { force!(named_region_map, def_id!().index); }
         DepKind::IsLateBound => { force!(is_late_bound_map, def_id!().index); }
         DepKind::ObjectLifetimeDefaults => {
@@ -900,3 +921,62 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
 
     true
 }
+
+
+// FIXME(#45015): Another piece of boilerplate code that could be generated in
+//                a combined define_dep_nodes!()/define_maps!() macro.
+macro_rules! impl_load_from_cache {
+    ($($dep_kind:ident => $query_name:ident,)*) => {
+        impl DepNode {
+            // Check whether the query invocation corresponding to the given
+            // DepNode is eligible for on-disk-caching.
+            pub fn cache_on_disk(&self, tcx: TyCtxt) -> bool {
+                use ty::maps::queries;
+                use ty::maps::QueryDescription;
+
+                match self.kind {
+                    $(DepKind::$dep_kind => {
+                        let def_id = self.extract_def_id(tcx).unwrap();
+                        queries::$query_name::cache_on_disk(def_id)
+                    })*
+                    _ => false
+                }
+            }
+
+            // This is method will execute the query corresponding to the given
+            // DepNode. It is only expected to work for DepNodes where the
+            // above `cache_on_disk` methods returns true.
+            // Also, as a sanity check, it expects that the corresponding query
+            // invocation has been marked as green already.
+            pub fn load_from_on_disk_cache(&self, tcx: TyCtxt) {
+                match self.kind {
+                    $(DepKind::$dep_kind => {
+                        debug_assert!(tcx.dep_graph
+                                         .node_color(self)
+                                         .map(|c| c.is_green())
+                                         .unwrap_or(false));
+
+                        let def_id = self.extract_def_id(tcx).unwrap();
+                        let _ = tcx.$query_name(def_id);
+                    })*
+                    _ => {
+                        bug!()
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl_load_from_cache!(
+    TypeckTables => typeck_tables_of,
+    MirOptimized => optimized_mir,
+    UnsafetyCheckResult => unsafety_check_result,
+    BorrowCheck => borrowck,
+    MirBorrowCheck => mir_borrowck,
+    MirConstQualif => mir_const_qualif,
+    SymbolName => def_symbol_name,
+    ConstIsRvaluePromotableToStatic => const_is_rvalue_promotable_to_static,
+    ContainsExternIndicator => contains_extern_indicator,
+    CheckMatch => check_match,
+);

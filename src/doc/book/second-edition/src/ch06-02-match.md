@@ -5,7 +5,7 @@ us to compare a value against a series of patterns and then execute code based
 on which pattern matches. Patterns can be made up of literal values, variable
 names, wildcards, and many other things; Chapter 18 covers all the different
 kinds of patterns and what they do. The power of `match` comes from the
-expressiveness of the patterns and the compiler checks that make sure all
+expressiveness of the patterns and the compiler checks that all
 possible cases are handled.
 
 Think of a `match` expression kind of like a coin sorting machine: coins slide
@@ -43,7 +43,7 @@ the variants of the enum as its patterns.</span>
 Let’s break down the `match` in the `value_in_cents` function. First, we list
 the `match` keyword followed by an expression, which in this case is the value
 `coin`. This seems very similar to an expression used with `if`, but there’s a
-big difference: with `if`, the expression needs to return a boolean value.
+big difference: with `if`, the expression needs to return a Boolean value.
 Here, it can be any type. The type of `coin` in this example is the `Coin` enum
 that we defined in Listing 6-3.
 

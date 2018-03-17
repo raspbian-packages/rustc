@@ -13,7 +13,7 @@
 // a variety of errors from the older, AST-based machinery (notably
 // borrowck), and then we get the NLL error at the end.
 
-// compile-flags:-Znll -Zborrowck-mir
+// compile-flags:-Znll -Zborrowck=compare -Znll-dump-cause
 
 struct Map {
 }
@@ -31,6 +31,7 @@ fn ok(map: &mut Map) -> &String {
             }
             None => {
                 map.set(String::new()); // Just AST errors here
+                //~^ ERROR borrowed as immutable (Ast)
             }
         }
     }
@@ -41,10 +42,13 @@ fn err(map: &mut Map) -> &String {
         match map.get() {
             Some(v) => {
                 map.set(String::new()); // Both AST and MIR error here
+                //~^ ERROR borrowed as immutable (Mir)
+                //~| ERROR borrowed as immutable (Ast)
                 return v;
             }
             None => {
                 map.set(String::new()); // Just AST errors here
+                //~^ ERROR borrowed as immutable (Ast)
             }
         }
     }

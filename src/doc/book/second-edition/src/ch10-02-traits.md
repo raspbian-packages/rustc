@@ -413,8 +413,6 @@ and `Copy` traits, like `i32` and `char`:
 <span class="filename">Filename: src/main.rs</span>
 
 ```rust
-use std::cmp::PartialOrd;
-
 fn largest<T: PartialOrd + Copy>(list: &[T]) -> T {
     let mut largest = list[0];
 
@@ -505,7 +503,7 @@ similar to this code:
 
 ```rust,ignore
 impl<T: Display> ToString for T {
-    // ...snip...
+    // --snip--
 }
 ```
 

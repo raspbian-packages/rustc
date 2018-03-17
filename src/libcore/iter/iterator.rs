@@ -30,6 +30,7 @@ fn _assert_is_object_safe(_: &Iterator<Item=()>) {}
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented = "`{Self}` is not an iterator; maybe try calling \
                             `.iter()` or a similar method"]
+#[doc(spotlight)]
 pub trait Iterator {
     /// The type of the elements being iterated over.
     #[stable(feature = "rust1", since = "1.0.0")]
@@ -620,27 +621,24 @@ pub trait Iterator {
     /// Basic usage:
     ///
     /// ```
-    /// let a = ["1", "2", "lol"];
+    /// let a = ["1", "lol", "3", "NaN", "5"];
     ///
     /// let mut iter = a.iter().filter_map(|s| s.parse().ok());
     ///
     /// assert_eq!(iter.next(), Some(1));
-    /// assert_eq!(iter.next(), Some(2));
+    /// assert_eq!(iter.next(), Some(3));
+    /// assert_eq!(iter.next(), Some(5));
     /// assert_eq!(iter.next(), None);
     /// ```
     ///
     /// Here's the same example, but with [`filter`] and [`map`]:
     ///
     /// ```
-    /// let a = ["1", "2", "lol"];
-    ///
-    /// let mut iter = a.iter()
-    ///                 .map(|s| s.parse())
-    ///                 .filter(|s| s.is_ok())
-    ///                 .map(|s| s.unwrap());
-    ///
+    /// let a = ["1", "lol", "3", "NaN", "5"];
+    /// let mut iter = a.iter().map(|s| s.parse()).filter(|s| s.is_ok()).map(|s| s.unwrap());
     /// assert_eq!(iter.next(), Some(1));
-    /// assert_eq!(iter.next(), Some(2));
+    /// assert_eq!(iter.next(), Some(3));
+    /// assert_eq!(iter.next(), Some(5));
     /// assert_eq!(iter.next(), None);
     /// ```
     ///

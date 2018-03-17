@@ -37,13 +37,14 @@ if [ "$DIST_SRC" = "" ]; then
 fi
 
 # If we're deploying artifacts then we set the release channel, otherwise if
-# we're not deploying then we want to be sure to enable all assertions becauase
+# we're not deploying then we want to be sure to enable all assertions because
 # we'll be running tests
 #
 # FIXME: need a scheme for changing this `nightly` value to `beta` and `stable`
 #        either automatically or manually.
+export RUST_RELEASE_CHANNEL=stable
 if [ "$DEPLOY$DEPLOY_ALT" != "" ]; then
-  RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --release-channel=stable"
+  RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --release-channel=$RUST_RELEASE_CHANNEL"
   RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-llvm-static-stdcpp"
 
   if [ "$NO_LLVM_ASSERTIONS" = "1" ]; then

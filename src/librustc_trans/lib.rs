@@ -22,17 +22,17 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
+#![feature(fs_read_write)]
 #![allow(unused_attributes)]
 #![feature(i128_type)]
 #![feature(i128)]
+#![feature(inclusive_range)]
+#![feature(inclusive_range_syntax)]
 #![feature(libc)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_patterns)]
 #![feature(conservative_impl_trait)]
-
-#![feature(const_atomic_bool_new)]
-#![feature(const_once_new)]
 
 use rustc::dep_graph::WorkProduct;
 use syntax_pos::symbol::Symbol;
@@ -41,10 +41,10 @@ use syntax_pos::symbol::Symbol;
 extern crate bitflags;
 extern crate flate2;
 extern crate libc;
-extern crate owning_ref;
 #[macro_use] extern crate rustc;
 extern crate jobserver;
 extern crate num_cpus;
+extern crate rustc_mir;
 extern crate rustc_allocator;
 extern crate rustc_apfloat;
 extern crate rustc_back;
@@ -64,6 +64,7 @@ extern crate rustc_errors as errors;
 extern crate serialize;
 #[cfg(windows)]
 extern crate cc; // Used to locate MSVC
+extern crate tempdir;
 
 pub use base::trans_crate;
 use back::bytecode::RLIB_BYTECODE_EXTENSION;
@@ -85,8 +86,7 @@ use rustc::session::config::{OutputFilenames, OutputType};
 use rustc::ty::{self, TyCtxt};
 use rustc::util::nodemap::{FxHashSet, FxHashMap};
 
-use rustc_trans_utils::collector;
-use rustc_trans_utils::monomorphize;
+use rustc_mir::monomorphize;
 
 mod diagnostics;
 
@@ -104,7 +104,6 @@ pub mod back {
 }
 
 mod abi;
-mod adt;
 mod allocator;
 mod asm;
 mod assert_module_sources;
@@ -137,15 +136,12 @@ mod declare;
 mod glue;
 mod intrinsic;
 mod llvm_util;
-mod machine;
 mod metadata;
 mod meth;
 mod mir;
-mod partitioning;
 mod symbol_names_test;
 mod time_graph;
 mod trans_item;
-mod tvec;
 mod type_;
 mod type_of;
 mod value;

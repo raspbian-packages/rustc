@@ -59,7 +59,7 @@ impl RegexBuilder {
     /// Create a new regular expression builder with the given pattern.
     ///
     /// If the pattern is invalid, then an error will be returned when
-    /// `compile` is called.
+    /// `build` is called.
     pub fn new(pattern: &str) -> RegexBuilder {
         let mut builder = RegexBuilder(RegexOptions::default());
         builder.0.pats.push(pattern.to_owned());
@@ -79,12 +79,20 @@ impl RegexBuilder {
     }
 
     /// Set the value for the case insensitive (`i`) flag.
+    ///
+    /// When enabled, letters in the pattern will match both upper case and
+    /// lower case variants.
     pub fn case_insensitive(&mut self, yes: bool) -> &mut RegexBuilder {
         self.0.case_insensitive = yes;
         self
     }
 
     /// Set the value for the multi-line matching (`m`) flag.
+    ///
+    /// When enabled, `^` matches the beginning of lines and `$` matches the
+    /// end of lines.
+    ///
+    /// By default, they match beginning/end of the input.
     pub fn multi_line(&mut self, yes: bool) -> &mut RegexBuilder {
         self.0.multi_line = yes;
         self
@@ -103,18 +111,30 @@ impl RegexBuilder {
     }
 
     /// Set the value for the greedy swap (`U`) flag.
+    ///
+    /// When enabled, a pattern like `a*` is lazy (tries to find shortest
+    /// match) and `a*?` is greedy (tries to find longest match).
+    ///
+    /// By default, `a*` is greedy and `a*?` is lazy.
     pub fn swap_greed(&mut self, yes: bool) -> &mut RegexBuilder {
         self.0.swap_greed = yes;
         self
     }
 
     /// Set the value for the ignore whitespace (`x`) flag.
+    ///
+    /// When enabled, whitespace such as new lines and spaces will be ignored
+    /// between expressions of the pattern, and `#` can be used to start a
+    /// comment until the next new line.
     pub fn ignore_whitespace(&mut self, yes: bool) -> &mut RegexBuilder {
         self.0.ignore_whitespace = yes;
         self
     }
 
     /// Set the value for the Unicode (`u`) flag.
+    ///
+    /// Enabled by default. When disabled, character classes such as `\w` only
+    /// match ASCII word characters instead of all Unicode word characters.
     pub fn unicode(&mut self, yes: bool) -> &mut RegexBuilder {
         self.0.unicode = yes;
         self
@@ -137,7 +157,7 @@ impl RegexBuilder {
     ///
     /// Note that this is a *per thread* limit. There is no way to set a global
     /// limit. In particular, if a regex is used from multiple threads
-    /// simulanteously, then each thread may use up to the number of bytes
+    /// simultaneously, then each thread may use up to the number of bytes
     /// specified here.
     pub fn dfa_size_limit(&mut self, limit: usize) -> &mut RegexBuilder {
         self.0.dfa_size_limit = limit;
@@ -171,7 +191,7 @@ impl RegexSetBuilder {
     /// Create a new regular expression builder with the given pattern.
     ///
     /// If the pattern is invalid, then an error will be returned when
-    /// `compile` is called.
+    /// `build` is called.
     pub fn new<I, S>(patterns: I) -> RegexSetBuilder
             where S: AsRef<str>, I: IntoIterator<Item=S> {
         let mut builder = RegexSetBuilder(RegexOptions::default());

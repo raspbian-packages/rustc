@@ -15,28 +15,37 @@ use {LocalName, QualName};
 
 pub fn serialize<Wr, T>(writer: Wr, node: &T, opts: SerializeOpts) -> io::Result<()>
 where Wr: Write, T: Serialize {
-    let mut ser = HtmlSerializer::new(writer, opts);
+    let mut ser = HtmlSerializer::new(writer, opts.clone());
     node.serialize(&mut ser, opts.traversal_scope)
 }
 
-#[derive(Copy, Clone)]
+#[derive(Clone)]
 pub struct SerializeOpts {
     /// Is scripting enabled?
     pub scripting_enabled: bool,
 
     /// Serialize the root node? Default: ChildrenOnly
     pub traversal_scope: TraversalScope,
+
+    /// If the serializer is asked to serialize an invalid tree, the default
+    /// behavior is to panic in the event that an `end_elem` is created without a
+    /// matching `start_elem`. Setting this to true will prevent those panics by
+    /// creating a default parent on the element stack. No extra start elem will
+    /// actually be written. Default: false
+    pub create_missing_parent: bool,
 }
 
 impl Default for SerializeOpts {
     fn default() -> SerializeOpts {
         SerializeOpts {
             scripting_enabled: true,
-            traversal_scope: TraversalScope::ChildrenOnly,
+            traversal_scope: TraversalScope::ChildrenOnly(None),
+            create_missing_parent: false,
         }
     }
 }
 
+#[derive(Default)]
 struct ElemInfo {
     html_name: Option<LocalName>,
     ignore_children: bool,
@@ -63,11 +72,15 @@ fn tagname(name: &QualName) -> LocalName {
 
 impl<Wr: Write> HtmlSerializer<Wr> {
     fn new(writer: Wr, opts: SerializeOpts) -> Self {
+        let html_name = match opts.traversal_scope {
+            TraversalScope::IncludeNode | TraversalScope::ChildrenOnly(None) => None,
+            TraversalScope::ChildrenOnly(Some(ref n)) => Some(tagname(n))
+        };
         HtmlSerializer {
             writer: writer,
             opts: opts,
             stack: vec!(ElemInfo {
-                html_name: None,
+                html_name: html_name,
                 ignore_children: false,
                 processed_first_child: false,
             }),
@@ -75,7 +88,15 @@ impl<Wr: Write> HtmlSerializer<Wr> {
     }
 
     fn parent(&mut self) -> &mut ElemInfo {
-        self.stack.last_mut().expect("no parent ElemInfo")
+        if self.stack.len() == 0 {
+            if self.opts.create_missing_parent {
+                warn!("ElemInfo stack empty, creating new parent");
+                self.stack.push(Default::default());
+            } else {
+                panic!("no parent ElemInfo")
+            }
+        }
+        self.stack.last_mut().unwrap()
     }
 
     fn write_escaped(&mut self, text: &str, attr_mode: bool) -> io::Result<()> {
@@ -159,7 +180,14 @@ impl<Wr: Write> Serializer for HtmlSerializer<Wr> {
     }
 
     fn end_elem(&mut self, name: QualName) -> io::Result<()> {
-        let info = self.stack.pop().expect("no ElemInfo");
+        let info = match self.stack.pop() {
+            Some(info) => info,
+            None if self.opts.create_missing_parent => {
+                warn!("missing ElemInfo, creating default.");
+                Default::default()
+            }
+            _ => panic!("no ElemInfo"),
+        };
         if info.ignore_children {
             return Ok(());
         }
@@ -170,18 +198,6 @@ impl<Wr: Write> Serializer for HtmlSerializer<Wr> {
     }
 
     fn write_text(&mut self, text: &str) -> io::Result<()> {
-        let prepend_lf = text.starts_with("\n") && {
-            let parent = self.parent();
-            !parent.processed_first_child && match parent.html_name {
-                Some(local_name!("pre")) | Some(local_name!("textarea")) | Some(local_name!("listing")) => true,
-                _ => false,
-            }
-        };
-
-        if prepend_lf {
-            try!(self.writer.write_all(b"\n"));
-        }
-
         let escape = match self.parent().html_name {
             Some(local_name!("style")) | Some(local_name!("script")) | Some(local_name!("xmp"))
             | Some(local_name!("iframe")) | Some(local_name!("noembed")) | Some(local_name!("noframes"))

@@ -10,6 +10,7 @@ src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
 src/libbacktrace/configure
 src/rustc/*/Cargo.toml
 src/vendor/*/.travis.yml
+src/vendor/*/Cargo.toml
 src/vendor/*/CHANGELOG.md
 src/vendor/*/CONTRIBUTORS.md
 src/vendor/*/README.md
@@ -17,14 +18,16 @@ src/vendor/*/README.tpl
 src/vendor/*/LICENSE
 src/vendor/*/*/LICENSE
 src/vendor/*/*/*/LICENSE
+src/vendor/clap/.github/CONTRIBUTING.md
 # author likes to omit line breaks in their comments
 src/vendor/handlebars/src/lib.rs
+src/vendor/lazy_static/src/lib.rs
 src/vendor/pulldown-cmark/tests/footnotes.rs
 src/vendor/pulldown-cmark/specs/footnotes.txt
 src/vendor/pulldown-cmark-*/tests/footnotes.rs
 src/vendor/pulldown-cmark-*/specs/footnotes.txt
 src/vendor/stable_deref_trait/src/lib.rs
-src/vendor/winapi/src/winnt.rs
+src/vendor/winapi-*/src/winnt.rs
 
 # Embedded libraries, justified in README.source
 src/binaryen/.travis.yml
@@ -58,6 +61,7 @@ src/rt/hoedown/test/MarkdownTest_1.0.3/Tests/Markdown*.html
 src/test/compile-fail/not-utf8.bin
 src/test/*/*.rs
 src/test/*/*/*.stderr
+src/test/*/*/*/*.stderr
 src/tools/*/tests/*/*.stderr
 src/vendor/cssparser/src/css-parsing-tests/*.json
 src/vendor/cssparser/src/big-data-url.css

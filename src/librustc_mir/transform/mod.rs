@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use borrow_check::nll::type_check;
 use build;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::mir::{Mir, Promoted};
@@ -23,25 +24,26 @@ use syntax::ast;
 use syntax_pos::Span;
 
 pub mod add_validation;
+pub mod add_moves_for_packed_drops;
 pub mod clean_end_regions;
 pub mod check_unsafety;
 pub mod simplify_branches;
 pub mod simplify;
 pub mod erase_regions;
 pub mod no_landing_pads;
-pub mod type_check;
 pub mod rustc_peek;
 pub mod elaborate_drops;
 pub mod add_call_guards;
 pub mod promote_consts;
 pub mod qualify_consts;
+pub mod remove_noop_landing_pads;
 pub mod dump_mir;
 pub mod deaggregator;
 pub mod instcombine;
 pub mod copy_prop;
 pub mod generator;
 pub mod inline;
-pub mod nll;
+pub mod lower_128bit;
 
 pub(crate) fn provide(providers: &mut Providers) {
     self::qualify_consts::provide(providers);
@@ -224,8 +226,11 @@ fn optimized_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> &'tcx 
 
     let mut mir = tcx.mir_validated(def_id).steal();
     run_passes![tcx, mir, def_id, 2;
+        // Remove all things not needed by analysis
         no_landing_pads::NoLandingPads,
         simplify_branches::SimplifyBranches::new("initial"),
+        remove_noop_landing_pads::RemoveNoopLandingPads,
+        simplify::SimplifyCfg::new("early-opt"),
 
         // These next passes must be executed together
         add_call_guards::CriticalCallEdges,
@@ -235,17 +240,26 @@ fn optimized_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> &'tcx 
         // an AllCallEdges pass right before it.
         add_call_guards::AllCallEdges,
         add_validation::AddValidation,
+        // AddMovesForPackedDrops needs to run after drop
+        // elaboration.
+        add_moves_for_packed_drops::AddMovesForPackedDrops,
+
         simplify::SimplifyCfg::new("elaborate-drops"),
+
         // No lifetime analysis based on borrowing can be done from here on out.
 
         // From here on out, regions are gone.
         erase_regions::EraseRegions,
+
+        lower_128bit::Lower128Bit,
 
         // Optimizations begin.
         inline::Inline,
         instcombine::InstCombine,
         deaggregator::Deaggregator,
         copy_prop::CopyPropagation,
+        remove_noop_landing_pads::RemoveNoopLandingPads,
+        simplify::SimplifyCfg::new("final"),
         simplify::SimplifyLocals,
 
         generator::StateTransform,

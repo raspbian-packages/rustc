@@ -28,6 +28,14 @@ reports on the Debian side.
 We will also examine these failures ourselves on a best-effort basis and
 attempt to fix the more serious-looking ones.
 
+Ports architectures
+-------------------
+
+The number of allowed test failures on certain Debian ports architectures
+(currently powerpc, powerpcspe, sparc64, x32) is raised greatly to help unblock
+progress for porters. Of course, as a user this means you may run into more
+bugs than usual; as mentioned above bugs reports and patches are welcome.
+
 
 Shared libraries
 ================

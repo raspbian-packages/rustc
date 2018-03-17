@@ -17,14 +17,13 @@ use driver;
 use rustc_lint;
 use rustc_resolve::MakeGlobMap;
 use rustc_trans;
-use rustc::middle::free_region::FreeRegionMap;
 use rustc::middle::region;
-use rustc::middle::resolve_lifetime;
 use rustc::ty::subst::{Kind, Subst};
 use rustc::traits::{ObligationCause, Reveal};
 use rustc::ty::{self, Ty, TyCtxt, TypeFoldable};
 use rustc::ty::maps::OnDiskCache;
 use rustc::infer::{self, InferOk, InferResult};
+use rustc::infer::outlives::env::OutlivesEnvironment;
 use rustc::infer::type_variable::TypeVariableOrigin;
 use rustc_metadata::cstore::CStore;
 use rustc::hir::map as hir_map;
@@ -34,14 +33,13 @@ use rustc_trans_utils::trans_crate::TransCrate;
 use std::rc::Rc;
 use syntax::ast;
 use syntax::abi::Abi;
-use syntax::codemap::{CodeMap, FilePathMapping};
+use syntax::codemap::{CodeMap, FilePathMapping, FileName};
 use errors;
 use errors::emitter::Emitter;
 use errors::{Level, DiagnosticBuilder};
 use syntax::feature_gate::UnstableFeatures;
 use syntax::symbol::Symbol;
 use syntax_pos::DUMMY_SP;
-use arena::DroplessArena;
 
 use rustc::hir;
 
@@ -114,7 +112,7 @@ fn test_env<F>(source_string: &str,
     rustc_trans::init(&sess);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
     let input = config::Input::Str {
-        name: driver::anon_src(),
+        name: FileName::Anon,
         input: source_string.to_string(),
     };
     let krate = driver::phase_1_parse_input(&driver::CompileController::basic(),
@@ -132,12 +130,10 @@ fn test_env<F>(source_string: &str,
             .expect("phase 2 aborted")
     };
 
-    let arena = DroplessArena::new();
-    let arenas = ty::GlobalArenas::new();
+    let arenas = ty::AllArenas::new();
     let hir_map = hir_map::map_crate(&sess, &*cstore, &mut hir_forest, &defs);
 
     // run just enough stuff to build a tcx:
-    let named_region_map = resolve_lifetime::krate(&sess, &*cstore, &hir_map);
     let (tx, _rx) = mpsc::channel();
     let outputs = OutputFilenames {
         out_directory: PathBuf::new(),
@@ -151,9 +147,7 @@ fn test_env<F>(source_string: &str,
                              ty::maps::Providers::default(),
                              ty::maps::Providers::default(),
                              &arenas,
-                             &arena,
                              resolutions,
-                             named_region_map.unwrap(),
                              hir_map,
                              OnDiskCache::new_empty(sess.codemap()),
                              "test_crate",
@@ -162,14 +156,15 @@ fn test_env<F>(source_string: &str,
                              |tcx| {
         tcx.infer_ctxt().enter(|infcx| {
             let mut region_scope_tree = region::ScopeTree::default();
+            let param_env = ty::ParamEnv::empty(Reveal::UserFacing);
             body(Env {
                 infcx: &infcx,
                 region_scope_tree: &mut region_scope_tree,
-                param_env: ty::ParamEnv::empty(Reveal::UserFacing),
+                param_env: param_env,
             });
-            let free_regions = FreeRegionMap::new();
+            let outlives_env = OutlivesEnvironment::new(param_env);
             let def_id = tcx.hir.local_def_id(ast::CRATE_NODE_ID);
-            infcx.resolve_regions_and_report_errors(def_id, &region_scope_tree, &free_regions);
+            infcx.resolve_regions_and_report_errors(def_id, &region_scope_tree, &outlives_env);
             assert_eq!(tcx.sess.err_count(), expected_err_count);
         });
     });
@@ -250,6 +245,7 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) |
                 hir::ItemTrait(..) |
+                hir::ItemTraitAlias(..) |
                 hir::ItemImpl(..) |
                 hir::ItemAutoImpl(..) => None,
 

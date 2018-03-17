@@ -8,11 +8,17 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: -Z emit-end-regions -Z borrowck-mir
+// compile-flags: -Z borrowck=compare
 
 fn ok() {
     loop {
         let _x = 1;
+    }
+}
+
+fn also_ok() {
+    loop {
+        let _x = String::new();
     }
 }
 
@@ -26,5 +32,6 @@ fn fail() {
 
 fn main() {
     ok();
+    also_ok();
     fail();
 }

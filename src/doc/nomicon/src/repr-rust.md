@@ -21,7 +21,7 @@ Rust gives you the following ways to lay out composite data:
 * arrays (homogeneous product types)
 * enums (named sum types -- tagged unions)
 
-An enum is said to be *C-like* if none of its variants have associated data.
+An enum is said to be *field-less* if none of its variants have associated data.
 
 Composite structures will have an alignment equal to the maximum
 of their fields' alignment. Rust will consequently insert padding where
@@ -109,9 +109,6 @@ struct Foo<u32, u16> {
 
 The latter case quite simply wastes space. An optimal use of space therefore
 requires different monomorphizations to have *different field orderings*.
-
-**Note: this is a hypothetical optimization that is not yet implemented in Rust
-1.0**
 
 Enums make this consideration even more complicated. Naively, an enum such as:
 

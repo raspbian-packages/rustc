@@ -145,6 +145,7 @@ Import of a new upstream version
 
 # Make sure you apply the patch mentioned in #855464 to /usr/bin/mk-origtargz
 
+$ sudo mk-build-deps -irt 'aptitude -R'
 $ uscan --verbose
 $ ver=UPDATE-ME # whatever it is, X.YY.0 or X.YY.0~beta probably
 $ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/

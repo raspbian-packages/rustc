@@ -448,6 +448,12 @@ s! {
         pub p_memsz: Elf64_Xword,
         pub p_align: Elf64_Xword,
     }
+
+    pub struct ucred {
+        pub pid: ::pid_t,
+        pub uid: ::uid_t,
+        pub gid: ::gid_t,
+    }
 }
 
 pub const ABDAY_1: ::nl_item = 0x20000;
@@ -720,6 +726,28 @@ pub const IFF_LOWER_UP: ::c_int = 0x10000;
 pub const IFF_DORMANT: ::c_int = 0x20000;
 pub const IFF_ECHO: ::c_int = 0x40000;
 
+// linux/if_tun.h
+// Read queue size
+pub const TUN_READQ_SIZE: ::c_short = 500;
+// TUN device type flags: deprecated. Use IFF_TUN/IFF_TAP instead.
+pub const TUN_TUN_DEV: ::c_short   = IFF_TUN;
+pub const TUN_TAP_DEV: ::c_short   = IFF_TAP;
+pub const TUN_TYPE_MASK: ::c_short = 0x000f;
+// TUNSETIFF ifr flags
+pub const IFF_TUN: ::c_short        = 0x0001;
+pub const IFF_TAP: ::c_short        = 0x0002;
+pub const IFF_NO_PI: ::c_short      = 0x1000;
+// This flag has no real effect
+pub const IFF_ONE_QUEUE: ::c_short    = 0x2000;
+pub const IFF_VNET_HDR: ::c_short     = 0x4000;
+pub const IFF_TUN_EXCL: ::c_short     = 0x8000;
+pub const IFF_MULTI_QUEUE: ::c_short  = 0x0100;
+pub const IFF_ATTACH_QUEUE: ::c_short = 0x0200;
+pub const IFF_DETACH_QUEUE: ::c_short = 0x0400;
+// read-only flag
+pub const IFF_PERSIST: ::c_short  = 0x0800;
+pub const IFF_NOFILTER: ::c_short = 0x1000;
+
 pub const ST_RDONLY: ::c_ulong = 1;
 pub const ST_NOSUID: ::c_ulong = 2;
 pub const ST_NODEV: ::c_ulong = 4;
@@ -903,10 +931,12 @@ pub const EAI_BADFLAGS: ::c_int = -1;
 pub const EAI_NONAME: ::c_int = -2;
 pub const EAI_AGAIN: ::c_int = -3;
 pub const EAI_FAIL: ::c_int = -4;
+pub const EAI_NODATA: ::c_int = -5;
 pub const EAI_FAMILY: ::c_int = -6;
 pub const EAI_SOCKTYPE: ::c_int = -7;
 pub const EAI_SERVICE: ::c_int = -8;
 pub const EAI_MEMORY: ::c_int = -10;
+pub const EAI_SYSTEM: ::c_int = -11;
 pub const EAI_OVERFLOW: ::c_int = -12;
 
 pub const NI_NUMERICHOST: ::c_int = 1;
@@ -918,8 +948,6 @@ pub const NI_DGRAM: ::c_int = 16;
 pub const SYNC_FILE_RANGE_WAIT_BEFORE: ::c_uint = 1;
 pub const SYNC_FILE_RANGE_WRITE: ::c_uint = 2;
 pub const SYNC_FILE_RANGE_WAIT_AFTER: ::c_uint = 4;
-
-pub const EAI_SYSTEM: ::c_int = -11;
 
 pub const AIO_CANCELED: ::c_int = 0;
 pub const AIO_NOTCANCELED: ::c_int = 1;

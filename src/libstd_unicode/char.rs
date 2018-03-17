@@ -57,6 +57,7 @@ pub use tables::{UnicodeVersion, UNICODE_VERSION};
 /// [`to_lowercase`]: ../../std/primitive.char.html#method.to_lowercase
 /// [`char`]: ../../std/primitive.char.html
 #[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Debug)]
 pub struct ToLowercase(CaseMappingIter);
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -78,6 +79,7 @@ impl FusedIterator for ToLowercase {}
 /// [`to_uppercase`]: ../../std/primitive.char.html#method.to_uppercase
 /// [`char`]: ../../std/primitive.char.html
 #[stable(feature = "rust1", since = "1.0.0")]
+#[derive(Debug)]
 pub struct ToUppercase(CaseMappingIter);
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -91,6 +93,7 @@ impl Iterator for ToUppercase {
 #[unstable(feature = "fused", issue = "35602")]
 impl FusedIterator for ToUppercase {}
 
+#[derive(Debug)]
 enum CaseMappingIter {
     Three(char, char, char),
     Two(char, char),
@@ -935,7 +938,7 @@ impl char {
     /// assert!(ascii.is_ascii());
     /// assert!(!non_ascii.is_ascii());
     /// ```
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn is_ascii(&self) -> bool {
         *self as u32 <= 0x7F
@@ -963,7 +966,7 @@ impl char {
     ///
     /// [`make_ascii_uppercase`]: #method.make_ascii_uppercase
     /// [`to_uppercase`]: #method.to_uppercase
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn to_ascii_uppercase(&self) -> char {
         if self.is_ascii() {
@@ -995,7 +998,7 @@ impl char {
     ///
     /// [`make_ascii_lowercase`]: #method.make_ascii_lowercase
     /// [`to_lowercase`]: #method.to_lowercase
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn to_ascii_lowercase(&self) -> char {
         if self.is_ascii() {
@@ -1020,7 +1023,7 @@ impl char {
     /// assert!(upper_a.eq_ignore_ascii_case(&upper_a));
     /// assert!(!upper_a.eq_ignore_ascii_case(&lower_z));
     /// ```
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn eq_ignore_ascii_case(&self, other: &char) -> bool {
         self.to_ascii_lowercase() == other.to_ascii_lowercase()
@@ -1045,7 +1048,7 @@ impl char {
     /// ```
     ///
     /// [`to_ascii_uppercase`]: #method.to_ascii_uppercase
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn make_ascii_uppercase(&mut self) {
         *self = self.to_ascii_uppercase();
@@ -1070,7 +1073,7 @@ impl char {
     /// ```
     ///
     /// [`to_ascii_lowercase`]: #method.to_ascii_lowercase
-    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.21.0")]
+    #[stable(feature = "ascii_methods_on_intrinsics", since = "1.23.0")]
     #[inline]
     pub fn make_ascii_lowercase(&mut self) {
         *self = self.to_ascii_lowercase();
@@ -1106,7 +1109,7 @@ impl char {
     /// assert!(!lf.is_ascii_alphabetic());
     /// assert!(!esc.is_ascii_alphabetic());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_alphabetic(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_alphabetic()
@@ -1140,7 +1143,7 @@ impl char {
     /// assert!(!lf.is_ascii_uppercase());
     /// assert!(!esc.is_ascii_uppercase());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_uppercase(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_uppercase()
@@ -1174,7 +1177,7 @@ impl char {
     /// assert!(!lf.is_ascii_lowercase());
     /// assert!(!esc.is_ascii_lowercase());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_lowercase(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_lowercase()
@@ -1211,7 +1214,7 @@ impl char {
     /// assert!(!lf.is_ascii_alphanumeric());
     /// assert!(!esc.is_ascii_alphanumeric());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_alphanumeric(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_alphanumeric()
@@ -1245,7 +1248,7 @@ impl char {
     /// assert!(!lf.is_ascii_digit());
     /// assert!(!esc.is_ascii_digit());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_digit(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_digit()
@@ -1282,7 +1285,7 @@ impl char {
     /// assert!(!lf.is_ascii_hexdigit());
     /// assert!(!esc.is_ascii_hexdigit());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_hexdigit(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_hexdigit()
@@ -1320,7 +1323,7 @@ impl char {
     /// assert!(!lf.is_ascii_punctuation());
     /// assert!(!esc.is_ascii_punctuation());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_punctuation(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_punctuation()
@@ -1354,7 +1357,7 @@ impl char {
     /// assert!(!lf.is_ascii_graphic());
     /// assert!(!esc.is_ascii_graphic());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_graphic(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_graphic()
@@ -1405,7 +1408,7 @@ impl char {
     /// assert!(lf.is_ascii_whitespace());
     /// assert!(!esc.is_ascii_whitespace());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_whitespace(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_whitespace()
@@ -1441,7 +1444,7 @@ impl char {
     /// assert!(lf.is_ascii_control());
     /// assert!(esc.is_ascii_control());
     /// ```
-    #[unstable(feature = "ascii_ctype", issue = "39658")]
+    #[stable(feature = "ascii_ctype_on_intrinsics", since = "1.24.0")]
     #[inline]
     pub fn is_ascii_control(&self) -> bool {
         self.is_ascii() && (*self as u8).is_ascii_control()
@@ -1450,7 +1453,7 @@ impl char {
 
 /// An iterator that decodes UTF-16 encoded code points from an iterator of `u16`s.
 #[stable(feature = "decode_utf16", since = "1.9.0")]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct DecodeUtf16<I>
     where I: Iterator<Item = u16>
 {
@@ -1458,7 +1461,7 @@ pub struct DecodeUtf16<I>
     buf: Option<u16>,
 }
 
-/// An iterator that decodes UTF-16 encoded code points from an iterator of `u16`s.
+/// An error that can be returned when decoding UTF-16 code points.
 #[stable(feature = "decode_utf16", since = "1.9.0")]
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct DecodeUtf16Error {
@@ -1525,12 +1528,7 @@ impl<I: Iterator<Item = u16>> Iterator for DecodeUtf16<I> {
     fn next(&mut self) -> Option<Result<char, DecodeUtf16Error>> {
         let u = match self.buf.take() {
             Some(buf) => buf,
-            None => {
-                match self.iter.next() {
-                    Some(u) => u,
-                    None => return None,
-                }
-            }
+            None => self.iter.next()?
         };
 
         if u < 0xD800 || 0xDFFF < u {

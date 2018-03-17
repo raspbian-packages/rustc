@@ -90,7 +90,8 @@ use middle::region;
 use rustc::hir::def_id::DefId;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty};
-use rustc::infer::{self, OutlivesEnvironment};
+use rustc::infer;
+use rustc::infer::outlives::env::OutlivesEnvironment;
 use rustc::ty::adjustment;
 
 use std::mem;
@@ -123,7 +124,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             rcx.visit_body(body);
             rcx.visit_region_obligations(id);
         }
-        rcx.resolve_regions_and_report_errors();
+        rcx.resolve_regions_and_report_errors_unless_nll();
 
         assert!(self.tables.borrow().free_region_map.is_empty());
         self.tables.borrow_mut().free_region_map = rcx.outlives_environment.into_free_region_map();
@@ -135,7 +136,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                          item_id: ast::NodeId,
                          span: Span,
                          wf_tys: &[Ty<'tcx>]) {
-        debug!("regionck_item(item.id={:?}, wf_tys={:?}", item_id, wf_tys);
+        debug!("regionck_item(item.id={:?}, wf_tys={:?})", item_id, wf_tys);
         let subject = self.tcx.hir.local_def_id(item_id);
         let mut rcx = RegionCtxt::new(self,
                                       RepeatingScope(item_id),
@@ -172,7 +173,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             rcx.visit_fn_body(fn_id, body, self.tcx.hir.span(fn_id));
         }
 
-        rcx.resolve_regions_and_report_errors();
+        rcx.resolve_regions_and_report_errors_unless_nll();
 
         // In this mode, we also copy the free-region-map into the
         // tables of the enclosing fcx. In the other regionck modes
@@ -336,10 +337,16 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         debug!("visit_fn_body body.id {:?} call_site_scope: {:?}",
                body.id(), call_site_scope);
         let call_site_region = self.tcx.mk_region(ty::ReScope(call_site_scope));
+
         let body_hir_id = self.tcx.hir.node_to_hir_id(body_id.node_id);
         self.type_of_node_must_outlive(infer::CallReturn(span),
                                        body_hir_id,
                                        call_site_region);
+
+        self.constrain_anon_types(
+            &self.fcx.anon_types.borrow(),
+            self.outlives_environment.free_region_map(),
+        );
     }
 
     fn visit_region_obligations(&mut self, node_id: ast::NodeId)
@@ -361,7 +368,13 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     fn resolve_regions_and_report_errors(&self) {
         self.fcx.resolve_regions_and_report_errors(self.subject_def_id,
                                                    &self.region_scope_tree,
-                                                   self.outlives_environment.free_region_map());
+                                                   &self.outlives_environment);
+    }
+
+    fn resolve_regions_and_report_errors_unless_nll(&self) {
+        self.fcx.resolve_regions_and_report_errors_unless_nll(self.subject_def_id,
+                                                              &self.region_scope_tree,
+                                                              &self.outlives_environment);
     }
 
     fn constrain_bindings_in_pat(&mut self, pat: &hir::Pat) {

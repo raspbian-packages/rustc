@@ -2,6 +2,7 @@
 //!
 //! This covers *-apple-* triples currently
 
+pub type c_char = i8;
 pub type clock_t = c_ulong;
 pub type time_t = c_long;
 pub type suseconds_t = i32;
@@ -476,6 +477,17 @@ s! {
         pub cmd: u32,
         pub cmdsize: u32,
     }
+
+    pub struct sockaddr_dl {
+        pub sdl_len: ::c_uchar,
+        pub sdl_family: ::c_uchar,
+        pub sdl_index: ::c_ushort,
+        pub sdl_type: ::c_uchar,
+        pub sdl_nlen: ::c_uchar,
+        pub sdl_alen: ::c_uchar,
+        pub sdl_slen: ::c_uchar,
+        pub sdl_data: [::c_char; 12],
+    }
 }
 
 pub const _UTX_USERSIZE: usize = 256;
@@ -899,7 +911,17 @@ pub const EOWNERDEAD: ::c_int = 105;
 pub const EQFULL: ::c_int = 106;
 pub const ELAST: ::c_int = 106;
 
+pub const EAI_AGAIN: ::c_int = 2;
+pub const EAI_BADFLAGS: ::c_int = 3;
+pub const EAI_FAIL: ::c_int = 4;
+pub const EAI_FAMILY: ::c_int = 5;
+pub const EAI_MEMORY: ::c_int = 6;
+pub const EAI_NODATA: ::c_int = 7;
+pub const EAI_NONAME: ::c_int = 8;
+pub const EAI_SERVICE: ::c_int = 9;
+pub const EAI_SOCKTYPE: ::c_int = 10;
 pub const EAI_SYSTEM: ::c_int = 11;
+pub const EAI_OVERFLOW: ::c_int = 14;
 
 pub const F_DUPFD: ::c_int = 0;
 pub const F_DUPFD_CLOEXEC: ::c_int = 67;
@@ -1501,7 +1523,7 @@ pub const MSG_RCVMORE: ::c_int = 0x4000;
 pub const SCM_TIMESTAMP: ::c_int = 0x02;
 pub const SCM_CREDS: ::c_int = 0x03;
 
-/// https://github.com/aosm/xnu/blob/master/bsd/net/if.h#L140-L156
+// https://github.com/aosm/xnu/blob/master/bsd/net/if.h#L140-L156
 pub const IFF_UP: ::c_int          = 0x1;  // interface is up
 pub const IFF_BROADCAST: ::c_int   = 0x2;  // broadcast address valid
 pub const IFF_DEBUG: ::c_int       = 0x4;  // turn on debugging
@@ -2047,6 +2069,10 @@ pub const LC_SEGMENT_64: u32 = 0x19;
 
 pub const MH_MAGIC: u32 = 0xfeedface;
 pub const MH_MAGIC_64: u32 = 0xfeedfacf;
+
+// net/if_utun.h
+pub const UTUN_OPT_FLAGS: ::c_int = 1;
+pub const UTUN_OPT_IFNAME: ::c_int = 2;
 
 f! {
     pub fn WSTOPSIG(status: ::c_int) -> ::c_int {

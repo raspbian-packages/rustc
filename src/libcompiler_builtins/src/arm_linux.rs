@@ -4,23 +4,12 @@ use core::mem;
 // Kernel-provided user-mode helper functions:
 // https://www.kernel.org/doc/Documentation/arm/kernel_user_helpers.txt
 unsafe fn __kuser_cmpxchg(oldval: u32, newval: u32, ptr: *mut u32) -> bool {
-    let out: u32;
-    // FIXME: we can't use BLX on ARMv4
-    asm!("blx ${0}"
-         : "={r0}" (out)
-         : "r" (0xffff0fc0u32)
-           "{r0}" (oldval),
-           "{r1}" (newval),
-           "{r2}" (ptr)
-         : "r3", "r12", "lr", "cc", "memory");
-    out == 0
+    let f: extern "C" fn (u32, u32, *mut u32) -> u32 = mem::transmute(0xffff0fc0u32);
+    f(oldval, newval, ptr) == 0
 }
 unsafe fn __kuser_memory_barrier() {
-    // FIXME: we can't use BLX on ARMv4
-    asm!("blx ${0}"
-         :
-         : "r" (0xffff0fa0u32)
-         : "lr", "memory");
+    let f: extern "C" fn () = mem::transmute(0xffff0fa0u32);
+    f();
 }
 
 // Word-align a pointer
@@ -82,7 +71,7 @@ unsafe fn atomic_rmw<T, F: Fn(u32) -> u32>(ptr: *mut T, f: F) -> u32 {
 }
 
 // Generic atomic compare-exchange operation
-unsafe fn atomic_cmpxchg<T>(oldval: u32, newval: u32, ptr: *mut T) -> u32 {
+unsafe fn atomic_cmpxchg<T>(ptr: *mut T, oldval: u32, newval: u32) -> u32 {
     let aligned_ptr = align_ptr(ptr);
     let (shift, mask) = get_shift_mask(ptr);
 
@@ -110,8 +99,8 @@ macro_rules! atomic_rmw {
 macro_rules! atomic_cmpxchg {
     ($name:ident, $ty:ty) => {
         #[cfg_attr(not(feature = "mangled-names"), no_mangle)]
-        pub unsafe extern "C" fn $name(oldval: $ty, newval: $ty, ptr: *mut $ty) -> $ty {
-            atomic_cmpxchg(oldval as u32, newval as u32, ptr) as $ty
+        pub unsafe extern "C" fn $name(ptr: *mut $ty, oldval: $ty, newval: $ty) -> $ty {
+            atomic_cmpxchg(ptr, oldval as u32, newval as u32) as $ty
         }
     }
 }

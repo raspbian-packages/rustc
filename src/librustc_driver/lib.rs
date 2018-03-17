@@ -98,7 +98,7 @@ use syntax::ast;
 use syntax::codemap::{CodeMap, FileLoader, RealFileLoader};
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
-use syntax_pos::{DUMMY_SP, MultiSpan};
+use syntax_pos::{DUMMY_SP, MultiSpan, FileName};
 
 #[cfg(test)]
 mod test;
@@ -227,12 +227,12 @@ pub fn run_compiler<'a>(args: &[String],
         },
     };
 
-    let cstore = Rc::new(CStore::new(DefaultTransCrate::metadata_loader()));
+    let cstore = CStore::new(DefaultTransCrate::metadata_loader());
 
     let loader = file_loader.unwrap_or(box RealFileLoader);
     let codemap = Rc::new(CodeMap::with_file_loader(loader, sopts.file_path_mapping()));
     let mut sess = session::build_session_with_codemap(
-        sopts, input_file_path, descriptions, codemap, emitter_dest,
+        sopts, input_file_path.clone(), descriptions, codemap, emitter_dest,
     );
     rustc_trans::init(&sess);
     rustc_lint::register_builtins(&mut sess.lint_store.borrow_mut(), Some(&sess));
@@ -243,7 +243,7 @@ pub fn run_compiler<'a>(args: &[String],
 
     do_or_return!(callbacks.late_callback(&matches,
                                           &sess,
-                                          &*cstore,
+                                          &cstore,
                                           &input,
                                           &odir,
                                           &ofile), Some(sess));
@@ -252,6 +252,7 @@ pub fn run_compiler<'a>(args: &[String],
     let control = callbacks.build_controller(&sess, &matches);
     (driver::compile_input(&sess,
                            &cstore,
+                           &input_file_path,
                            &input,
                            &odir,
                            &ofile,
@@ -274,7 +275,7 @@ fn make_input(free_matches: &[String]) -> Option<(Input, Option<PathBuf>)> {
         if ifile == "-" {
             let mut src = String::new();
             io::stdin().read_to_string(&mut src).unwrap();
-            Some((Input::Str { name: driver::anon_src(), input: src },
+            Some((Input::Str { name: FileName::Anon, input: src },
                   None))
         } else {
             Some((Input::File(PathBuf::from(ifile)),
@@ -565,7 +566,9 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                 control.after_hir_lowering.stop = Compilation::Stop;
 
                 control.after_parse.callback = box move |state| {
-                    state.krate = Some(pretty::fold_crate(state.krate.take().unwrap(), ppm));
+                    state.krate = Some(pretty::fold_crate(state.session,
+                                                          state.krate.take().unwrap(),
+                                                          ppm));
                 };
                 control.after_hir_lowering.callback = box move |state| {
                     pretty::print_after_hir_lowering(state.session,
@@ -577,7 +580,6 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                                                      &state.expanded_crate.take().unwrap(),
                                                      state.crate_name.unwrap(),
                                                      ppm,
-                                                     state.arena.unwrap(),
                                                      state.arenas.unwrap(),
                                                      state.output_filenames.unwrap(),
                                                      opt_uii.clone(),
@@ -587,7 +589,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                 control.after_parse.stop = Compilation::Stop;
 
                 control.after_parse.callback = box move |state| {
-                    let krate = pretty::fold_crate(state.krate.take().unwrap(), ppm);
+                    let krate = pretty::fold_crate(state.session, state.krate.take().unwrap(), ppm);
                     pretty::print_after_parsing(state.session,
                                                 state.input,
                                                 &krate,
@@ -808,9 +810,8 @@ impl RustcDefaultCalls {
                 PrintRequest::TargetCPUs | PrintRequest::TargetFeatures => {
                     rustc_trans::print(*req, sess);
                 }
-                PrintRequest::NativeStaticLibs => {
-                    println!("Native static libs can be printed only during linking");
-                }
+                // Any output here interferes with Cargo's parsing of other printed output
+                PrintRequest::NativeStaticLibs => {}
             }
         }
         return Compilation::Stop;
@@ -980,7 +981,7 @@ Available lint options:
     println!("Lint groups provided by rustc:\n");
     println!("    {}  {}", padded("name"), "sub-lints");
     println!("    {}  {}", padded("----"), "---------");
-    println!("    {}  {}", padded("warnings"), "all built-in lints");
+    println!("    {}  {}", padded("warnings"), "all lints that are set to issue warnings");
 
     let print_lint_groups = |lints: Vec<(&'static str, Vec<lint::LintId>)>| {
         for (name, to) in lints {
@@ -1163,7 +1164,9 @@ fn parse_crate_attrs<'a>(sess: &'a Session, input: &Input) -> PResult<'a, Vec<as
             parse::parse_crate_attrs_from_file(ifile, &sess.parse_sess)
         }
         Input::Str { ref name, ref input } => {
-            parse::parse_crate_attrs_from_source_str(name.clone(), input.clone(), &sess.parse_sess)
+            parse::parse_crate_attrs_from_source_str(name.clone(),
+                                                     input.clone(),
+                                                     &sess.parse_sess)
         }
     }
 }

@@ -156,6 +156,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub SAFE_PACKED_BORROWS,
+    Warn,
+    "safe borrows of fields of packed structs were was erroneously allowed"
+}
+
+declare_lint! {
     pub PATTERNS_IN_FNS_WITHOUT_BODY,
     Warn,
     "patterns in functions without body were erroneously allowed"
@@ -199,6 +205,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub INCOHERENT_FUNDAMENTAL_IMPLS,
+    Warn,
+    "potentially-conflicting impls were erroneously allowed"
+}
+
+declare_lint! {
     pub DEPRECATED,
     Warn,
     "detects use of deprecated items"
@@ -214,6 +226,24 @@ declare_lint! {
     pub UNUSED_MUT,
     Warn,
     "detect mut variables which don't need to be mutable"
+}
+
+declare_lint! {
+    pub COERCE_NEVER,
+    Deny,
+    "detect coercion to !"
+}
+
+declare_lint! {
+    pub SINGLE_USE_LIFETIME,
+    Allow,
+   "detects single use lifetimes"
+}
+
+declare_lint! {
+    pub TYVAR_BEHIND_RAW_POINTER,
+    Warn,
+    "raw pointer to an inference variable"
 }
 
 /// Does nothing as a lint pass, but registers some `Lint`s
@@ -247,6 +277,7 @@ impl LintPass for HardwiredLints {
             RENAMED_AND_REMOVED_LINTS,
             RESOLVE_TRAIT_ON_DEFAULTED_UNIT,
             SAFE_EXTERN_STATICS,
+            SAFE_PACKED_BORROWS,
             PATTERNS_IN_FNS_WITHOUT_BODY,
             LEGACY_DIRECTORY_OWNERSHIP,
             LEGACY_IMPORTS,
@@ -254,9 +285,13 @@ impl LintPass for HardwiredLints {
             MISSING_FRAGMENT_SPECIFIER,
             PARENTHESIZED_PARAMS_IN_TYPES_AND_MODULES,
             LATE_BOUND_LIFETIME_ARGUMENTS,
+            INCOHERENT_FUNDAMENTAL_IMPLS,
             DEPRECATED,
             UNUSED_UNSAFE,
-            UNUSED_MUT
+            UNUSED_MUT,
+            COERCE_NEVER,
+            SINGLE_USE_LIFETIME,
+            TYVAR_BEHIND_RAW_POINTER
         )
     }
 }

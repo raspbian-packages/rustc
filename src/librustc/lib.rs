@@ -46,11 +46,15 @@
 #![feature(const_fn)]
 #![feature(core_intrinsics)]
 #![feature(drain_filter)]
+#![feature(dyn_trait)]
+#![feature(from_ref)]
+#![feature(i128)]
 #![feature(i128_type)]
-#![feature(match_default_bindings)]
+#![feature(inclusive_range)]
 #![feature(inclusive_range_syntax)]
 #![cfg_attr(windows, feature(libc))]
 #![feature(macro_vis_matcher)]
+#![feature(match_default_bindings)]
 #![feature(never_type)]
 #![feature(nonzero)]
 #![feature(quote)]
@@ -60,9 +64,10 @@
 #![feature(specialization)]
 #![feature(unboxed_closures)]
 #![feature(underscore_lifetimes)]
+#![feature(universal_impl_trait)]
 #![feature(trace_macros)]
+#![feature(catch_expr)]
 #![feature(test)]
-#![feature(const_atomic_bool_new)]
 
 #![recursion_limit="512"]
 
@@ -74,7 +79,6 @@ extern crate getopts;
 extern crate graphviz;
 #[cfg(windows)]
 extern crate libc;
-extern crate owning_ref;
 extern crate rustc_back;
 #[macro_use] extern crate rustc_data_structures;
 extern crate serialize;
@@ -86,6 +90,10 @@ extern crate syntax_pos;
 extern crate jobserver;
 
 extern crate serialize as rustc_serialize; // used by deriving
+
+extern crate rustc_apfloat;
+extern crate byteorder;
+extern crate backtrace;
 
 // Note that librustc doesn't actually depend on these crates, see the note in
 // `Cargo.toml` for this crate about why these are here.
@@ -130,7 +138,6 @@ pub mod middle {
     pub mod recursion_limit;
     pub mod resolve_lifetime;
     pub mod stability;
-    pub mod trans;
     pub mod weak_lang_items;
 }
 

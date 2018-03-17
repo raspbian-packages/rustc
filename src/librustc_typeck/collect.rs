@@ -43,7 +43,6 @@ use rustc_const_math::ConstInt;
 use std::collections::BTreeMap;
 
 use syntax::{abi, ast};
-use syntax::ptr::P;
 use syntax::codemap::Spanned;
 use syntax::symbol::{Symbol, keywords};
 use syntax_pos::{Span, DUMMY_SP};
@@ -112,7 +111,7 @@ impl<'a, 'tcx> Visitor<'tcx> for CollectItemTypesVisitor<'a, 'tcx> {
     }
 
     fn visit_generics(&mut self, generics: &'tcx hir::Generics) {
-        for param in &generics.ty_params {
+        for param in generics.ty_params() {
             if param.default.is_some() {
                 let def_id = self.tcx.hir.local_def_id(param.id);
                 self.tcx.type_of(def_id);
@@ -202,7 +201,7 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
                                         poly_trait_ref: ty::PolyTraitRef<'tcx>)
                                         -> Ty<'tcx>
     {
-        if let Some(trait_ref) = self.tcx().no_late_bound_regions(&poly_trait_ref) {
+        if let Some(trait_ref) = poly_trait_ref.no_late_bound_regions() {
             self.tcx().mk_projection(item_def_id, trait_ref.substs)
         } else {
             // no late-bound regions, we can just ignore the binder
@@ -316,8 +315,7 @@ impl<'a, 'tcx> ItemCtxt<'a, 'tcx> {
                                          -> Vec<ty::Predicate<'tcx>>
     {
         let from_ty_params =
-            ast_generics.ty_params
-                .iter()
+            ast_generics.ty_params()
                 .filter(|p| p.id == param_id)
                 .flat_map(|p| p.bounds.iter())
                 .flat_map(|b| predicates_from_bound(self, ty, b));
@@ -366,7 +364,7 @@ fn ensure_no_ty_param_bounds(tcx: TyCtxt,
                              thing: &'static str) {
     let mut warn = false;
 
-    for ty_param in generics.ty_params.iter() {
+    for ty_param in generics.ty_params() {
         for bound in ty_param.bounds.iter() {
             match *bound {
                 hir::TraitTyParamBound(..) => {
@@ -440,6 +438,10 @@ fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
             tcx.trait_def(def_id);
             tcx.at(it.span).super_predicates_of(def_id);
             tcx.predicates_of(def_id);
+        },
+        hir::ItemTraitAlias(..) => {
+            span_err!(tcx.sess, it.span, E0645,
+                      "trait aliases are not yet implemented (see issue #41517)");
         },
         hir::ItemStruct(ref struct_def, _) |
         hir::ItemUnion(ref struct_def, _) => {
@@ -672,6 +674,7 @@ fn super_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let (generics, bounds) = match item.node {
         hir::ItemTrait(.., ref generics, ref supertraits, _) => (generics, supertraits),
+        hir::ItemTraitAlias(ref generics, ref supertraits) => (generics, supertraits),
         _ => span_bug!(item.span,
                        "super_predicates invoked on non-trait"),
     };
@@ -715,6 +718,7 @@ fn trait_def<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let unsafety = match item.node {
         hir::ItemTrait(_, unsafety, ..) => unsafety,
+        hir::ItemTraitAlias(..) => hir::Unsafety::Normal,
         _ => span_bug!(item.span, "trait_def_of_item invoked on non-trait"),
     };
 
@@ -784,7 +788,7 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let hir_id = self.tcx.hir.node_to_hir_id(lt.id);
             match self.tcx.named_region(hir_id) {
                 Some(rl::Region::Static) | Some(rl::Region::EarlyBound(..)) => {}
-                Some(rl::Region::LateBound(debruijn, _)) |
+                Some(rl::Region::LateBound(debruijn, _, _)) |
                 Some(rl::Region::LateBoundAnon(debruijn, _))
                     if debruijn.depth < self.binder_depth => {}
                 _ => self.has_late_bound_regions = Some(lt.span),
@@ -799,7 +803,7 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let mut visitor = LateBoundRegionsDetector {
             tcx, binder_depth: 1, has_late_bound_regions: None
         };
-        for lifetime in &generics.lifetimes {
+        for lifetime in generics.lifetimes() {
             let hir_id = tcx.hir.node_to_hir_id(lifetime.lifetime.id);
             if tcx.is_late_bound(hir_id) {
                 return Some(lifetime.lifetime.span);
@@ -874,35 +878,25 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let mut allow_defaults = false;
 
     let no_generics = hir::Generics::empty();
-    let (ast_generics, opt_inputs) = match node {
-        NodeTraitItem(item) => {
-            match item.node {
-                TraitItemKind::Method(ref sig, _) => (&item.generics, Some(&sig.decl.inputs)),
-                _ => (&item.generics, None)
-            }
-        }
+    let ast_generics = match node {
+        NodeTraitItem(item) => &item.generics,
 
-        NodeImplItem(item) => {
-            match item.node {
-                ImplItemKind::Method(ref sig, _) => (&item.generics, Some(&sig.decl.inputs)),
-                _ => (&item.generics, None)
-            }
-        }
+        NodeImplItem(item) => &item.generics,
 
         NodeItem(item) => {
             match item.node {
-                ItemFn(ref decl, .., ref generics, _) => (generics, Some(&decl.inputs)),
-                ItemImpl(_, _, _, ref generics, ..) => (generics, None),
+                ItemFn(.., ref generics, _) |
+                ItemImpl(_, _, _, ref generics, ..) => generics,
 
                 ItemTy(_, ref generics) |
                 ItemEnum(_, ref generics) |
                 ItemStruct(_, ref generics) |
                 ItemUnion(_, ref generics) => {
                     allow_defaults = true;
-                    (generics, None)
+                    generics
                 }
 
-                ItemTrait(_, _, ref generics, ..) => {
+                ItemTrait(_, _, ref generics, ..) | ItemTraitAlias(ref generics, ..) => {
                     // Add in the self type parameter.
                     //
                     // Something of a hack: use the node id for the trait, also as
@@ -920,22 +914,26 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     });
 
                     allow_defaults = true;
-                    (generics, None)
+                    generics
                 }
 
-                _ => (&no_generics, None)
+                _ => &no_generics,
             }
         }
 
         NodeForeignItem(item) => {
             match item.node {
-                ForeignItemStatic(..) => (&no_generics, None),
-                ForeignItemFn(ref decl, _, ref generics) => (generics, Some(&decl.inputs)),
-                ForeignItemType => (&no_generics, None)
+                ForeignItemStatic(..) => &no_generics,
+                ForeignItemFn(_, _, ref generics) => generics,
+                ForeignItemType => &no_generics,
             }
         }
 
-        _ => (&no_generics, None)
+        NodeTy(&hir::Ty { node: hir::TyImplTraitExistential(ref exist_ty, _), .. }) => {
+            &exist_ty.generics
+        }
+
+        _ => &no_generics,
     };
 
     let has_self = opt_self.is_some();
@@ -965,7 +963,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Now create the real type parameters.
     let type_start = own_start + regions.len() as u32;
-    let types = ast_generics.ty_params.iter().enumerate().map(|(i, p)| {
+    let types = ast_generics.ty_params().enumerate().map(|(i, p)| {
         if p.name == keywords::SelfType.name() {
             span_bug!(p.span, "`Self` should not be the name of a regular parameter");
         }
@@ -993,31 +991,37 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
     });
 
-    let fn_ins = opt_inputs.map(|tys| &tys[..]);
-    let univ_impl_trait_info = extract_universal_impl_trait_info(tcx, fn_ins);
-    let other_type_start = type_start + ast_generics.ty_params.len() as u32;
-    let mut types: Vec<_> = opt_self.into_iter()
-        .chain(types)
-        .chain(univ_impl_trait_info.iter().enumerate().map(|(i, info)| {
-            ty::TypeParameterDef {
-                index: other_type_start + i as u32,
-                name: Symbol::intern(&tcx.hir.node_to_pretty_string(info.id)),
-                def_id: info.def_id,
-                has_default: false,
-                object_lifetime_default: rl::Set1::Empty,
-                pure_wrt_drop: false,
-                synthetic: Some(SyntheticTyParamKind::ImplTrait),
-            }
-        }))
-        .collect();
+    let mut types: Vec<_> = opt_self.into_iter().chain(types).collect();
 
     // provide junk type parameter defs - the only place that
     // cares about anything but the length is instantiation,
     // and we don't do that for closures.
     if let NodeExpr(&hir::Expr { node: hir::ExprClosure(..), .. }) = node {
+        // add a dummy parameter for the closure kind
+        types.push(ty::TypeParameterDef {
+            index: type_start,
+            name: Symbol::intern("<closure_kind>"),
+            def_id,
+            has_default: false,
+            object_lifetime_default: rl::Set1::Empty,
+            pure_wrt_drop: false,
+            synthetic: None,
+        });
+
+        // add a dummy parameter for the closure signature
+        types.push(ty::TypeParameterDef {
+            index: type_start + 1,
+            name: Symbol::intern("<closure_signature>"),
+            def_id,
+            has_default: false,
+            object_lifetime_default: rl::Set1::Empty,
+            pure_wrt_drop: false,
+            synthetic: None,
+        });
+
         tcx.with_freevars(node_id, |fv| {
-            types.extend(fv.iter().enumerate().map(|(i, _)| ty::TypeParameterDef {
-                index: type_start + i as u32,
+            types.extend(fv.iter().zip(2..).map(|(_, i)| ty::TypeParameterDef {
+                index: type_start + i,
                 name: Symbol::intern("<upvar>"),
                 def_id,
                 has_default: false,
@@ -1106,7 +1110,7 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     tcx.mk_adt(def, substs)
                 }
                 ItemAutoImpl(..) |
-                ItemTrait(..) |
+                ItemTrait(..) | ItemTraitAlias(..) |
                 ItemMod(..) |
                 ItemForeignMod(..) |
                 ItemGlobalAsm(..) |
@@ -1152,14 +1156,19 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 return tcx.typeck_tables_of(def_id).node_id_to_type(hir_id);
             }
 
-            tcx.mk_closure(def_id, Substs::for_item(
-                tcx, def_id,
-                |def, _| {
-                    let region = def.to_early_bound_region_data();
-                    tcx.mk_region(ty::ReEarlyBound(region))
-                },
-                |def, _| tcx.mk_param_from_def(def)
-            ))
+            let substs = ty::ClosureSubsts {
+                substs: Substs::for_item(
+                    tcx,
+                    def_id,
+                    |def, _| {
+                        let region = def.to_early_bound_region_data();
+                        tcx.mk_region(ty::ReEarlyBound(region))
+                    },
+                    |def, _| tcx.mk_param_from_def(def)
+                )
+            };
+
+            tcx.mk_closure(def_id, substs)
         }
 
         NodeExpr(_) => match tcx.hir.get(tcx.hir.get_parent_node(node_id)) {
@@ -1237,8 +1246,23 @@ fn fn_sig<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             ))
         }
 
-        NodeExpr(&hir::Expr { node: hir::ExprClosure(..), hir_id, .. }) => {
-            tcx.typeck_tables_of(def_id).closure_tys()[hir_id]
+        NodeExpr(&hir::Expr { node: hir::ExprClosure(..), .. }) => {
+            // Closure signatures are not like other function
+            // signatures and cannot be accessed through `fn_sig`. For
+            // example, a closure signature excludes the `self`
+            // argument. In any case they are embedded within the
+            // closure type as part of the `ClosureSubsts`.
+            //
+            // To get
+            // the signature of a closure, you should use the
+            // `closure_sig` method on the `ClosureSubsts`:
+            //
+            //    closure_substs.closure_sig(def_id, tcx)
+            //
+            // or, inside of an inference context, you can use
+            //
+            //    infcx.closure_sig(def_id, closure_substs)
+            bug!("to get the signature of a closure, use `closure_sig()` not `fn_sig()`");
         }
 
         x => {
@@ -1334,8 +1358,7 @@ fn early_bound_lifetimes_from_generics<'a, 'tcx>(
     -> impl Iterator<Item=&'a hir::LifetimeDef>
 {
     ast_generics
-        .lifetimes
-        .iter()
+        .lifetimes()
         .filter(move |l| {
             let hir_id = tcx.hir.node_to_hir_id(l.lifetime.id);
             !tcx.is_late_bound(hir_id)
@@ -1358,6 +1381,8 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     use rustc::hir::map::*;
     use rustc::hir::*;
 
+    debug!("explicit_predicates_of(def_id={:?})", def_id);
+
     let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
     let node = tcx.hir.get(node_id);
 
@@ -1365,68 +1390,65 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let icx = ItemCtxt::new(tcx, def_id);
     let no_generics = hir::Generics::empty();
-    let (ast_generics, opt_inputs) = match node {
-        NodeTraitItem(item) => {
-            match item.node {
-                TraitItemKind::Method(ref sig, _) => (&item.generics, Some(&sig.decl.inputs)),
-                _ => (&item.generics, None)
-            }
-        }
-
-        NodeImplItem(item) => {
-            match item.node {
-                ImplItemKind::Method(ref sig, _) => (&item.generics, Some(&sig.decl.inputs)),
-                _ => (&item.generics, None)
-            }
-        }
+    let ast_generics = match node {
+        NodeTraitItem(item) => &item.generics,
+        NodeImplItem(item) => &item.generics,
 
         NodeItem(item) => {
             match item.node {
-                ItemFn(ref decl, .., ref generics, _) => (generics, Some(&decl.inputs)),
-
+                ItemFn(.., ref generics, _) |
                 ItemImpl(_, _, _, ref generics, ..) |
                 ItemTy(_, ref generics) |
                 ItemEnum(_, ref generics) |
                 ItemStruct(_, ref generics) |
-                ItemUnion(_, ref generics) => {
-                    (generics, None)
-                }
+                ItemUnion(_, ref generics) => generics,
 
                 ItemTrait(_, _, ref generics, .., ref items) => {
                     is_trait = Some((ty::TraitRef {
                         def_id,
                         substs: Substs::identity_for_item(tcx, def_id)
                     }, items));
-                    (generics, None)
+                    generics
                 }
 
-                _ => (&no_generics, None)
+                _ => &no_generics,
             }
         }
 
         NodeForeignItem(item) => {
             match item.node {
-                ForeignItemStatic(..) => (&no_generics, None),
-                ForeignItemFn(ref decl, _, ref generics) => (generics, Some(&decl.inputs)),
-                ForeignItemType => (&no_generics, None),
+                ForeignItemStatic(..) => &no_generics,
+                ForeignItemFn(_, _, ref generics) => generics,
+                ForeignItemType => &no_generics,
             }
         }
 
-        NodeTy(&Ty { node: TyImplTraitExistential(ref bounds), span, .. }) => {
+        NodeTy(&Ty { node: TyImplTraitExistential(ref exist_ty, _), span, .. }) => {
             let substs = Substs::identity_for_item(tcx, def_id);
             let anon_ty = tcx.mk_anon(def_id, substs);
 
+            debug!("explicit_predicates_of: anon_ty={:?}", anon_ty);
+
             // Collect the bounds, i.e. the `A+B+'c` in `impl A+B+'c`.
-            let bounds = compute_bounds(&icx, anon_ty, bounds,
+            let bounds = compute_bounds(&icx,
+                                        anon_ty,
+                                        &exist_ty.bounds,
                                         SizedByDefault::Yes,
                                         span);
+
+            debug!("explicit_predicates_of: bounds={:?}", bounds);
+
+            let predicates = bounds.predicates(tcx, anon_ty);
+
+            debug!("explicit_predicates_of: predicates={:?}", predicates);
+
             return ty::GenericPredicates {
                 parent: None,
-                predicates: bounds.predicates(tcx, anon_ty)
+                predicates: predicates
             };
         }
 
-        _ => (&no_generics, None)
+        _ => &no_generics,
     };
 
     let generics = tcx.generics_of(def_id);
@@ -1468,7 +1490,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Collect the predicates that were written inline by the user on each
     // type parameter (e.g., `<T:Foo>`).
-    for param in &ast_generics.ty_params {
+    for param in ast_generics.ty_params() {
         let param_ty = ty::ParamTy::new(index, param.name).to_ty(tcx);
         index += 1;
 
@@ -1555,19 +1577,6 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
             bounds.predicates(tcx, assoc_ty).into_iter()
         }))
-    }
-
-    // Add predicates from impl Trait arguments
-    let fn_ins = opt_inputs.map(|tys| &tys[..]);
-    let univ_impl_trait_info = extract_universal_impl_trait_info(tcx, fn_ins);
-    for info in univ_impl_trait_info.iter() {
-        let name = keywords::Invalid.name();
-        let param_ty = ty::ParamTy::new(index, name).to_ty(tcx);
-        index += 1;
-        let bounds = compute_bounds(&icx, param_ty, info.bounds,
-                                    SizedByDefault::Yes,
-                                    info.span);
-        predicates.extend(bounds.predicates(tcx, param_ty));
     }
 
     // Subtle: before we store the predicates into the tcx, we
@@ -1729,55 +1738,4 @@ fn is_auto_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         Some(_) => false,
         _ => bug!("is_auto_impl applied to non-local def-id {:?}", def_id)
     }
-}
-
-struct ImplTraitUniversalInfo<'hir> {
-    id: ast::NodeId,
-    def_id: DefId,
-    span: Span,
-    bounds: &'hir [hir::TyParamBound],
-}
-
-/// Take some possible list of arguments and return the DefIds of the ImplTraitUniversal
-/// arguments
-fn extract_universal_impl_trait_info<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                               opt_inputs: Option<&'tcx [P<hir::Ty>]>)
-                                               -> Vec<ImplTraitUniversalInfo<'tcx>>
-{
-    // A visitor for simply collecting Universally quantified impl Trait arguments
-    struct ImplTraitUniversalVisitor<'tcx> {
-        items: Vec<&'tcx hir::Ty>
-    }
-
-    impl<'tcx> Visitor<'tcx> for ImplTraitUniversalVisitor<'tcx> {
-        fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
-            NestedVisitorMap::None
-        }
-
-        fn visit_ty(&mut self, ty: &'tcx hir::Ty) {
-            if let hir::TyImplTraitUniversal(..) = ty.node {
-                self.items.push(ty);
-            }
-            intravisit::walk_ty(self, ty);
-        }
-    }
-
-    let mut visitor = ImplTraitUniversalVisitor { items: Vec::new() };
-
-    if let Some(inputs) = opt_inputs {
-        for t in inputs.iter() {
-            visitor.visit_ty(t);
-        }
-    }
-
-    visitor.items.into_iter().map(|ty| if let hir::TyImplTraitUniversal(_, ref bounds) = ty.node {
-        ImplTraitUniversalInfo {
-            id: ty.id,
-            def_id: tcx.hir.local_def_id(ty.id),
-            span: ty.span,
-            bounds: bounds
-        }
-    } else {
-        span_bug!(ty.span, "this type should be a universally quantified impl trait. this is a bug")
-    }).collect()
 }

@@ -1,5 +1,11 @@
 # Closure expressions
 
+> **<sup>Syntax</sup>**  
+> _ClosureExpression_ :  
+> &nbsp;&nbsp; `move`<sup>?</sup>  
+> &nbsp;&nbsp; ( `||` | `|` [_FunctionParameters_]<sup>?</sup> `|` )  
+> &nbsp;&nbsp; ([_Expression_] | `->` [_TypeNoBounds_]&nbsp;[_BlockExpression_])  
+
 A _closure expression_ defines a closure and denotes it as a value, in a single
 expression. A closure expression is a pipe-symbol-delimited (`|`) list of
 patterns followed by an expression. Type annotations may optionally be added
@@ -31,9 +37,10 @@ closure's type is `'static`.
 The compiler will determine which of the [closure
 traits](types.html#closure-types) the closure's type will implement by how it
 acts on its captured variables. The closure will also implement
-[`Send`](the-send-trait.html) and/or [`Sync`](the-sync-trait.html) if all of
-its captured types do. These traits allow functions to accept closures using
-generics, even though the exact types can't be named.
+[`Send`](special-types-and-traits.html#send) and/or
+[`Sync`](special-types-and-traits.html#sync) if all of its captured types do.
+These traits allow functions to accept closures using generics, even though the
+exact types can't be named.
 
 In this example, we define a function `ten_times` that takes a higher-order
 function argument, and we then call it with a closure expression as an argument,
@@ -56,3 +63,8 @@ ten_times(move |j| println!("{}, {}", word, j));
 
 [block]: expressions/block-expr.html
 [function definitions]: items/functions.html
+
+[_Expression_]: expressions.html
+[_BlockExpression_]: expressions/block-expr.html
+[_TypeNoBounds_]: types.html
+[_FunctionParameters_]: items/functions.html

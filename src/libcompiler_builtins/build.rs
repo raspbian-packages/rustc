@@ -52,9 +52,9 @@ fn main() {
     }
 
     // Only emit the ARM Linux atomic emulation on pre-ARMv6 architectures.
-    if llvm_target[0] == "armv5te" {
-        println!("cargo:rustc-cfg=armv5te")
-    }
+    // if llvm_target[0] == "armv4t" || llvm_target[0] == "armv5te" {
+    //     println!("cargo:rustc-cfg=kernel_user_helpers")
+    // }
 }
 
 #[cfg(feature = "gen-tests")]
@@ -128,6 +128,16 @@ mod tests {
             // float/div.rs
             Divsf3,
             Divdf3,
+
+            // int/addsub.rs
+            AddU128,
+            AddI128,
+            AddoU128,
+            AddoI128,
+            SubU128,
+            SubI128,
+            SuboU128,
+            SuboI128,
 
             // int/mul.rs
             Muldi3,
@@ -335,6 +345,242 @@ fn addsf3() {
     for &((a, b), c) in TEST_CASES {
         let c_ = __addsf3(mk_f32(a), mk_f32(b));
         assert_eq!(((a, b), c), ((a, b), to_u32(c_)));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct AddU128 {
+        a: u128,
+        b: u128,
+        c: u128,
+    }
+
+    impl TestCase for AddU128 {
+        fn name() -> &'static str {
+            "u128_add"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_u128(rng);
+            let b = gen_u128(rng);
+            let c = a.wrapping_add(b);
+
+            Some(AddU128 { a, b, c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_u128_add;
+
+static TEST_CASES: &[((u128, u128), u128)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn u128_add() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = rust_u128_add(a, b);
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct AddI128 {
+        a: i128,
+        b: i128,
+        c: i128,
+    }
+
+    impl TestCase for AddI128 {
+        fn name() -> &'static str {
+            "i128_add"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_i128(rng);
+            let b = gen_i128(rng);
+            let c = a.wrapping_add(b);
+
+            Some(AddI128 { a, b, c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_i128_add;
+
+static TEST_CASES: &[((i128, i128), i128)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn i128_add() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = rust_i128_add(a, b);
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct AddoU128 {
+        a: u128,
+        b: u128,
+        c: u128,
+        d: bool,
+    }
+
+    impl TestCase for AddoU128 {
+        fn name() -> &'static str {
+            "u128_addo"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_u128(rng);
+            let b = gen_u128(rng);
+            let (c, d) = a.overflowing_add(b);
+
+            Some(AddoU128 { a, b, c, d })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), ({c}, {d})),",
+                a = self.a,
+                b = self.b,
+                c = self.c,
+                d = self.d
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_u128_addo;
+
+static TEST_CASES: &[((u128, u128), (u128, bool))] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn u128_addo() {
+    for &((a, b), (c, d)) in TEST_CASES {
+        let (c_, d_) = rust_u128_addo(a, b);
+        assert_eq!(((a, b), (c, d)), ((a, b), (c_, d_)));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct AddoI128 {
+        a: i128,
+        b: i128,
+        c: i128,
+        d: bool,
+    }
+
+    impl TestCase for AddoI128 {
+        fn name() -> &'static str {
+            "i128_addo"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_i128(rng);
+            let b = gen_i128(rng);
+            let (c, d) = a.overflowing_add(b);
+
+            Some(AddoI128 { a, b, c, d })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), ({c}, {d})),",
+                a = self.a,
+                b = self.b,
+                c = self.c,
+                d = self.d
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_i128_addo;
+
+static TEST_CASES: &[((i128, i128), (i128, bool))] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn i128_addo() {
+    for &((a, b), (c, d)) in TEST_CASES {
+        let (c_, d_) = rust_i128_addo(a, b);
+        assert_eq!(((a, b), (c, d)), ((a, b), (c_, d_)));
     }
 }
 "
@@ -3230,6 +3476,242 @@ fn subsf3() {
     }
 
     #[derive(Eq, Hash, PartialEq)]
+    pub struct SubU128 {
+        a: u128,
+        b: u128,
+        c: u128,
+    }
+
+    impl TestCase for SubU128 {
+        fn name() -> &'static str {
+            "u128_sub"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_u128(rng);
+            let b = gen_u128(rng);
+            let c = a.wrapping_sub(b);
+
+            Some(SubU128 { a, b, c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_u128_sub;
+
+static TEST_CASES: &[((u128, u128), u128)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn u128_sub() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = rust_u128_sub(a, b);
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct SubI128 {
+        a: i128,
+        b: i128,
+        c: i128,
+    }
+
+    impl TestCase for SubI128 {
+        fn name() -> &'static str {
+            "i128_sub"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_i128(rng);
+            let b = gen_i128(rng);
+            let c = a.wrapping_sub(b);
+
+            Some(SubI128 { a, b, c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_i128_sub;
+
+static TEST_CASES: &[((i128, i128), i128)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn i128_sub() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = rust_i128_sub(a, b);
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct SuboU128 {
+        a: u128,
+        b: u128,
+        c: u128,
+        d: bool,
+    }
+
+    impl TestCase for SuboU128 {
+        fn name() -> &'static str {
+            "u128_subo"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_u128(rng);
+            let b = gen_u128(rng);
+            let (c, d) = a.overflowing_sub(b);
+
+            Some(SuboU128 { a, b, c, d })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), ({c}, {d})),",
+                a = self.a,
+                b = self.b,
+                c = self.c,
+                d = self.d
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_u128_subo;
+
+static TEST_CASES: &[((u128, u128), (u128, bool))] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn u128_subo() {
+    for &((a, b), (c, d)) in TEST_CASES {
+        let (c_, d_) = rust_u128_subo(a, b);
+        assert_eq!(((a, b), (c, d)), ((a, b), (c_, d_)));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct SuboI128 {
+        a: i128,
+        b: i128,
+        c: i128,
+        d: bool,
+    }
+
+    impl TestCase for SuboI128 {
+        fn name() -> &'static str {
+            "i128_subo"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_i128(rng);
+            let b = gen_i128(rng);
+            let (c, d) = a.overflowing_sub(b);
+
+            Some(SuboI128 { a, b, c, d })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), ({c}, {d})),",
+                a = self.a,
+                b = self.b,
+                c = self.c,
+                d = self.d
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use compiler_builtins::int::addsub::rust_i128_subo;
+
+static TEST_CASES: &[((i128, i128), (i128, bool))] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn i128_subo() {
+    for &((a, b), (c, d)) in TEST_CASES {
+        let (c_, d_) = rust_i128_subo(a, b);
+        assert_eq!(((a, b), (c, d)), ((a, b), (c_, d_)));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
     pub struct Mulsf3 {
         a: u32,  // f32
         b: u32,  // f32
@@ -4453,8 +4935,16 @@ mod c {
             // compiler-rt's build system already
             cfg.flag("-fno-builtin");
             cfg.flag("-fvisibility=hidden");
-            cfg.flag("-fomit-frame-pointer");
             cfg.flag("-ffreestanding");
+            // Avoid the following warning appearing once **per file**:
+            // clang: warning: optimization flag '-fomit-frame-pointer' is not supported for target 'armv7' [-Wignored-optimization-argument]
+            //
+            // Note that compiler-rt's build system also checks
+            //
+            // `check_cxx_compiler_flag(-fomit-frame-pointer COMPILER_RT_HAS_FOMIT_FRAME_POINTER_FLAG)`
+            //
+            // in https://github.com/rust-lang/compiler-rt/blob/c8fbcb3/cmake/config-ix.cmake#L19.
+            cfg.flag_if_supported("-fomit-frame-pointer");
             cfg.define("VISIBILITY_HIDDEN", None);
         }
 
@@ -4497,9 +4987,7 @@ mod c {
                 "ctzdi2.c",
                 "ctzsi2.c",
                 "divdc3.c",
-                "divdf3.c",
                 "divsc3.c",
-                "divsf3.c",
                 "divxc3.c",
                 "extendsfdf2.c",
                 "extendhfsf2.c",
@@ -4507,9 +4995,7 @@ mod c {
                 "floatundisf.c",
                 "int_util.c",
                 "muldc3.c",
-                "muldf3.c",
                 "mulsc3.c",
-                "mulsf3.c",
                 "mulvdi3.c",
                 "mulvsi3.c",
                 "mulxc3.c",

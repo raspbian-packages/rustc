@@ -9,29 +9,24 @@
 // except according to those terms.
 
 // revisions: ast mir
-//[mir]compile-flags: -Z emit-end-regions -Z borrowck-mir
+//[mir]compile-flags: -Z borrowck=mir
+
+#![feature(rustc_attrs)]
 
 enum Sexpression {
     Num(()),
     Cons(&'static mut Sexpression)
 }
 
-fn causes_ice(mut l: &mut Sexpression) {
+fn causes_error_in_ast(mut l: &mut Sexpression) {
     loop { match l {
         &mut Sexpression::Num(ref mut n) => {},
         &mut Sexpression::Cons(ref mut expr) => { //[ast]~ ERROR [E0499]
-                                                  //[mir]~^ ERROR (Ast) [E0499]
-                                                  //[mir]~| ERROR (Mir) [E0506]
-                                                  //[mir]~| ERROR (Mir) [E0499]
             l = &mut **expr; //[ast]~ ERROR [E0506]
-                             //[mir]~^ ERROR (Ast) [E0506]
-                             //[mir]~| ERROR (Mir) [E0506]
-                             //[mir]~| ERROR (Mir) [E0506]
-                             //[mir]~| ERROR (Mir) [E0499]
-                             //[mir]~| ERROR (Mir) [E0499]
         }
     }}
 }
 
-fn main() {
+#[rustc_error]
+fn main() { //[mir]~ ERROR compilation successful
 }

@@ -8,5 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+//! Various code related to computing outlives relations.
+
 pub mod env;
+pub mod free_region_map;
+pub mod bounds;
 mod obligations;

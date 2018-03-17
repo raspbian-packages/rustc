@@ -17,7 +17,7 @@ use self::NodesMatchingUII::*;
 
 use {abort_on_err, driver};
 
-use rustc::ty::{self, TyCtxt, GlobalArenas, Resolutions};
+use rustc::ty::{self, TyCtxt, Resolutions, AllArenas};
 use rustc::cfg;
 use rustc::cfg::graphviz::LabelledCFG;
 use rustc::middle::cstore::CrateStore;
@@ -34,7 +34,7 @@ use syntax::print::{pprust};
 use syntax::print::pprust::PrintState;
 use syntax::ptr::P;
 use syntax::util::small_vector::SmallVector;
-use syntax_pos;
+use syntax_pos::{self, FileName};
 
 use graphviz as dot;
 
@@ -50,8 +50,6 @@ use rustc::hir::map as hir_map;
 use rustc::hir::map::blocks;
 use rustc::hir;
 use rustc::hir::print as pprust_hir;
-
-use arena::DroplessArena;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum PpSourceMode {
@@ -77,6 +75,7 @@ pub enum PpFlowGraphMode {
 pub enum PpMode {
     PpmSource(PpSourceMode),
     PpmHir(PpSourceMode),
+    PpmHirTree(PpSourceMode),
     PpmFlowGraph(PpFlowGraphMode),
     PpmMir,
     PpmMirCFG,
@@ -93,6 +92,7 @@ impl PpMode {
             PpmSource(PpmExpandedIdentified) |
             PpmSource(PpmExpandedHygiene) |
             PpmHir(_) |
+            PpmHirTree(_) |
             PpmMir |
             PpmMirCFG |
             PpmFlowGraph(_) => true,
@@ -125,6 +125,7 @@ pub fn parse_pretty(sess: &Session,
         ("hir", true) => PpmHir(PpmNormal),
         ("hir,identified", true) => PpmHir(PpmIdentified),
         ("hir,typed", true) => PpmHir(PpmTyped),
+        ("hir-tree", true) => PpmHirTree(PpmNormal),
         ("mir", true) => PpmMir,
         ("mir-cfg", true) => PpmMirCFG,
         ("flowgraph", true) => PpmFlowGraph(PpFlowGraphMode::Default),
@@ -202,8 +203,7 @@ impl PpSourceMode {
                                                hir_map: &hir_map::Map<'tcx>,
                                                analysis: &ty::CrateAnalysis,
                                                resolutions: &Resolutions,
-                                               arena: &'tcx DroplessArena,
-                                               arenas: &'tcx GlobalArenas<'tcx>,
+                                               arenas: &'tcx AllArenas<'tcx>,
                                                output_filenames: &OutputFilenames,
                                                id: &str,
                                                f: F)
@@ -234,7 +234,6 @@ impl PpSourceMode {
                                                                  hir_map.clone(),
                                                                  analysis.clone(),
                                                                  resolutions.clone(),
-                                                                 arena,
                                                                  arenas,
                                                                  id,
                                                                  output_filenames,
@@ -420,7 +419,8 @@ impl<'hir> pprust_hir::PpAnn for IdentifiedAnnotation<'hir> {
             pprust_hir::NodeName(_) => Ok(()),
             pprust_hir::NodeItem(item) => {
                 s.s.space()?;
-                s.synth_comment(item.id.to_string())
+                s.synth_comment(format!("node_id: {} hir local_id: {}",
+                                        item.id, item.hir_id.local_id.0))
             }
             pprust_hir::NodeSubItem(id) => {
                 s.s.space()?;
@@ -428,16 +428,19 @@ impl<'hir> pprust_hir::PpAnn for IdentifiedAnnotation<'hir> {
             }
             pprust_hir::NodeBlock(blk) => {
                 s.s.space()?;
-                s.synth_comment(format!("block {}", blk.id))
+                s.synth_comment(format!("block node_id: {} hir local_id: {}",
+                                        blk.id, blk.hir_id.local_id.0))
             }
             pprust_hir::NodeExpr(expr) => {
                 s.s.space()?;
-                s.synth_comment(expr.id.to_string())?;
+                s.synth_comment(format!("node_id: {} hir local_id: {}",
+                                        expr.id, expr.hir_id.local_id.0))?;
                 s.pclose()
             }
             pprust_hir::NodePat(pat) => {
                 s.s.space()?;
-                s.synth_comment(format!("pat {}", pat.id))
+                s.synth_comment(format!("pat node_id: {} hir local_id: {}",
+                                        pat.id, pat.hir_id.local_id.0))
             }
         }
     }
@@ -635,13 +638,14 @@ impl UserIdentifiedItem {
 //    ambitious form of the closed RFC #1637. See also [#34511].
 //
 // [#34511]: https://github.com/rust-lang/rust/issues/34511#issuecomment-322340401
-pub struct ReplaceBodyWithLoop {
+pub struct ReplaceBodyWithLoop<'a> {
     within_static_or_const: bool,
+    sess: &'a Session,
 }
 
-impl ReplaceBodyWithLoop {
-    pub fn new() -> ReplaceBodyWithLoop {
-        ReplaceBodyWithLoop { within_static_or_const: false }
+impl<'a> ReplaceBodyWithLoop<'a> {
+    pub fn new(sess: &'a Session) -> ReplaceBodyWithLoop<'a> {
+        ReplaceBodyWithLoop { within_static_or_const: false, sess }
     }
 
     fn run<R, F: FnOnce(&mut Self) -> R>(&mut self, is_const: bool, action: F) -> R {
@@ -688,7 +692,7 @@ impl ReplaceBodyWithLoop {
     }
 }
 
-impl fold::Folder for ReplaceBodyWithLoop {
+impl<'a> fold::Folder for ReplaceBodyWithLoop<'a> {
     fn fold_item_kind(&mut self, i: ast::ItemKind) -> ast::ItemKind {
         let is_const = match i {
             ast::ItemKind::Static(..) | ast::ItemKind::Const(..) => true,
@@ -720,11 +724,14 @@ impl fold::Folder for ReplaceBodyWithLoop {
     }
 
     fn fold_block(&mut self, b: P<ast::Block>) -> P<ast::Block> {
-        fn expr_to_block(rules: ast::BlockCheckMode, e: Option<P<ast::Expr>>) -> P<ast::Block> {
+        fn expr_to_block(rules: ast::BlockCheckMode,
+                         recovered: bool,
+                         e: Option<P<ast::Expr>>,
+                         sess: &Session) -> P<ast::Block> {
             P(ast::Block {
                 stmts: e.map(|e| {
                         ast::Stmt {
-                            id: ast::DUMMY_NODE_ID,
+                            id: sess.next_node_id(),
                             span: e.span,
                             node: ast::StmtKind::Expr(e),
                         }
@@ -732,22 +739,23 @@ impl fold::Folder for ReplaceBodyWithLoop {
                     .into_iter()
                     .collect(),
                 rules,
-                id: ast::DUMMY_NODE_ID,
+                id: sess.next_node_id(),
                 span: syntax_pos::DUMMY_SP,
+                recovered,
             })
         }
 
         if !self.within_static_or_const {
 
-            let empty_block = expr_to_block(BlockCheckMode::Default, None);
+            let empty_block = expr_to_block(BlockCheckMode::Default, false, None, self.sess);
             let loop_expr = P(ast::Expr {
                 node: ast::ExprKind::Loop(empty_block, None),
-                id: ast::DUMMY_NODE_ID,
+                id: self.sess.next_node_id(),
                 span: syntax_pos::DUMMY_SP,
                 attrs: ast::ThinVec::new(),
             });
 
-            expr_to_block(b.rules, Some(loop_expr))
+            expr_to_block(b.rules, b.recovered, Some(loop_expr), self.sess)
 
         } else {
             fold::noop_fold_block(b, self)
@@ -826,16 +834,16 @@ fn print_flowgraph<'a, 'tcx, W: Write>(variants: Vec<borrowck_dot::Variant>,
     }
 }
 
-pub fn fold_crate(krate: ast::Crate, ppm: PpMode) -> ast::Crate {
+pub fn fold_crate(sess: &Session, krate: ast::Crate, ppm: PpMode) -> ast::Crate {
     if let PpmSource(PpmEveryBodyLoops) = ppm {
-        let mut fold = ReplaceBodyWithLoop::new();
+        let mut fold = ReplaceBodyWithLoop::new(sess);
         fold.fold_crate(krate)
     } else {
         krate
     }
 }
 
-fn get_source(input: &Input, sess: &Session) -> (Vec<u8>, String) {
+fn get_source(input: &Input, sess: &Session) -> (Vec<u8>, FileName) {
     let src_name = driver::source_name(input);
     let src = sess.codemap()
         .get_filemap(&src_name)
@@ -879,7 +887,7 @@ pub fn print_after_parsing(sess: &Session,
                 pprust::print_crate(sess.codemap(),
                                     &sess.parse_sess,
                                     krate,
-                                    src_name.to_string(),
+                                    src_name,
                                     &mut rdr,
                                     box out,
                                     annotation.pp_ann(),
@@ -902,8 +910,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                                                 krate: &ast::Crate,
                                                 crate_name: &str,
                                                 ppm: PpMode,
-                                                arena: &'tcx DroplessArena,
-                                                arenas: &'tcx GlobalArenas<'tcx>,
+                                                arenas: &'tcx AllArenas<'tcx>,
                                                 output_filenames: &OutputFilenames,
                                                 opt_uii: Option<UserIdentifiedItem>,
                                                 ofile: Option<&Path>) {
@@ -914,7 +921,6 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                             analysis,
                             resolutions,
                             crate_name,
-                            arena,
                             arenas,
                             output_filenames,
                             ppm,
@@ -938,7 +944,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                     pprust::print_crate(sess.codemap(),
                                         &sess.parse_sess,
                                         krate,
-                                        src_name.to_string(),
+                                        src_name,
                                         &mut rdr,
                                         box out,
                                         annotation.pp_ann(),
@@ -953,7 +959,6 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                                            hir_map,
                                            analysis,
                                            resolutions,
-                                           arena,
                                            arenas,
                                            output_filenames,
                                            crate_name,
@@ -963,11 +968,27 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                     pprust_hir::print_crate(sess.codemap(),
                                             &sess.parse_sess,
                                             krate,
-                                            src_name.to_string(),
+                                            src_name,
                                             &mut rdr,
                                             box out,
                                             annotation.pp_ann(),
                                             true)
+                })
+            }
+
+            (PpmHirTree(s), None) => {
+                let out: &mut Write = &mut out;
+                s.call_with_pp_support_hir(sess,
+                                           cstore,
+                                           hir_map,
+                                           analysis,
+                                           resolutions,
+                                           arenas,
+                                           output_filenames,
+                                           crate_name,
+                                           move |_annotation, krate| {
+                    debug!("pretty printing source code {:?}", s);
+                    write!(out, "{:#?}", krate)
                 })
             }
 
@@ -978,7 +999,6 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                                            hir_map,
                                            analysis,
                                            resolutions,
-                                           arena,
                                            arenas,
                                            output_filenames,
                                            crate_name,
@@ -988,7 +1008,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                     let hir_map = annotation.hir_map().expect("--unpretty missing HIR map");
                     let mut pp_state = pprust_hir::State::new_from_input(sess.codemap(),
                                                                          &sess.parse_sess,
-                                                                         src_name.to_string(),
+                                                                         src_name,
                                                                          &mut rdr,
                                                                          box out,
                                                                          annotation.pp_ann(),
@@ -1005,6 +1025,27 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                     pp_state.s.eof()
                 })
             }
+
+            (PpmHirTree(s), Some(uii)) => {
+                let out: &mut Write = &mut out;
+                s.call_with_pp_support_hir(sess,
+                                           cstore,
+                                           hir_map,
+                                           analysis,
+                                           resolutions,
+                                           arenas,
+                                           output_filenames,
+                                           crate_name,
+                                           move |_annotation, _krate| {
+                    debug!("pretty printing source code {:?}", s);
+                    for node_id in uii.all_matching_node_ids(hir_map) {
+                        let node = hir_map.get(node_id);
+                        write!(out, "{:#?}", node)?;
+                    }
+                    Ok(())
+                })
+            }
+
             _ => unreachable!(),
         }
         .unwrap();
@@ -1022,8 +1063,7 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                        analysis: &ty::CrateAnalysis,
                                        resolutions: &Resolutions,
                                        crate_name: &str,
-                                       arena: &'tcx DroplessArena,
-                                       arenas: &'tcx GlobalArenas<'tcx>,
+                                       arenas: &'tcx AllArenas<'tcx>,
                                        output_filenames: &OutputFilenames,
                                        ppm: PpMode,
                                        uii: Option<UserIdentifiedItem>,
@@ -1045,7 +1085,6 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                                      hir_map.clone(),
                                                      analysis.clone(),
                                                      resolutions.clone(),
-                                                     arena,
                                                      arenas,
                                                      crate_name,
                                                      output_filenames,
