@@ -1,10 +1,11 @@
 rustc (1.24.1+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
-  * Fix clean target.
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
+  [changes introduced in 1.24.1+dfsg1-1+rpi1 by Peter Michael Green]
+  * Remove -march=native from src/binaryen/CMakeLists.txt
 
  -- Peter Michael Green <plugwash@raspbian.org>  Fri, 16 Mar 2018 00:05:34 +0000
 
