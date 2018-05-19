@@ -1,0 +1,3 @@
+src/etc/rust-gdb usr/bin/
+src/etc/gdb_*.py usr/share/rust-gdb/
+src/etc/debugger_pretty_printers_common.py usr/share/rust-gdb/
