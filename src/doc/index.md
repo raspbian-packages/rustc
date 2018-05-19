@@ -56,5 +56,5 @@ before this policy was put into place. That work is being tracked
 [nomicon]: nomicon/index.html
 [unstable-book]: unstable-book/index.html
 [rustdoc-book]: rustdoc/index.html
-[cargo-book]: cargo/index.html
+[cargo-book]: ../../cargo-doc/doc/index.html
 
