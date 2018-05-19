@@ -1,0 +1,4 @@
+# False positives that change quite often, so just override with a wildcard
+rust-src binary: executable-not-elf-or-script usr/src/rustc-*/*
+# False positive - test data
+rust-src binary: arch-independent-package-contains-binary-or-object usr/src/rustc-*/src/binaryen/test/*/*/*.a
