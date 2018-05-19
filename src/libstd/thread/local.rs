@@ -529,7 +529,7 @@ pub mod os {
 #[cfg(all(test, not(target_os = "emscripten")))]
 mod tests {
     use sync::mpsc::{channel, Sender};
-    use cell::{Cell, UnsafeCell};
+    use cell::UnsafeCell;
     use super::LocalKeyState;
     use thread;
 
@@ -542,9 +542,9 @@ mod tests {
         }
     }
 
-    #[test]
+    #[test] #[cfg(not(target_arch = "powerpc64"))]
     fn smoke_no_dtor() {
-        thread_local!(static FOO: Cell<i32> = Cell::new(1));
+        thread_local!(static FOO: ::cell::Cell<i32> = ::cell::Cell::new(1));
 
         FOO.with(|f| {
             assert_eq!(f.get(), 1);
