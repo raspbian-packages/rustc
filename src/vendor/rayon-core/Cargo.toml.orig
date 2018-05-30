@@ -1,0 +1,23 @@
+[package]
+name = "rayon-core"
+version = "1.4.0" # reminder to update html_root_url attribute
+authors = ["Niko Matsakis <niko@alum.mit.edu>",
+           "Josh Stone <cuviper@gmail.com>"]
+description = "Core APIs for Rayon"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/rayon-rs/rayon"
+documentation = "https://docs.rs/rayon/"
+links = "rayon-core"
+build = "build.rs"
+readme = "README.md"
+keywords = ["parallel", "thread", "concurrency", "join", "performance"]
+categories = ["concurrency"]
+
+[dependencies]
+rand = ">= 0.3, < 0.5"
+num_cpus = "1.2"
+crossbeam-deque = "0.2.0"
+libc = "0.2.16"
+lazy_static = "1"
+
+[dev-dependencies]

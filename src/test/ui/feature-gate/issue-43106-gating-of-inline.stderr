@@ -1,0 +1,42 @@
+error[E0518]: attribute should be applied to function
+  --> $DIR/issue-43106-gating-of-inline.rs:21:1
+   |
+LL |   #[inline = "2100"]
+   |   ^^^^^^^^^^^^^^^^^^
+LL |   //~^ ERROR attribute should be applied to function
+LL | / mod inline {
+LL | |     mod inner { #![inline="2100"] }
+LL | |     //~^ ERROR attribute should be applied to function
+LL | |
+...  |
+LL | |     //~^ ERROR attribute should be applied to function
+LL | | }
+   | |_- not a function
+
+error[E0518]: attribute should be applied to function
+  --> $DIR/issue-43106-gating-of-inline.rs:24:17
+   |
+LL |     mod inner { #![inline="2100"] }
+   |     ------------^^^^^^^^^^^^^^^^^-- not a function
+
+error[E0518]: attribute should be applied to function
+  --> $DIR/issue-43106-gating-of-inline.rs:29:5
+   |
+LL |     #[inline = "2100"] struct S;
+   |     ^^^^^^^^^^^^^^^^^^ --------- not a function
+
+error[E0518]: attribute should be applied to function
+  --> $DIR/issue-43106-gating-of-inline.rs:32:5
+   |
+LL |     #[inline = "2100"] type T = S;
+   |     ^^^^^^^^^^^^^^^^^^ ----------- not a function
+
+error[E0518]: attribute should be applied to function
+  --> $DIR/issue-43106-gating-of-inline.rs:35:5
+   |
+LL |     #[inline = "2100"] impl S { }
+   |     ^^^^^^^^^^^^^^^^^^ ---------- not a function
+
+error: aborting due to 5 previous errors
+
+For more information about this error, try `rustc --explain E0518`.

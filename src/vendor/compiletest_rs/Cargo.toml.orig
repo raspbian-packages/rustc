@@ -1,0 +1,36 @@
+[package]
+name = "compiletest_rs"
+version = "0.3.8"
+authors = [ "The Rust Project Developers"
+          , "Thomas Bracht Laumann Jespersen <laumann.thomas@gmail.com>"
+          , "Manish Goregaokar <manishsmail@gmail.com>"
+          ]
+description = "The compiletest utility from the Rust compiler as a standalone testing harness"
+license = "Apache-2.0/MIT" # Same as rustc
+repository = "https://github.com/laumann/compiletest-rs"
+keywords = ["compiletest", "test", "plugin"]
+readme = "README.md"
+
+[lib]
+name = "compiletest_rs"
+
+[dependencies]
+diff = "0.1.10"
+filetime = "0.1"
+getopts = "0.2"
+log = "0.4"
+tempdir = { version = "0.3", optional = true }
+serde = "1.0"
+serde_json = "1.0"
+serde_derive = "1.0"
+
+[target."cfg(unix)".dependencies]
+libc = "0.2"
+
+[target."cfg(windows)".dependencies]
+miow = "0.3"
+winapi = { version = "0.3", features = ["winerror"] }
+
+[features]
+tmp = ["tempdir"]
+norustc = []
