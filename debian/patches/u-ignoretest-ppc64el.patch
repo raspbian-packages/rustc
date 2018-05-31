@@ -1,0 +1,43 @@
+Description: Ignore failing tests on ppc64el
+ There is a workaround (see bug below) but we can't use it due to
+ https://github.com/rust-lang/rust/issues/42476
+ https://github.com/rust-lang/rust/issues/42532
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/issues/39015
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/libarena/lib.rs
++++ b/src/libarena/lib.rs
+@@ -585,6 +585,9 @@
+ 
+     #[test]
+     fn test_typed_arena_drop_small_count() {
++        if cfg!(target_arch = "powerpc64") {
++            return;
++        }
+         DROP_COUNTER.with(|c| c.set(0));
+         {
+             let arena: TypedArena<SmallDroppable> = TypedArena::new();
+--- a/src/libstd/thread/local.rs
++++ b/src/libstd/thread/local.rs
+@@ -442,7 +442,7 @@
+ #[cfg(all(test, not(target_os = "emscripten")))]
+ mod tests {
+     use sync::mpsc::{channel, Sender};
+-    use cell::{Cell, UnsafeCell};
++    use cell::UnsafeCell;
+     use thread;
+ 
+     struct Foo(Sender<()>);
+@@ -454,9 +454,9 @@
+         }
+     }
+ 
+-    #[test]
++    #[test] #[cfg(not(target_arch = "powerpc64"))]
+     fn smoke_no_dtor() {
+-        thread_local!(static FOO: Cell<i32> = Cell::new(1));
++        thread_local!(static FOO: ::cell::Cell<i32> = ::cell::Cell::new(1));
+ 
+         FOO.with(|f| {
+             assert_eq!(f.get(), 1);

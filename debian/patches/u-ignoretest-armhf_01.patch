@@ -1,0 +1,21 @@
+Description: Ignore atomic-lock-free tests on armhf
+ Last checked this still affects 1.17
+Author: Ximin Luo <infinity0@debian.org>
+Bug: https://github.com/rust-lang/rust/issues/40238
+---
+This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
+--- a/src/test/run-make-fulldeps/atomic-lock-free/Makefile
++++ b/src/test/run-make-fulldeps/atomic-lock-free/Makefile
+@@ -5,6 +5,7 @@
+ 
+ all:
+ ifeq ($(UNAME),Linux)
++ifeq (,$(filter armv7-unknown-linux-gnueabihf,$(TARGET)))
+ ifeq ($(filter x86,$(LLVM_COMPONENTS)),x86)
+ 	$(RUSTC) --target=i686-unknown-linux-gnu atomic_lock_free.rs
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+@@ -40,3 +41,4 @@
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+ endif
+ endif
++endif

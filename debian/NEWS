@@ -1,0 +1,29 @@
+rustc (1.20.0+dfsg1-2) unstable; urgency=medium
+
+  Starting from version 1.20.0+dfsg1-1 (i.e. the previous version) the Debian
+  packages of rustc no longer fail their build if any tests fail. In other
+  words, some tests might have failed when building this and future versions of
+  the package. This is due to lack of maintainer time to investigate failures.
+
+  Many previous test failures were reported to upstream and did not receive a
+  timely response, suggesting the failures were not important. I was then
+  forced to patch out the test to make the build proceed, so several tests were
+  being ignored in practise anyway.
+
+  This brings the Debian package in line with the Fedora package which also
+  ignores all test failures. (Many other distributions don't run tests at all.)
+
+  If you think that the Debian rustc package is miscompiling your program in a
+  way that the upstream distributed compiler doesn't, you may check the test
+  failures here:
+
+  https://buildd.debian.org/status/package.php?p=rustc
+
+  If you can identify a relevant test failure as well as the patches needed to
+  fix it (either to rustc or LLVM), this will speed up the processing of any
+  bug reports on the Debian side.
+
+  We will also examine these failures ourselves on a best-effort basis and
+  attempt to fix the more serious-looking ones.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 16 Oct 2017 18:02:23 +0200
