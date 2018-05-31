@@ -11,15 +11,13 @@
         <base href="{{ path_to_root }}">
 
         <link rel="stylesheet" href="book.css">
-        <link href="https://fonts.googleapis.com/css?family=Open+Sans:300italic,400italic,600italic,700italic,800italic,400,300,600,700,800" rel="stylesheet" type="text/css">
-        <link href="https://fonts.googleapis.com/css?family=Source+Code+Pro:500" rel="stylesheet" type="text/css">
 
         <link rel="shortcut icon" href="{{ favicon }}">
 
         <!-- Font Awesome -->
-        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+        <link rel="stylesheet" href="../font-awesome.min.css">
 
-        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
         <link rel="stylesheet" href="tomorrow-night.css">
         <link rel="stylesheet" href="ayu-highlight.css">
 
@@ -30,53 +28,12 @@
 
         {{#if mathjax_support}}
         <!-- MathJax -->
-        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
         {{/if}}
-
-        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
-        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
-        <script>
-            if (typeof Clipboard == 'undefined') {
-                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
-            }
-        </script>
 
     </head>
     <body class="light">
-        <!-- Work around some values being stored in localStorage wrapped in quotes -->
-        <script type="text/javascript">
-            try {
-                var theme = localStorage.getItem('mdbook-theme');
-                var sidebar = localStorage.getItem('mdbook-sidebar');
 
-                if (theme.startsWith('"') && theme.endsWith('"')) {
-                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
-                }
-
-                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
-                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
-                }
-            } catch (e) { }
-        </script>
-
-        <!-- Set the theme before any content is loaded, prevents flash -->
-        <script type="text/javascript">
-            var theme;
-            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { } 
-            if (theme === null || theme === undefined) { theme = 'light'; }
-            document.body.className = theme;
-            document.querySelector('html').className = theme;
-        </script>
-
-        <!-- Hide / unhide sidebar before it is displayed -->
-        <script type="text/javascript">
-            var sidebar = 'hidden';
-            if (document.body.clientWidth >= 1080) {
-                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
-                sidebar = sidebar || 'visible';
-            }
-            document.querySelector('html').classList.add("sidebar-" + sidebar);
-        </script>
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             {{#toc}}{{/toc}}
@@ -164,17 +121,6 @@
         </div>
 
 
-        <!-- Local fallback for Font Awesome -->
-        <script>
-            if (getComputedStyle(document.querySelector(".fa")).fontFamily !== "FontAwesome") {
-                var link = document.createElement('link');
-                link.rel = 'stylesheet';
-                link.type = 'text/css';
-                link.href = '_FontAwesome/css/font-awesome.css';
-                document.head.insertBefore(link, document.head.firstChild)
-            }
-        </script>
-
         {{#if livereload}}
         <!-- Livereload script (if served using the cli tool) -->
         <script type="text/javascript">
@@ -192,32 +138,7 @@
         </script>
         {{/if}}
 
-        {{#if google_analytics}}
-        <!-- Google Analytics Tag -->
-        <script>
-            var localAddrs = ["localhost", "127.0.0.1", ""];
 
-            // make sure we don't activate google analytics if the developer is
-            // inspecting the book locally...
-            if (localAddrs.indexOf(document.location.hostname) === -1) {
-                (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
-                (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
-                m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
-                })(window,document,'script','https://www.google-analytics.com/analytics.js','ga');
-
-                ga('create', '{{google_analytics}}', 'auto');
-                ga('send', 'pageview');
-            }
-        </script>
-        {{/if}}
-
-        {{#if playpens_editable}}
-        <script src="{{ ace_js }}" type="text/javascript" charset="utf-8"></script>
-        <script src="{{ editor_js }}" type="text/javascript" charset="utf-8"></script>
-        <script src="{{ mode_rust_js }}" type="text/javascript" charset="utf-8"></script>
-        <script src="{{ theme_dawn_js }}" type="text/javascript" charset="utf-8"></script>
-        <script src="{{ theme_tomorrow_night_js }}" type="text/javascript" charset="utf-8"></script>
-        {{/if}}
 
         {{#if is_print}}
         <script>
@@ -227,7 +148,7 @@
         </script>
         {{/if}}
 
-        <script src="highlight.js"></script>
+        <script src="../highlight.js"></script>
         <script src="book.js"></script>
 
         <!-- Custom JS script -->

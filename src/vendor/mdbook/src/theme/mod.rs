@@ -1,6 +1,4 @@
 #![allow(missing_docs)] // FIXME: Document this
-pub mod playpen_editor;
-
 use std::path::Path;
 use std::fs::File;
 use std::io::Read;
@@ -12,23 +10,8 @@ pub static HEADER: &'static [u8] = include_bytes!("header.hbs");
 pub static CSS: &'static [u8] = include_bytes!("book.css");
 pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
 pub static JS: &'static [u8] = include_bytes!("book.js");
-pub static HIGHLIGHT_JS: &'static [u8] = include_bytes!("highlight.js");
 pub static TOMORROW_NIGHT_CSS: &'static [u8] = include_bytes!("tomorrow-night.css");
-pub static HIGHLIGHT_CSS: &'static [u8] = include_bytes!("highlight.css");
 pub static AYU_HIGHLIGHT_CSS: &'static [u8] = include_bytes!("ayu-highlight.css");
-pub static CLIPBOARD_JS: &'static [u8] = include_bytes!("clipboard.min.js");
-pub static FONT_AWESOME: &'static [u8] = include_bytes!("_FontAwesome/css/font-awesome.min.css");
-pub static FONT_AWESOME_EOT: &'static [u8] =
-    include_bytes!("_FontAwesome/fonts/fontawesome-webfont.eot");
-pub static FONT_AWESOME_SVG: &'static [u8] =
-    include_bytes!("_FontAwesome/fonts/fontawesome-webfont.svg");
-pub static FONT_AWESOME_TTF: &'static [u8] =
-    include_bytes!("_FontAwesome/fonts/fontawesome-webfont.ttf");
-pub static FONT_AWESOME_WOFF: &'static [u8] =
-    include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff");
-pub static FONT_AWESOME_WOFF2: &'static [u8] =
-    include_bytes!("_FontAwesome/fonts/fontawesome-webfont.woff2");
-pub static FONT_AWESOME_OTF: &'static [u8] = include_bytes!("_FontAwesome/fonts/FontAwesome.otf");
 
 
 /// The `Theme` struct should be used instead of the static variables because
@@ -44,11 +27,8 @@ pub struct Theme {
     pub css: Vec<u8>,
     pub favicon: Vec<u8>,
     pub js: Vec<u8>,
-    pub highlight_css: Vec<u8>,
     pub tomorrow_night_css: Vec<u8>,
     pub ayu_highlight_css: Vec<u8>,
-    pub highlight_js: Vec<u8>,
-    pub clipboard_js: Vec<u8>,
 }
 
 impl Theme {
@@ -69,9 +49,6 @@ impl Theme {
                 (theme_dir.join("book.js"), &mut theme.js),
                 (theme_dir.join("book.css"), &mut theme.css),
                 (theme_dir.join("favicon.png"), &mut theme.favicon),
-                (theme_dir.join("highlight.js"), &mut theme.highlight_js),
-                (theme_dir.join("clipboard.min.js"), &mut theme.clipboard_js),
-                (theme_dir.join("highlight.css"), &mut theme.highlight_css),
                 (theme_dir.join("tomorrow-night.css"), &mut theme.tomorrow_night_css),
                 (theme_dir.join("ayu-highlight.css"), &mut theme.ayu_highlight_css),
             ];
@@ -99,11 +76,8 @@ impl Default for Theme {
             css: CSS.to_owned(),
             favicon: FAVICON.to_owned(),
             js: JS.to_owned(),
-            highlight_css: HIGHLIGHT_CSS.to_owned(),
             tomorrow_night_css: TOMORROW_NIGHT_CSS.to_owned(),
             ayu_highlight_css: AYU_HIGHLIGHT_CSS.to_owned(),
-            highlight_js: HIGHLIGHT_JS.to_owned(),
-            clipboard_js: CLIPBOARD_JS.to_owned(),
         }
     }
 }
@@ -169,11 +143,8 @@ mod tests {
             css: Vec::new(),
             favicon: Vec::new(),
             js: Vec::new(),
-            highlight_css: Vec::new(),
             tomorrow_night_css: Vec::new(),
             ayu_highlight_css: Vec::new(),
-            highlight_js: Vec::new(),
-            clipboard_js: Vec::new(),
         };
 
         assert_eq!(got, empty);

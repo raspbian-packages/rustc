@@ -3,7 +3,7 @@ use renderer::{RenderContext, Renderer};
 use book::{Book, BookItem, Chapter};
 use config::{Config, HtmlConfig, Playpen};
 use {theme, utils};
-use theme::{playpen_editor, Theme};
+use theme::{Theme};
 use errors::*;
 use regex::{Captures, Regex};
 
@@ -156,62 +156,8 @@ impl HtmlHandlebars {
         self.write_file(destination, "book.js", &theme.js)?;
         self.write_file(destination, "book.css", &theme.css)?;
         self.write_file(destination, "favicon.png", &theme.favicon)?;
-        self.write_file(destination, "highlight.css", &theme.highlight_css)?;
         self.write_file(destination, "tomorrow-night.css", &theme.tomorrow_night_css)?;
         self.write_file(destination, "ayu-highlight.css", &theme.ayu_highlight_css)?;
-        self.write_file(destination, "highlight.js", &theme.highlight_js)?;
-        self.write_file(destination, "clipboard.min.js", &theme.clipboard_js)?;
-        self.write_file(
-            destination,
-            "_FontAwesome/css/font-awesome.css",
-            theme::FONT_AWESOME,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/fontawesome-webfont.eot",
-            theme::FONT_AWESOME_EOT,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/fontawesome-webfont.svg",
-            theme::FONT_AWESOME_SVG,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/fontawesome-webfont.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/fontawesome-webfont.woff",
-            theme::FONT_AWESOME_WOFF,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/fontawesome-webfont.woff2",
-            theme::FONT_AWESOME_WOFF2,
-        )?;
-        self.write_file(
-            destination,
-            "_FontAwesome/fonts/FontAwesome.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-
-        let playpen_config = &html_config.playpen;
-
-        // Ace is a very large dependency, so only load it when requested
-        if playpen_config.editable {
-            // Load the editor
-            let editor = playpen_editor::PlaypenEditor::new(&playpen_config.editor);
-            self.write_file(destination, "editor.js", &editor.js)?;
-            self.write_file(destination, "ace.js", &editor.ace_js)?;
-            self.write_file(destination, "mode-rust.js", &editor.mode_rust_js)?;
-            self.write_file(destination, "theme-dawn.js", &editor.theme_dawn_js)?;
-            self.write_file(destination,
-                "theme-tomorrow_night.js",
-                &editor.theme_tomorrow_night_js,
-            )?;
-        }
 
         Ok(())
     }
