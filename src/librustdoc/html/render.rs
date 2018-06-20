@@ -132,6 +132,8 @@ pub struct SharedContext {
     /// This flag indicates whether listings of modules (in the side bar and documentation itself)
     /// should be ordered alphabetically or in order of appearance (in the source code).
     pub sort_modules_alphabetically: bool,
+    /// Additional themes to be added to the generated docs.
+    pub themes: Vec<PathBuf>,
 }
 
 impl SharedContext {
@@ -173,14 +175,7 @@ pub enum ExternalLocation {
     Unknown,
 }
 
-/// Metadata about an implementor of a trait.
-pub struct Implementor {
-    pub def_id: DefId,
-    pub stability: Option<clean::Stability>,
-    pub impl_: clean::Impl,
-}
-
-/// Metadata about implementations for a type.
+/// Metadata about implementations for a type or trait.
 #[derive(Clone)]
 pub struct Impl {
     pub impl_item: clean::Item,
@@ -224,6 +219,17 @@ impl Error {
             error: e,
         }
     }
+}
+
+macro_rules! try_none {
+    ($e:expr, $file:expr) => ({
+        use std::io;
+        match $e {
+            Some(e) => e,
+            None => return Err(Error::new(io::Error::new(io::ErrorKind::Other, "not found"),
+                                          $file))
+        }
+    })
 }
 
 macro_rules! try_err {
@@ -279,7 +285,7 @@ pub struct Cache {
     /// When rendering traits, it's often useful to be able to list all
     /// implementors of the trait, and this mapping is exactly, that: a mapping
     /// of trait ids to the list of known implementors of the trait
-    pub implementors: FxHashMap<DefId, Vec<Implementor>>,
+    pub implementors: FxHashMap<DefId, Vec<Impl>>,
 
     /// Cache of where external crate documentation can be found.
     pub extern_locations: FxHashMap<CrateNum, (String, PathBuf, ExternalLocation)>,
@@ -428,7 +434,7 @@ thread_local!(pub static CURRENT_LOCATION_KEY: RefCell<Vec<String>> =
 thread_local!(pub static USED_ID_MAP: RefCell<FxHashMap<String, usize>> =
                     RefCell::new(init_ids()));
 
-pub fn render_text<F: FnMut(RenderType) -> String>(mut render: F) -> (String, String) {
+pub fn render_text<T, F: FnMut(RenderType) -> T>(mut render: F) -> (T, T) {
     // Save the state of USED_ID_MAP so it only gets updated once even
     // though we're rendering twice.
     let orig_used_id_map = USED_ID_MAP.with(|map| map.borrow().clone());
@@ -496,7 +502,8 @@ pub fn run(mut krate: clean::Crate,
            renderinfo: RenderInfo,
            render_type: RenderType,
            sort_modules_alphabetically: bool,
-           deny_render_differences: bool) -> Result<(), Error> {
+           deny_render_differences: bool,
+           themes: Vec<PathBuf>) -> Result<(), Error> {
     let src_root = match krate.src {
         FileName::Real(ref p) => match p.parent() {
             Some(p) => p.to_path_buf(),
@@ -520,6 +527,7 @@ pub fn run(mut krate: clean::Crate,
         markdown_warnings: RefCell::new(vec![]),
         created_dirs: RefCell::new(FxHashSet()),
         sort_modules_alphabetically,
+        themes,
     };
 
     // If user passed in `--playground-url` arg, we fill in crate name here
@@ -866,22 +874,68 @@ fn write_shared(cx: &Context,
     // Add all the static files. These may already exist, but we just
     // overwrite them anyway to make sure that they're fresh and up-to-date.
 
-    write(cx.dst.join("main.js"),
-          include_bytes!("static/main.js"))?;
     write(cx.dst.join("rustdoc.css"),
           include_bytes!("static/rustdoc.css"))?;
-    write(cx.dst.join("main.css"),
-          include_bytes!("static/styles/main.css"))?;
-    if let Some(ref css) = cx.shared.css_file_extension {
-        let mut content = String::new();
-        let css = css.as_path();
-        let mut f = try_err!(File::open(css), css);
 
-        try_err!(f.read_to_string(&mut content), css);
-        let css = cx.dst.join("theme.css");
-        let css = css.as_path();
-        let mut f = try_err!(File::create(css), css);
-        try_err!(write!(f, "{}", &content), css);
+    // To avoid "main.css" to be overwritten, we'll first run over the received themes and only
+    // then we'll run over the "official" styles.
+    let mut themes: HashSet<String> = HashSet::new();
+
+    for entry in &cx.shared.themes {
+        let mut content = Vec::with_capacity(100000);
+
+        let mut f = try_err!(File::open(&entry), &entry);
+        try_err!(f.read_to_end(&mut content), &entry);
+        write(cx.dst.join(try_none!(entry.file_name(), &entry)), content.as_slice())?;
+        themes.insert(try_none!(try_none!(entry.file_stem(), &entry).to_str(), &entry).to_owned());
+    }
+
+    write(cx.dst.join("brush.svg"),
+          include_bytes!("static/brush.svg"))?;
+    write(cx.dst.join("main.css"),
+          include_bytes!("static/themes/main.css"))?;
+    themes.insert("main".to_owned());
+    write(cx.dst.join("dark.css"),
+          include_bytes!("static/themes/dark.css"))?;
+    themes.insert("dark".to_owned());
+
+    let mut themes: Vec<&String> = themes.iter().collect();
+    themes.sort();
+    // To avoid theme switch latencies as much as possible, we put everything theme related
+    // at the beginning of the html files into another js file.
+    write(cx.dst.join("theme.js"), format!(
+r#"var themes = document.getElementById("theme-choices");
+var themePicker = document.getElementById("theme-picker");
+themePicker.onclick = function() {{
+    if (themes.style.display === "block") {{
+        themes.style.display = "none";
+        themePicker.style.borderBottomRightRadius = "3px";
+        themePicker.style.borderBottomLeftRadius = "3px";
+    }} else {{
+        themes.style.display = "block";
+        themePicker.style.borderBottomRightRadius = "0";
+        themePicker.style.borderBottomLeftRadius = "0";
+    }}
+}};
+[{}].forEach(function(item) {{
+    var but = document.createElement('button');
+    but.innerHTML = item;
+    but.onclick = function(el) {{
+        switchTheme(currentTheme, mainTheme, item);
+    }};
+    themes.appendChild(but);
+}});
+"#, themes.iter()
+          .map(|s| format!("\"{}\"", s))
+          .collect::<Vec<String>>()
+          .join(",")).as_bytes())?;
+
+    write(cx.dst.join("main.js"), include_bytes!("static/main.js"))?;
+    write(cx.dst.join("storage.js"), include_bytes!("static/storage.js"))?;
+
+    if let Some(ref css) = cx.shared.css_file_extension {
+        let out = cx.dst.join("theme.css");
+        try_err!(fs::copy(css, out), css);
     }
     write(cx.dst.join("normalize.css"),
           include_bytes!("static/normalize.css"))?;
@@ -971,12 +1025,12 @@ fn write_shared(cx: &Context,
             // there's no need to emit information about it (there's inlining
             // going on). If they're in different crates then the crate defining
             // the trait will be interested in our implementation.
-            if imp.def_id.krate == did.krate { continue }
+            if imp.impl_item.def_id.krate == did.krate { continue }
             // If the implementation is from another crate then that crate
             // should add it.
-            if !imp.def_id.is_local() { continue }
+            if !imp.impl_item.def_id.is_local() { continue }
             have_impls = true;
-            write!(implementors, "{},", as_json(&imp.impl_.to_string())).unwrap();
+            write!(implementors, "{},", as_json(&imp.inner_impl().to_string())).unwrap();
         }
         implementors.push_str("];");
 
@@ -1034,7 +1088,7 @@ fn render_sources(dst: &Path, scx: &mut SharedContext,
 /// Writes the entire contents of a string to a destination, not attempting to
 /// catch any errors.
 fn write(dst: PathBuf, contents: &[u8]) -> Result<(), Error> {
-    Ok(try_err!(try_err!(File::create(&dst), &dst).write_all(contents), &dst))
+    Ok(try_err!(fs::write(&dst, contents), &dst))
 }
 
 /// Takes a path to a source file and cleans the path to it. This canonicalizes
@@ -1131,16 +1185,13 @@ impl<'a> SourceCollector<'a> {
             return Ok(());
         }
 
-        let mut contents = Vec::new();
-        File::open(&p).and_then(|mut f| f.read_to_end(&mut contents))?;
-
-        let contents = str::from_utf8(&contents).unwrap();
+        let contents = fs::read_string(&p)?;
 
         // Remove the utf-8 BOM if any
         let contents = if contents.starts_with("\u{feff}") {
             &contents[3..]
         } else {
-            contents
+            &contents[..]
         };
 
         // Create the intermediate directories
@@ -1173,7 +1224,8 @@ impl<'a> SourceCollector<'a> {
         };
         layout::render(&mut w, &self.scx.layout,
                        &page, &(""), &Source(contents),
-                       self.scx.css_file_extension.is_some())?;
+                       self.scx.css_file_extension.is_some(),
+                       &self.scx.themes)?;
         w.flush()?;
         self.scx.local_sources.insert(p.clone(), href);
         Ok(())
@@ -1191,6 +1243,16 @@ impl DocFolder for Cache {
             _ => self.stripped_mod,
         };
 
+        // If the impl is from a masked crate or references something from a
+        // masked crate then remove it completely.
+        if let clean::ImplItem(ref i) = item.inner {
+            if self.masked_crates.contains(&item.def_id.krate) ||
+               i.trait_.def_id().map_or(false, |d| self.masked_crates.contains(&d.krate)) ||
+               i.for_.def_id().map_or(false, |d| self.masked_crates.contains(&d.krate)) {
+                return None;
+            }
+        }
+
         // Register any generics to their corresponding string. This is used
         // when pretty-printing types.
         if let Some(generics) = item.inner.generics() {
@@ -1205,16 +1267,10 @@ impl DocFolder for Cache {
 
         // Collect all the implementors of traits.
         if let clean::ImplItem(ref i) = item.inner {
-            if !self.masked_crates.contains(&item.def_id.krate) {
-                if let Some(did) = i.trait_.def_id() {
-                    if i.for_.def_id().map_or(true, |d| !self.masked_crates.contains(&d.krate)) {
-                        self.implementors.entry(did).or_insert(vec![]).push(Implementor {
-                            def_id: item.def_id,
-                            stability: item.stability.clone(),
-                            impl_: i.clone(),
-                        });
-                    }
-                }
+            if let Some(did) = i.trait_.def_id() {
+                self.implementors.entry(did).or_insert(vec![]).push(Impl {
+                    impl_item: item.clone(),
+                });
             }
         }
 
@@ -1303,11 +1359,11 @@ impl DocFolder for Cache {
             clean::FunctionItem(..) | clean::ModuleItem(..) |
             clean::ForeignFunctionItem(..) | clean::ForeignStaticItem(..) |
             clean::ConstantItem(..) | clean::StaticItem(..) |
-            clean::UnionItem(..) | clean::ForeignTypeItem
+            clean::UnionItem(..) | clean::ForeignTypeItem | clean::MacroItem(..)
             if !self.stripped_mod => {
-                // Reexported items mean that the same id can show up twice
+                // Re-exported items mean that the same id can show up twice
                 // in the rustdoc ast that we're looking at. We know,
-                // however, that a reexported item doesn't show up in the
+                // however, that a re-exported item doesn't show up in the
                 // `public_items` map, so we can skip inserting into the
                 // paths map if there was already an entry present and we're
                 // not a public item.
@@ -1377,24 +1433,20 @@ impl DocFolder for Cache {
                 // Note: matching twice to restrict the lifetime of the `i` borrow.
                 let mut dids = FxHashSet();
                 if let clean::Item { inner: clean::ImplItem(ref i), .. } = item {
-                    let masked_trait = i.trait_.def_id().map_or(false,
-                        |d| self.masked_crates.contains(&d.krate));
-                    if !masked_trait {
-                        match i.for_ {
-                            clean::ResolvedPath { did, .. } |
-                            clean::BorrowedRef {
-                                type_: box clean::ResolvedPath { did, .. }, ..
-                            } => {
-                                dids.insert(did);
-                            }
-                            ref t => {
-                                let did = t.primitive_type().and_then(|t| {
-                                    self.primitive_locations.get(&t).cloned()
-                                });
+                    match i.for_ {
+                        clean::ResolvedPath { did, .. } |
+                        clean::BorrowedRef {
+                            type_: box clean::ResolvedPath { did, .. }, ..
+                        } => {
+                            dids.insert(did);
+                        }
+                        ref t => {
+                            let did = t.primitive_type().and_then(|t| {
+                                self.primitive_locations.get(&t).cloned()
+                            });
 
-                                if let Some(did) = did {
-                                    dids.insert(did);
-                                }
+                            if let Some(did) = did {
+                                dids.insert(did);
                             }
                         }
                     }
@@ -1539,7 +1591,8 @@ impl Context {
             layout::render(writer, &self.shared.layout, &page,
                            &Sidebar{ cx: self, item: it },
                            &Item{ cx: self, item: it },
-                           self.shared.css_file_extension.is_some())?;
+                           self.shared.css_file_extension.is_some(),
+                           &self.shared.themes)?;
         } else {
             let mut url = self.root_path();
             if let Some(&(ref names, ty)) = cache().paths.get(&it.def_id) {
@@ -1564,7 +1617,7 @@ impl Context {
     {
         // Stripped modules survive the rustdoc passes (i.e. `strip-private`)
         // if they contain impls for public types. These modules can also
-        // contain items such as publicly reexported structures.
+        // contain items such as publicly re-exported structures.
         //
         // External crates will provide links to these structures, so
         // these modules are recursed into, but not rendered normally
@@ -1880,12 +1933,14 @@ fn document(w: &mut fmt::Formatter, cx: &Context, item: &clean::Item) -> fmt::Re
 /// rendering between Pulldown and Hoedown.
 fn render_markdown(w: &mut fmt::Formatter,
                    md_text: &str,
+                   links: Vec<(String, String)>,
                    span: Span,
                    render_type: RenderType,
                    prefix: &str,
                    scx: &SharedContext)
                    -> fmt::Result {
-    let (hoedown_output, pulldown_output) = render_text(|ty| format!("{}", Markdown(md_text, ty)));
+    let (hoedown_output, pulldown_output) =
+        render_text(|ty| format!("{}", Markdown(md_text, &links, ty)));
     let mut differences = html_diff::get_differences(&pulldown_output, &hoedown_output);
     differences.retain(|s| {
         match *s {
@@ -1917,7 +1972,13 @@ fn document_short(w: &mut fmt::Formatter, item: &clean::Item, link: AssocItemLin
         } else {
             format!("{}", &plain_summary_line(Some(s)))
         };
-        render_markdown(w, &markdown, item.source.clone(), cx.render_type, prefix, &cx.shared)?;
+        render_markdown(w,
+                        &markdown,
+                        item.links(),
+                        item.source.clone(),
+                        cx.render_type,
+                        prefix,
+                        &cx.shared)?;
     } else if !prefix.is_empty() {
         write!(w, "<div class='docblock'>{}</div>", prefix)?;
     }
@@ -1943,7 +2004,13 @@ fn document_full(w: &mut fmt::Formatter, item: &clean::Item,
                  cx: &Context, prefix: &str) -> fmt::Result {
     if let Some(s) = cx.shared.maybe_collapsed_doc_value(item) {
         debug!("Doc block: =====\n{}\n=====", s);
-        render_markdown(w, &*s, item.source.clone(), cx.render_type, prefix, &cx.shared)?;
+        render_markdown(w,
+                        &*s,
+                        item.links(),
+                        item.source.clone(),
+                        cx.render_type,
+                        prefix,
+                        &cx.shared)?;
     } else if !prefix.is_empty() {
         write!(w, "<div class='docblock'>{}</div>", prefix)?;
     }
@@ -1983,12 +2050,8 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
                item: &clean::Item, items: &[clean::Item]) -> fmt::Result {
     document(w, cx, item)?;
 
-    let mut indices = (0..items.len()).filter(|i| {
-        if let clean::AutoImplItem(..) = items[*i].inner {
-            return false;
-        }
-        !items[*i].is_stripped()
-    }).collect::<Vec<usize>>();
+    let mut indices = (0..items.len()).filter(|i| !items[*i].is_stripped())
+                                      .collect::<Vec<usize>>();
 
     // the order of item types in the listing
     fn reorder(ty: ItemType) -> u8 {
@@ -2031,7 +2094,7 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
     if cx.shared.sort_modules_alphabetically {
         indices.sort_by(|&i1, &i2| cmp(&items[i1], &items[i2], i1, i2));
     }
-    // This call is to remove reexport duplicates in cases such as:
+    // This call is to remove re-export duplicates in cases such as:
     //
     // ```
     // pub mod foo {
@@ -2082,7 +2145,7 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
             curty = myty;
             let (short, name) = match myty.unwrap() {
                 ItemType::ExternCrate |
-                ItemType::Import          => ("reexports", "Reexports"),
+                ItemType::Import          => ("reexports", "Re-exports"),
                 ItemType::Module          => ("modules", "Modules"),
                 ItemType::Struct          => ("structs", "Structs"),
                 ItemType::Union           => ("unions", "Unions"),
@@ -2169,10 +2232,10 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
                        stab_docs = stab_docs,
                        docs = if cx.render_type == RenderType::Hoedown {
                            format!("{}",
-                                   shorter(Some(&Markdown(doc_value,
+                                   shorter(Some(&Markdown(doc_value, &myitem.links(),
                                                           RenderType::Hoedown).to_string())))
                        } else {
-                           format!("{}", MarkdownSummaryLine(doc_value))
+                           format!("{}", MarkdownSummaryLine(doc_value, &myitem.links()))
                        },
                        class = myitem.type_(),
                        stab = myitem.stability_class().unwrap_or("".to_string()),
@@ -2338,18 +2401,6 @@ fn item_function(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
     document(w, cx, it)
 }
 
-fn implementor2item<'a>(cache: &'a Cache, imp : &Implementor) -> Option<&'a clean::Item> {
-    if let Some(t_did) = imp.impl_.for_.def_id() {
-        if let Some(impl_item) = cache.impls.get(&t_did).and_then(|i| i.iter()
-            .find(|i| i.impl_item.def_id == imp.def_id))
-        {
-            let i = &impl_item.impl_item;
-            return Some(i);
-        }
-    }
-    None
-}
-
 fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
               t: &clean::Trait) -> fmt::Result {
     let mut bounds = String::new();
@@ -2374,9 +2425,10 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
     // Output the trait definition
     write!(w, "<pre class='rust trait'>")?;
     render_attributes(w, it)?;
-    write!(w, "{}{}trait {}{}{}",
+    write!(w, "{}{}{}trait {}{}{}",
            VisSpace(&it.visibility),
            UnsafetySpace(t.unsafety),
+           if t.is_auto { "auto " } else { "" },
            it.name.as_ref().unwrap(),
            t.generics,
            bounds)?;
@@ -2533,7 +2585,7 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
         // if any Types with the same name but different DefId have been found.
         let mut implementor_dups: FxHashMap<&str, (DefId, bool)> = FxHashMap();
         for implementor in implementors {
-            match implementor.impl_.for_ {
+            match implementor.inner_impl().for_ {
                 clean::ResolvedPath { ref path, did, is_generic: false, .. } |
                 clean::BorrowedRef {
                     type_: box clean::ResolvedPath { ref path, did, is_generic: false, .. },
@@ -2550,7 +2602,7 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
         }
 
         let (local, foreign) = implementors.iter()
-            .partition::<Vec<_>, _>(|i| i.impl_.for_.def_id()
+            .partition::<Vec<_>, _>(|i| i.inner_impl().for_.def_id()
                                          .map_or(true, |d| cache.paths.contains_key(&d)));
 
         if !foreign.is_empty() {
@@ -2561,14 +2613,11 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
             ")?;
 
             for implementor in foreign {
-                if let Some(i) = implementor2item(&cache, implementor) {
-                    let impl_ = Impl { impl_item: i.clone() };
-                    let assoc_link = AssocItemLink::GotoSource(
-                        i.def_id, &implementor.impl_.provided_trait_methods
-                    );
-                    render_impl(w, cx, &impl_, assoc_link,
-                                RenderMode::Normal, i.stable_since(), false)?;
-                }
+                let assoc_link = AssocItemLink::GotoSource(
+                    implementor.impl_item.def_id, &implementor.inner_impl().provided_trait_methods
+                );
+                render_impl(w, cx, &implementor, assoc_link,
+                            RenderMode::Normal, implementor.impl_item.stable_since(), false)?;
             }
         }
 
@@ -2576,18 +2625,16 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
 
         for implementor in local {
             write!(w, "<li>")?;
-            if let Some(item) = implementor2item(&cache, implementor) {
-                if let Some(l) = (Item { cx, item }).src_href() {
-                    write!(w, "<div class='out-of-band'>")?;
-                    write!(w, "<a class='srclink' href='{}' title='{}'>[src]</a>",
-                                l, "goto source code")?;
-                    write!(w, "</div>")?;
-                }
+            if let Some(l) = (Item { cx, item: &implementor.impl_item }).src_href() {
+                write!(w, "<div class='out-of-band'>")?;
+                write!(w, "<a class='srclink' href='{}' title='{}'>[src]</a>",
+                            l, "goto source code")?;
+                write!(w, "</div>")?;
             }
             write!(w, "<code>")?;
             // If there's already another implementor that has the same abbridged name, use the
             // full path, for example in `std::iter::ExactSizeIterator`
-            let use_absolute = match implementor.impl_.for_ {
+            let use_absolute = match implementor.inner_impl().for_ {
                 clean::ResolvedPath { ref path, is_generic: false, .. } |
                 clean::BorrowedRef {
                     type_: box clean::ResolvedPath { ref path, is_generic: false, .. },
@@ -2595,8 +2642,8 @@ fn item_trait(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
                 } => implementor_dups[path.last_name()].1,
                 _ => false,
             };
-            fmt_impl_for_trait_page(&implementor.impl_, w, use_absolute)?;
-            for it in &implementor.impl_.items {
+            fmt_impl_for_trait_page(&implementor.inner_impl(), w, use_absolute)?;
+            for it in &implementor.inner_impl().items {
                 if let clean::TypedefItem(ref tydef, _) = it.inner {
                     write!(w, "<span class=\"where fmt-newline\">  ")?;
                     assoc_type(w, it, &vec![], Some(&tydef.type_), AssocItemLink::Anchor(None))?;
@@ -3317,8 +3364,7 @@ fn spotlight_decl(decl: &clean::FnDecl) -> Result<String, fmt::Error> {
         if let Some(impls) = c.impls.get(&did) {
             for i in impls {
                 let impl_ = i.inner_impl();
-                if impl_.trait_.def_id().and_then(|d| c.traits.get(&d))
-                                        .map_or(false, |t| t.is_spotlight) {
+                if impl_.trait_.def_id().map_or(false, |d| c.traits[&d].is_spotlight) {
                     if out.is_empty() {
                         out.push_str(
                             &format!("<h3 class=\"important\">Important traits for {}</h3>\
@@ -3379,7 +3425,8 @@ fn render_impl(w: &mut fmt::Formatter, cx: &Context, i: &Impl, link: AssocItemLi
         write!(w, "</span>")?;
         write!(w, "</h3>\n")?;
         if let Some(ref dox) = cx.shared.maybe_collapsed_doc_value(&i.impl_item) {
-            write!(w, "<div class='docblock'>{}</div>", Markdown(&*dox, cx.render_type))?;
+            write!(w, "<div class='docblock'>{}</div>",
+                   Markdown(&*dox, &i.impl_item.links(), cx.render_type))?;
         }
     }
 
@@ -3484,7 +3531,7 @@ fn render_impl(w: &mut fmt::Formatter, cx: &Context, i: &Impl, link: AssocItemLi
     }
 
     let traits = &cache().traits;
-    let trait_ = i.trait_did().and_then(|did| traits.get(&did));
+    let trait_ = i.trait_did().map(|did| &traits[&did]);
 
     if !show_def_docs {
         write!(w, "<span class='docblock autohide'>")?;
@@ -3886,20 +3933,16 @@ fn sidebar_trait(fmt: &mut fmt::Formatter, it: &clean::Item,
 
     if let Some(implementors) = c.implementors.get(&it.def_id) {
         let res = implementors.iter()
-                              .filter(|i| i.impl_.for_.def_id()
-                                                      .map_or(false, |d| !c.paths.contains_key(&d)))
+                              .filter(|i| i.inner_impl().for_.def_id()
+                                           .map_or(false, |d| !c.paths.contains_key(&d)))
                               .filter_map(|i| {
-                                  if let Some(item) = implementor2item(&c, i) {
-                                      match extract_for_impl_name(&item) {
-                                          Some((ref name, ref url)) => {
-                                              Some(format!("<a href=\"#impl-{}\">{}</a>",
-                                                           small_url_encode(url),
-                                                           Escape(name)))
-                                          }
-                                          _ => None,
+                                  match extract_for_impl_name(&i.impl_item) {
+                                      Some((ref name, ref url)) => {
+                                          Some(format!("<a href=\"#impl-{}\">{}</a>",
+                                                      small_url_encode(url),
+                                                      Escape(name)))
                                       }
-                                  } else {
-                                      None
+                                      _ => None,
                                   }
                               })
                               .collect::<String>();
@@ -4003,7 +4046,7 @@ fn sidebar_module(fmt: &mut fmt::Formatter, _it: &clean::Item,
                              it.type_() == ItemType::Import) {
         sidebar.push_str(&format!("<li><a href=\"#{id}\">{name}</a></li>",
                                   id = "reexports",
-                                  name = "Reexports"));
+                                  name = "Re-exports"));
     }
 
     // ordering taken from item_module, reorder, where it prioritized elements in a certain order
@@ -4013,16 +4056,10 @@ fn sidebar_module(fmt: &mut fmt::Formatter, _it: &clean::Item,
                    ItemType::Function, ItemType::Typedef, ItemType::Union, ItemType::Impl,
                    ItemType::TyMethod, ItemType::Method, ItemType::StructField, ItemType::Variant,
                    ItemType::AssociatedType, ItemType::AssociatedConst, ItemType::ForeignType] {
-        if items.iter().any(|it| {
-            if let clean::AutoImplItem(..) = it.inner {
-                false
-            } else {
-                !it.is_stripped() && it.type_() == myty
-            }
-        }) {
+        if items.iter().any(|it| !it.is_stripped() && it.type_() == myty) {
             let (short, name) = match myty {
                 ItemType::ExternCrate |
-                ItemType::Import          => ("reexports", "Reexports"),
+                ItemType::Import          => ("reexports", "Re-exports"),
                 ItemType::Module          => ("modules", "Modules"),
                 ItemType::Struct          => ("structs", "Structs"),
                 ItemType::Union           => ("unions", "Unions"),
@@ -4136,7 +4173,11 @@ fn get_index_type_name(clean_type: &clean::Type, accept_generic: bool) -> Option
     match *clean_type {
         clean::ResolvedPath { ref path, .. } => {
             let segments = &path.segments;
-            Some(segments[segments.len() - 1].name.clone())
+            let path_segment = segments.into_iter().last().unwrap_or_else(|| panic!(
+                "get_index_type_name(clean_type: {:?}, accept_generic: {:?}) had length zero path",
+                clean_type, accept_generic
+            ));
+            Some(path_segment.name.clone())
         }
         clean::Generic(ref s) if accept_generic => Some(s.clone()),
         clean::Primitive(ref p) => Some(format!("{:?}", p)),

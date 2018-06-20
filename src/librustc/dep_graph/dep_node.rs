@@ -496,7 +496,6 @@ define_dep_nodes!( <'tcx>
     [] SuperPredicatesOfItem(DefId),
     [] TraitDefOfItem(DefId),
     [] AdtDefOfItem(DefId),
-    [] IsAutoImpl(DefId),
     [] ImplTraitRef(DefId),
     [] ImplPolarity(DefId),
     [] FnSignature(DefId),
@@ -633,6 +632,16 @@ define_dep_nodes!( <'tcx>
     [anon] NormalizeTy,
     // We use this for most things when incr. comp. is turned off.
     [] Null,
+
+    [] SubstituteNormalizeAndTestPredicates { key: (DefId, &'tcx Substs<'tcx>) },
+
+    [input] TargetFeaturesWhitelist,
+    [] TargetFeaturesEnabled(DefId),
+
+    [] InstanceDefSizeEstimate { instance_def: InstanceDef<'tcx> },
+
+    [] GetSymbolExportLevel(DefId),
+
 );
 
 trait DepNodeParams<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> : fmt::Debug {

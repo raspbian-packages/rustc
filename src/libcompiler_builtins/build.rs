@@ -89,6 +89,12 @@ mod tests {
             Adddf3,
             Addsf3,
 
+            // float/cmp.rs
+            Gedf2,
+            Gesf2,
+            Ledf2,
+            Lesf2,
+
             // float/conv.rs
             Fixdfdi,
             Fixdfsi,
@@ -2523,6 +2529,318 @@ fn floatuntidf() {
         let g_b = to_u64(b_);
         let diff = if g_b > b { g_b - b } else { b - g_b };
         assert_eq!(((a,), b, g_b, true), ((a,), b, g_b, diff <= 1));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct Gedf2 {
+        a: u64,
+        b: u64,
+        c: i32,
+    }
+
+    impl TestCase for Gedf2 {
+        fn name() -> &'static str {
+            "gedf2"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_f64(rng);
+            let b = gen_f64(rng);
+            // TODO accept NaNs. We don't do that right now because we can't check
+            // for NaN-ness on the thumb targets (due to missing intrinsics)
+            if a.is_nan() || b.is_nan() {
+                return None;
+            }
+
+            let c;
+            if a.is_nan() || b.is_nan() {
+                c = -1;
+            } else if a < b {
+                c = -1;
+            } else if a > b {
+                c = 1;
+            } else {
+                c = 0;
+            }
+
+            Some(Gedf2 { a: to_u64(a), b: to_u64(b), c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use std::mem;
+use compiler_builtins::float::cmp::__gedf2;
+
+fn to_f64(x: u64) -> f64 {
+    unsafe { mem::transmute(x) }
+}
+
+static TEST_CASES: &[((u64, u64), i32)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn gedf2() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = __gedf2(to_f64(a), to_f64(b));
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct Gesf2 {
+        a: u32,
+        b: u32,
+        c: i32,
+    }
+
+    impl TestCase for Gesf2 {
+        fn name() -> &'static str {
+            "gesf2"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_f32(rng);
+            let b = gen_f32(rng);
+            // TODO accept NaNs. We don't do that right now because we can't check
+            // for NaN-ness on the thumb targets (due to missing intrinsics)
+            if a.is_nan() || b.is_nan() {
+                return None;
+            }
+
+            let c;
+            if a.is_nan() || b.is_nan() {
+                c = -1;
+            } else if a < b {
+                c = -1;
+            } else if a > b {
+                c = 1;
+            } else {
+                c = 0;
+            }
+
+            Some(Gesf2 { a: to_u32(a), b: to_u32(b), c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use std::mem;
+use compiler_builtins::float::cmp::__gesf2;
+
+fn to_f32(x: u32) -> f32 {
+    unsafe { mem::transmute(x) }
+}
+
+static TEST_CASES: &[((u32, u32), i32)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn gesf2() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = __gesf2(to_f32(a), to_f32(b));
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct Ledf2 {
+        a: u64,
+        b: u64,
+        c: i32,
+    }
+
+    impl TestCase for Ledf2 {
+        fn name() -> &'static str {
+            "ledf2"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_f64(rng);
+            let b = gen_f64(rng);
+            // TODO accept NaNs. We don't do that right now because we can't check
+            // for NaN-ness on the thumb targets (due to missing intrinsics)
+            if a.is_nan() || b.is_nan() {
+                return None;
+            }
+
+            let c;
+            if a.is_nan() || b.is_nan() {
+                c = 1;
+            } else if a < b {
+                c = -1;
+            } else if a > b {
+                c = 1;
+            } else {
+                c = 0;
+            }
+
+            Some(Ledf2 { a: to_u64(a), b: to_u64(b), c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use std::mem;
+use compiler_builtins::float::cmp::__ledf2;
+
+fn to_f64(x: u64) -> f64 {
+    unsafe { mem::transmute(x) }
+}
+
+static TEST_CASES: &[((u64, u64), i32)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn ledf2() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = __ledf2(to_f64(a), to_f64(b));
+        assert_eq!(((a, b), c), ((a, b), c_));
+    }
+}
+"
+        }
+    }
+
+    #[derive(Eq, Hash, PartialEq)]
+    pub struct Lesf2 {
+        a: u32,
+        b: u32,
+        c: i32,
+    }
+
+    impl TestCase for Lesf2 {
+        fn name() -> &'static str {
+            "lesf2"
+        }
+
+        fn generate<R>(rng: &mut R) -> Option<Self>
+        where
+            R: Rng,
+            Self: Sized,
+        {
+            let a = gen_f32(rng);
+            let b = gen_f32(rng);
+            // TODO accept NaNs. We don't do that right now because we can't check
+            // for NaN-ness on the thumb targets (due to missing intrinsics)
+            if a.is_nan() || b.is_nan() {
+                return None;
+            }
+
+            let c;
+            if a.is_nan() || b.is_nan() {
+                c = 1;
+            } else if a < b {
+                c = -1;
+            } else if a > b {
+                c = 1;
+            } else {
+                c = 0;
+            }
+
+            Some(Lesf2 { a: to_u32(a), b: to_u32(b), c })
+        }
+
+        fn to_string(&self, buffer: &mut String) {
+            writeln!(
+                buffer,
+                "(({a}, {b}), {c}),",
+                a = self.a,
+                b = self.b,
+                c = self.c
+            )
+                    .unwrap();
+        }
+
+        fn prologue() -> &'static str {
+            "
+use std::mem;
+use compiler_builtins::float::cmp::__lesf2;
+
+fn to_f32(x: u32) -> f32 {
+    unsafe { mem::transmute(x) }
+}
+
+static TEST_CASES: &[((u32, u32), i32)] = &[
+"
+        }
+
+        fn epilogue() -> &'static str {
+            "
+];
+
+#[test]
+fn lesf2() {
+    for &((a, b), c) in TEST_CASES {
+        let c_ = __lesf2(to_f32(a), to_f32(b));
+        assert_eq!(((a, b), c), ((a, b), c_));
     }
 }
 "
@@ -4982,8 +5300,6 @@ mod c {
                 "clzdi2.c",
                 "clzsi2.c",
                 "cmpdi2.c",
-                "comparedf2.c",
-                "comparesf2.c",
                 "ctzdi2.c",
                 "ctzsi2.c",
                 "divdc3.c",
@@ -5114,20 +5430,13 @@ mod c {
         if target_arch == "arm" && target_os != "ios" {
             sources.extend(
                 &[
-                    "arm/aeabi_cdcmp.S",
-                    "arm/aeabi_cdcmpeq_check_nan.c",
-                    "arm/aeabi_cfcmp.S",
-                    "arm/aeabi_cfcmpeq_check_nan.c",
-                    "arm/aeabi_dcmp.S",
                     "arm/aeabi_div0.c",
                     "arm/aeabi_drsub.c",
-                    "arm/aeabi_fcmp.S",
                     "arm/aeabi_frsub.c",
                     "arm/bswapdi2.S",
                     "arm/bswapsi2.S",
                     "arm/clzdi2.S",
                     "arm/clzsi2.S",
-                    "arm/comparesf2.S",
                     "arm/divmodsi4.S",
                     "arm/modsi3.S",
                     "arm/switch16.S",
@@ -5152,6 +5461,21 @@ mod c {
                     // "arm/udivsi3.S",
                 ],
             );
+
+            // First of all aeabi_cdcmp and aeabi_cfcmp are never called by LLVM.
+            // Second are little-endian only, so build fail on big-endian targets.
+            // Temporally workaround: exclude these files for big-endian targets.
+            if !llvm_target[0].starts_with("thumbeb") &&
+               !llvm_target[0].starts_with("armeb") {
+                sources.extend(
+                    &[
+                        "arm/aeabi_cdcmp.S",
+                        "arm/aeabi_cdcmpeq_check_nan.c",
+                        "arm/aeabi_cfcmp.S",
+                        "arm/aeabi_cfcmpeq_check_nan.c",
+                    ],
+                );
+            }
         }
 
         if llvm_target[0] == "armv7" {

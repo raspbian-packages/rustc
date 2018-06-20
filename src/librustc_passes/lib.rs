@@ -42,9 +42,9 @@ pub mod consts;
 pub mod hir_stats;
 pub mod loops;
 mod mir_stats;
-pub mod no_asm;
 pub mod static_recursion;
 
+#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_passes, DIAGNOSTICS }
 
 pub fn provide(providers: &mut Providers) {

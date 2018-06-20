@@ -158,13 +158,6 @@ fn check(cache: &mut Cache,
        file.ends_with("sync/struct.RwLock.html") {
         return None;
     }
-    // FIXME(#47038)
-    if file.ends_with("deriving/generic/index.html") ||
-       file.ends_with("deriving/generic/macro.vec.html") ||
-       file.ends_with("deriving/custom/macro.panic.html") ||
-       file.ends_with("proc_macro_impl/macro.panic.html") {
-        return None;
-    }
 
     let res = load_file(cache, root, file, SkipRedirect);
     let (pretty_file, contents) = match res {
@@ -204,7 +197,17 @@ fn check(cache: &mut Cache,
             for part in Path::new(base).join(url).components() {
                 match part {
                     Component::Prefix(_) |
-                    Component::RootDir => panic!(),
+                    Component::RootDir => {
+                        // Avoid absolute paths as they make the docs not
+                        // relocatable by making assumptions on where the docs
+                        // are hosted relative to the site root.
+                        *errors = true;
+                        println!("{}:{}: absolute path - {}",
+                                 pretty_file.display(),
+                                 i + 1,
+                                 Path::new(base).join(url).display());
+                        return;
+                    }
                     Component::CurDir => {}
                     Component::ParentDir => { path.pop(); }
                     Component::Normal(s) => { path.push(s); }

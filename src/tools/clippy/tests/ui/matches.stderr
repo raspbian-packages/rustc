@@ -132,7 +132,9 @@ error: you don't need to add `&` to all patterns
     = note: `-D match-ref-pats` implied by `-D warnings`
 help: instead of prefixing all patterns with `&`, you can dereference the expression
     |
-138 |         match *v { .. }
+138 |         match *v {
+139 |             Some(v) => println!("{:?}", v),
+140 |             None => println!("none"),
     |
 
 error: you don't need to add `&` to all patterns
@@ -145,7 +147,8 @@ error: you don't need to add `&` to all patterns
     | |_____^
 help: instead of prefixing all patterns with `&`, you can dereference the expression
     |
-148 |     match *tup { .. }
+148 |     match *tup {
+149 |         (v, 1) => println!("{}", v),
     |
 
 error: you don't need to add `&` to both the expression and the patterns
@@ -155,7 +158,13 @@ error: you don't need to add `&` to both the expression and the patterns
 155 | |         &Some(v) => println!("{:?}", v),
 156 | |         &None => println!("none"),
 157 | |     }
-    | |_____^ help: try: `match w { .. }`
+    | |_____^
+help: try
+    |
+154 |     match w {
+155 |         Some(v) => println!("{:?}", v),
+156 |         None => println!("none"),
+    |
 
 error: you don't need to add `&` to all patterns
    --> $DIR/matches.rs:165:5
@@ -166,7 +175,7 @@ error: you don't need to add `&` to all patterns
     | |_____^
 help: instead of prefixing all patterns with `&`, you can dereference the expression
     |
-165 |     if let .. = *a { .. }
+165 |     if let None = *a {
     |
 
 error: you don't need to add `&` to both the expression and the patterns
@@ -175,7 +184,11 @@ error: you don't need to add `&` to both the expression and the patterns
 170 | /     if let &None = &b {
 171 | |         println!("none");
 172 | |     }
-    | |_____^ help: try: `if let .. = b { .. }`
+    | |_____^
+help: try
+    |
+170 |     if let None = b {
+    |
 
 error: some ranges overlap
    --> $DIR/matches.rs:179:9
@@ -391,24 +404,6 @@ note: consider refactoring into `Ok(3) | Ok(_)`
     = note: this error originates in a macro outside of the current crate (in Nightly builds, run with -Z external-macro-backtrace for more info)
 
 error: this `match` has identical arm bodies
-   --> $DIR/matches.rs:292:18
-    |
-292 |         Ok(_) => println!("ok"),
-    |                  ^^^^^^^^^^^^^^
-    |
-note: same as this
-   --> $DIR/matches.rs:290:18
-    |
-290 |         Ok(3) => println!("ok"),
-    |                  ^^^^^^^^^^^^^^
-note: consider refactoring into `Ok(3) | Ok(_)`
-   --> $DIR/matches.rs:290:18
-    |
-290 |         Ok(3) => println!("ok"),
-    |                  ^^^^^^^^^^^^^^
-    = note: this error originates in a macro outside of the current crate (in Nightly builds, run with -Z external-macro-backtrace for more info)
-
-error: this `match` has identical arm bodies
    --> $DIR/matches.rs:298:29
     |
 298 |         (Ok(_), Some(x)) => println!("ok {}", x),
@@ -443,4 +438,28 @@ note: consider refactoring into `Ok(3) | Ok(_)`
 312 |         Ok(3) => println!("ok"),
     |                  ^^^^^^^^^^^^^^
     = note: this error originates in a macro outside of the current crate (in Nightly builds, run with -Z external-macro-backtrace for more info)
+
+error: use as_ref() instead
+   --> $DIR/matches.rs:320:33
+    |
+320 |       let borrowed: Option<&()> = match owned {
+    |  _________________________________^
+321 | |         None => None,
+322 | |         Some(ref v) => Some(v),
+323 | |     };
+    | |_____^ help: try this: `owned.as_ref()`
+    |
+    = note: `-D match-as-ref` implied by `-D warnings`
+
+error: use as_mut() instead
+   --> $DIR/matches.rs:326:39
+    |
+326 |       let borrow_mut: Option<&mut ()> = match mut_owned {
+    |  _______________________________________^
+327 | |         None => None,
+328 | |         Some(ref mut v) => Some(v),
+329 | |     };
+    | |_____^ help: try this: `mut_owned.as_mut()`
+
+error: aborting due to 37 previous errors
 

@@ -66,7 +66,7 @@ pub enum PpSourceMode {
 pub enum PpFlowGraphMode {
     Default,
     /// Drops the labels from the edges in the flowgraph output. This
-    /// is mostly for use in the --unpretty flowgraph run-make tests,
+    /// is mostly for use in the -Z unpretty flowgraph run-make tests,
     /// since the labels are largely uninteresting in those cases and
     /// have become a pain to maintain.
     UnlabelledEdges,
@@ -228,7 +228,9 @@ impl PpSourceMode {
             }
             PpmTyped => {
                 let control = &driver::CompileController::basic();
-                abort_on_err(driver::phase_3_run_analysis_passes(control,
+                let trans = ::get_trans(sess);
+                abort_on_err(driver::phase_3_run_analysis_passes(&*trans,
+                                                                 control,
                                                                  sess,
                                                                  cstore,
                                                                  hir_map.clone(),
@@ -243,8 +245,9 @@ impl PpSourceMode {
                         tcx,
                         tables: Cell::new(&empty_tables)
                     };
-                    let _ignore = tcx.dep_graph.in_ignore();
-                    f(&annotation, hir_map.forest.krate())
+                    tcx.dep_graph.with_ignore(|| {
+                        f(&annotation, hir_map.forest.krate())
+                    })
                 }),
                              sess)
             }
@@ -1005,7 +1008,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                                            move |annotation, _| {
                     debug!("pretty printing source code {:?}", s);
                     let sess = annotation.sess();
-                    let hir_map = annotation.hir_map().expect("--unpretty missing HIR map");
+                    let hir_map = annotation.hir_map().expect("-Z unpretty missing HIR map");
                     let mut pp_state = pprust_hir::State::new_from_input(sess.codemap(),
                                                                          &sess.parse_sess,
                                                                          src_name,
@@ -1018,7 +1021,7 @@ pub fn print_after_hir_lowering<'tcx, 'a: 'tcx>(sess: &'a Session,
                         pp_state.print_node(node)?;
                         pp_state.s.space()?;
                         let path = annotation.node_path(node_id)
-                            .expect("--unpretty missing node paths");
+                            .expect("-Z unpretty missing node paths");
                         pp_state.synth_comment(path)?;
                         pp_state.s.hardbreak()?;
                     }
@@ -1070,7 +1073,7 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
                                        ofile: Option<&Path>) {
     let nodeid = if let Some(uii) = uii {
         debug!("pretty printing for {:?}", uii);
-        Some(uii.to_one_node_id("--unpretty", sess, &hir_map))
+        Some(uii.to_one_node_id("-Z unpretty", sess, &hir_map))
     } else {
         debug!("pretty printing for whole crate");
         None
@@ -1079,7 +1082,9 @@ fn print_with_analysis<'tcx, 'a: 'tcx>(sess: &'a Session,
     let mut out = Vec::new();
 
     let control = &driver::CompileController::basic();
-    abort_on_err(driver::phase_3_run_analysis_passes(control,
+    let trans = ::get_trans(sess);
+    abort_on_err(driver::phase_3_run_analysis_passes(&*trans,
+                                                     control,
                                                      sess,
                                                      cstore,
                                                      hir_map.clone(),

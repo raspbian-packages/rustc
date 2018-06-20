@@ -40,8 +40,6 @@ use util::nodemap::FxHashMap;
 
 use rustc_const_math::ConstInt;
 
-use std::collections::BTreeMap;
-
 use syntax::{abi, ast};
 use syntax::codemap::Spanned;
 use syntax::symbol::{Symbol, keywords};
@@ -73,7 +71,6 @@ pub fn provide(providers: &mut Providers) {
         impl_trait_ref,
         impl_polarity,
         is_foreign_item,
-        is_auto_impl,
         ..*providers
     };
 }
@@ -241,7 +238,7 @@ fn type_param_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let param_owner = tcx.hir.ty_param_owner(param_id);
     let param_owner_def_id = tcx.hir.local_def_id(param_owner);
     let generics = tcx.generics_of(param_owner_def_id);
-    let index = generics.type_param_to_index[&def_id.index];
+    let index = generics.type_param_to_index[&def_id];
     let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id));
 
     // Don't look for bounds where the type parameter isn't in scope.
@@ -358,31 +355,26 @@ fn is_param<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn ensure_no_ty_param_bounds(tcx: TyCtxt,
-                             span: Span,
-                             generics: &hir::Generics,
-                             thing: &'static str) {
+fn ensure_no_param_bounds(tcx: TyCtxt,
+                          span: Span,
+                          generics: &hir::Generics,
+                          thing: &'static str) {
     let mut warn = false;
 
     for ty_param in generics.ty_params() {
-        for bound in ty_param.bounds.iter() {
-            match *bound {
-                hir::TraitTyParamBound(..) => {
-                    warn = true;
-                }
-                hir::RegionTyParamBound(..) => { }
-            }
+        if !ty_param.bounds.is_empty() {
+            warn = true;
         }
     }
 
-    for predicate in generics.where_clause.predicates.iter() {
-        match *predicate {
-            hir::WherePredicate::BoundPredicate(..) => {
-                warn = true;
-            }
-            hir::WherePredicate::RegionPredicate(..) => { }
-            hir::WherePredicate::EqPredicate(..) => { }
+    for lft_param in generics.lifetimes() {
+        if !lft_param.bounds.is_empty() {
+            warn = true;
         }
+    }
+
+    if !generics.where_clause.predicates.is_empty() {
+        warn = true;
     }
 
     if warn {
@@ -391,8 +383,7 @@ fn ensure_no_ty_param_bounds(tcx: TyCtxt,
         // part of this PR. Still, convert to warning to
         // make bootstrapping easier.
         span_warn!(tcx.sess, span, E0122,
-                   "trait bounds are not (yet) enforced \
-                   in {} definitions",
+                   "generic bounds are ignored in {}",
                    thing);
     }
 }
@@ -424,9 +415,6 @@ fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
             tcx.predicates_of(def_id);
             convert_enum_variant_types(tcx, def_id, &enum_definition.variants);
         },
-        hir::ItemAutoImpl(..) => {
-            tcx.impl_trait_ref(def_id);
-        }
         hir::ItemImpl(..) => {
             tcx.generics_of(def_id);
             tcx.type_of(def_id);
@@ -461,7 +449,7 @@ fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
             }
         },
         hir::ItemTy(_, ref generics) => {
-            ensure_no_ty_param_bounds(tcx, it.span, generics, "type");
+            ensure_no_param_bounds(tcx, it.span, generics, "type aliases");
             tcx.generics_of(def_id);
             tcx.type_of(def_id);
             tcx.predicates_of(def_id);
@@ -716,9 +704,9 @@ fn trait_def<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
     let item = tcx.hir.expect_item(node_id);
 
-    let unsafety = match item.node {
-        hir::ItemTrait(_, unsafety, ..) => unsafety,
-        hir::ItemTraitAlias(..) => hir::Unsafety::Normal,
+    let (is_auto, unsafety) = match item.node {
+        hir::ItemTrait(is_auto, unsafety, ..) => (is_auto == hir::IsAuto::Yes, unsafety),
+        hir::ItemTraitAlias(..) => (false, hir::Unsafety::Normal),
         _ => span_bug!(item.span, "trait_def_of_item invoked on non-trait"),
     };
 
@@ -735,10 +723,6 @@ fn trait_def<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     let def_path_hash = tcx.def_path_hash(def_id);
-    let is_auto = match item.node {
-        hir::ItemTrait(hir::IsAuto::Yes, ..) => true,
-        _ => tcx.hir.trait_is_auto(def_id),
-    };
     let def = ty::TraitDef::new(def_id,
                                 unsafety,
                                 paren_sugar,
@@ -1032,10 +1016,9 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         });
     }
 
-    let mut type_param_to_index = BTreeMap::new();
-    for param in &types {
-        type_param_to_index.insert(param.def_id.index, param.index);
-    }
+    let type_param_to_index = types.iter()
+                                   .map(|param| (param.def_id, param.index))
+                                   .collect();
 
     tcx.alloc_generics(ty::Generics {
         parent: parent_def_id,
@@ -1109,7 +1092,6 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     let substs = Substs::identity_for_item(tcx, def_id);
                     tcx.mk_adt(def, substs)
                 }
-                ItemAutoImpl(..) |
                 ItemTrait(..) | ItemTraitAlias(..) |
                 ItemMod(..) |
                 ItemForeignMod(..) |
@@ -1150,8 +1132,8 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         NodeField(field) => icx.to_ty(&field.ty),
 
-        NodeExpr(&hir::Expr { node: hir::ExprClosure(.., is_generator), .. }) => {
-            if is_generator {
+        NodeExpr(&hir::Expr { node: hir::ExprClosure(.., gen), .. }) => {
+            if gen.is_some() {
                 let hir_id = tcx.hir.node_to_hir_id(node_id);
                 return tcx.typeck_tables_of(def_id).node_id_to_type(hir_id);
             }
@@ -1278,11 +1260,6 @@ fn impl_trait_ref<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
     match tcx.hir.expect_item(node_id).node {
-        hir::ItemAutoImpl(_, ref ast_trait_ref) => {
-            Some(AstConv::instantiate_mono_trait_ref(&icx,
-                                                     ast_trait_ref,
-                                                     tcx.mk_self_type()))
-        }
         hir::ItemImpl(.., ref opt_trait_ref, _, _) => {
             opt_trait_ref.as_ref().map(|ast_trait_ref| {
                 let selfty = tcx.type_of(def_id);
@@ -1726,16 +1703,5 @@ fn is_foreign_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         Some(hir_map::NodeForeignItem(..)) => true,
         Some(_) => false,
         _ => bug!("is_foreign_item applied to non-local def-id {:?}", def_id)
-    }
-}
-
-fn is_auto_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             def_id: DefId)
-                             -> bool {
-    match tcx.hir.get_if_local(def_id) {
-        Some(hir_map::NodeItem(&hir::Item { node: hir::ItemAutoImpl(..), .. }))
-             => true,
-        Some(_) => false,
-        _ => bug!("is_auto_impl applied to non-local def-id {:?}", def_id)
     }
 }

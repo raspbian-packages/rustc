@@ -77,7 +77,7 @@ pub enum Adjust<'tcx> {
     /// Go from a mut raw pointer to a const raw pointer.
     MutToConstPointer,
 
-    /// Dereference once, producing an lvalue.
+    /// Dereference once, producing a place.
     Deref(Option<OverloadedDeref<'tcx>>),
 
     /// Take the address and produce either a `&` or `*` pointer.
@@ -120,9 +120,24 @@ impl<'a, 'gcx, 'tcx> OverloadedDeref<'tcx> {
 }
 
 #[derive(Copy, Clone, PartialEq, Debug, RustcEncodable, RustcDecodable)]
+pub enum AutoBorrowMutability {
+    Mutable { allow_two_phase_borrow: bool },
+    Immutable,
+}
+
+impl From<AutoBorrowMutability> for hir::Mutability {
+    fn from(m: AutoBorrowMutability) -> Self {
+        match m {
+            AutoBorrowMutability::Mutable { .. } => hir::MutMutable,
+            AutoBorrowMutability::Immutable => hir::MutImmutable,
+        }
+    }
+}
+
+#[derive(Copy, Clone, PartialEq, Debug, RustcEncodable, RustcDecodable)]
 pub enum AutoBorrow<'tcx> {
     /// Convert from T to &T.
-    Ref(ty::Region<'tcx>, hir::Mutability),
+    Ref(ty::Region<'tcx>, AutoBorrowMutability),
 
     /// Convert from T to *T.
     RawPtr(hir::Mutability),

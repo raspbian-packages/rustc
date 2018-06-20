@@ -99,6 +99,7 @@ fn main() {
         cfg.header("sys/socket.h");
         if linux && !musl {
             cfg.header("linux/if.h");
+            cfg.header("sys/auxv.h");
         }
         cfg.header("sys/time.h");
         cfg.header("sys/un.h");
@@ -162,6 +163,7 @@ fn main() {
     }
 
     if apple {
+        cfg.header("spawn.h");
         cfg.header("mach-o/dyld.h");
         cfg.header("mach/mach_time.h");
         cfg.header("malloc/malloc.h");
@@ -170,17 +172,23 @@ fn main() {
         cfg.header("sys/xattr.h");
         cfg.header("sys/sys_domain.h");
         cfg.header("net/if_utun.h");
+        cfg.header("net/bpf.h");
         if target.starts_with("x86") {
             cfg.header("crt_externs.h");
         }
         cfg.header("net/route.h");
+        cfg.header("netinet/if_ether.h");
         cfg.header("sys/proc_info.h");
+        cfg.header("sys/kern_control.h");
+        cfg.header("sys/ipc.h");
+        cfg.header("sys/shm.h");
     }
 
     if bsdlike {
         cfg.header("sys/event.h");
         cfg.header("net/if_dl.h");
         if freebsd {
+            cfg.header("net/bpf.h");
             cfg.header("libutil.h");
         } else {
             cfg.header("util.h");
@@ -188,6 +196,7 @@ fn main() {
     }
 
     if linux || emscripten {
+        cfg.header("mntent.h");
         cfg.header("mqueue.h");
         cfg.header("ucontext.h");
         if !uclibc {
@@ -233,24 +242,32 @@ fn main() {
         }
         cfg.header("sys/reboot.h");
         if !emscripten {
+            cfg.header("linux/netlink.h");
+            cfg.header("linux/genetlink.h");
             cfg.header("linux/netfilter_ipv4.h");
+            cfg.header("linux/netfilter_ipv6.h");
             cfg.header("linux/fs.h");
         }
         if !musl {
             cfg.header("asm/mman.h");
-            cfg.header("linux/netlink.h");
             cfg.header("linux/magic.h");
             cfg.header("linux/reboot.h");
+            cfg.header("linux/netfilter/nf_tables.h");
 
             if !mips {
                 cfg.header("linux/quota.h");
             }
         }
     }
+    if solaris {
+        cfg.header("sys/epoll.h");
+    }
 
     if linux || android {
         cfg.header("sys/fsuid.h");
-
+        cfg.header("linux/seccomp.h");
+        cfg.header("linux/if_ether.h");
+        cfg.header("linux/if_tun.h");
         // DCCP support
         if !uclibc && !musl && !emscripten {
             cfg.header("linux/dccp.h");
@@ -265,7 +282,7 @@ fn main() {
         cfg.header("linux/random.h");
         cfg.header("elf.h");
         cfg.header("link.h");
-        cfg.header("linux/if_tun.h");
+        cfg.header("spawn.h");
     }
 
     if freebsd {
@@ -277,6 +294,9 @@ fn main() {
         cfg.header("sys/ipc.h");
         cfg.header("sys/msg.h");
         cfg.header("sys/shm.h");
+        cfg.header("sys/procdesc.h");
+        cfg.header("sys/rtprio.h");
+        cfg.header("spawn.h");
     }
 
     if netbsd {
@@ -300,6 +320,7 @@ fn main() {
         cfg.header("ufs/ufs/quota.h");
         cfg.header("pthread_np.h");
         cfg.header("sys/ioctl_compat.h");
+        cfg.header("sys/rtprio.h");
     }
 
     if solaris {
@@ -370,9 +391,9 @@ fn main() {
                 }
             }
             "u64" if struct_ == "epoll_event" => "data.u64".to_string(),
-            "type_" if linux &&
+            "type_" if (linux || freebsd || dragonfly) &&
                 (struct_ == "input_event" || struct_ == "input_mask" ||
-                 struct_ == "ff_effect") => "type".to_string(),
+                 struct_ == "ff_effect" || struct_ == "rtprio") => "type".to_string(),
             s => s.to_string(),
         }
     });
@@ -396,7 +417,7 @@ fn main() {
             "__timeval" if linux => true,
 
             // The alignment of this is 4 on 64-bit OSX...
-            "kevent" if apple && x86_64 => true,
+            "kevent" | "shmid_ds" if apple && x86_64 => true,
 
             // This is actually a union, not a struct
             "sigval" => true,
@@ -431,6 +452,10 @@ fn main() {
             "sem_t" if openbsd || freebsd || dragonfly || netbsd => true,
             // mqd_t is a pointer on FreeBSD and DragonFly
             "mqd_t" if freebsd || dragonfly => true,
+
+            // Just some typedefs on osx, no need to check their sign
+            "posix_spawnattr_t" |
+            "posix_spawn_file_actions_t" => true,
 
             // windows-isms
             n if n.starts_with("P") => true,
@@ -485,6 +510,10 @@ fn main() {
             "KERN_MAXID" |
             "HW_MAXID" |
             "USER_MAXID" if freebsd => true,
+
+            // These constants were added in FreeBSD 11
+            "EVFILT_PROCDESC" | "EVFILT_SENDFILE" | "EVFILT_EMPTY" |
+            "PD_CLOEXEC" | "PD_ALLOWED_AT_FORK" if freebsd => true,
 
             // These OSX constants are removed in Sierra.
             // https://developer.apple.com/library/content/releasenotes/General/APIDiffsMacOS10_12/Swift/Darwin.html
@@ -544,6 +573,11 @@ fn main() {
 
             // These are defined for Solaris 11, but the crate is tested on illumos, where they are currently not defined
             "EADI" | "PORT_SOURCE_POSTWAIT" | "PORT_SOURCE_SIGNAL" | "PTHREAD_STACK_MIN" => true,
+
+            // These change all the time from release to release of linux
+            // distros, let's just not bother trying to verify them. They
+            // shouldn't be used in code anyway...
+            "AF_MAX" | "PF_MAX" => true,
 
             _ => false,
         }
@@ -629,6 +663,9 @@ fn main() {
             // delegates to another, but the symbol still exists, so don't check
             // the symbol.
             "uname" if freebsd => true,
+
+            // FIXME: need to upgrade FreeBSD version; see https://github.com/rust-lang/libc/issues/938
+            "setgrent" if freebsd => true,
 
             // aio_waitcomplete's return type changed between FreeBSD 10 and 11.
             "aio_waitcomplete" if freebsd => true,

@@ -17,7 +17,7 @@ use ext::base::ExtCtxt;
 use ptr::P;
 use symbol::{Symbol, keywords};
 
-// Transitional reexports so qquote can find the paths it is looking for
+// Transitional re-exports so qquote can find the paths it is looking for
 mod syntax {
     pub use ext;
     pub use parse;
@@ -694,17 +694,17 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
     }
     fn expr_usize(&self, span: Span, i: usize) -> P<ast::Expr> {
         self.expr_lit(span, ast::LitKind::Int(i as u128,
-                                              ast::LitIntType::Unsigned(ast::UintTy::Us)))
+                                              ast::LitIntType::Unsigned(ast::UintTy::Usize)))
     }
     fn expr_isize(&self, sp: Span, i: isize) -> P<ast::Expr> {
         if i < 0 {
             let i = (-i) as u128;
-            let lit_ty = ast::LitIntType::Signed(ast::IntTy::Is);
+            let lit_ty = ast::LitIntType::Signed(ast::IntTy::Isize);
             let lit = self.expr_lit(sp, ast::LitKind::Int(i, lit_ty));
             self.expr_unary(sp, ast::UnOp::Neg, lit)
         } else {
             self.expr_lit(sp, ast::LitKind::Int(i as u128,
-                                                ast::LitIntType::Signed(ast::IntTy::Is)))
+                                                ast::LitIntType::Signed(ast::IntTy::Isize)))
         }
     }
     fn expr_u32(&self, sp: Span, u: u32) -> P<ast::Expr> {
@@ -883,7 +883,6 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             pats,
             guard: None,
             body: expr,
-            beginning_vert: None,
         }
     }
 
@@ -912,6 +911,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
                       fn_decl_span: Span) // span of the `|...|` part
                       -> P<ast::Expr> {
         self.expr(span, ast::ExprKind::Closure(ast::CaptureBy::Ref,
+                                               ast::Movability::Movable,
                                                fn_decl,
                                                body,
                                                fn_decl_span))
@@ -930,7 +930,11 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         // part of the lambda, but it probably (maybe?) corresponds to
         // the entire lambda body. Probably we should extend the API
         // here, but that's not entirely clear.
-        self.expr(span, ast::ExprKind::Closure(ast::CaptureBy::Ref, fn_decl, body, span))
+        self.expr(span, ast::ExprKind::Closure(ast::CaptureBy::Ref,
+                                               ast::Movability::Movable,
+                                               fn_decl,
+                                               body,
+                                               span))
     }
 
     fn lambda0(&self, span: Span, body: P<ast::Expr>) -> P<ast::Expr> {

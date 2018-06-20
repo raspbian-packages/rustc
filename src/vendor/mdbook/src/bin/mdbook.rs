@@ -1,17 +1,22 @@
-extern crate mdbook;
 #[macro_use]
 extern crate clap;
-extern crate log;
+extern crate chrono;
 extern crate env_logger;
+extern crate error_chain;
+#[macro_use]
+extern crate log;
+extern crate mdbook;
 extern crate open;
 
 use std::env;
 use std::ffi::OsStr;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use clap::{App, ArgMatches, AppSettings};
-use log::{LogRecord, LogLevelFilter};
-use env_logger::LogBuilder;
+use std::io::Write;
+use clap::{App, AppSettings, ArgMatches};
+use chrono::Local;
+use log::LevelFilter;
+use env_logger::Builder;
+use mdbook::utils;
 
 pub mod build;
 pub mod init;
@@ -33,7 +38,10 @@ fn main() {
                 // Get the version from our Cargo.toml using clap's crate_version!() macro
                 .version(concat!("v",crate_version!()))
                 .setting(AppSettings::SubcommandRequired)
-                .after_help("For more information about a specific command, try `mdbook <command> --help`\nSource code for mdbook available at: https://github.com/azerupi/mdBook")
+                .after_help("For more information about a specific command, \
+                             try `mdbook <command> --help`\n\
+                             Source code for mdbook available \
+                             at: https://github.com/rust-lang-nursery/mdBook")
                 .subcommand(init::make_subcommand())
                 .subcommand(build::make_subcommand())
                 .subcommand(test::make_subcommand());
@@ -56,25 +64,31 @@ fn main() {
     };
 
     if let Err(e) = res {
-        writeln!(&mut io::stderr(), "An error occured:\n{}", e).ok();
+        utils::log_backtrace(&e);
+
         ::std::process::exit(101);
     }
 }
 
 fn init_logger() {
-    let format = |record: &LogRecord| {
-        let module_path = record.location().module_path();
-        format!("{}:{}: {}", record.level(), module_path, record.args())
-    };
+    let mut builder = Builder::new();
 
-    let mut builder = LogBuilder::new();
-    builder.format(format).filter(None, LogLevelFilter::Info);
+    builder.format(|formatter, record| {
+        writeln!(formatter, "{} [{}] ({}): {}",
+                 Local::now().format("%Y-%m-%d %H:%M:%S"),
+                 record.level(),
+                 record.target(),
+                 record.args())
+    });
 
     if let Ok(var) = env::var("RUST_LOG") {
-       builder.parse(&var);
+        builder.parse(&var);
+    } else {
+        // if no RUST_LOG provided, default to logging at the Info level
+        builder.filter(None, LevelFilter::Info);
     }
 
-    builder.init().unwrap();
+    builder.init();
 }
 
 fn get_book_dir(args: &ArgMatches) -> PathBuf {
@@ -87,12 +101,12 @@ fn get_book_dir(args: &ArgMatches) -> PathBuf {
             p.to_path_buf()
         }
     } else {
-        env::current_dir().unwrap()
+        env::current_dir().expect("Unable to determine the current directory")
     }
 }
 
 fn open<P: AsRef<OsStr>>(path: P) {
     if let Err(e) = open::that(path) {
-        println!("Error opening web browser: {}", e);
+        error!("Error opening web browser: {}", e);
     }
 }

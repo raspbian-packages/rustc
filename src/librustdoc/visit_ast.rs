@@ -23,6 +23,7 @@ use rustc::hir::def::Def;
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::middle::cstore::{LoadedMacro, CrateStore};
 use rustc::middle::privacy::AccessLevel;
+use rustc::ty::Visibility;
 use rustc::util::nodemap::FxHashSet;
 
 use rustc::hir;
@@ -39,11 +40,11 @@ use doctree::*;
 // also, is there some reason that this doesn't use the 'visit'
 // framework from syntax?
 
-pub struct RustdocVisitor<'a, 'tcx: 'a> {
-    cstore: &'tcx CrateStore,
+pub struct RustdocVisitor<'a, 'tcx: 'a, 'rcx: 'a> {
+    cstore: &'a CrateStore,
     pub module: Module,
     pub attrs: hir::HirVec<ast::Attribute>,
-    pub cx: &'a core::DocContext<'a, 'tcx>,
+    pub cx: &'a core::DocContext<'a, 'tcx, 'rcx>,
     view_item_stack: FxHashSet<ast::NodeId>,
     inlining: bool,
     /// Is the current module and all of its parents public?
@@ -51,10 +52,10 @@ pub struct RustdocVisitor<'a, 'tcx: 'a> {
     reexported_macros: FxHashSet<DefId>,
 }
 
-impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
-    pub fn new(cstore: &'tcx CrateStore,
-               cx: &'a core::DocContext<'a, 'tcx>) -> RustdocVisitor<'a, 'tcx> {
-        // If the root is reexported, terminate all recursion.
+impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
+    pub fn new(cstore: &'a CrateStore,
+               cx: &'a core::DocContext<'a, 'tcx, 'rcx>) -> RustdocVisitor<'a, 'tcx, 'rcx> {
+        // If the root is re-exported, terminate all recursion.
         let mut stack = FxHashSet();
         stack.insert(ast::CRATE_NODE_ID);
         RustdocVisitor {
@@ -204,7 +205,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
         self.inside_public_path = orig_inside_public_path;
         let def_id = self.cx.tcx.hir.local_def_id(id);
         if let Some(exports) = self.cx.tcx.module_exports(def_id) {
-            for export in exports.iter() {
+            for export in exports.iter().filter(|e| e.vis == Visibility::Public) {
                 if let Def::Macro(def_id, ..) = export.def {
                     if def_id.krate == LOCAL_CRATE || self.reexported_macros.contains(&def_id) {
                         continue // These are `krate.exported_macros`, handled in `self.visit()`.
@@ -213,7 +214,7 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     let imported_from = self.cx.tcx.original_crate_name(def_id.krate);
                     let def = match self.cstore.load_macro_untracked(def_id, self.cx.sess()) {
                         LoadedMacro::MacroDef(macro_def) => macro_def,
-                        // FIXME(jseyfried): document proc macro reexports
+                        // FIXME(jseyfried): document proc macro re-exports
                         LoadedMacro::ProcMacro(..) => continue,
                     };
 
@@ -493,11 +494,12 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                 };
                 om.constants.push(s);
             },
-            hir::ItemTrait(_, unsafety, ref gen, ref b, ref item_ids) => {
+            hir::ItemTrait(is_auto, unsafety, ref gen, ref b, ref item_ids) => {
                 let items = item_ids.iter()
                                     .map(|ti| self.cx.tcx.hir.trait_item(ti.id).clone())
                                     .collect();
                 let t = Trait {
+                    is_auto,
                     unsafety,
                     name,
                     items,
@@ -547,19 +549,6 @@ impl<'a, 'tcx> RustdocVisitor<'a, 'tcx> {
                     om.impls.push(i);
                 }
             },
-            hir::ItemAutoImpl(unsafety, ref trait_ref) => {
-                // See comment above about ItemImpl.
-                if !self.inlining {
-                    let i = AutoImpl {
-                        unsafety,
-                        trait_: trait_ref.clone(),
-                        id: item.id,
-                        attrs: item.attrs.clone(),
-                        whence: item.span,
-                    };
-                    om.def_traits.push(i);
-                }
-            }
         }
     }
 

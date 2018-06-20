@@ -141,13 +141,8 @@ impl<'a> AstValidator<'a> {
 impl<'a> Visitor<'a> for AstValidator<'a> {
     fn visit_expr(&mut self, expr: &'a Expr) {
         match expr.node {
-            ExprKind::While(.., Some(ident)) |
-            ExprKind::Loop(_, Some(ident)) |
-            ExprKind::WhileLet(.., Some(ident)) |
-            ExprKind::ForLoop(.., Some(ident)) |
-            ExprKind::Break(Some(ident), _) |
-            ExprKind::Continue(Some(ident)) => {
-                self.check_label(ident.node, ident.span);
+            ExprKind::InlineAsm(..) if !self.session.target.target.options.allow_asm => {
+                span_err!(self.session, expr.span, E0472, "asm! is unsupported on this target");
             }
             _ => {}
         }
@@ -208,6 +203,11 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
         visit::walk_use_tree(self, use_tree, id);
     }
 
+    fn visit_label(&mut self, label: &'a Label) {
+        self.check_label(label.ident, label.span);
+        visit::walk_label(self, label);
+    }
+
     fn visit_lifetime(&mut self, lifetime: &'a Lifetime) {
         self.check_lifetime(lifetime);
         visit::walk_lifetime(self, lifetime);
@@ -215,8 +215,16 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
 
     fn visit_item(&mut self, item: &'a Item) {
         match item.node {
-            ItemKind::Impl(.., Some(..), _, ref impl_items) => {
+            ItemKind::Impl(unsafety, polarity, _, _, Some(..), ref ty, ref impl_items) => {
                 self.invalid_visibility(&item.vis, item.span, None);
+                if ty.node == TyKind::Err {
+                    self.err_handler()
+                        .struct_span_err(item.span, "`impl Trait for .. {}` is an obsolete syntax")
+                        .help("use `auto trait Trait {}` instead").emit();
+                }
+                if unsafety == Unsafety::Unsafe && polarity == ImplPolarity::Negative {
+                    span_err!(self.session, item.span, E0198, "negative impls cannot be unsafe");
+                }
                 for impl_item in impl_items {
                     self.invalid_visibility(&impl_item.vis, impl_item.span, None);
                     if let ImplItemKind::Method(ref sig, _) = impl_item.node {
@@ -224,13 +232,19 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
                     }
                 }
             }
-            ItemKind::Impl(.., None, _, _) => {
+            ItemKind::Impl(unsafety, polarity, defaultness, _, None, _, _) => {
                 self.invalid_visibility(&item.vis,
                                         item.span,
                                         Some("place qualifiers on individual impl items instead"));
-            }
-            ItemKind::AutoImpl(..) => {
-                self.invalid_visibility(&item.vis, item.span, None);
+                if unsafety == Unsafety::Unsafe {
+                    span_err!(self.session, item.span, E0197, "inherent impls cannot be unsafe");
+                }
+                if polarity == ImplPolarity::Negative {
+                    self.err_handler().span_err(item.span, "inherent impls cannot be negative");
+                }
+                if defaultness == Defaultness::Default {
+                    self.err_handler().span_err(item.span, "inherent impls cannot be default");
+                }
             }
             ItemKind::ForeignMod(..) => {
                 self.invalid_visibility(&item.vis,
@@ -250,16 +264,16 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
                 if is_auto == IsAuto::Yes {
                     // Auto traits cannot have generics, super traits nor contain items.
                     if generics.is_parameterized() {
-                        self.err_handler().span_err(item.span,
-                                                    "auto traits cannot have generics");
+                        struct_span_err!(self.session, item.span, E0567,
+                                        "auto traits cannot have generic parameters").emit();
                     }
                     if !bounds.is_empty() {
-                        self.err_handler().span_err(item.span,
-                                                    "auto traits cannot have super traits");
+                        struct_span_err!(self.session, item.span, E0568,
+                                        "auto traits cannot have super traits").emit();
                     }
                     if !trait_items.is_empty() {
-                        self.err_handler().span_err(item.span,
-                                                    "auto traits cannot contain items");
+                        struct_span_err!(self.session, item.span, E0380,
+                                "auto traits cannot have methods or associated items").emit();
                     }
                 }
                 self.no_questions_in_bounds(bounds, "supertraits", true);

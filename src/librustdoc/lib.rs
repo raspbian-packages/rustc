@@ -18,6 +18,7 @@
 #![feature(rustc_private)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
+#![feature(fs_read_write)]
 #![feature(libc)]
 #![feature(set_stdio)]
 #![feature(slice_patterns)]
@@ -33,7 +34,7 @@ extern crate libc;
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
-extern crate rustc_trans;
+extern crate rustc_trans_utils;
 extern crate rustc_driver;
 extern crate rustc_resolve;
 extern crate rustc_lint;
@@ -90,6 +91,7 @@ pub mod plugins;
 pub mod visit_ast;
 pub mod visit_lib;
 pub mod test;
+pub mod theme;
 
 use clean::AttributesExt;
 
@@ -241,8 +243,8 @@ pub fn opts() -> Vec<RustcOptGroup> {
                       or `#![doc(html_playground_url=...)]`",
                      "URL")
         }),
-        unstable("enable-commonmark", |o| {
-            o.optflag("", "enable-commonmark", "to enable commonmark doc rendering/testing")
+        unstable("disable-commonmark", |o| {
+            o.optflag("", "disable-commonmark", "to disable commonmark doc rendering/testing")
         }),
         unstable("display-warnings", |o| {
             o.optflag("", "display-warnings", "to print code warnings when testing doc")
@@ -260,6 +262,16 @@ pub fn opts() -> Vec<RustcOptGroup> {
         unstable("deny-render-differences", |o| {
             o.optflag("", "deny-render-differences", "abort doc runs when markdown rendering \
                                                       differences are found")
+        }),
+        unstable("themes", |o| {
+            o.optmulti("", "themes",
+                       "additional themes which will be added to the generated docs",
+                       "FILES")
+        }),
+        unstable("theme-checker", |o| {
+            o.optmulti("", "theme-checker",
+                       "check if given theme is valid",
+                       "FILES")
         }),
     ]
 }
@@ -310,6 +322,31 @@ pub fn main_args(args: &[String]) -> isize {
         return 0;
     }
 
+    let to_check = matches.opt_strs("theme-checker");
+    if !to_check.is_empty() {
+        let paths = theme::load_css_paths(include_bytes!("html/static/themes/main.css"));
+        let mut errors = 0;
+
+        println!("rustdoc: [theme-checker] Starting tests!");
+        for theme_file in to_check.iter() {
+            print!(" - Checking \"{}\"...", theme_file);
+            let (success, differences) = theme::test_theme_against(theme_file, &paths);
+            if !differences.is_empty() || !success {
+                println!(" FAILED");
+                errors += 1;
+                if !differences.is_empty() {
+                    println!("{}", differences.join("\n"));
+                }
+            } else {
+                println!(" OK");
+            }
+        }
+        if errors != 0 {
+            return 1;
+        }
+        return 0;
+    }
+
     if matches.free.is_empty() {
         print_error("missing file operand");
         return 1;
@@ -346,10 +383,10 @@ pub fn main_args(args: &[String]) -> isize {
     let css_file_extension = matches.opt_str("e").map(|s| PathBuf::from(&s));
     let cfgs = matches.opt_strs("cfg");
 
-    let render_type = if matches.opt_present("enable-commonmark") {
-        RenderType::Pulldown
-    } else {
+    let render_type = if matches.opt_present("disable-commonmark") {
         RenderType::Hoedown
+    } else {
+        RenderType::Pulldown
     };
 
     if let Some(ref p) = css_file_extension {
@@ -359,6 +396,27 @@ pub fn main_args(args: &[String]) -> isize {
                 "rustdoc: option --extend-css argument must be a file."
             ).unwrap();
             return 1;
+        }
+    }
+
+    let mut themes = Vec::new();
+    if matches.opt_present("themes") {
+        let paths = theme::load_css_paths(include_bytes!("html/static/themes/main.css"));
+
+        for (theme_file, theme_s) in matches.opt_strs("themes")
+                                            .iter()
+                                            .map(|s| (PathBuf::from(&s), s.to_owned())) {
+            if !theme_file.is_file() {
+                println!("rustdoc: option --themes arguments must all be files");
+                return 1;
+            }
+            let (success, ret) = theme::test_theme_against(&theme_file, &paths);
+            if !success || !ret.is_empty() {
+                println!("rustdoc: invalid theme: \"{}\"", theme_s);
+                println!("         Check what's wrong with the \"theme-checker\" option");
+                return 1;
+            }
+            themes.push(theme_file);
         }
     }
 
@@ -410,7 +468,8 @@ pub fn main_args(args: &[String]) -> isize {
                                   renderinfo,
                                   render_type,
                                   sort_modules_alphabetically,
-                                  deny_render_differences)
+                                  deny_render_differences,
+                                  themes)
                     .expect("failed to generate documentation");
                 0
             }
@@ -500,6 +559,11 @@ where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
     let crate_name = matches.opt_str("crate-name");
     let crate_version = matches.opt_str("crate-version");
     let plugin_path = matches.opt_str("plugin-path");
+    let render_type = if matches.opt_present("disable-commonmark") {
+        RenderType::Hoedown
+    } else {
+        RenderType::Pulldown
+    };
 
     info!("starting to run rustc");
     let display_warnings = matches.opt_present("display-warnings");
@@ -514,7 +578,7 @@ where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
 
         let (mut krate, renderinfo) =
             core::run_core(paths, cfgs, externs, Input::File(cratefile), triple, maybe_sysroot,
-                           display_warnings, force_unstable_if_unmarked);
+                           display_warnings, force_unstable_if_unmarked, render_type);
 
         info!("finished with rustc");
 

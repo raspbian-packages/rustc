@@ -992,7 +992,7 @@ extern "rust-intrinsic" {
     ///         ptr::copy_nonoverlapping(y, x, 1);
     ///         ptr::copy_nonoverlapping(&t, y, 1);
     ///
-    ///         // y and t now point to the same thing, but we need to completely forget `tmp`
+    ///         // y and t now point to the same thing, but we need to completely forget `t`
     ///         // because it's no longer relevant.
     ///         mem::forget(t);
     ///     }
@@ -1390,6 +1390,5 @@ extern "rust-intrinsic" {
 
     /// Emits a `!nontemporal` store according to LLVM (see their docs).
     /// Probably will never become stable.
-    #[cfg(not(stage0))]
     pub fn nontemporal_store<T>(ptr: *mut T, val: T);
 }

@@ -1241,6 +1241,46 @@ impl<K, V, S> HashMap<K, V, S>
         self.search_mut(k).into_occupied_bucket().map(|bucket| pop_internal(bucket).1)
     }
 
+    /// Removes a key from the map, returning the stored key and value if the
+    /// key was previously in the map.
+    ///
+    /// The key may be any borrowed form of the map's key type, but
+    /// [`Hash`] and [`Eq`] on the borrowed form *must* match those for
+    /// the key type.
+    ///
+    /// [`Eq`]: ../../std/cmp/trait.Eq.html
+    /// [`Hash`]: ../../std/hash/trait.Hash.html
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(hash_map_remove_entry)]
+    /// use std::collections::HashMap;
+    ///
+    /// # fn main() {
+    /// let mut map = HashMap::new();
+    /// map.insert(1, "a");
+    /// assert_eq!(map.remove_entry(&1), Some((1, "a")));
+    /// assert_eq!(map.remove(&1), None);
+    /// # }
+    /// ```
+    #[unstable(feature = "hash_map_remove_entry", issue = "46344")]
+    pub fn remove_entry<Q: ?Sized>(&mut self, k: &Q) -> Option<(K, V)>
+        where K: Borrow<Q>,
+              Q: Hash + Eq
+    {
+        if self.table.size() == 0 {
+            return None;
+        }
+
+        self.search_mut(k)
+            .into_occupied_bucket()
+            .map(|bucket| {
+                let (k, v, _) = pop_internal(bucket);
+                (k, v)
+            })
+    }
+
     /// Retains only the elements specified by the predicate.
     ///
     /// In other words, remove all pairs `(k, v)` such that `f(&k,&mut v)` returns `false`.
@@ -1344,9 +1384,14 @@ impl<'a, K, Q: ?Sized, V, S> Index<&'a Q> for HashMap<K, V, S>
 {
     type Output = V;
 
+    /// Returns a reference to the value corresponding to the supplied key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the key is not present in the `HashMap`.
     #[inline]
-    fn index(&self, index: &Q) -> &V {
-        self.get(index).expect("no entry found for key")
+    fn index(&self, key: &Q) -> &V {
+        self.get(key).expect("no entry found for key")
     }
 }
 
@@ -1932,7 +1977,7 @@ impl<'a, K, V> Placer<V> for Entry<'a, K, V> {
 #[unstable(feature = "collection_placement",
            reason = "placement protocol is subject to change",
            issue = "30172")]
-impl<'a, K, V> Place<V> for EntryPlace<'a, K, V> {
+unsafe impl<'a, K, V> Place<V> for EntryPlace<'a, K, V> {
     fn pointer(&mut self) -> *mut V {
         self.bucket.read_mut().1
     }
@@ -3040,10 +3085,18 @@ mod test_map {
     }
 
     #[test]
-    fn test_pop() {
+    fn test_remove() {
         let mut m = HashMap::new();
         m.insert(1, 2);
         assert_eq!(m.remove(&1), Some(2));
+        assert_eq!(m.remove(&1), None);
+    }
+
+    #[test]
+    fn test_remove_entry() {
+        let mut m = HashMap::new();
+        m.insert(1, 2);
+        assert_eq!(m.remove_entry(&1), Some((1, 2)));
         assert_eq!(m.remove(&1), None);
     }
 

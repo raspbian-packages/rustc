@@ -15,6 +15,7 @@
 
 #![feature(box_patterns)]
 #![feature(conservative_impl_trait)]
+#![feature(fs_read_write)]
 #![feature(i128_type)]
 #![feature(libc)]
 #![feature(proc_macro_internals)]
@@ -58,4 +59,5 @@ pub mod cstore;
 pub mod dynamic_lib;
 pub mod locator;
 
+#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_metadata, DIAGNOSTICS }

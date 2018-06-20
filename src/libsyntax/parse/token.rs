@@ -112,6 +112,7 @@ fn ident_can_begin_expr(ident: ast::Ident) -> bool {
         keywords::Unsafe.name(),
         keywords::While.name(),
         keywords::Yield.name(),
+        keywords::Static.name(),
     ].contains(&ident.name)
 }
 
@@ -359,6 +360,7 @@ impl Token {
             Some(id) => id.name == keywords::Super.name() ||
                         id.name == keywords::SelfValue.name() ||
                         id.name == keywords::SelfType.name() ||
+                        id.name == keywords::Extern.name() ||
                         id.name == keywords::Crate.name() ||
                         id.name == keywords::DollarCrate.name(),
             None => false,

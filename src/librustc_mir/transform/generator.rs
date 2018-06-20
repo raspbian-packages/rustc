@@ -78,7 +78,8 @@ use std::mem;
 use transform::{MirPass, MirSource};
 use transform::simplify;
 use transform::no_landing_pads::no_landing_pads;
-use dataflow::{do_dataflow, DebugFormatted, MaybeStorageLive, state_for_location};
+use dataflow::{do_dataflow, DebugFormatted, state_for_location};
+use dataflow::{MaybeStorageLive, HaveBeenBorrowedLocals};
 
 pub struct StateTransform;
 
@@ -332,23 +333,72 @@ impl<'tcx> Visitor<'tcx> for StorageIgnored {
     }
 }
 
+struct BorrowedLocals(liveness::LocalSet);
+
+fn mark_as_borrowed<'tcx>(place: &Place<'tcx>, locals: &mut BorrowedLocals) {
+    match *place {
+        Place::Local(l) => { locals.0.add(&l); },
+        Place::Static(..) => (),
+        Place::Projection(ref proj) => {
+            match proj.elem {
+                // For derefs we don't look any further.
+                // If it pointed to a Local, it would already be borrowed elsewhere
+                ProjectionElem::Deref => (),
+                _ => mark_as_borrowed(&proj.base, locals)
+            }
+        }
+    }
+}
+
+impl<'tcx> Visitor<'tcx> for BorrowedLocals {
+    fn visit_rvalue(&mut self,
+                    rvalue: &Rvalue<'tcx>,
+                    location: Location) {
+        if let Rvalue::Ref(_, _, ref place) = *rvalue {
+            mark_as_borrowed(place, self);
+        }
+
+        self.super_rvalue(rvalue, location)
+    }
+}
+
 fn locals_live_across_suspend_points<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                mir: &Mir<'tcx>,
-                                               source: MirSource) ->
+                                               source: MirSource,
+                                               movable: bool) ->
                                                (liveness::LocalSet,
                                                 HashMap<BasicBlock, liveness::LocalSet>) {
     let dead_unwinds = IdxSetBuf::new_empty(mir.basic_blocks().len());
     let node_id = tcx.hir.as_local_node_id(source.def_id).unwrap();
-    let analysis = MaybeStorageLive::new(mir);
+
+    // Calculate when MIR locals have live storage. This gives us an upper bound of their
+    // lifetimes.
+    let storage_live_analysis = MaybeStorageLive::new(mir);
     let storage_live =
-        do_dataflow(tcx, mir, node_id, &[], &dead_unwinds, analysis,
+        do_dataflow(tcx, mir, node_id, &[], &dead_unwinds, storage_live_analysis,
                     |bd, p| DebugFormatted::new(&bd.mir().local_decls[p]));
 
+    // Find the MIR locals which do not use StorageLive/StorageDead statements.
+    // The storage of these locals are always live.
     let mut ignored = StorageIgnored(IdxSetBuf::new_filled(mir.local_decls.len()));
     ignored.visit_mir(mir);
 
+    // Calculate the MIR locals which have been previously
+    // borrowed (even if they are still active).
+    // This is only used for immovable generators.
+    let borrowed_locals = if !movable {
+        let analysis = HaveBeenBorrowedLocals::new(mir);
+        let result =
+            do_dataflow(tcx, mir, node_id, &[], &dead_unwinds, analysis,
+                        |bd, p| DebugFormatted::new(&bd.mir().local_decls[p]));
+        Some((analysis, result))
+    } else {
+        None
+    };
+
+    // Calculate the liveness of MIR locals ignoring borrows.
     let mut set = liveness::LocalSet::new_empty(mir.local_decls.len());
-    let liveness = liveness::liveness_of_locals(mir, LivenessMode {
+    let mut liveness = liveness::liveness_of_locals(mir, LivenessMode {
         include_regular_use: true,
         include_drops: true,
     });
@@ -363,18 +413,41 @@ fn locals_live_across_suspend_points<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 statement_index: data.statements.len(),
             };
 
-            let storage_liveness = state_for_location(loc, &analysis, &storage_live);
+            if let Some((ref analysis, ref result)) = borrowed_locals {
+                let borrowed_locals = state_for_location(loc,
+                                                         analysis,
+                                                         result,
+                                                         mir);
+                // The `liveness` variable contains the liveness of MIR locals ignoring borrows.
+                // This is correct for movable generators since borrows cannot live across
+                // suspension points. However for immovable generators we need to account for
+                // borrows, so we conseratively assume that all borrowed locals live forever.
+                // To do this we just union our `liveness` result with `borrowed_locals`, which
+                // contains all the locals which has been borrowed before this suspension point.
+                // If a borrow is converted to a raw reference, we must also assume that it lives
+                // forever. Note that the final liveness is still bounded by the storage liveness
+                // of the local, which happens using the `intersect` operation below.
+                liveness.outs[block].union(&borrowed_locals);
+            }
 
+            let mut storage_liveness = state_for_location(loc,
+                                                          &storage_live_analysis,
+                                                          &storage_live,
+                                                          mir);
+
+            // Store the storage liveness for later use so we can restore the state
+            // after a suspension point
             storage_liveness_map.insert(block, storage_liveness.clone());
 
-            let mut live_locals = storage_liveness;
-
             // Mark locals without storage statements as always having live storage
-            live_locals.union(&ignored.0);
+            storage_liveness.union(&ignored.0);
 
-            // Locals live are live at this point only if they are used across suspension points
-            // and their storage is live
-            live_locals.intersect(&liveness.outs[block]);
+            // Locals live are live at this point only if they are used across
+            // suspension points (the `liveness` variable)
+            // and their storage is live (the `storage_liveness` variable)
+            storage_liveness.intersect(&liveness.outs[block]);
+
+            let live_locals = storage_liveness;
 
             // Add the locals life at this suspension point to the set of locals which live across
             // any suspension points
@@ -390,6 +463,7 @@ fn locals_live_across_suspend_points<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 fn compute_layout<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             source: MirSource,
+                            upvars: Vec<Ty<'tcx>>,
                             interior: GeneratorInterior<'tcx>,
                             mir: &mut Mir<'tcx>)
     -> (HashMap<Local, (Ty<'tcx>, usize)>,
@@ -397,11 +471,17 @@ fn compute_layout<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         HashMap<BasicBlock, liveness::LocalSet>)
 {
     // Use a liveness analysis to compute locals which are live across a suspension point
-    let (live_locals, storage_liveness) = locals_live_across_suspend_points(tcx, mir, source);
-
+    let (live_locals, storage_liveness) = locals_live_across_suspend_points(tcx,
+                                                                            mir,
+                                                                            source,
+                                                                            interior.movable);
     // Erase regions from the types passed in from typeck so we can compare them with
     // MIR types
-    let allowed = tcx.erase_regions(&interior.as_slice());
+    let allowed_upvars = tcx.erase_regions(&upvars);
+    let allowed = match interior.witness.sty {
+        ty::TyGeneratorWitness(s) => tcx.erase_late_bound_regions(&s),
+        _ => bug!(),
+    };
 
     for (local, decl) in mir.local_decls.iter_enumerated() {
         // Ignore locals which are internal or not live
@@ -411,7 +491,7 @@ fn compute_layout<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         // Sanity check that typeck knows about the type of locals which are
         // live across a suspension point
-        if !allowed.contains(&decl.ty) {
+        if !allowed.contains(&decl.ty) && !allowed_upvars.contains(&decl.ty) {
             span_bug!(mir.span,
                       "Broken MIR: generator contains type {} in MIR, \
                        but typeck only knows about {}",
@@ -763,18 +843,17 @@ impl MirPass for StateTransform {
         assert!(mir.generator_drop.is_none());
 
         let def_id = source.def_id;
-        let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
-        let hir_id = tcx.hir.node_to_hir_id(node_id);
-
-        // Get the interior types which typeck computed
-        let tables = tcx.typeck_tables_of(def_id);
-        let interior = match tables.node_id_to_type(hir_id).sty {
-            ty::TyGenerator(_, _, interior) => interior,
-            ref t => bug!("type of generator not a generator: {:?}", t),
-        };
 
         // The first argument is the generator type passed by value
         let gen_ty = mir.local_decls.raw[1].ty;
+
+        // Get the interior types and substs which typeck computed
+        let (upvars, interior) = match gen_ty.sty {
+            ty::TyGenerator(_, substs, interior) => {
+                (substs.upvar_tys(def_id, tcx).collect(), interior)
+            }
+            _ => bug!(),
+        };
 
         // Compute GeneratorState<yield_ty, return_ty>
         let state_did = tcx.lang_items().gen_state().unwrap();
@@ -790,7 +869,7 @@ impl MirPass for StateTransform {
         // Extract locals which are live across suspension point into `layout`
         // `remap` gives a mapping from local indices onto generator struct indices
         // `storage_liveness` tells us which locals have live storage at suspension points
-        let (remap, layout, storage_liveness) = compute_layout(tcx, source, interior, mir);
+        let (remap, layout, storage_liveness) = compute_layout(tcx, source, upvars, interior, mir);
 
         let state_field = mir.upvar_decls.len();
 

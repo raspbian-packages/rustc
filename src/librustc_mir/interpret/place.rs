@@ -9,9 +9,9 @@ use interpret::memory::HasMemory;
 
 #[derive(Copy, Clone, Debug)]
 pub enum Place {
-    /// An place referring to a value allocated in the `Memory` system.
+    /// A place referring to a value allocated in the `Memory` system.
     Ptr {
-        /// An place may have an invalid (integral or undef) pointer,
+        /// A place may have an invalid (integral or undef) pointer,
         /// since it might be turned back into a reference
         /// before ever being dereferenced.
         ptr: Pointer,
@@ -19,7 +19,7 @@ pub enum Place {
         extra: PlaceExtra,
     },
 
-    /// An place referring to a value on the stack. Represented by a stack frame index paired with
+    /// A place referring to a value on the stack. Represented by a stack frame index paired with
     /// a Mir local index.
     Local { frame: usize, local: mir::Local },
 }
@@ -33,7 +33,7 @@ pub enum PlaceExtra {
 }
 
 impl<'tcx> Place {
-    /// Produces an Place that will error if attempted to be read from
+    /// Produces a Place that will error if attempted to be read from
     pub fn undef() -> Self {
         Self::from_primval_ptr(PrimVal::Undef.into(), Align::from_bytes(1, 1).unwrap())
     }
@@ -194,8 +194,9 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     promoted: None,
                 };
                 let layout = self.layout_of(self.place_ty(mir_place))?;
+                let alloc = self.tcx.interpret_interner.borrow().get_cached(gid).expect("uncached global");
                 Place::Ptr {
-                    ptr: self.tcx.interpret_interner.borrow().get_cached(gid).expect("uncached global"),
+                    ptr: MemoryPointer::new(alloc, 0).into(),
                     align: layout.align,
                     extra: PlaceExtra::None,
                 }

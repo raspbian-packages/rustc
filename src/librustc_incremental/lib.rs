@@ -16,6 +16,7 @@
 #![deny(warnings)]
 
 #![feature(conservative_impl_trait)]
+#![feature(fs_read_write)]
 #![feature(i128_type)]
 #![feature(inclusive_range_syntax)]
 #![feature(specialization)]
@@ -31,6 +32,7 @@ extern crate syntax;
 extern crate syntax_pos;
 
 mod assert_dep_graph;
+pub mod assert_module_sources;
 mod persist;
 
 pub use assert_dep_graph::assert_dep_graph;
@@ -44,3 +46,4 @@ pub use persist::in_incr_comp_dir;
 pub use persist::prepare_session_directory;
 pub use persist::finalize_session_directory;
 pub use persist::delete_workproduct_files;
+pub use persist::garbage_collect_session_directories;

@@ -148,6 +148,9 @@ cfg_if! {
         pub enum FILE {}
         pub enum fpos_t {} // TODO: fill this out with a struct
 
+        pub const INT_MIN: c_int = -2147483648;
+        pub const INT_MAX: c_int = 2147483647;
+
         extern {
             pub fn isalnum(c: c_int) -> c_int;
             pub fn isalpha(c: c_int) -> c_int;
@@ -286,6 +289,9 @@ cfg_if! {
     } else if #[cfg(target_os = "redox")] {
         mod redox;
         pub use redox::*;
+    } else if #[cfg(target_os = "cloudabi")] {
+        mod cloudabi;
+        pub use cloudabi::*;
     } else if #[cfg(target_os = "fuchsia")] {
         mod fuchsia;
         pub use fuchsia::*;

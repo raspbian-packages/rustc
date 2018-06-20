@@ -46,8 +46,8 @@ pub enum ImportDirectiveSubclass<'a> {
     },
     GlobImport {
         is_prelude: bool,
-        max_vis: Cell<ty::Visibility>, // The visibility of the greatest reexport.
-        // n.b. `max_vis` is only used in `finalize_import` to check for reexport errors.
+        max_vis: Cell<ty::Visibility>, // The visibility of the greatest re-export.
+        // n.b. `max_vis` is only used in `finalize_import` to check for re-export errors.
     },
     ExternCrate(Option<Name>),
     MacroUse,
@@ -524,7 +524,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
     fn resolve_import(&mut self, directive: &'b ImportDirective<'b>) -> bool {
         debug!("(resolving import for module) resolving import `{}::...` in `{}`",
                names_to_string(&directive.module_path[..]),
-               module_to_string(self.current_module));
+               module_to_string(self.current_module).unwrap_or("???".to_string()));
 
         self.current_module = directive.parent;
 
@@ -604,26 +604,28 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         self.current_module = directive.parent;
         let ImportDirective { ref module_path, span, .. } = *directive;
 
-        // Extern crate mode for absolute paths needs some
-        // special support for single-segment imports.
-        let extern_absolute_paths = self.session.features.borrow().extern_absolute_paths;
-        if module_path.len() == 1 && module_path[0].node.name == keywords::CrateRoot.name() {
+        // FIXME: Last path segment is treated specially in import resolution, so extern crate
+        // mode for absolute paths needs some special support for single-segment imports.
+        if module_path.len() == 1 && (module_path[0].node.name == keywords::CrateRoot.name() ||
+                                      module_path[0].node.name == keywords::Extern.name()) {
+            let is_extern = module_path[0].node.name == keywords::Extern.name() ||
+                            self.session.features.borrow().extern_absolute_paths;
             match directive.subclass {
-                GlobImport { .. } if extern_absolute_paths => {
+                GlobImport { .. } if is_extern => {
                     return Some((directive.span,
                                  "cannot glob-import all possible crates".to_string()));
                 }
                 SingleImport { source, target, .. } => {
-                    let crate_root = if source.name == keywords::Crate.name() {
+                    let crate_root = if source.name == keywords::Crate.name() &&
+                                        module_path[0].node.name != keywords::Extern.name() {
                         if target.name == keywords::Crate.name() {
                             return Some((directive.span,
                                          "crate root imports need to be explicitly named: \
                                           `use crate as name;`".to_string()));
                         } else {
-                            Some(self.resolve_crate_root(source.ctxt.modern()))
+                            Some(self.resolve_crate_root(source.ctxt.modern(), false))
                         }
-                    } else if extern_absolute_paths &&
-                              !token::Ident(source).is_path_segment_keyword() {
+                    } else if is_extern && !token::Ident(source).is_path_segment_keyword() {
                         let crate_id =
                             self.crate_loader.resolve_crate_from_path(source.name, directive.span);
                         let crate_root =
@@ -771,10 +773,10 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         None => "".to_owned(),
                     };
                 let module_str = module_to_string(module);
-                let msg = if &module_str == "???" {
-                    format!("no `{}` in the root{}", ident, lev_suggestion)
-                } else {
+                let msg = if let Some(module_str) = module_str {
                     format!("no `{}` in `{}`{}", ident, module_str, lev_suggestion)
+                } else {
+                    format!("no `{}` in the root{}", ident, lev_suggestion)
                 };
                 Some((span, msg))
             } else {
@@ -801,8 +803,9 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         if !any_successful_reexport {
             let (ns, binding) = reexport_error.unwrap();
             if ns == TypeNS && binding.is_extern_crate() {
-                let msg = format!("extern crate `{}` is private, and cannot be reexported \
-                                   (error E0365), consider declaring with `pub`",
+                let msg = format!("extern crate `{}` is private, and cannot be \
+                                   re-exported (error E0365), consider declaring with \
+                                   `pub`",
                                    ident);
                 self.session.buffer_lint(PUB_USE_OF_PRIVATE_EXTERN_CRATE,
                                          directive.id,
@@ -810,12 +813,12 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                                          &msg);
             } else if ns == TypeNS {
                 struct_span_err!(self.session, directive.span, E0365,
-                                 "`{}` is private, and cannot be reexported", ident)
-                    .span_label(directive.span, format!("reexport of private `{}`", ident))
+                                 "`{}` is private, and cannot be re-exported", ident)
+                    .span_label(directive.span, format!("re-export of private `{}`", ident))
                     .note(&format!("consider declaring type or module `{}` with `pub`", ident))
                     .emit();
             } else {
-                let msg = format!("`{}` is private, and cannot be reexported", ident);
+                let msg = format!("`{}` is private, and cannot be re-exported", ident);
                 let note_msg =
                     format!("consider marking `{}` as `pub` in the imported module", ident);
                 struct_span_err!(self.session, directive.span, E0364, "{}", &msg)
@@ -874,7 +877,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         self.record_def(directive.id, PathResolution::new(module.def().unwrap()));
     }
 
-    // Miscellaneous post-processing, including recording reexports,
+    // Miscellaneous post-processing, including recording re-exports,
     // reporting conflicts, and reporting unresolved imports.
     fn finalize_resolutions_in(&mut self, module: Module<'b>) {
         // Since import resolution is finished, globs will not define any more names.
@@ -930,12 +933,12 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         !orig_binding.vis.is_at_least(binding.vis, &*self) {
                             let msg = match directive.subclass {
                                 ImportDirectiveSubclass::SingleImport { .. } => {
-                                    format!("variant `{}` is private and cannot be reexported",
+                                    format!("variant `{}` is private and cannot be re-exported",
                                             ident)
                                 },
                                 ImportDirectiveSubclass::GlobImport { .. } => {
                                     let msg = "enum is private and its variants \
-                                               cannot be reexported".to_owned();
+                                               cannot be re-exported".to_owned();
                                     let error_id = (DiagnosticMessageId::ErrorId(0), // no code?!
                                                     Some(binding.span),
                                                     msg.clone());
@@ -1023,9 +1026,28 @@ fn import_path_to_string(names: &[SpannedIdent],
         if names.is_empty() {
             import_directive_subclass_to_string(subclass)
         } else {
-            (format!("{}::{}",
-                     names_to_string(names),
-                     import_directive_subclass_to_string(subclass)))
+            // FIXME: Remove this entire logic after #48116 is fixed.
+            //
+            // Note that this code looks a little wonky, it's currently here to
+            // hopefully help debug #48116, but otherwise isn't intended to
+            // cause any problems.
+            let x = format!(
+                "{}::{}",
+                names_to_string(names),
+                import_directive_subclass_to_string(subclass),
+            );
+            if names.is_empty() || x.starts_with("::") {
+                span_bug!(
+                    span,
+                    "invalid name `{}` at {:?}; global = {}, names = {:?}, subclass = {:?}",
+                    x,
+                    span,
+                    global,
+                    names,
+                    subclass
+                );
+            }
+            return x
         }
     }
 }

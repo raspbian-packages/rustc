@@ -11,7 +11,7 @@ Forwarded: not-needed
  set -e
  
 -LLDB_VERSION=`lldb --version 2>/dev/null | head -1 | cut -d. -f1`
-+LLDB_VERSION=`lldb-4.0 --version 2>/dev/null | head -1 | cut -d. -f1`
++LLDB_VERSION=`lldb-6.0 --version 2>/dev/null | head -1 | cut -d. -f1`
  
  if [ "$LLDB_VERSION" = "lldb-350" ]
  then
@@ -30,4 +30,4 @@ Forwarded: not-needed
  
  # Call LLDB with the script added to the argument list
 -lldb --source-before-file="$TMPFILE" "$@"
-+lldb-4.0 --source-before-file="$TMPFILE" "$@"
++lldb-6.0 --source-before-file="$TMPFILE" "$@"

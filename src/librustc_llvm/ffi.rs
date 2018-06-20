@@ -299,12 +299,11 @@ pub enum RelocMode {
 #[repr(C)]
 pub enum CodeModel {
     Other,
-    Default,
-    JITDefault,
     Small,
     Kernel,
     Medium,
     Large,
+    None,
 }
 
 /// LLVMRustDiagnosticKind
@@ -331,7 +330,6 @@ pub enum DiagnosticKind {
 pub enum ArchiveKind {
     Other,
     K_GNU,
-    K_MIPS64,
     K_BSD,
     K_COFF,
 }
@@ -498,6 +496,10 @@ pub mod debuginfo {
             const FlagStaticMember        = (1 << 12);
             const FlagLValueReference     = (1 << 13);
             const FlagRValueReference     = (1 << 14);
+            const FlagExternalTypeRef     = (1 << 15);
+            const FlagIntroducedVirtual   = (1 << 18);
+            const FlagBitField            = (1 << 19);
+            const FlagNoReturn            = (1 << 20);
             const FlagMainSubprogram      = (1 << 21);
         }
     }
@@ -537,9 +539,6 @@ extern "C" {
 
     /// See llvm::LLVMTypeKind::getTypeID.
     pub fn LLVMRustGetTypeKind(Ty: TypeRef) -> TypeKind;
-
-    /// See llvm::Value::getContext
-    pub fn LLVMRustGetValueContext(V: ValueRef) -> ContextRef;
 
     // Operations on integer types
     pub fn LLVMInt1TypeInContext(C: ContextRef) -> TypeRef;
@@ -812,13 +811,12 @@ extern "C" {
                                Bundle: OperandBundleDefRef,
                                Name: *const c_char)
                                -> ValueRef;
-    pub fn LLVMRustBuildLandingPad(B: BuilderRef,
-                                   Ty: TypeRef,
-                                   PersFn: ValueRef,
-                                   NumClauses: c_uint,
-                                   Name: *const c_char,
-                                   F: ValueRef)
-                                   -> ValueRef;
+    pub fn LLVMBuildLandingPad(B: BuilderRef,
+                               Ty: TypeRef,
+                               PersFn: ValueRef,
+                               NumClauses: c_uint,
+                               Name: *const c_char)
+                               -> ValueRef;
     pub fn LLVMBuildResume(B: BuilderRef, Exn: ValueRef) -> ValueRef;
     pub fn LLVMBuildUnreachable(B: BuilderRef) -> ValueRef;
 
@@ -1319,9 +1317,6 @@ extern "C" {
                              ElementCount: c_uint,
                              Packed: Bool);
 
-    /// Enables LLVM debug output.
-    pub fn LLVMRustSetDebug(Enabled: c_int);
-
     /// Prepares inline assembly.
     pub fn LLVMRustInlineAsm(Ty: TypeRef,
                              AsmString: *const c_char,
@@ -1553,7 +1548,7 @@ extern "C" {
                                                 InlinedAt: MetadataRef)
                                                 -> ValueRef;
     pub fn LLVMRustDIBuilderCreateOpDeref() -> i64;
-    pub fn LLVMRustDIBuilderCreateOpPlus() -> i64;
+    pub fn LLVMRustDIBuilderCreateOpPlusUconst() -> i64;
 
     pub fn LLVMRustWriteTypeToString(Type: TypeRef, s: RustStringRef);
     pub fn LLVMRustWriteValueToString(value_ref: ValueRef, s: RustStringRef);
@@ -1614,7 +1609,6 @@ extern "C" {
     pub fn LLVMRustSetNormalizedTarget(M: ModuleRef, triple: *const c_char);
     pub fn LLVMRustAddAlwaysInlinePass(P: PassManagerBuilderRef, AddLifetimes: bool);
     pub fn LLVMRustLinkInExternalBitcode(M: ModuleRef, bc: *const c_char, len: size_t) -> bool;
-    pub fn LLVMRustLinkInParsedExternalBitcode(M: ModuleRef, M: ModuleRef) -> bool;
     pub fn LLVMRustRunRestrictionPass(M: ModuleRef, syms: *const *const c_char, len: size_t);
     pub fn LLVMRustMarkAllFunctionsNounwind(M: ModuleRef);
 
@@ -1650,8 +1644,6 @@ extern "C" {
     pub fn LLVMRustWriteDiagnosticInfoToString(DI: DiagnosticInfoRef, s: RustStringRef);
     pub fn LLVMRustGetDiagInfoKind(DI: DiagnosticInfoRef) -> DiagnosticKind;
 
-    pub fn LLVMRustWriteDebugLocToString(C: ContextRef, DL: DebugLocRef, s: RustStringRef);
-
     pub fn LLVMRustSetInlineAsmDiagnosticHandler(C: ContextRef,
                                                  H: InlineAsmDiagHandler,
                                                  CX: *mut c_void);
@@ -1671,7 +1663,6 @@ extern "C" {
     pub fn LLVMRustArchiveMemberFree(Member: RustArchiveMemberRef);
 
     pub fn LLVMRustSetDataLayoutFromTargetMachine(M: ModuleRef, TM: TargetMachineRef);
-    pub fn LLVMRustGetModuleDataLayout(M: ModuleRef) -> TargetDataRef;
 
     pub fn LLVMRustBuildOperandBundleDef(Name: *const c_char,
                                          Inputs: *const ValueRef,

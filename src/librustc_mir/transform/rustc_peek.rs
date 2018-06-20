@@ -22,7 +22,7 @@ use dataflow::{do_dataflow, DebugFormatted};
 use dataflow::MoveDataParamEnv;
 use dataflow::BitDenotation;
 use dataflow::DataflowResults;
-use dataflow::{DefinitelyInitializedLvals, MaybeInitializedLvals, MaybeUninitializedLvals};
+use dataflow::{DefinitelyInitializedPlaces, MaybeInitializedPlaces, MaybeUninitializedPlaces};
 use dataflow::move_paths::{MovePathIndex, LookupResult};
 use dataflow::move_paths::{HasMoveData, MoveData};
 use dataflow;
@@ -50,15 +50,15 @@ impl MirPass for SanityCheck {
         let dead_unwinds = IdxSetBuf::new_empty(mir.basic_blocks().len());
         let flow_inits =
             do_dataflow(tcx, mir, id, &attributes, &dead_unwinds,
-                        MaybeInitializedLvals::new(tcx, mir, &mdpe),
+                        MaybeInitializedPlaces::new(tcx, mir, &mdpe),
                         |bd, i| DebugFormatted::new(&bd.move_data().move_paths[i]));
         let flow_uninits =
             do_dataflow(tcx, mir, id, &attributes, &dead_unwinds,
-                        MaybeUninitializedLvals::new(tcx, mir, &mdpe),
+                        MaybeUninitializedPlaces::new(tcx, mir, &mdpe),
                         |bd, i| DebugFormatted::new(&bd.move_data().move_paths[i]));
         let flow_def_inits =
             do_dataflow(tcx, mir, id, &attributes, &dead_unwinds,
-                        DefinitelyInitializedLvals::new(tcx, mir, &mdpe),
+                        DefinitelyInitializedPlaces::new(tcx, mir, &mdpe),
                         |bd, i| DebugFormatted::new(&bd.move_data().move_paths[i]));
 
         if has_rustc_mir_with(&attributes, "rustc_peek_maybe_init").is_some() {
@@ -203,10 +203,17 @@ fn each_block<'a, 'tcx, O>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // reset GEN and KILL sets before emulating their effect.
         for e in sets.gen_set.words_mut() { *e = 0; }
         for e in sets.kill_set.words_mut() { *e = 0; }
-        results.0.operator.statement_effect(&mut sets, Location { block: bb, statement_index: j });
+        results.0.operator.before_statement_effect(
+            &mut sets, Location { block: bb, statement_index: j });
+        results.0.operator.statement_effect(
+            &mut sets, Location { block: bb, statement_index: j });
         sets.on_entry.union(sets.gen_set);
         sets.on_entry.subtract(sets.kill_set);
     }
+
+    results.0.operator.before_terminator_effect(
+        &mut sets,
+        Location { block: bb, statement_index: statements.len() });
 
     tcx.sess.span_err(span, &format!("rustc_peek: MIR did not match \
                                       anticipated pattern; note that \

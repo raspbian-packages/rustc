@@ -760,6 +760,8 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::VtableMethods |
         DepKind::EraseRegionsTy |
         DepKind::NormalizeTy |
+        DepKind::SubstituteNormalizeAndTestPredicates |
+        DepKind::InstanceDefSizeEstimate |
 
         // This one should never occur in this context
         DepKind::Null => {
@@ -800,7 +802,6 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::SuperPredicatesOfItem => { force!(super_predicates_of, def_id!()); }
         DepKind::TraitDefOfItem => { force!(trait_def, def_id!()); }
         DepKind::AdtDefOfItem => { force!(adt_def, def_id!()); }
-        DepKind::IsAutoImpl => { force!(is_auto_impl, def_id!()); }
         DepKind::ImplTraitRef => { force!(impl_trait_ref, def_id!()); }
         DepKind::ImplPolarity => { force!(impl_polarity, def_id!()); }
         DepKind::FnSignature => { force!(fn_sig, def_id!()); }
@@ -917,6 +918,11 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         }
         DepKind::IsTranslatedFunction => { force!(is_translated_function, def_id!()); }
         DepKind::OutputFilenames => { force!(output_filenames, LOCAL_CRATE); }
+
+        DepKind::TargetFeaturesWhitelist => { force!(target_features_whitelist, LOCAL_CRATE); }
+        DepKind::TargetFeaturesEnabled => { force!(target_features_enabled, def_id!()); }
+
+        DepKind::GetSymbolExportLevel => { force!(symbol_export_level, def_id!()); }
     }
 
     true
@@ -979,4 +985,8 @@ impl_load_from_cache!(
     ConstIsRvaluePromotableToStatic => const_is_rvalue_promotable_to_static,
     ContainsExternIndicator => contains_extern_indicator,
     CheckMatch => check_match,
+    TypeOfItem => type_of,
+    GenericsOfItem => generics_of,
+    PredicatesOfItem => predicates_of,
+    UsedTraitImports => used_trait_imports,
 );

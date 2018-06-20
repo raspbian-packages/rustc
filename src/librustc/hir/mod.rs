@@ -34,13 +34,14 @@ use util::nodemap::{NodeMap, FxHashSet};
 use syntax_pos::{Span, DUMMY_SP};
 use syntax::codemap::{self, Spanned};
 use syntax::abi::Abi;
-use syntax::ast::{Ident, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
+use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, MetaItem};
 use syntax::ext::hygiene::SyntaxContext;
 use syntax::ptr::P;
 use syntax::symbol::{Symbol, keywords};
 use syntax::tokenstream::TokenStream;
 use syntax::util::ThinVec;
+use syntax::util::parser::ExprPrecedence;
 use ty::AdtKind;
 
 use rustc_data_structures::indexed_vec;
@@ -172,6 +173,18 @@ pub const DUMMY_HIR_ID: HirId = HirId {
 pub const DUMMY_ITEM_LOCAL_ID: ItemLocalId = ItemLocalId(!0);
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
+pub struct Label {
+    pub name: Name,
+    pub span: Span,
+}
+
+impl fmt::Debug for Label {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "label({:?})", self.name)
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
 pub struct Lifetime {
     pub id: NodeId,
     pub span: Span,
@@ -241,7 +254,7 @@ pub struct LifetimeDef {
 }
 
 /// A "Path" is essentially Rust's notion of a name; for instance:
-/// std::cmp::PartialEq  .  It's represented as a sequence of identifiers,
+/// `std::cmp::PartialEq`. It's represented as a sequence of identifiers,
 /// along with a bunch of supporting information.
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash)]
 pub struct Path {
@@ -958,6 +971,31 @@ impl BinOp_ {
     }
 }
 
+impl Into<ast::BinOpKind> for BinOp_ {
+    fn into(self) -> ast::BinOpKind {
+        match self {
+            BiAdd => ast::BinOpKind::Add,
+            BiSub => ast::BinOpKind::Sub,
+            BiMul => ast::BinOpKind::Mul,
+            BiDiv => ast::BinOpKind::Div,
+            BiRem => ast::BinOpKind::Rem,
+            BiAnd => ast::BinOpKind::And,
+            BiOr => ast::BinOpKind::Or,
+            BiBitXor => ast::BinOpKind::BitXor,
+            BiBitAnd => ast::BinOpKind::BitAnd,
+            BiBitOr => ast::BinOpKind::BitOr,
+            BiShl => ast::BinOpKind::Shl,
+            BiShr => ast::BinOpKind::Shr,
+            BiEq => ast::BinOpKind::Eq,
+            BiLt => ast::BinOpKind::Lt,
+            BiLe => ast::BinOpKind::Le,
+            BiNe => ast::BinOpKind::Ne,
+            BiGe => ast::BinOpKind::Ge,
+            BiGt => ast::BinOpKind::Gt,
+        }
+    }
+}
+
 pub type BinOp = Spanned<BinOp_>;
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
@@ -1166,6 +1204,42 @@ pub struct Expr {
     pub hir_id: HirId,
 }
 
+impl Expr {
+    pub fn precedence(&self) -> ExprPrecedence {
+        match self.node {
+            ExprBox(_) => ExprPrecedence::Box,
+            ExprArray(_) => ExprPrecedence::Array,
+            ExprCall(..) => ExprPrecedence::Call,
+            ExprMethodCall(..) => ExprPrecedence::MethodCall,
+            ExprTup(_) => ExprPrecedence::Tup,
+            ExprBinary(op, ..) => ExprPrecedence::Binary(op.node.into()),
+            ExprUnary(..) => ExprPrecedence::Unary,
+            ExprLit(_) => ExprPrecedence::Lit,
+            ExprType(..) | ExprCast(..) => ExprPrecedence::Cast,
+            ExprIf(..) => ExprPrecedence::If,
+            ExprWhile(..) => ExprPrecedence::While,
+            ExprLoop(..) => ExprPrecedence::Loop,
+            ExprMatch(..) => ExprPrecedence::Match,
+            ExprClosure(..) => ExprPrecedence::Closure,
+            ExprBlock(..) => ExprPrecedence::Block,
+            ExprAssign(..) => ExprPrecedence::Assign,
+            ExprAssignOp(..) => ExprPrecedence::AssignOp,
+            ExprField(..) => ExprPrecedence::Field,
+            ExprTupField(..) => ExprPrecedence::TupField,
+            ExprIndex(..) => ExprPrecedence::Index,
+            ExprPath(..) => ExprPrecedence::Path,
+            ExprAddrOf(..) => ExprPrecedence::AddrOf,
+            ExprBreak(..) => ExprPrecedence::Break,
+            ExprAgain(..) => ExprPrecedence::Continue,
+            ExprRet(..) => ExprPrecedence::Ret,
+            ExprInlineAsm(..) => ExprPrecedence::InlineAsm,
+            ExprStruct(..) => ExprPrecedence::Struct,
+            ExprRepeat(..) => ExprPrecedence::Repeat,
+            ExprYield(..) => ExprPrecedence::Yield,
+        }
+    }
+}
+
 impl fmt::Debug for Expr {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "expr({}: {})", self.id,
@@ -1214,11 +1288,11 @@ pub enum Expr_ {
     /// A while loop, with an optional label
     ///
     /// `'label: while expr { block }`
-    ExprWhile(P<Expr>, P<Block>, Option<Spanned<Name>>),
+    ExprWhile(P<Expr>, P<Block>, Option<Label>),
     /// Conditionless loop (can be exited with break, continue, or return)
     ///
     /// `'label: loop { block }`
-    ExprLoop(P<Block>, Option<Spanned<Name>>, LoopSource),
+    ExprLoop(P<Block>, Option<Label>, LoopSource),
     /// A `match` block, with a source that indicates whether or not it is
     /// the result of a desugaring, and if so, which kind.
     ExprMatch(P<Expr>, HirVec<Arm>, MatchSource),
@@ -1228,7 +1302,7 @@ pub enum Expr_ {
     ///
     /// This may also be a generator literal, indicated by the final boolean,
     /// in that case there is an GeneratorClause.
-    ExprClosure(CaptureClause, P<FnDecl>, BodyId, Span, bool),
+    ExprClosure(CaptureClause, P<FnDecl>, BodyId, Span, Option<GeneratorMovability>),
     /// A block (`{ ... }`)
     ExprBlock(P<Block>),
 
@@ -1397,11 +1471,17 @@ impl ScopeTarget {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub struct Destination {
     // This is `Some(_)` iff there is an explicit user-specified `label
-    pub ident: Option<Spanned<Ident>>,
+    pub label: Option<Label>,
 
     // These errors are caught and then reported during the diagnostics pass in
     // librustc_passes/loops.rs
     pub target_id: ScopeTarget,
+}
+
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+pub enum GeneratorMovability {
+    Static,
+    Movable,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
@@ -1965,10 +2045,6 @@ pub enum Item_ {
     /// Represents a Trait Alias Declaration
     ItemTraitAlias(Generics, TyParamBounds),
 
-    /// Auto trait implementations
-    ///
-    /// `impl Trait for .. {}`
-    ItemAutoImpl(Unsafety, TraitRef),
     /// An implementation, eg `impl<A> Trait for Foo { .. }`
     ItemImpl(Unsafety,
              ImplPolarity,
@@ -1996,8 +2072,7 @@ impl Item_ {
             ItemUnion(..) => "union",
             ItemTrait(..) => "trait",
             ItemTraitAlias(..) => "trait alias",
-            ItemImpl(..) |
-            ItemAutoImpl(..) => "item",
+            ItemImpl(..) => "item",
         }
     }
 

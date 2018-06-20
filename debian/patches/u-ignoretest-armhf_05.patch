@@ -12,5 +12,5 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  // ignore-aarch64
 +// ignore-arm
  // min-lldb-version: 310
+ // ignore-gdb // Test temporarily ignored due to debuginfo tests being disabled, see PR 47155
  
- // aux-build:macro-stepping.rs

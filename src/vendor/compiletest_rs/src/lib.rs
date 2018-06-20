@@ -34,9 +34,8 @@ use std::ffi::OsString;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use common::Mode;
+use common::{Mode, TestPaths};
 use common::{Pretty, DebugInfoGdb, DebugInfoLldb};
-use test::TestPaths;
 
 use self::header::EarlyProps;
 
@@ -95,7 +94,7 @@ pub fn test_opts(config: &Config) -> test::TestOpts {
         filter: config.filter.clone(),
         filter_exact: config.filter_exact,
         run_ignored: config.run_ignored,
-        quiet: config.quiet,
+        format: if config.quiet { test::OutputFormat::Terse } else { test::OutputFormat::Pretty },
         logfile: config.logfile.clone(),
         run_tests: true,
         bench_benchmarks: true,
@@ -268,7 +267,7 @@ pub fn make_test_name(config: &Config, testpaths: &TestPaths) -> test::TestName 
 pub fn make_test_closure(config: &Config, testpaths: &TestPaths) -> test::TestFn {
     let config = config.clone();
     let testpaths = testpaths.clone();
-    test::DynTestFn(Box::new(move |()| {
+    test::DynTestFn(Box::new(move || {
         runtest::run(config, &testpaths)
     }))
 }

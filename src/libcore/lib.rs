@@ -91,6 +91,7 @@
 #![feature(untagged_unions)]
 #![feature(unwind_attributes)]
 #![feature(doc_spotlight)]
+#![feature(rustc_const_unstable)]
 
 #[prelude_import]
 #[allow(unused)]
@@ -168,6 +169,7 @@ pub mod slice;
 pub mod str;
 pub mod hash;
 pub mod fmt;
+pub mod time;
 
 // note: does not need to be public
 mod char_private;

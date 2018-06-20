@@ -29,7 +29,6 @@ use rustc_data_structures::stable_hasher::{StableHasher, StableHasherResult,
                                            HashStable};
 use rustc_data_structures::fx::FxHashMap;
 use std::cmp;
-use std::iter;
 use std::hash::Hash;
 use std::intrinsics;
 use syntax::ast::{self, Name};
@@ -55,7 +54,7 @@ macro_rules! typed_literal {
             SignedInt(ast::IntTy::I32)   => ConstInt::I32($lit),
             SignedInt(ast::IntTy::I64)   => ConstInt::I64($lit),
             SignedInt(ast::IntTy::I128)   => ConstInt::I128($lit),
-            SignedInt(ast::IntTy::Is) => match $tcx.sess.target.isize_ty {
+            SignedInt(ast::IntTy::Isize) => match $tcx.sess.target.isize_ty {
                 ast::IntTy::I16 => ConstInt::Isize(ConstIsize::Is16($lit)),
                 ast::IntTy::I32 => ConstInt::Isize(ConstIsize::Is32($lit)),
                 ast::IntTy::I64 => ConstInt::Isize(ConstIsize::Is64($lit)),
@@ -66,7 +65,7 @@ macro_rules! typed_literal {
             UnsignedInt(ast::UintTy::U32) => ConstInt::U32($lit),
             UnsignedInt(ast::UintTy::U64) => ConstInt::U64($lit),
             UnsignedInt(ast::UintTy::U128) => ConstInt::U128($lit),
-            UnsignedInt(ast::UintTy::Us) => match $tcx.sess.target.usize_ty {
+            UnsignedInt(ast::UintTy::Usize) => match $tcx.sess.target.usize_ty {
                 ast::UintTy::U16 => ConstInt::Usize(ConstUsize::Us16($lit)),
                 ast::UintTy::U32 => ConstInt::Usize(ConstUsize::Us32($lit)),
                 ast::UintTy::U64 => ConstInt::Usize(ConstUsize::Us64($lit)),
@@ -84,13 +83,13 @@ impl IntTypeExt for attr::IntType {
             SignedInt(ast::IntTy::I32)     => tcx.types.i32,
             SignedInt(ast::IntTy::I64)     => tcx.types.i64,
             SignedInt(ast::IntTy::I128)     => tcx.types.i128,
-            SignedInt(ast::IntTy::Is)   => tcx.types.isize,
+            SignedInt(ast::IntTy::Isize)   => tcx.types.isize,
             UnsignedInt(ast::UintTy::U8)    => tcx.types.u8,
             UnsignedInt(ast::UintTy::U16)   => tcx.types.u16,
             UnsignedInt(ast::UintTy::U32)   => tcx.types.u32,
             UnsignedInt(ast::UintTy::U64)   => tcx.types.u64,
             UnsignedInt(ast::UintTy::U128)   => tcx.types.u128,
-            UnsignedInt(ast::UintTy::Us) => tcx.types.usize,
+            UnsignedInt(ast::UintTy::Usize) => tcx.types.usize,
         }
     }
 
@@ -105,13 +104,13 @@ impl IntTypeExt for attr::IntType {
             (SignedInt(ast::IntTy::I32), ConstInt::I32(_)) => {},
             (SignedInt(ast::IntTy::I64), ConstInt::I64(_)) => {},
             (SignedInt(ast::IntTy::I128), ConstInt::I128(_)) => {},
-            (SignedInt(ast::IntTy::Is), ConstInt::Isize(_)) => {},
+            (SignedInt(ast::IntTy::Isize), ConstInt::Isize(_)) => {},
             (UnsignedInt(ast::UintTy::U8), ConstInt::U8(_)) => {},
             (UnsignedInt(ast::UintTy::U16), ConstInt::U16(_)) => {},
             (UnsignedInt(ast::UintTy::U32), ConstInt::U32(_)) => {},
             (UnsignedInt(ast::UintTy::U64), ConstInt::U64(_)) => {},
             (UnsignedInt(ast::UintTy::U128), ConstInt::U128(_)) => {},
-            (UnsignedInt(ast::UintTy::Us), ConstInt::Usize(_)) => {},
+            (UnsignedInt(ast::UintTy::Usize), ConstInt::Usize(_)) => {},
             _ => bug!("disr type mismatch: {:?} vs {:?}", self, val),
         }
     }
@@ -258,7 +257,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 adt.variant_with_id(vid).fields.get(i).map(|f| f.ty(self, substs))
             }
             (&TyAdt(adt, substs), None) => {
-                // Don't use `struct_variant`, this may be a univariant enum.
+                // Don't use `non_enum_variant`, this may be a univariant enum.
                 adt.variants[0].fields.get(i).map(|f| f.ty(self, substs))
             }
             (&TyTuple(ref v, _), None) => v.get(i).cloned(),
@@ -277,7 +276,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 adt.variant_with_id(vid).find_field_named(n).map(|f| f.ty(self, substs))
             }
             (&TyAdt(adt, substs), None) => {
-                adt.struct_variant().find_field_named(n).map(|f| f.ty(self, substs))
+                adt.non_enum_variant().find_field_named(n).map(|f| f.ty(self, substs))
             }
             _ => return None
         }
@@ -293,7 +292,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                     if !def.is_struct() {
                         break;
                     }
-                    match def.struct_variant().fields.last() {
+                    match def.non_enum_variant().fields.last() {
                         Some(f) => ty = f.ty(self, substs),
                         None => break,
                     }
@@ -329,7 +328,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             match (&a.sty, &b.sty) {
                 (&TyAdt(a_def, a_substs), &TyAdt(b_def, b_substs))
                         if a_def == b_def && a_def.is_struct() => {
-                    if let Some(f) = a_def.struct_variant().fields.last() {
+                    if let Some(f) = a_def.non_enum_variant().fields.last() {
                         a = f.ty(self, a_substs);
                         b = f.ty(self, b_substs);
                     } else {
@@ -550,7 +549,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         let result = match ty.sty {
             ty::TyBool | ty::TyChar | ty::TyInt(_) | ty::TyUint(_) |
             ty::TyFloat(_) | ty::TyStr | ty::TyNever | ty::TyForeign(..) |
-            ty::TyRawPtr(..) | ty::TyRef(..) | ty::TyFnDef(..) | ty::TyFnPtr(_) => {
+            ty::TyRawPtr(..) | ty::TyRef(..) | ty::TyFnDef(..) | ty::TyFnPtr(_) |
+            ty::TyGeneratorWitness(..) => {
                 // these types never have a destructor
                 Ok(ty::DtorckConstraint::empty())
             }
@@ -572,8 +572,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 }).collect()
             }
 
-            ty::TyGenerator(def_id, substs, interior) => {
-                substs.upvar_tys(def_id, self).chain(iter::once(interior.witness)).map(|ty| {
+            ty::TyGenerator(def_id, substs, _) => {
+                // Note that the interior types are ignored here.
+                // Any type reachable inside the interior must also be reachable
+                // through the upvars.
+                substs.upvar_tys(def_id, self).map(|ty| {
                     self.dtorck_constraint_for_ty(span, for_ty, depth+1, ty)
                 }).collect()
             }
@@ -782,6 +785,9 @@ impl<'a, 'gcx, 'tcx, W> TypeVisitor<'tcx> for TypeIdHasher<'a, 'gcx, 'tcx, W>
                 for d in data.auto_traits() {
                     self.def_id(d);
                 }
+            }
+            TyGeneratorWitness(tys) => {
+                self.hash(tys.skip_binder().len());
             }
             TyTuple(tys, defaulted) => {
                 self.hash(tys.len());
@@ -1139,7 +1145,7 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // Fast-path for primitive types
         ty::TyInfer(ty::FreshIntTy(_)) | ty::TyInfer(ty::FreshFloatTy(_)) |
         ty::TyBool | ty::TyInt(_) | ty::TyUint(_) | ty::TyFloat(_) | ty::TyNever |
-        ty::TyFnDef(..) | ty::TyFnPtr(_) | ty::TyChar |
+        ty::TyFnDef(..) | ty::TyFnPtr(_) | ty::TyChar | ty::TyGeneratorWitness(..) |
         ty::TyRawPtr(_) | ty::TyRef(..) | ty::TyStr => false,
 
         // Foreign types can never have destructors

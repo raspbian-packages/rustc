@@ -12,7 +12,7 @@
 # Exit if anything fails
 set -e
 
-LLDB_VERSION=`lldb-4.0 --version 2>/dev/null | head -1 | cut -d. -f1`
+LLDB_VERSION=`lldb-6.0 --version 2>/dev/null | head -1 | cut -d. -f1`
 
 if [ "$LLDB_VERSION" = "lldb-350" ]
 then
@@ -35,4 +35,4 @@ echo "type summary add --no-value --python-function lldb_rust_formatters.print_v
 echo "type category enable Rust" >> $TMPFILE
 
 # Call LLDB with the script added to the argument list
-lldb-4.0 --source-before-file="$TMPFILE" "$@"
+lldb-6.0 --source-before-file="$TMPFILE" "$@"

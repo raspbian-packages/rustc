@@ -195,15 +195,76 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     }
                 };
                 let mut err = if !actual.references_error() {
-                    struct_span_err!(
-                        tcx.sess,
-                        span,
-                        E0599,
-                        "no {} named `{}` found for type `{}` in the current scope",
-                        type_str,
-                        item_name,
-                        ty_string
-                    )
+                    // Suggest clamping down the type if the method that is being attempted to
+                    // be used exists at all, and the type is an ambiuous numeric type
+                    // ({integer}/{float}).
+                    let mut candidates = all_traits(self.tcx)
+                        .filter(|info| {
+                            self.associated_item(info.def_id, item_name, Namespace::Value).is_some()
+                        });
+                    if let (true, false, Some(expr), Some(_)) = (actual.is_numeric(),
+                                                                 actual.has_concrete_skeleton(),
+                                                                 rcvr_expr,
+                                                                 candidates.next()) {
+                        let mut err = struct_span_err!(
+                            tcx.sess,
+                            span,
+                            E0689,
+                            "can't call {} `{}` on ambiguous numeric type `{}`",
+                            type_str,
+                            item_name,
+                            ty_string
+                        );
+                        let concrete_type = if actual.is_integral() {
+                            "i32"
+                        } else {
+                            "f32"
+                        };
+                        match expr.node {
+                            hir::ExprLit(_) => {  // numeric literal
+                                let snippet = tcx.sess.codemap().span_to_snippet(expr.span)
+                                    .unwrap_or("<numeric literal>".to_string());
+                                // FIXME: use the literal for missing snippet
+
+                                err.span_suggestion(expr.span,
+                                                    &format!("you must specify a concrete type for \
+                                                              this numeric value, like `{}`",
+                                                             concrete_type),
+                                                    format!("{}_{}",
+                                                            snippet,
+                                                            concrete_type));
+                            }
+                            hir::ExprPath(ref qpath) => {  // local binding
+                                if let &hir::QPath::Resolved(_, ref path) = &qpath {
+                                    if let hir::def::Def::Local(node_id) = path.def {
+                                        let span = tcx.hir.span(node_id);
+                                        let snippet = tcx.sess.codemap().span_to_snippet(span)
+                                            .unwrap();
+                                        err.span_suggestion(span,
+                                                            &format!("you must specify a type for \
+                                                                      this binding, like `{}`",
+                                                                     concrete_type),
+                                                            format!("{}: {}",
+                                                                    snippet,
+                                                                    concrete_type));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        err.emit();
+                        return;
+                    } else {
+                        struct_span_err!(
+                            tcx.sess,
+                            span,
+                            E0599,
+                            "no {} named `{}` found for type `{}` in the current scope",
+                            type_str,
+                            item_name,
+                            ty_string
+                        )
+                    }
                 } else {
                     tcx.sess.diagnostic().struct_dummy()
                 };
@@ -228,7 +289,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     for (ty, _) in self.autoderef(span, rcvr_ty) {
                         match ty.sty {
                             ty::TyAdt(def, substs) if !def.is_enum() => {
-                                if let Some(field) = def.struct_variant()
+                                if let Some(field) = def.non_enum_variant()
                                     .find_field_named(item_name) {
                                     let snippet = tcx.sess.codemap().span_to_snippet(expr.span);
                                     let expr_string = match snippet {
@@ -305,12 +366,16 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                       bound_list));
                 }
 
-                self.suggest_traits_to_import(&mut err,
-                                              span,
-                                              rcvr_ty,
-                                              item_name,
-                                              rcvr_expr,
-                                              out_of_scope_traits);
+                if actual.is_numeric() && actual.is_fresh() {
+
+                } else {
+                    self.suggest_traits_to_import(&mut err,
+                                                  span,
+                                                  rcvr_ty,
+                                                  item_name,
+                                                  rcvr_expr,
+                                                  out_of_scope_traits);
+                }
 
                 if let Some(lev_candidate) = lev_candidate {
                     err.help(&format!("did you mean `{}`?", lev_candidate.name));
@@ -448,8 +513,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // this isn't perfect (that is, there are cases when
                 // implementing a trait would be legal but is rejected
                 // here).
-                (type_is_local || info.def_id.is_local())
-                    && self.associated_item(info.def_id, item_name, Namespace::Value).is_some()
+                (type_is_local || info.def_id.is_local()) &&
+                    self.associated_item(info.def_id, item_name, Namespace::Value)
+                        .filter(|item| {
+                            // We only want to suggest public or local traits (#45781).
+                            item.vis == ty::Visibility::Public || info.def_id.is_local()
+                        })
+                        .is_some()
             })
             .collect::<Vec<_>>();
 

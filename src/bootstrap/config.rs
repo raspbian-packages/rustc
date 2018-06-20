@@ -13,7 +13,7 @@
 //! This module implements parsing `config.toml` configuration files to tweak
 //! how the build runs.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs::File;
 use std::io::prelude::*;
@@ -52,9 +52,11 @@ pub struct Config {
     pub target_config: HashMap<Interned<String>, Target>,
     pub full_bootstrap: bool,
     pub extended: bool,
+    pub tools: Option<HashSet<String>>,
     pub sanitizers: bool,
     pub profiler: bool,
     pub ignore_git: bool,
+    pub exclude: Vec<PathBuf>,
 
     pub run_host_only: bool,
 
@@ -81,6 +83,7 @@ pub struct Config {
     // rust codegen options
     pub rust_optimize: bool,
     pub rust_codegen_units: Option<u32>,
+    pub rust_thinlto: bool,
     pub rust_debug_assertions: bool,
     pub rust_debuginfo: bool,
     pub rust_debuginfo_lines: bool,
@@ -91,6 +94,7 @@ pub struct Config {
     pub rust_optimize_tests: bool,
     pub rust_debuginfo_tests: bool,
     pub rust_dist_src: bool,
+    pub rust_codegen_backends: Vec<Interned<String>>,
 
     pub build: Interned<String>,
     pub hosts: Vec<Interned<String>>,
@@ -106,6 +110,7 @@ pub struct Config {
     pub debug_jemalloc: bool,
     pub use_jemalloc: bool,
     pub backtrace: bool, // support for RUST_BACKTRACE
+    pub wasm_syscall: bool,
 
     // misc
     pub low_priority: bool,
@@ -118,6 +123,7 @@ pub struct Config {
     pub musl_root: Option<PathBuf>,
     pub prefix: Option<PathBuf>,
     pub sysconfdir: Option<PathBuf>,
+    pub datadir: Option<PathBuf>,
     pub docdir: Option<PathBuf>,
     pub bindir: Option<PathBuf>,
     pub libdir: Option<PathBuf>,
@@ -188,6 +194,7 @@ struct Build {
     python: Option<String>,
     full_bootstrap: Option<bool>,
     extended: Option<bool>,
+    tools: Option<HashSet<String>>,
     verbose: Option<usize>,
     sanitizers: Option<bool>,
     profiler: Option<bool>,
@@ -202,13 +209,13 @@ struct Build {
 struct Install {
     prefix: Option<String>,
     sysconfdir: Option<String>,
+    datadir: Option<String>,
     docdir: Option<String>,
     bindir: Option<String>,
     libdir: Option<String>,
     mandir: Option<String>,
 
     // standard paths, currently unused
-    datadir: Option<String>,
     infodir: Option<String>,
     localstatedir: Option<String>,
 }
@@ -259,6 +266,7 @@ impl Default for StringOrBool {
 struct Rust {
     optimize: Option<bool>,
     codegen_units: Option<u32>,
+    thinlto: Option<bool>,
     debug_assertions: Option<bool>,
     debuginfo: Option<bool>,
     debuginfo_lines: Option<bool>,
@@ -280,6 +288,8 @@ struct Rust {
     quiet_tests: Option<bool>,
     test_miri: Option<bool>,
     save_toolstates: Option<String>,
+    codegen_backends: Option<Vec<String>>,
+    wasm_syscall: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -303,6 +313,7 @@ impl Config {
         let flags = Flags::parse(&args);
         let file = flags.config.clone();
         let mut config = Config::default();
+        config.exclude = flags.exclude;
         config.llvm_enabled = true;
         config.llvm_optimize = true;
         config.llvm_version_check = true;
@@ -318,6 +329,7 @@ impl Config {
         config.ignore_git = false;
         config.rust_dist_src = true;
         config.test_miri = false;
+        config.rust_codegen_backends = vec![INTERNER.intern_str("llvm")];
 
         config.on_fail = flags.on_fail;
         config.stage = flags.stage;
@@ -388,6 +400,7 @@ impl Config {
         set(&mut config.vendor, build.vendor);
         set(&mut config.full_bootstrap, build.full_bootstrap);
         set(&mut config.extended, build.extended);
+        config.tools = build.tools;
         set(&mut config.verbose, build.verbose);
         set(&mut config.sanitizers, build.sanitizers);
         set(&mut config.profiler, build.profiler);
@@ -399,6 +412,7 @@ impl Config {
         if let Some(ref install) = toml.install {
             config.prefix = install.prefix.clone().map(PathBuf::from);
             config.sysconfdir = install.sysconfdir.clone().map(PathBuf::from);
+            config.datadir = install.datadir.clone().map(PathBuf::from);
             config.docdir = install.docdir.clone().map(PathBuf::from);
             config.bindir = install.bindir.clone().map(PathBuf::from);
             config.libdir = install.libdir.clone().map(PathBuf::from);
@@ -407,6 +421,7 @@ impl Config {
 
         // Store off these values as options because if they're not provided
         // we'll infer default values for them later
+        let mut thinlto = None;
         let mut llvm_assertions = None;
         let mut debuginfo_lines = None;
         let mut debuginfo_only_std = None;
@@ -450,6 +465,7 @@ impl Config {
             optimize = rust.optimize;
             ignore_git = rust.ignore_git;
             debug_jemalloc = rust.debug_jemalloc;
+            thinlto = rust.thinlto;
             set(&mut config.rust_optimize_tests, rust.optimize_tests);
             set(&mut config.rust_debuginfo_tests, rust.debuginfo_tests);
             set(&mut config.codegen_tests, rust.codegen_tests);
@@ -460,10 +476,17 @@ impl Config {
             set(&mut config.rust_dist_src, rust.dist_src);
             set(&mut config.quiet_tests, rust.quiet_tests);
             set(&mut config.test_miri, rust.test_miri);
+            set(&mut config.wasm_syscall, rust.wasm_syscall);
             config.rustc_parallel_queries = rust.experimental_parallel_queries.unwrap_or(false);
             config.rustc_default_linker = rust.default_linker.clone();
             config.musl_root = rust.musl_root.clone().map(PathBuf::from);
             config.save_toolstates = rust.save_toolstates.clone().map(PathBuf::from);
+
+            if let Some(ref backends) = rust.codegen_backends {
+                config.rust_codegen_backends = backends.iter()
+                    .map(|s| INTERNER.intern_str(s))
+                    .collect();
+            }
 
             match rust.codegen_units {
                 Some(0) => config.rust_codegen_units = Some(num_cpus::get() as u32),
@@ -527,6 +550,7 @@ impl Config {
             "stable" | "beta" | "nightly" => true,
             _ => false,
         };
+        config.rust_thinlto = thinlto.unwrap_or(true);
         config.rust_debuginfo_lines = debuginfo_lines.unwrap_or(default);
         config.rust_debuginfo_only_std = debuginfo_only_std.unwrap_or(default);
 

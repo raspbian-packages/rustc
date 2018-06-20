@@ -20,9 +20,10 @@ pub use self::FunctionRetTy::*;
 pub use self::Visibility::*;
 
 use syntax::abi::Abi;
-use syntax::ast;
+use syntax::ast::{self, AttrStyle};
 use syntax::attr;
 use syntax::codemap::Spanned;
+use syntax::feature_gate::UnstableFeatures;
 use syntax::ptr::P;
 use syntax::symbol::keywords;
 use syntax_pos::{self, DUMMY_SP, Pos, FileName};
@@ -53,6 +54,7 @@ use core::DocContext;
 use doctree;
 use visit_ast;
 use html::item_type::ItemType;
+use html::markdown::markdown_links;
 
 pub mod inline;
 pub mod cfg;
@@ -124,7 +126,7 @@ pub struct Crate {
     pub masked_crates: FxHashSet<CrateNum>,
 }
 
-impl<'a, 'tcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx> {
+impl<'a, 'tcx, 'rcx> Clean<Crate> for visit_ast::RustdocVisitor<'a, 'tcx, 'rcx> {
     fn clean(&self, cx: &DocContext) -> Crate {
         use ::visit_lib::LibEmbargoVisitor;
 
@@ -305,6 +307,11 @@ impl Item {
     pub fn collapsed_doc_value(&self) -> Option<String> {
         self.attrs.collapsed_doc_value()
     }
+
+    pub fn links(&self) -> Vec<(String, String)> {
+        self.attrs.links()
+    }
+
     pub fn is_crate(&self) -> bool {
         match self.inner {
             StrippedItem(box ModuleItem(Module { is_crate: true, ..})) |
@@ -430,7 +437,6 @@ pub enum ItemEnum {
     PrimitiveItem(PrimitiveType),
     AssociatedConstItem(Type, Option<String>),
     AssociatedTypeItem(Vec<TyParamBound>, Option<Type>),
-    AutoImplItem(AutoImpl),
     /// An item that has been stripped by a rustdoc pass
     StrippedItem(Box<ItemEnum>),
 }
@@ -466,6 +472,23 @@ impl Clean<Item> for doctree::Module {
             "".to_string()
         };
 
+        // maintain a stack of mod ids, for doc comment path resolution
+        // but we also need to resolve the module's own docs based on whether its docs were written
+        // inside or outside the module, so check for that
+        let attrs = if self.attrs.iter()
+                                 .filter(|a| a.check_name("doc"))
+                                 .next()
+                                 .map_or(true, |a| a.style == AttrStyle::Inner) {
+            // inner doc comment, use the module's own scope for resolution
+            cx.mod_ids.borrow_mut().push(self.id);
+            self.attrs.clean(cx)
+        } else {
+            // outer doc comment, use its parent's scope
+            let attrs = self.attrs.clean(cx);
+            cx.mod_ids.borrow_mut().push(self.id);
+            attrs
+        };
+
         let mut items: Vec<Item> = vec![];
         items.extend(self.extern_crates.iter().map(|x| x.clean(cx)));
         items.extend(self.imports.iter().flat_map(|x| x.clean(cx)));
@@ -481,7 +504,8 @@ impl Clean<Item> for doctree::Module {
         items.extend(self.traits.iter().map(|x| x.clean(cx)));
         items.extend(self.impls.iter().flat_map(|x| x.clean(cx)));
         items.extend(self.macros.iter().map(|x| x.clean(cx)));
-        items.extend(self.def_traits.iter().map(|x| x.clean(cx)));
+
+        cx.mod_ids.borrow_mut().pop();
 
         // determine if we should display the inner contents or
         // the outer `mod` item for the source code.
@@ -500,7 +524,7 @@ impl Clean<Item> for doctree::Module {
 
         Item {
             name: Some(name),
-            attrs: self.attrs.clean(cx),
+            attrs,
             source: whence.clean(cx),
             visibility: self.vis.clean(cx),
             stability: self.stab.clean(cx),
@@ -635,6 +659,8 @@ pub struct Attributes {
     pub other_attrs: Vec<ast::Attribute>,
     pub cfg: Option<Rc<Cfg>>,
     pub span: Option<syntax_pos::Span>,
+    /// map from Rust paths to resolved defs and potential URL fragments
+    pub links: Vec<(String, DefId, Option<String>)>,
 }
 
 impl Attributes {
@@ -764,11 +790,13 @@ impl Attributes {
                 Some(attr.clone())
             })
         }).collect();
+
         Attributes {
             doc_strings,
             other_attrs,
             cfg: if cfg == Cfg::True { None } else { Some(Rc::new(cfg)) },
             span: sp,
+            links: vec![],
         }
     }
 
@@ -787,6 +815,24 @@ impl Attributes {
             None
         }
     }
+
+    /// Get links as a vector
+    ///
+    /// Cache must be populated before call
+    pub fn links(&self) -> Vec<(String, String)> {
+        use html::format::href;
+        self.links.iter().filter_map(|&(ref s, did, ref fragment)| {
+            if let Some((mut href, ..)) = href(did) {
+                if let Some(ref fragment) = *fragment {
+                    href.push_str("#");
+                    href.push_str(fragment);
+                }
+                Some((s.clone(), href))
+            } else {
+                None
+            }
+        }).collect()
+    }
 }
 
 impl AttributesExt for Attributes {
@@ -795,9 +841,339 @@ impl AttributesExt for Attributes {
     }
 }
 
+/// Given a def, returns its name and disambiguator
+/// for a value namespace
+///
+/// Returns None for things which cannot be ambiguous since
+/// they exist in both namespaces (structs and modules)
+fn value_ns_kind(def: Def, path_str: &str) -> Option<(&'static str, String)> {
+    match def {
+        // structs, variants, and mods exist in both namespaces. skip them
+        Def::StructCtor(..) | Def::Mod(..) | Def::Variant(..) | Def::VariantCtor(..) => None,
+        Def::Fn(..)
+            => Some(("function", format!("{}()", path_str))),
+        Def::Method(..)
+            => Some(("method", format!("{}()", path_str))),
+        Def::Const(..)
+            => Some(("const", format!("const@{}", path_str))),
+        Def::Static(..)
+            => Some(("static", format!("static@{}", path_str))),
+        _ => Some(("value", format!("value@{}", path_str))),
+    }
+}
+
+/// Given a def, returns its name, the article to be used, and a disambiguator
+/// for the type namespace
+fn type_ns_kind(def: Def, path_str: &str) -> (&'static str, &'static str, String) {
+    let (kind, article) = match def {
+        // we can still have non-tuple structs
+        Def::Struct(..) => ("struct", "a"),
+        Def::Enum(..) => ("enum", "an"),
+        Def::Trait(..) => ("trait", "a"),
+        Def::Union(..) => ("union", "a"),
+        _ => ("type", "a"),
+    };
+    (kind, article, format!("{}@{}", kind, path_str))
+}
+
+fn ambiguity_error(cx: &DocContext, attrs: &Attributes,
+                   path_str: &str,
+                   article1: &str, kind1: &str, disambig1: &str,
+                   article2: &str, kind2: &str, disambig2: &str) {
+    let sp = attrs.doc_strings.first()
+                  .map_or(DUMMY_SP, |a| a.span());
+    cx.sess()
+      .struct_span_warn(sp,
+                        &format!("`{}` is both {} {} and {} {}",
+                                 path_str, article1, kind1,
+                                 article2, kind2))
+      .help(&format!("try `{}` if you want to select the {}, \
+                      or `{}` if you want to \
+                      select the {}",
+                      disambig1, kind1, disambig2,
+                      kind2))
+             .emit();
+}
+
+/// Given an enum variant's def, return the def of its enum and the associated fragment
+fn handle_variant(cx: &DocContext, def: Def) -> Result<(Def, Option<String>), ()> {
+    use rustc::ty::DefIdTree;
+
+    let parent = if let Some(parent) = cx.tcx.parent(def.def_id()) {
+        parent
+    } else {
+        return Err(())
+    };
+    let parent_def = Def::Enum(parent);
+    let variant = cx.tcx.expect_variant_def(def);
+    Ok((parent_def, Some(format!("{}.v", variant.name))))
+}
+
+/// Resolve a given string as a path, along with whether or not it is
+/// in the value namespace. Also returns an optional URL fragment in the case
+/// of variants and methods
+fn resolve(cx: &DocContext, path_str: &str, is_val: bool) -> Result<(Def, Option<String>), ()> {
+    // In case we're in a module, try to resolve the relative
+    // path
+    if let Some(id) = cx.mod_ids.borrow().last() {
+        let result = cx.resolver.borrow_mut()
+                                .with_scope(*id,
+            |resolver| {
+                resolver.resolve_str_path_error(DUMMY_SP,
+                                                &path_str, is_val)
+        });
+
+        if let Ok(result) = result {
+            // In case this is a trait item, skip the
+            // early return and try looking for the trait
+            let value = match result.def {
+                Def::Method(_) | Def::AssociatedConst(_) => true,
+                Def::AssociatedTy(_)  => false,
+                Def::Variant(_) => return handle_variant(cx, result.def),
+                // not a trait item, just return what we found
+                _ => return Ok((result.def, None))
+            };
+
+            if value != is_val {
+                return Err(())
+            }
+        } else {
+            // If resolution failed, it may still be a method
+            // because methods are not handled by the resolver
+            // If so, bail when we're not looking for a value
+            if !is_val {
+                return Err(())
+            }
+        }
+
+        // Try looking for methods and associated items
+        let mut split = path_str.rsplitn(2, "::");
+        let mut item_name = if let Some(first) = split.next() {
+            first
+        } else {
+            return Err(())
+        };
+
+        let mut path = if let Some(second) = split.next() {
+            second
+        } else {
+            return Err(())
+        };
+
+        let ty = cx.resolver.borrow_mut()
+                            .with_scope(*id,
+            |resolver| {
+                resolver.resolve_str_path_error(DUMMY_SP,
+                                                &path, false)
+        })?;
+        match ty.def {
+            Def::Struct(did) | Def::Union(did) | Def::Enum(did) | Def::TyAlias(did) => {
+                let item = cx.tcx.inherent_impls(did).iter()
+                                 .flat_map(|imp| cx.tcx.associated_items(*imp))
+                                 .find(|item| item.name == item_name);
+                if let Some(item) = item {
+                    if item.kind == ty::AssociatedKind::Method && is_val {
+                        Ok((ty.def, Some(format!("method.{}", item_name))))
+                    } else {
+                        Err(())
+                    }
+                } else {
+                    Err(())
+                }
+            }
+            Def::Trait(did) => {
+                let item = cx.tcx.associated_item_def_ids(did).iter()
+                             .map(|item| cx.tcx.associated_item(*item))
+                             .find(|item| item.name == item_name);
+                if let Some(item) = item {
+                    let kind = match item.kind {
+                        ty::AssociatedKind::Const if is_val => "associatedconstant",
+                        ty::AssociatedKind::Type if !is_val => "associatedtype",
+                        ty::AssociatedKind::Method if is_val => "tymethod",
+                        _ => return Err(())
+                    };
+
+                    Ok((ty.def, Some(format!("{}.{}", kind, item_name))))
+                } else {
+                    Err(())
+                }
+            }
+            _ => Err(())
+        }
+
+    } else {
+        Err(())
+    }
+}
+
+/// Resolve a string as a macro
+fn macro_resolve(cx: &DocContext, path_str: &str) -> Option<Def> {
+    use syntax::ext::base::MacroKind;
+    use syntax::ext::hygiene::Mark;
+    let segment = ast::PathSegment {
+        identifier: ast::Ident::from_str(path_str),
+        span: DUMMY_SP,
+        parameters: None,
+    };
+    let path = ast::Path {
+        span: DUMMY_SP,
+        segments: vec![segment],
+    };
+
+    let mut resolver = cx.resolver.borrow_mut();
+    let mark = Mark::root();
+    let res = resolver
+        .resolve_macro_to_def_inner(mark, &path, MacroKind::Bang, false);
+    if let Ok(def) = res {
+        Some(def)
+    } else if let Some(def) = resolver.all_macros.get(&path_str.into()) {
+        Some(*def)
+    } else {
+        None
+    }
+}
+
+enum PathKind {
+    /// can be either value or type, not a macro
+    Unknown,
+    /// macro
+    Macro,
+    /// values, functions, consts, statics, everything in the value namespace
+    Value,
+    /// types, traits, everything in the type namespace
+    Type
+}
+
 impl Clean<Attributes> for [ast::Attribute] {
     fn clean(&self, cx: &DocContext) -> Attributes {
-        Attributes::from_ast(cx.sess().diagnostic(), self)
+        let mut attrs = Attributes::from_ast(cx.sess().diagnostic(), self);
+
+        if UnstableFeatures::from_environment().is_nightly_build() {
+            let dox = attrs.collapsed_doc_value().unwrap_or_else(String::new);
+            for link in markdown_links(&dox, cx.render_type) {
+                // bail early for real links
+                if link.contains('/') {
+                    continue;
+                }
+                let (def, fragment)  = {
+                    let mut kind = PathKind::Unknown;
+                    let path_str = if let Some(prefix) =
+                        ["struct@", "enum@", "type@",
+                         "trait@", "union@"].iter()
+                                          .find(|p| link.starts_with(**p)) {
+                        kind = PathKind::Type;
+                        link.trim_left_matches(prefix)
+                    } else if let Some(prefix) =
+                        ["const@", "static@",
+                         "value@", "function@", "mod@",
+                         "fn@", "module@", "method@"]
+                            .iter().find(|p| link.starts_with(**p)) {
+                        kind = PathKind::Value;
+                        link.trim_left_matches(prefix)
+                    } else if link.ends_with("()") {
+                        kind = PathKind::Value;
+                        link.trim_right_matches("()")
+                    } else if link.starts_with("macro@") {
+                        kind = PathKind::Macro;
+                        link.trim_left_matches("macro@")
+                    } else if link.ends_with('!') {
+                        kind = PathKind::Macro;
+                        link.trim_right_matches('!')
+                    } else {
+                        &link[..]
+                    }.trim();
+
+                    // avoid resolving things (i.e. regular links) which aren't like paths
+                    // FIXME(Manishearth) given that most links have slashes in them might be worth
+                    // doing a check for slashes first
+                    if path_str.contains(|ch: char| !(ch.is_alphanumeric() ||
+                                                      ch == ':' || ch == '_')) {
+                        continue;
+                    }
+
+
+                    match kind {
+                        PathKind::Value => {
+                            if let Ok(def) = resolve(cx, path_str, true) {
+                                def
+                            } else {
+                                // this could just be a normal link or a broken link
+                                // we could potentially check if something is
+                                // "intra-doc-link-like" and warn in that case
+                                continue;
+                            }
+                        }
+                        PathKind::Type => {
+                            if let Ok(def) = resolve(cx, path_str, false) {
+                                def
+                            } else {
+                                // this could just be a normal link
+                                continue;
+                            }
+                        }
+                        PathKind::Unknown => {
+                            // try everything!
+                            if let Some(macro_def) = macro_resolve(cx, path_str) {
+                                if let Ok(type_def) = resolve(cx, path_str, false) {
+                                    let (type_kind, article, type_disambig)
+                                        = type_ns_kind(type_def.0, path_str);
+                                    ambiguity_error(cx, &attrs, path_str,
+                                                    article, type_kind, &type_disambig,
+                                                    "a", "macro", &format!("macro@{}", path_str));
+                                    continue;
+                                } else if let Ok(value_def) = resolve(cx, path_str, true) {
+                                    let (value_kind, value_disambig)
+                                        = value_ns_kind(value_def.0, path_str)
+                                            .expect("struct and mod cases should have been \
+                                                     caught in previous branch");
+                                    ambiguity_error(cx, &attrs, path_str,
+                                                    "a", value_kind, &value_disambig,
+                                                    "a", "macro", &format!("macro@{}", path_str));
+                                }
+                                (macro_def, None)
+                            } else if let Ok(type_def) = resolve(cx, path_str, false) {
+                                // It is imperative we search for not-a-value first
+                                // Otherwise we will find struct ctors for when we are looking
+                                // for structs, and the link won't work.
+                                // if there is something in both namespaces
+                                if let Ok(value_def) = resolve(cx, path_str, true) {
+                                    let kind = value_ns_kind(value_def.0, path_str);
+                                    if let Some((value_kind, value_disambig)) = kind {
+                                        let (type_kind, article, type_disambig)
+                                            = type_ns_kind(type_def.0, path_str);
+                                        ambiguity_error(cx, &attrs, path_str,
+                                                        article, type_kind, &type_disambig,
+                                                        "a", value_kind, &value_disambig);
+                                        continue;
+                                    }
+                                }
+                                type_def
+                            } else if let Ok(value_def) = resolve(cx, path_str, true) {
+                                value_def
+                            } else {
+                                // this could just be a normal link
+                                continue;
+                            }
+                        }
+                        PathKind::Macro => {
+                            if let Some(def) = macro_resolve(cx, path_str) {
+                                (def, None)
+                            } else {
+                                continue
+                            }
+                        }
+                    }
+                };
+
+
+                let id = register_def(cx, def);
+                attrs.links.push((link, id, fragment));
+            }
+
+            cx.sess().abort_if_errors();
+        }
+
+        attrs
     }
 }
 
@@ -1525,6 +1901,7 @@ pub struct Trait {
     pub generics: Generics,
     pub bounds: Vec<TyParamBound>,
     pub is_spotlight: bool,
+    pub is_auto: bool,
 }
 
 impl Clean<Item> for doctree::Trait {
@@ -1545,7 +1922,17 @@ impl Clean<Item> for doctree::Trait {
                 generics: self.generics.clean(cx),
                 bounds: self.bounds.clean(cx),
                 is_spotlight: is_spotlight,
+                is_auto: self.is_auto.clean(cx),
             }),
+        }
+    }
+}
+
+impl Clean<bool> for hir::IsAuto {
+    fn clean(&self, _: &DocContext) -> bool {
+        match *self {
+            hir::IsAuto::Yes => true,
+            hir::IsAuto::No => false,
         }
     }
 }
@@ -1855,6 +2242,7 @@ pub enum TypeKind {
     Variant,
     Typedef,
     Foreign,
+    Macro,
 }
 
 pub trait GetDefId {
@@ -2011,7 +2399,7 @@ impl PrimitiveType {
 impl From<ast::IntTy> for PrimitiveType {
     fn from(int_ty: ast::IntTy) -> PrimitiveType {
         match int_ty {
-            ast::IntTy::Is => PrimitiveType::Isize,
+            ast::IntTy::Isize => PrimitiveType::Isize,
             ast::IntTy::I8 => PrimitiveType::I8,
             ast::IntTy::I16 => PrimitiveType::I16,
             ast::IntTy::I32 => PrimitiveType::I32,
@@ -2024,7 +2412,7 @@ impl From<ast::IntTy> for PrimitiveType {
 impl From<ast::UintTy> for PrimitiveType {
     fn from(uint_ty: ast::UintTy) -> PrimitiveType {
         match uint_ty {
-            ast::UintTy::Us => PrimitiveType::Usize,
+            ast::UintTy::Usize => PrimitiveType::Usize,
             ast::UintTy::U8 => PrimitiveType::U8,
             ast::UintTy::U16 => PrimitiveType::U16,
             ast::UintTy::U32 => PrimitiveType::U32,
@@ -2063,7 +2451,12 @@ impl Clean<Type> for hir::Ty {
                 let def_id = cx.tcx.hir.body_owner_def_id(n);
                 let param_env = cx.tcx.param_env(def_id);
                 let substs = Substs::identity_for_item(cx.tcx, def_id);
-                let n = cx.tcx.const_eval(param_env.and((def_id, substs))).unwrap();
+                let n = cx.tcx.const_eval(param_env.and((def_id, substs))).unwrap_or_else(|_| {
+                    cx.tcx.mk_const(ty::Const {
+                        val: ConstVal::Unevaluated(def_id, substs),
+                        ty: cx.tcx.types.usize
+                    })
+                });
                 let n = if let ConstVal::Integral(ConstInt::Usize(n)) = n.val {
                     n.to_string()
                 } else if let ConstVal::Unevaluated(def_id, _) = n.val {
@@ -2193,7 +2586,9 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
                 let mut n = cx.tcx.lift(&n).unwrap();
                 if let ConstVal::Unevaluated(def_id, substs) = n.val {
                     let param_env = cx.tcx.param_env(def_id);
-                    n = cx.tcx.const_eval(param_env.and((def_id, substs))).unwrap()
+                    if let Ok(new_n) = cx.tcx.const_eval(param_env.and((def_id, substs))) {
+                        n = new_n;
+                    }
                 };
                 let n = if let ConstVal::Integral(ConstInt::Usize(n)) = n.val {
                     n.to_string()
@@ -2316,6 +2711,7 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
 
             ty::TyClosure(..) | ty::TyGenerator(..) => Tuple(vec![]), // FIXME(pcwalton)
 
+            ty::TyGeneratorWitness(..) => panic!("TyGeneratorWitness"),
             ty::TyInfer(..) => panic!("TyInfer"),
             ty::TyError => panic!("TyError"),
         }
@@ -2941,30 +3337,6 @@ fn build_deref_target_impls(cx: &DocContext,
     }
 }
 
-#[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
-pub struct AutoImpl {
-    pub unsafety: hir::Unsafety,
-    pub trait_: Type,
-}
-
-impl Clean<Item> for doctree::AutoImpl {
-    fn clean(&self, cx: &DocContext) -> Item {
-        Item {
-            name: None,
-            attrs: self.attrs.clean(cx),
-            source: self.whence.clean(cx),
-            def_id: cx.tcx.hir.local_def_id(self.id),
-            visibility: Some(Public),
-            stability: None,
-            deprecation: None,
-            inner: AutoImplItem(AutoImpl {
-                unsafety: self.unsafety,
-                trait_: self.trait_.clean(cx),
-            }),
-        }
-    }
-}
-
 impl Clean<Item> for doctree::ExternCrate {
     fn clean(&self, cx: &DocContext) -> Item {
         Item {
@@ -3180,6 +3552,7 @@ fn register_def(cx: &DocContext, def: Def) -> DefId {
         Def::TyForeign(i) => (i, TypeKind::Foreign),
         Def::Static(i, _) => (i, TypeKind::Static),
         Def::Variant(i) => (cx.tcx.parent_def_id(i).unwrap(), TypeKind::Enum),
+        Def::Macro(i, _) => (i, TypeKind::Macro),
         Def::SelfTy(Some(def_id), _) => (def_id, TypeKind::Trait),
         Def::SelfTy(_, Some(impl_def_id)) => {
             return impl_def_id
@@ -3189,8 +3562,7 @@ fn register_def(cx: &DocContext, def: Def) -> DefId {
     if did.is_local() { return did }
     inline::record_extern_fqn(cx, did, kind);
     if let TypeKind::Trait = kind {
-        let t = inline::build_external_trait(cx, did);
-        cx.external_traits.borrow_mut().insert(did, t);
+        inline::record_extern_trait(cx, did);
     }
     did
 }

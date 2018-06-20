@@ -21,6 +21,9 @@ pub struct Stream {
     raw: lzma_sys::lzma_stream,
 }
 
+unsafe impl Send for Stream {}
+unsafe impl Sync for Stream {}
+
 /// Options that can be used to configure how LZMA encoding happens.
 ///
 /// This builder is consumed by a number of other methods.

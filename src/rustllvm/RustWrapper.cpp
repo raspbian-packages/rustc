@@ -315,7 +315,11 @@ extern "C" void LLVMRustRemoveFunctionAttributes(LLVMValueRef Fn,
 // enable fpmath flag UnsafeAlgebra
 extern "C" void LLVMRustSetHasUnsafeAlgebra(LLVMValueRef V) {
   if (auto I = dyn_cast<Instruction>(unwrap<Value>(V))) {
+#if LLVM_VERSION_GE(6, 0)
+    I->setFast(true);
+#else
     I->setHasUnsafeAlgebra(true);
+#endif
   }
 }
 
@@ -382,12 +386,6 @@ extern "C" LLVMValueRef
 LLVMRustBuildAtomicFence(LLVMBuilderRef B, LLVMAtomicOrdering Order,
                          LLVMRustSynchronizationScope Scope) {
   return wrap(unwrap(B)->CreateFence(fromRust(Order), fromRust(Scope)));
-}
-
-extern "C" void LLVMRustSetDebug(int Enabled) {
-#ifndef NDEBUG
-  DebugFlag = Enabled;
-#endif
 }
 
 enum class LLVMRustAsmDialect {
@@ -463,9 +461,13 @@ enum class LLVMRustDIFlags : uint32_t {
   FlagStaticMember = (1 << 12),
   FlagLValueReference = (1 << 13),
   FlagRValueReference = (1 << 14),
-  FlagMainSubprogram      = (1 << 21),
+  FlagExternalTypeRef = (1 << 15),
+  FlagIntroducedVirtual = (1 << 18),
+  FlagBitField = (1 << 19),
+  FlagNoReturn = (1 << 20),
+  FlagMainSubprogram = (1 << 21),
   // Do not add values that are not supported by the minimum LLVM
-  // version we support!
+  // version we support! see llvm/include/llvm/IR/DebugInfoFlags.def
 };
 
 inline LLVMRustDIFlags operator&(LLVMRustDIFlags A, LLVMRustDIFlags B) {
@@ -550,7 +552,21 @@ static unsigned fromRust(LLVMRustDIFlags Flags) {
   if (isSet(Flags & LLVMRustDIFlags::FlagRValueReference)) {
     Result |= DINode::DIFlags::FlagRValueReference;
   }
+#if LLVM_VERSION_LE(4, 0)
+  if (isSet(Flags & LLVMRustDIFlags::FlagExternalTypeRef)) {
+    Result |= DINode::DIFlags::FlagExternalTypeRef;
+  }
+#endif
+  if (isSet(Flags & LLVMRustDIFlags::FlagIntroducedVirtual)) {
+    Result |= DINode::DIFlags::FlagIntroducedVirtual;
+  }
+  if (isSet(Flags & LLVMRustDIFlags::FlagBitField)) {
+    Result |= DINode::DIFlags::FlagBitField;
+  }
 #if LLVM_RUSTLLVM || LLVM_VERSION_GE(4, 0)
+  if (isSet(Flags & LLVMRustDIFlags::FlagNoReturn)) {
+    Result |= DINode::DIFlags::FlagNoReturn;
+  }
   if (isSet(Flags & LLVMRustDIFlags::FlagMainSubprogram)) {
     Result |= DINode::DIFlags::FlagMainSubprogram;
   }
@@ -872,7 +888,14 @@ extern "C" int64_t LLVMRustDIBuilderCreateOpDeref() {
   return dwarf::DW_OP_deref;
 }
 
-extern "C" int64_t LLVMRustDIBuilderCreateOpPlus() { return dwarf::DW_OP_plus; }
+extern "C" int64_t LLVMRustDIBuilderCreateOpPlusUconst() {
+#if LLVM_VERSION_GE(5, 0)
+  return dwarf::DW_OP_plus_uconst;
+#else
+  // older LLVM used `plus` to behave like `plus_uconst`.
+  return dwarf::DW_OP_plus;
+#endif
+}
 
 extern "C" void LLVMRustWriteTypeToString(LLVMTypeRef Ty, RustStringRef Str) {
   RawRustStringOstream OS(Str);
@@ -933,23 +956,6 @@ extern "C" bool LLVMRustLinkInExternalBitcode(LLVMModuleRef DstRef, char *BC,
   return true;
 }
 
-extern "C" bool LLVMRustLinkInParsedExternalBitcode(
-    LLVMModuleRef DstRef, LLVMModuleRef SrcRef) {
-#if LLVM_VERSION_GE(4, 0)
-  Module *Dst = unwrap(DstRef);
-  std::unique_ptr<Module> Src(unwrap(SrcRef));
-
-  if (Linker::linkModules(*Dst, std::move(Src))) {
-    LLVMRustSetLastError("failed to link modules");
-    return false;
-  }
-  return true;
-#else
-  LLVMRustSetLastError("can't link parsed modules on this LLVM");
-  return false;
-#endif
-}
-
 // Note that the two following functions look quite similar to the
 // LLVMGetSectionName function. Sadly, it appears that this function only
 // returns a char* pointer, which isn't guaranteed to be null-terminated. The
@@ -981,7 +987,6 @@ extern "C" LLVMTypeRef LLVMRustArrayType(LLVMTypeRef ElementTy,
 }
 
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(Twine, LLVMTwineRef)
-DEFINE_SIMPLE_CONVERSION_FUNCTIONS(DebugLoc, LLVMDebugLocRef)
 
 extern "C" void LLVMRustWriteTwineToString(LLVMTwineRef T, RustStringRef Str) {
   RawRustStringOstream OS(Str);
@@ -1130,13 +1135,6 @@ extern "C" LLVMTypeKind LLVMRustGetTypeKind(LLVMTypeRef Ty) {
   report_fatal_error("Unhandled TypeID.");
 }
 
-extern "C" void LLVMRustWriteDebugLocToString(LLVMContextRef C,
-                                              LLVMDebugLocRef DL,
-                                              RustStringRef Str) {
-  RawRustStringOstream OS(Str);
-  unwrap(DL)->print(OS);
-}
-
 DEFINE_SIMPLE_CONVERSION_FUNCTIONS(SMDiagnostic, LLVMSMDiagnosticRef)
 
 extern "C" void LLVMRustSetInlineAsmDiagnosticHandler(
@@ -1148,13 +1146,6 @@ extern "C" void LLVMRustWriteSMDiagnosticToString(LLVMSMDiagnosticRef D,
                                                   RustStringRef Str) {
   RawRustStringOstream OS(Str);
   unwrap(D)->print("", OS);
-}
-
-extern "C" LLVMValueRef
-LLVMRustBuildLandingPad(LLVMBuilderRef B, LLVMTypeRef Ty,
-                        LLVMValueRef PersFn, unsigned NumClauses,
-                        const char *Name, LLVMValueRef F) {
-  return LLVMBuildLandingPad(B, Ty, PersFn, NumClauses, Name);
 }
 
 extern "C" LLVMValueRef LLVMRustBuildCleanupPad(LLVMBuilderRef B,
@@ -1361,10 +1352,6 @@ extern "C" bool LLVMRustConstInt128Get(LLVMValueRef CV, bool sext, uint64_t *hig
     return true;
 }
 
-extern "C" LLVMContextRef LLVMRustGetValueContext(LLVMValueRef V) {
-  return wrap(&unwrap(V)->getContext());
-}
-
 enum class LLVMRustVisibility {
   Default = 0,
   Hidden = 1,
@@ -1445,11 +1432,6 @@ LLVMRustModuleBufferLen(const LLVMRustModuleBuffer *Buffer) {
 
 extern "C" uint64_t
 LLVMRustModuleCost(LLVMModuleRef M) {
-  Module &Mod = *unwrap(M);
-  uint64_t cost = 0;
-  for (auto &F : Mod.functions()) {
-    (void)F;
-    cost += 1;
-  }
-  return cost;
+  auto f = unwrap(M)->functions();
+  return std::distance(std::begin(f), std::end(f));
 }

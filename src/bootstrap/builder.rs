@@ -26,6 +26,7 @@ use util::{exe, libdir, add_lib_path};
 use {Build, Mode};
 use cache::{INTERNER, Interned, Cache};
 use check;
+use test;
 use flags::Subcommand;
 use doc;
 use tool;
@@ -94,7 +95,7 @@ pub struct RunConfig<'a> {
     pub builder: &'a Builder<'a>,
     pub host: Interned<String>,
     pub target: Interned<String>,
-    pub path: Option<&'a Path>,
+    pub path: PathBuf,
 }
 
 struct StepDescription {
@@ -104,6 +105,32 @@ struct StepDescription {
     only_build: bool,
     should_run: fn(ShouldRun) -> ShouldRun,
     make_run: fn(RunConfig),
+    name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialOrd, Ord, PartialEq, Eq)]
+struct PathSet {
+    set: BTreeSet<PathBuf>,
+}
+
+impl PathSet {
+    fn empty() -> PathSet {
+        PathSet { set: BTreeSet::new() }
+    }
+
+    fn one<P: Into<PathBuf>>(path: P) -> PathSet {
+        let mut set = BTreeSet::new();
+        set.insert(path.into());
+        PathSet { set }
+    }
+
+    fn has(&self, needle: &Path) -> bool {
+        self.set.iter().any(|p| p.ends_with(needle))
+    }
+
+    fn path(&self, builder: &Builder) -> PathBuf {
+        self.set.iter().next().unwrap_or(&builder.build.src).to_path_buf()
+    }
 }
 
 impl StepDescription {
@@ -115,10 +142,18 @@ impl StepDescription {
             only_build: S::ONLY_BUILD,
             should_run: S::should_run,
             make_run: S::make_run,
+            name: unsafe { ::std::intrinsics::type_name::<S>() },
         }
     }
 
-    fn maybe_run(&self, builder: &Builder, path: Option<&Path>) {
+    fn maybe_run(&self, builder: &Builder, pathset: &PathSet) {
+        if builder.config.exclude.iter().any(|e| pathset.has(e)) {
+            eprintln!("Skipping {:?} because it is excluded", pathset);
+            return;
+        } else if !builder.config.exclude.is_empty() {
+            eprintln!("{:?} not skipped for {:?} -- not in {:?}", pathset,
+                self.name, builder.config.exclude);
+        }
         let build = builder.build;
         let hosts = if self.only_build_targets || self.only_build {
             build.build_triple()
@@ -143,7 +178,7 @@ impl StepDescription {
             for target in targets {
                 let run = RunConfig {
                     builder,
-                    path,
+                    path: pathset.path(builder),
                     host: *host,
                     target: *target,
                 };
@@ -156,24 +191,33 @@ impl StepDescription {
         let should_runs = v.iter().map(|desc| {
             (desc.should_run)(ShouldRun::new(builder))
         }).collect::<Vec<_>>();
+
+        // sanity checks on rules
+        for (desc, should_run) in v.iter().zip(&should_runs) {
+            assert!(!should_run.paths.is_empty(),
+                "{:?} should have at least one pathset", desc.name);
+        }
+
         if paths.is_empty() {
             for (desc, should_run) in v.iter().zip(should_runs) {
                 if desc.default && should_run.is_really_default {
-                    desc.maybe_run(builder, None);
+                    for pathset in &should_run.paths {
+                        desc.maybe_run(builder, pathset);
+                    }
                 }
             }
         } else {
             for path in paths {
                 let mut attempted_run = false;
                 for (desc, should_run) in v.iter().zip(&should_runs) {
-                    if should_run.run(path) {
+                    if let Some(pathset) = should_run.pathset_for_path(path) {
                         attempted_run = true;
-                        desc.maybe_run(builder, Some(path));
+                        desc.maybe_run(builder, pathset);
                     }
                 }
 
                 if !attempted_run {
-                    eprintln!("Warning: no rules matched {}.", path.display());
+                    panic!("Error: no rules matched {}.", path.display());
                 }
             }
         }
@@ -184,7 +228,7 @@ impl StepDescription {
 pub struct ShouldRun<'a> {
     pub builder: &'a Builder<'a>,
     // use a BTreeSet to maintain sort order
-    paths: BTreeSet<PathBuf>,
+    paths: BTreeSet<PathSet>,
 
     // If this is a default rule, this is an additional constraint placed on
     // it's run. Generally something like compiler docs being enabled.
@@ -205,31 +249,53 @@ impl<'a> ShouldRun<'a> {
         self
     }
 
+    // Unlike `krate` this will create just one pathset. As such, it probably shouldn't actually
+    // ever be used, but as we transition to having all rules properly handle passing krate(...) by
+    // actually doing something different for every crate passed.
+    pub fn all_krates(mut self, name: &str) -> Self {
+        let mut set = BTreeSet::new();
+        for krate in self.builder.in_tree_crates(name) {
+            set.insert(PathBuf::from(&krate.path));
+        }
+        self.paths.insert(PathSet { set });
+        self
+    }
+
     pub fn krate(mut self, name: &str) -> Self {
-        for (_, krate_path) in self.builder.crates(name) {
-            self.paths.insert(PathBuf::from(krate_path));
+        for krate in self.builder.in_tree_crates(name) {
+            self.paths.insert(PathSet::one(&krate.path));
         }
         self
     }
 
-    pub fn path(mut self, path: &str) -> Self {
-        self.paths.insert(PathBuf::from(path));
+    // single, non-aliased path
+    pub fn path(self, path: &str) -> Self {
+        self.paths(&[path])
+    }
+
+    // multiple aliases for the same job
+    pub fn paths(mut self, paths: &[&str]) -> Self {
+        self.paths.insert(PathSet {
+            set: paths.iter().map(PathBuf::from).collect(),
+        });
         self
     }
 
     // allows being more explicit about why should_run in Step returns the value passed to it
-    pub fn never(self) -> ShouldRun<'a> {
+    pub fn never(mut self) -> ShouldRun<'a> {
+        self.paths.insert(PathSet::empty());
         self
     }
 
-    fn run(&self, path: &Path) -> bool {
-        self.paths.iter().any(|p| path.ends_with(p))
+    fn pathset_for_path(&self, path: &Path) -> Option<&PathSet> {
+        self.paths.iter().find(|pathset| pathset.has(path))
     }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Kind {
     Build,
+    Check,
     Test,
     Bench,
     Dist,
@@ -251,18 +317,24 @@ impl<'a> Builder<'a> {
                 tool::Compiletest, tool::RemoteTestServer, tool::RemoteTestClient,
                 tool::RustInstaller, tool::Cargo, tool::Rls, tool::Rustdoc, tool::Clippy,
                 native::Llvm, tool::Rustfmt, tool::Miri),
-            Kind::Test => describe!(check::Tidy, check::Bootstrap, check::DefaultCompiletest,
-                check::HostCompiletest, check::Crate, check::CrateLibrustc, check::Rustdoc,
-                check::Linkcheck, check::Cargotest, check::Cargo, check::Rls, check::Docs,
-                check::ErrorIndex, check::Distcheck, check::Rustfmt, check::Miri, check::Clippy),
-            Kind::Bench => describe!(check::Crate, check::CrateLibrustc),
+            Kind::Check => describe!(check::Std, check::Test, check::Rustc),
+            Kind::Test => describe!(test::Tidy, test::Bootstrap, test::Ui, test::RunPass,
+                test::CompileFail, test::ParseFail, test::RunFail, test::RunPassValgrind,
+                test::MirOpt, test::Codegen, test::CodegenUnits, test::Incremental, test::Debuginfo,
+                test::UiFullDeps, test::RunPassFullDeps, test::RunFailFullDeps,
+                test::CompileFailFullDeps, test::IncrementalFullDeps, test::Rustdoc, test::Pretty,
+                test::RunPassPretty, test::RunFailPretty, test::RunPassValgrindPretty,
+                test::RunPassFullDepsPretty, test::RunFailFullDepsPretty, test::RunMake,
+                test::Crate, test::CrateLibrustc, test::Rustdoc, test::Linkcheck, test::Cargotest,
+                test::Cargo, test::Rls, test::Docs, test::ErrorIndex, test::Distcheck,
+                test::Rustfmt, test::Miri, test::Clippy, test::RustdocJS, test::RustdocTheme),
+            Kind::Bench => describe!(test::Crate, test::CrateLibrustc),
             Kind::Doc => describe!(doc::UnstableBook, doc::UnstableBookGen, doc::TheBook,
                 doc::Standalone, doc::Std, doc::Test, doc::Rustc, doc::ErrorIndex, doc::Nomicon,
-                doc::Reference, doc::Rustdoc, doc::CargoBook),
+                doc::Reference, doc::Rustdoc, doc::RustByExample, doc::CargoBook),
             Kind::Dist => describe!(dist::Docs, dist::Mingw, dist::Rustc, dist::DebuggerScripts,
                 dist::Std, dist::Analysis, dist::Src, dist::PlainSourceTarball, dist::Cargo,
-                dist::Rls, dist::Rustfmt, dist::Extended, dist::HashSign,
-                dist::DontDistWithMiriEnabled),
+                dist::Rls, dist::Rustfmt, dist::Extended, dist::HashSign),
             Kind::Install => describe!(install::Docs, install::Std, install::Cargo, install::Rls,
                 install::Rustfmt, install::Analysis, install::Src, install::Rustc),
         }
@@ -293,8 +365,10 @@ impl<'a> Builder<'a> {
             should_run = (desc.should_run)(should_run);
         }
         let mut help = String::from("Available paths:\n");
-        for path in should_run.paths {
-            help.push_str(format!("    ./x.py {} {}\n", subcommand, path.display()).as_str());
+        for pathset in should_run.paths {
+            for path in pathset.set {
+                help.push_str(format!("    ./x.py {} {}\n", subcommand, path.display()).as_str());
+            }
         }
         Some(help)
     }
@@ -302,6 +376,7 @@ impl<'a> Builder<'a> {
     pub fn run(build: &Build) {
         let (kind, paths) = match build.config.cmd {
             Subcommand::Build { ref paths } => (Kind::Build, &paths[..]),
+            Subcommand::Check { ref paths } => (Kind::Check, &paths[..]),
             Subcommand::Doc { ref paths } => (Kind::Doc, &paths[..]),
             Subcommand::Test { ref paths, .. } => (Kind::Test, &paths[..]),
             Subcommand::Bench { ref paths, .. } => (Kind::Bench, &paths[..]),
@@ -310,6 +385,12 @@ impl<'a> Builder<'a> {
             Subcommand::Clean { .. } => panic!(),
         };
 
+        if let Some(path) = paths.get(0) {
+            if path == Path::new("nonexistent/path/to/trigger/cargo/metadata") {
+                return;
+            }
+        }
+
         let builder = Builder {
             build,
             top_stage: build.config.stage.unwrap_or(2),
@@ -317,6 +398,12 @@ impl<'a> Builder<'a> {
             cache: Cache::new(),
             stack: RefCell::new(Vec::new()),
         };
+
+        if kind == Kind::Dist {
+            assert!(!build.config.test_miri, "Do not distribute with miri enabled.\n\
+                The distributed libraries would include all MIR (increasing binary size).
+                The distributed MIR would include validation statements.");
+        }
 
         StepDescription::run(&Builder::get_step_descriptions(builder.kind), &builder, paths);
     }
@@ -371,6 +458,11 @@ impl<'a> Builder<'a> {
             }
         }
         self.ensure(Libdir { compiler, target })
+    }
+
+    pub fn sysroot_codegen_backends(&self, compiler: Compiler) -> PathBuf {
+        self.sysroot_libdir(compiler, compiler.host)
+            .with_file_name("codegen-backends")
     }
 
     /// Returns the compiler's libdir where it stores the dynamic libraries that
@@ -444,7 +536,8 @@ impl<'a> Builder<'a> {
         let out_dir = self.stage_out(compiler, mode);
         cargo.env("CARGO_TARGET_DIR", out_dir)
              .arg(cmd)
-             .arg("--target").arg(target);
+             .arg("--target")
+             .arg(target);
 
         // If we were invoked from `make` then that's already got a jobserver
         // set up for us so no need to tell Cargo about jobs all over again.
@@ -462,6 +555,18 @@ impl<'a> Builder<'a> {
             stage = 1;
         } else {
             stage = compiler.stage;
+        }
+
+        let mut extra_args = env::var(&format!("RUSTFLAGS_STAGE_{}", stage)).unwrap_or_default();
+        if stage != 0 {
+            let s = env::var("RUSTFLAGS_STAGE_NOT_0").unwrap_or_default();
+            extra_args.push_str(" ");
+            extra_args.push_str(&s);
+        }
+
+        if !extra_args.is_empty() {
+            cargo.env("RUSTFLAGS",
+                format!("{} {}", env::var("RUSTFLAGS").unwrap_or_default(), extra_args));
         }
 
         // Customize the compiler we're running. Specify the compiler to cargo
@@ -487,9 +592,6 @@ impl<'a> Builder<'a> {
              })
              .env("TEST_MIRI", self.config.test_miri.to_string())
              .env("RUSTC_ERROR_METADATA_DST", self.extended_error_dir());
-        if let Some(n) = self.config.rust_codegen_units {
-            cargo.env("RUSTC_CODEGEN_UNITS", n.to_string());
-        }
 
         if let Some(host_linker) = self.build.linker(compiler.host) {
             cargo.env("RUSTC_HOST_LINKER", host_linker);
@@ -497,7 +599,7 @@ impl<'a> Builder<'a> {
         if let Some(target_linker) = self.build.linker(target) {
             cargo.env("RUSTC_TARGET_LINKER", target_linker);
         }
-        if cmd != "build" {
+        if cmd != "build" && cmd != "check" {
             cargo.env("RUSTDOC_LIBDIR", self.rustc_libdir(self.compiler(2, self.build.build)));
         }
 
@@ -551,7 +653,7 @@ impl<'a> Builder<'a> {
         // build scripts in that situation.
         //
         // If LLVM support is disabled we need to use the snapshot compiler to compile
-        // build scripts, as the new compiler doesnt support executables.
+        // build scripts, as the new compiler doesn't support executables.
         if mode == Mode::Libstd || !self.build.config.llvm_enabled {
             cargo.env("RUSTC_SNAPSHOT", &self.initial_rustc)
                  .env("RUSTC_SNAPSHOT_LIBDIR", self.rustc_snapshot_libdir());
@@ -564,8 +666,7 @@ impl<'a> Builder<'a> {
         // not guaranteeing correctness across builds if the compiler
         // is changing under your feet.`
         if self.config.incremental && compiler.stage == 0 {
-            let incr_dir = self.incremental_dir(compiler);
-            cargo.env("RUSTC_INCREMENTAL", incr_dir);
+            cargo.env("CARGO_INCREMENTAL", "1");
         }
 
         if let Some(ref on_fail) = self.config.on_fail {
@@ -621,9 +722,49 @@ impl<'a> Builder<'a> {
         // Set this for all builds to make sure doc builds also get it.
         cargo.env("CFG_RELEASE_CHANNEL", &self.build.config.channel);
 
+        // This one's a bit tricky. As of the time of this writing the compiler
+        // links to the `winapi` crate on crates.io. This crate provides raw
+        // bindings to Windows system functions, sort of like libc does for
+        // Unix. This crate also, however, provides "import libraries" for the
+        // MinGW targets. There's an import library per dll in the windows
+        // distribution which is what's linked to. These custom import libraries
+        // are used because the winapi crate can reference Windows functions not
+        // present in the MinGW import libraries.
+        //
+        // For example MinGW may ship libdbghelp.a, but it may not have
+        // references to all the functions in the dbghelp dll. Instead the
+        // custom import library for dbghelp in the winapi crates has all this
+        // information.
+        //
+        // Unfortunately for us though the import libraries are linked by
+        // default via `-ldylib=winapi_foo`. That is, they're linked with the
+        // `dylib` type with a `winapi_` prefix (so the winapi ones don't
+        // conflict with the system MinGW ones). This consequently means that
+        // the binaries we ship of things like rustc_trans (aka the rustc_trans
+        // DLL) when linked against *again*, for example with procedural macros
+        // or plugins, will trigger the propagation logic of `-ldylib`, passing
+        // `-lwinapi_foo` to the linker again. This isn't actually available in
+        // our distribution, however, so the link fails.
+        //
+        // To solve this problem we tell winapi to not use its bundled import
+        // libraries. This means that it will link to the system MinGW import
+        // libraries by default, and the `-ldylib=foo` directives will still get
+        // passed to the final linker, but they'll look like `-lfoo` which can
+        // be resolved because MinGW has the import library. The downside is we
+        // don't get newer functions from Windows, but we don't use any of them
+        // anyway.
+        cargo.env("WINAPI_NO_BUNDLED_LIBRARIES", "1");
+
         if self.is_very_verbose() {
             cargo.arg("-v");
         }
+
+        // This must be kept before the thinlto check, as we set codegen units
+        // to 1 forcibly there.
+        if let Some(n) = self.config.rust_codegen_units {
+            cargo.env("RUSTC_CODEGEN_UNITS", n.to_string());
+        }
+
         if self.config.rust_optimize {
             // FIXME: cargo bench does not accept `--release`
             if cmd != "bench" {
@@ -631,11 +772,17 @@ impl<'a> Builder<'a> {
             }
 
             if self.config.rust_codegen_units.is_none() &&
-               self.build.is_rust_llvm(compiler.host)
-            {
+               self.build.is_rust_llvm(compiler.host) &&
+               self.config.rust_thinlto {
                 cargo.env("RUSTC_THINLTO", "1");
+            } else if self.config.rust_codegen_units.is_none() {
+                // Generally, if ThinLTO has been disabled for some reason, we
+                // want to set the codegen units to 1. However, we shouldn't do
+                // this if the option was specifically set by the user.
+                cargo.env("RUSTC_CODEGEN_UNITS", "1");
             }
         }
+
         if self.is_sudo {
             cargo.arg("--frozen");
         }

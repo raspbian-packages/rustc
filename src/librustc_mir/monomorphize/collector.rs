@@ -636,7 +636,8 @@ impl<'a, 'tcx> MirVisitor<'tcx> for MirNeighborCollector<'a, 'tcx> {
             mir::TerminatorKind::Assert { .. } => {}
             mir::TerminatorKind::GeneratorDrop |
             mir::TerminatorKind::Yield { .. } |
-            mir::TerminatorKind::FalseEdges { .. } => bug!(),
+            mir::TerminatorKind::FalseEdges { .. } |
+            mir::TerminatorKind::FalseUnwind { .. } => bug!(),
         }
 
         self.super_terminator_kind(block, kind, location);
@@ -838,8 +839,8 @@ fn find_vtable_types_for_unsizing<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 CustomCoerceUnsized::Struct(i) => i
             };
 
-            let source_fields = &source_adt_def.struct_variant().fields;
-            let target_fields = &target_adt_def.struct_variant().fields;
+            let source_fields = &source_adt_def.non_enum_variant().fields;
+            let target_fields = &target_adt_def.non_enum_variant().fields;
 
             assert!(coerce_index < source_fields.len() &&
                     source_fields.len() == target_fields.len());
@@ -910,7 +911,6 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
             hir::ItemUse(..)         |
             hir::ItemForeignMod(..)  |
             hir::ItemTy(..)          |
-            hir::ItemAutoImpl(..) |
             hir::ItemTrait(..)       |
             hir::ItemTraitAlias(..)  |
             hir::ItemMod(..)         => {

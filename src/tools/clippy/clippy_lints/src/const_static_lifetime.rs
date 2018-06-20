@@ -1,6 +1,6 @@
-use syntax::ast::{Item, ItemKind, Ty, TyKind};
+use syntax::ast::*;
 use rustc::lint::{EarlyContext, EarlyLintPass, LintArray, LintPass};
-use utils::{in_macro, span_lint_and_then};
+use utils::{in_macro, snippet, span_lint_and_then};
 
 /// **What it does:** Checks for constants with an explicit `'static` lifetime.
 ///
@@ -18,7 +18,6 @@ use utils::{in_macro, span_lint_and_then};
 /// ```rust
 ///  const FOO: &[(&str, &str, fn(&Bar) -> bool)] = &[...]
 /// ```
-
 declare_lint! {
     pub CONST_STATIC_LIFETIME,
     Warn,
@@ -52,14 +51,15 @@ impl StaticConst {
                         TyKind::Path(..) | TyKind::Slice(..) | TyKind::Array(..) |
                         TyKind::Tup(..) => {
                             if lifetime.ident.name == "'static" {
-                                let mut sug: String = String::new();
+                                let snip = snippet(cx, borrow_type.ty.span, "<type>");
+                                let sugg = format!("&{}", snip);
                                 span_lint_and_then(
                                     cx,
                                     CONST_STATIC_LIFETIME,
                                     lifetime.span,
                                     "Constants have by default a `'static` lifetime",
                                     |db| {
-                                        db.span_suggestion(lifetime.span, "consider removing `'static`", sug);
+                                        db.span_suggestion(ty.span, "consider removing `'static`", sugg);
                                     },
                                 );
                             }
@@ -82,6 +82,24 @@ impl EarlyLintPass for StaticConst {
         if !in_macro(item.span) {
             // Match only constants...
             if let ItemKind::Const(ref var_type, _) = item.node {
+                self.visit_type(var_type, cx);
+            }
+        }
+    }
+
+    fn check_trait_item(&mut self, cx: &EarlyContext, item: &TraitItem) {
+        if !in_macro(item.span) {
+            // Match only constants...
+            if let TraitItemKind::Const(ref var_type, _) = item.node {
+                self.visit_type(var_type, cx);
+            }
+        }
+    }
+
+    fn check_impl_item(&mut self, cx: &EarlyContext, item: &ImplItem) {
+        if !in_macro(item.span) {
+            // Match only constants...
+            if let ImplItemKind::Const(ref var_type, _) = item.node {
                 self.visit_type(var_type, cx);
             }
         }

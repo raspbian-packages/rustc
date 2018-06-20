@@ -830,17 +830,19 @@ fn find_repr_type_name(diagnostic: &Handler, type_attrs: &[ast::Attribute]) -> &
     for a in type_attrs {
         for r in &attr::find_repr_attrs(diagnostic, a) {
             repr_type_name = match *r {
-                attr::ReprPacked | attr::ReprSimd | attr::ReprAlign(_) => continue,
-                attr::ReprExtern => "i32",
+                attr::ReprPacked | attr::ReprSimd | attr::ReprAlign(_) | attr::ReprTransparent =>
+                    continue,
 
-                attr::ReprInt(attr::SignedInt(ast::IntTy::Is)) => "isize",
+                attr::ReprC => "i32",
+
+                attr::ReprInt(attr::SignedInt(ast::IntTy::Isize)) => "isize",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I8)) => "i8",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I16)) => "i16",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I32)) => "i32",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I64)) => "i64",
                 attr::ReprInt(attr::SignedInt(ast::IntTy::I128)) => "i128",
 
-                attr::ReprInt(attr::UnsignedInt(ast::UintTy::Us)) => "usize",
+                attr::ReprInt(attr::UnsignedInt(ast::UintTy::Usize)) => "usize",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U8)) => "u8",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U16)) => "u16",
                 attr::ReprInt(attr::UnsignedInt(ast::UintTy::U32)) => "u32",
@@ -1437,7 +1439,7 @@ impl<'a> MethodDef<'a> {
                                                          &catch_all_substructure);
 
             // Final wrinkle: the self_args are expressions that deref
-            // down to desired l-values, but we cannot actually deref
+            // down to desired places, but we cannot actually deref
             // them when they are fed as r-values into a tuple
             // expression; here add a layer of borrowing, turning
             // `(*self, *__arg_0, ...)` into `(&*self, &*__arg_0, ...)`.
@@ -1514,7 +1516,7 @@ impl<'a> MethodDef<'a> {
         } else {
 
             // Final wrinkle: the self_args are expressions that deref
-            // down to desired l-values, but we cannot actually deref
+            // down to desired places, but we cannot actually deref
             // them when they are fed as r-values into a tuple
             // expression; here add a layer of borrowing, turning
             // `(*self, *__arg_0, ...)` into `(&*self, &*__arg_0, ...)`.

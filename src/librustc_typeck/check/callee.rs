@@ -8,15 +8,15 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use super::{Expectation, FnCtxt, TupleArgumentsFlag};
+use super::{Expectation, FnCtxt, Needs, TupleArgumentsFlag};
 use super::autoderef::Autoderef;
 use super::method::MethodCallee;
 
 use hir::def::Def;
 use hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::{infer, traits};
-use rustc::ty::{self, TyCtxt, TypeFoldable, LvaluePreference, Ty};
-use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow};
+use rustc::ty::{self, TyCtxt, TypeFoldable, Ty};
+use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability};
 use syntax::abi;
 use syntax::symbol::Symbol;
 use syntax_pos::Span;
@@ -96,7 +96,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // If the callee is a bare function or a closure, then we're all set.
         match adjusted_ty.sty {
             ty::TyFnDef(..) | ty::TyFnPtr(_) => {
-                let adjustments = autoderef.adjust_steps(LvaluePreference::NoPreference);
+                let adjustments = autoderef.adjust_steps(Needs::None);
                 self.apply_adjustments(callee_expr, adjustments);
                 return Some(CallStep::Builtin(adjusted_ty));
             }
@@ -113,7 +113,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                                    infer::FnCall,
                                                                    &closure_ty)
                         .0;
-                    let adjustments = autoderef.adjust_steps(LvaluePreference::NoPreference);
+                    let adjustments = autoderef.adjust_steps(Needs::None);
                     self.record_deferred_call_resolution(def_id, DeferredCallResolution {
                         call_expr,
                         callee_expr,
@@ -143,7 +143,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         }
 
         self.try_overloaded_call_traits(call_expr, adjusted_ty).map(|(autoref, method)| {
-            let mut adjustments = autoderef.adjust_steps(LvaluePreference::NoPreference);
+            let mut adjustments = autoderef.adjust_steps(Needs::None);
             adjustments.extend(autoref);
             self.apply_adjustments(callee_expr, adjustments);
             CallStep::Overloaded(method)
@@ -176,8 +176,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     let mut autoref = None;
                     if borrow {
                         if let ty::TyRef(region, mt) = method.sig.inputs()[0].sty {
+                            let mutbl = match mt.mutbl {
+                                hir::MutImmutable => AutoBorrowMutability::Immutable,
+                                hir::MutMutable => AutoBorrowMutability::Mutable {
+                                    // For initial two-phase borrow
+                                    // deployment, conservatively omit
+                                    // overloaded function call ops.
+                                    allow_two_phase_borrow: false,
+                                }
+                            };
                             autoref = Some(Adjustment {
-                                kind: Adjust::Borrow(AutoBorrow::Ref(region, mt.mutbl)),
+                                kind: Adjust::Borrow(AutoBorrow::Ref(region, mutbl)),
                                 target: method.sig.inputs()[0]
                             });
                         }
@@ -210,15 +219,25 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         }
                     }
                 }
-                let mut err = type_error_struct!(self.tcx.sess, call_expr.span, callee_ty, E0618,
-                                                 "expected function, found `{}`",
-                                                 if let Some(ref path) = unit_variant {
-                                                     path.to_string()
-                                                 } else {
-                                                     callee_ty.to_string()
-                                                 });
-                if let Some(path) = unit_variant {
-                    err.help(&format!("did you mean to write `{}`?", path));
+
+                let mut err = type_error_struct!(
+                    self.tcx.sess,
+                    call_expr.span,
+                    callee_ty,
+                    E0618,
+                    "expected function, found {}",
+                    match unit_variant {
+                        Some(ref path) => format!("enum variant `{}`", path),
+                        None => format!("`{}`", callee_ty),
+                    });
+
+                err.span_label(call_expr.span, "not a function");
+
+                if let Some(ref path) = unit_variant {
+                    err.span_suggestion(call_expr.span,
+                                        &format!("`{}` is a unit variant, you need to write it \
+                                                  without the parenthesis", path),
+                                        path.to_string());
                 }
 
                 if let hir::ExprCall(ref expr, _) = call_expr.node {
@@ -235,7 +254,11 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         _ => self.tcx.hir.span_if_local(def.def_id())
                     };
                     if let Some(span) = def_span {
-                        err.span_note(span, "defined here");
+                        let name = match unit_variant {
+                            Some(path) => path,
+                            None => callee_ty.to_string(),
+                        };
+                        err.span_label(span, format!("`{}` defined here", name));
                     }
                 }
 

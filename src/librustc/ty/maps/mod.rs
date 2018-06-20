@@ -112,9 +112,6 @@ define_maps! { <'tcx>
     /// True if this is a foreign item (i.e., linked via `extern { ... }`).
     [] fn is_foreign_item: IsForeignItem(DefId) -> bool,
 
-    /// True if this is an auto impl (aka impl Foo for ..)
-    [] fn is_auto_impl: IsAutoImpl(DefId) -> bool,
-
     /// Get a map with the variance of every item; use `item_variance`
     /// instead.
     [] fn crate_variances: crate_variances(CrateNum) -> Rc<ty::CrateVariancesMap>,
@@ -346,6 +343,7 @@ define_maps! { <'tcx>
         -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>),
     [] fn export_name: ExportName(DefId) -> Option<Symbol>,
     [] fn contains_extern_indicator: ContainsExternIndicator(DefId) -> bool,
+    [] fn symbol_export_level: GetSymbolExportLevel(DefId) -> SymbolExportLevel,
     [] fn is_translated_function: IsTranslatedFunction(DefId) -> bool,
     [] fn codegen_unit: CodegenUnit(InternedString) -> Arc<CodegenUnit<'tcx>>,
     [] fn compile_codegen_unit: CompileCodegenUnit(InternedString) -> Stats,
@@ -360,6 +358,17 @@ define_maps! { <'tcx>
     // however, which uses this query as a kind of cache.
     [] fn erase_regions_ty: erase_regions_ty(Ty<'tcx>) -> Ty<'tcx>,
     [] fn fully_normalize_monormophic_ty: normalize_ty_node(Ty<'tcx>) -> Ty<'tcx>,
+
+    [] fn substitute_normalize_and_test_predicates:
+        substitute_normalize_and_test_predicates_node((DefId, &'tcx Substs<'tcx>)) -> bool,
+
+    [] fn target_features_whitelist:
+        target_features_whitelist_node(CrateNum) -> Rc<FxHashSet<String>>,
+    [] fn target_features_enabled: TargetFeaturesEnabled(DefId) -> Rc<Vec<String>>,
+
+    // Get an estimate of the size of an InstanceDef based on its MIR for CGU partitioning.
+    [] fn instance_def_size_estimate: instance_def_size_estimate_dep_node(ty::InstanceDef<'tcx>)
+        -> usize,
 }
 
 //////////////////////////////////////////////////////////////////////
@@ -499,4 +508,20 @@ fn vtable_methods_node<'tcx>(trait_ref: ty::PolyTraitRef<'tcx>) -> DepConstructo
 }
 fn normalize_ty_node<'tcx>(_: Ty<'tcx>) -> DepConstructor<'tcx> {
     DepConstructor::NormalizeTy
+}
+
+fn substitute_normalize_and_test_predicates_node<'tcx>(key: (DefId, &'tcx Substs<'tcx>))
+                                            -> DepConstructor<'tcx> {
+    DepConstructor::SubstituteNormalizeAndTestPredicates { key }
+}
+
+fn target_features_whitelist_node<'tcx>(_: CrateNum) -> DepConstructor<'tcx> {
+    DepConstructor::TargetFeaturesWhitelist
+}
+
+fn instance_def_size_estimate_dep_node<'tcx>(instance_def: ty::InstanceDef<'tcx>)
+                                              -> DepConstructor<'tcx> {
+    DepConstructor::InstanceDefSizeEstimate {
+        instance_def
+    }
 }

@@ -23,8 +23,14 @@
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
 #include "llvm/Target/TargetMachine.h"
-#include "llvm/Target/TargetSubtargetInfo.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
+
+#if LLVM_VERSION_GE(6, 0)
+#include "llvm/CodeGen/TargetSubtargetInfo.h"
+#include "llvm/IR/IntrinsicInst.h"
+#else
+#include "llvm/Target/TargetSubtargetInfo.h"
+#endif
 
 #if LLVM_VERSION_GE(4, 0)
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
@@ -210,20 +216,15 @@ extern "C" bool LLVMRustHasFeature(LLVMTargetMachineRef TM,
 
 enum class LLVMRustCodeModel {
   Other,
-  Default,
-  JITDefault,
   Small,
   Kernel,
   Medium,
   Large,
+  None,
 };
 
 static CodeModel::Model fromRust(LLVMRustCodeModel Model) {
   switch (Model) {
-  case LLVMRustCodeModel::Default:
-    return CodeModel::Default;
-  case LLVMRustCodeModel::JITDefault:
-    return CodeModel::JITDefault;
   case LLVMRustCodeModel::Small:
     return CodeModel::Small;
   case LLVMRustCodeModel::Kernel:
@@ -360,7 +361,6 @@ extern "C" LLVMTargetMachineRef LLVMRustCreateTargetMachine(
     bool TrapUnreachable,
     bool Singlethread) {
 
-  auto CM = fromRust(RustCM);
   auto OptLevel = fromRust(RustOptLevel);
   auto RM = fromRust(RustReloc);
 
@@ -399,6 +399,13 @@ extern "C" LLVMTargetMachineRef LLVMRustCreateTargetMachine(
     Options.ThreadModel = ThreadModel::Single;
   }
 
+#if LLVM_VERSION_GE(6, 0)
+  Optional<CodeModel::Model> CM;
+#else
+  CodeModel::Model CM = CodeModel::Model::Default;
+#endif
+  if (RustCM != LLVMRustCodeModel::None)
+    CM = fromRust(RustCM);
   TargetMachine *TM = TheTarget->createTargetMachine(
       Trip.getTriple(), RealCPU, Feature, Options, RM, CM, OptLevel);
   return wrap(TM);
@@ -746,10 +753,6 @@ LLVMRustSetDataLayoutFromTargetMachine(LLVMModuleRef Module,
   unwrap(Module)->setDataLayout(Target->createDataLayout());
 }
 
-extern "C" LLVMTargetDataRef LLVMRustGetModuleDataLayout(LLVMModuleRef M) {
-  return wrap(&unwrap(M)->getDataLayout());
-}
-
 extern "C" void LLVMRustSetModulePIELevel(LLVMModuleRef M) {
   unwrap(M)->setPIELevel(PIELevel::Level::Large);
 }
@@ -833,6 +836,10 @@ struct LLVMRustThinLTOData {
   StringMap<FunctionImporter::ImportMapTy> ImportLists;
   StringMap<FunctionImporter::ExportSetTy> ExportLists;
   StringMap<GVSummaryMapTy> ModuleToDefinedGVSummaries;
+
+#if LLVM_VERSION_GE(7, 0)
+  LLVMRustThinLTOData() : Index(/* isPerformingAnalysis = */ false) {}
+#endif
 };
 
 // Just an argument to the `LLVMRustCreateThinLTOData` function below.
@@ -915,7 +922,14 @@ LLVMRustCreateThinLTOData(LLVMRustThinLTOModule *modules,
   //
   // This is copied from `lib/LTO/ThinLTOCodeGenerator.cpp`
 #if LLVM_VERSION_GE(5, 0)
+#if LLVM_VERSION_GE(7, 0)
+  auto deadIsPrevailing = [&](GlobalValue::GUID G) {
+    return PrevailingType::Unknown;
+  };
+  computeDeadSymbols(Ret->Index, Ret->GUIDPreservedSymbols, deadIsPrevailing);
+#else
   computeDeadSymbols(Ret->Index, Ret->GUIDPreservedSymbols);
+#endif
   ComputeCrossModuleImport(
     Ret->Index,
     Ret->ModuleToDefinedGVSummaries,

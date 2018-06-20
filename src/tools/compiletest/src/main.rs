@@ -33,10 +33,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use filetime::FileTime;
 use getopts::Options;
-use common::Config;
+use common::{Config, TestPaths};
 use common::{DebugInfoGdb, DebugInfoLldb, Mode, Pretty};
 use common::{expected_output_path, UI_EXTENSIONS};
-use test::{ColorConfig, TestPaths};
+use test::ColorConfig;
 use util::logv;
 
 use self::header::EarlyProps;
@@ -485,7 +485,7 @@ pub fn test_opts(config: &Config) -> test::TestOpts {
         filter: config.filter.clone(),
         filter_exact: config.filter_exact,
         run_ignored: config.run_ignored,
-        quiet: config.quiet,
+        format: if config.quiet { test::OutputFormat::Terse } else { test::OutputFormat::Pretty },
         logfile: config.logfile.clone(),
         run_tests: true,
         bench_benchmarks: true,
@@ -667,9 +667,16 @@ fn up_to_date(config: &Config, testpaths: &TestPaths, props: &EarlyProps) -> boo
     for pretty_printer_file in &pretty_printer_files {
         inputs.push(mtime(&rust_src_dir.join(pretty_printer_file)));
     }
-    for lib in config.run_lib_path.read_dir().unwrap() {
-        let lib = lib.unwrap();
-        inputs.push(mtime(&lib.path()));
+    let mut entries = config.run_lib_path.read_dir().unwrap()
+        .collect::<Vec<_>>();
+    while let Some(entry) = entries.pop() {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if entry.metadata().unwrap().is_file() {
+            inputs.push(mtime(&path));
+        } else {
+            entries.extend(path.read_dir().unwrap());
+        }
     }
     if let Some(ref rustdoc_path) = config.rustdoc_path {
         inputs.push(mtime(&rustdoc_path));

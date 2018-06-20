@@ -44,10 +44,12 @@
 #![feature(box_syntax)]
 #![feature(conservative_impl_trait)]
 #![feature(const_fn)]
+#![feature(copy_closures, clone_closures)]
 #![feature(core_intrinsics)]
 #![feature(drain_filter)]
 #![feature(dyn_trait)]
 #![feature(from_ref)]
+#![feature(fs_read_write)]
 #![feature(i128)]
 #![feature(i128_type)]
 #![feature(inclusive_range)]
@@ -56,6 +58,7 @@
 #![feature(macro_vis_matcher)]
 #![feature(match_default_bindings)]
 #![feature(never_type)]
+#![feature(non_exhaustive)]
 #![feature(nonzero)]
 #![feature(quote)]
 #![feature(refcell_replace_swap)]
@@ -176,4 +179,5 @@ fn noop() {
 
 
 // Build the diagnostics array at the end so that the metadata includes error use sites.
+#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc, DIAGNOSTICS }

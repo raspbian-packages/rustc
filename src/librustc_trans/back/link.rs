@@ -16,7 +16,7 @@ use super::rpath::RPathConfig;
 use super::rpath;
 use metadata::METADATA_FILENAME;
 use rustc::session::config::{self, NoDebugInfo, OutputFilenames, OutputType, PrintRequest};
-use rustc::session::config::RUST_CGU_EXT;
+use rustc::session::config::{RUST_CGU_EXT, Lto};
 use rustc::session::filesearch;
 use rustc::session::search_paths::PathKind;
 use rustc::session::Session;
@@ -37,7 +37,7 @@ use std::env;
 use std::ffi::OsString;
 use std::fmt;
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
 use std::str;
@@ -139,10 +139,10 @@ pub fn remove(sess: &Session, path: &Path) {
 
 /// Perform the linkage portion of the compilation phase. This will generate all
 /// of the requested outputs for this compilation session.
-pub fn link_binary(sess: &Session,
-                   trans: &CrateTranslation,
-                   outputs: &OutputFilenames,
-                   crate_name: &str) -> Vec<PathBuf> {
+pub(crate) fn link_binary(sess: &Session,
+                          trans: &CrateTranslation,
+                          outputs: &OutputFilenames,
+                          crate_name: &str) -> Vec<PathBuf> {
     let mut out_filenames = Vec::new();
     for &crate_type in sess.crate_types.borrow().iter() {
         // Ignore executable crates if we have -Z no-trans, as they will error.
@@ -199,9 +199,9 @@ fn filename_for_metadata(sess: &Session, crate_name: &str, outputs: &OutputFilen
     out_filename
 }
 
-pub fn each_linked_rlib(sess: &Session,
-                        info: &CrateInfo,
-                        f: &mut FnMut(CrateNum, &Path)) -> Result<(), String> {
+pub(crate) fn each_linked_rlib(sess: &Session,
+                               info: &CrateInfo,
+                               f: &mut FnMut(CrateNum, &Path)) -> Result<(), String> {
     let crates = info.used_crates_static.iter();
     let fmts = sess.dependency_formats.borrow();
     let fmts = fmts.get(&config::CrateTypeExecutable)
@@ -245,7 +245,7 @@ pub fn each_linked_rlib(sess: &Session,
 /// It's unusual for a crate to not participate in LTO. Typically only
 /// compiler-specific and unstable crates have a reason to not participate in
 /// LTO.
-pub fn ignored_for_lto(sess: &Session, info: &CrateInfo, cnum: CrateNum) -> bool {
+pub(crate) fn ignored_for_lto(sess: &Session, info: &CrateInfo, cnum: CrateNum) -> bool {
     // If our target enables builtin function lowering in LLVM then the
     // crates providing these functions don't participate in LTO (e.g.
     // no_builtins or compiler builtins crates).
@@ -341,9 +341,7 @@ fn archive_config<'a>(sess: &'a Session,
 fn emit_metadata<'a>(sess: &'a Session, trans: &CrateTranslation, tmpdir: &TempDir)
                      -> PathBuf {
     let out_filename = tmpdir.path().join(METADATA_FILENAME);
-    let result = fs::File::create(&out_filename).and_then(|mut f| {
-        f.write_all(&trans.metadata.raw_data)
-    });
+    let result = fs::write(&out_filename, &trans.metadata.raw_data);
 
     if let Err(e) = result {
         sess.fatal(&format!("failed to write {}: {}", out_filename.display(), e));
@@ -505,7 +503,8 @@ fn link_staticlib(sess: &Session,
         });
         ab.add_rlib(path,
                     &name.as_str(),
-                    sess.lto() && !ignored_for_lto(sess, &trans.crate_info, cnum),
+                    is_full_lto_enabled(sess) &&
+                        !ignored_for_lto(sess, &trans.crate_info, cnum),
                     skip_object_files).unwrap();
 
         all_native_libs.extend(trans.crate_info.native_libraries[&cnum].iter().cloned());
@@ -1232,7 +1231,8 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
             lib.kind == NativeLibraryKind::NativeStatic && !relevant_lib(sess, lib)
         });
 
-        if (!sess.lto() || ignored_for_lto(sess, &trans.crate_info, cnum)) &&
+        if (!is_full_lto_enabled(sess) ||
+            ignored_for_lto(sess, &trans.crate_info, cnum)) &&
            crate_type != config::CrateTypeDylib &&
            !skip_native {
             cmd.link_rlib(&fix_windows_verbatim_for_gcc(cratepath));
@@ -1285,7 +1285,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
                 // file, then we don't need the object file as it's part of the
                 // LTO module. Note that `#![no_builtins]` is excluded from LTO,
                 // though, so we let that object file slide.
-                let skip_because_lto = sess.lto() &&
+                let skip_because_lto = is_full_lto_enabled(sess) &&
                     is_rust_object &&
                     (sess.target.target.options.no_builtins ||
                      !trans.crate_info.is_no_builtins.contains(&cnum));
@@ -1322,7 +1322,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
     fn add_dynamic_crate(cmd: &mut Linker, sess: &Session, cratepath: &Path) {
         // If we're performing LTO, then it should have been previously required
         // that all upstream rust dependencies were available in an rlib format.
-        assert!(!sess.lto());
+        assert!(!is_full_lto_enabled(sess));
 
         // Just need to tell the linker about where the library lives and
         // what its name is
@@ -1428,5 +1428,15 @@ fn link_binaryen(sess: &Session,
         sess.fatal(&format!("failed to create `{}`: {}",
                             out_filename.display(),
                             e));
+    }
+}
+
+fn is_full_lto_enabled(sess: &Session) -> bool {
+    match sess.lto() {
+        Lto::Yes |
+        Lto::Thin |
+        Lto::Fat => true,
+        Lto::No |
+        Lto::ThinLocal => false,
     }
 }

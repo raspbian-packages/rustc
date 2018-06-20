@@ -18,6 +18,7 @@ use rustc::middle::cstore::{LinkMeta, LinkagePreference, NativeLibrary,
 use rustc::hir::def::CtorKind;
 use rustc::hir::def_id::{CrateNum, CRATE_DEF_INDEX, DefIndex, DefId, LOCAL_CRATE};
 use rustc::hir::map::definitions::DefPathTable;
+use rustc::ich::Fingerprint;
 use rustc::middle::dependency_format::Linkage;
 use rustc::middle::lang_items;
 use rustc::mir;
@@ -41,7 +42,7 @@ use syntax::ast::{self, CRATE_NODE_ID};
 use syntax::codemap::Spanned;
 use syntax::attr;
 use syntax::symbol::Symbol;
-use syntax_pos::{self, FileName};
+use syntax_pos::{self, FileName, FileMap, Span, DUMMY_SP};
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
@@ -57,6 +58,9 @@ pub struct EncodeContext<'a, 'tcx: 'a> {
     lazy_state: LazyState,
     type_shorthands: FxHashMap<Ty<'tcx>, usize>,
     predicate_shorthands: FxHashMap<ty::Predicate<'tcx>, usize>,
+
+    // This is used to speed up Span encoding.
+    filemap_cache: Rc<FileMap>,
 }
 
 macro_rules! encoder_methods {
@@ -136,7 +140,42 @@ impl<'a, 'tcx> SpecializedEncoder<DefId> for EncodeContext<'a, 'tcx> {
 impl<'a, 'tcx> SpecializedEncoder<DefIndex> for EncodeContext<'a, 'tcx> {
     #[inline]
     fn specialized_encode(&mut self, def_index: &DefIndex) -> Result<(), Self::Error> {
-        self.emit_u32(def_index.as_u32())
+        self.emit_u32(def_index.as_raw_u32())
+    }
+}
+
+impl<'a, 'tcx> SpecializedEncoder<Span> for EncodeContext<'a, 'tcx> {
+    fn specialized_encode(&mut self, span: &Span) -> Result<(), Self::Error> {
+        if *span == DUMMY_SP {
+            return TAG_INVALID_SPAN.encode(self)
+        }
+
+        let span = span.data();
+
+        // The Span infrastructure should make sure that this invariant holds:
+        debug_assert!(span.lo <= span.hi);
+
+        if !self.filemap_cache.contains(span.lo) {
+            let codemap = self.tcx.sess.codemap();
+            let filemap_index = codemap.lookup_filemap_idx(span.lo);
+            self.filemap_cache = codemap.files()[filemap_index].clone();
+        }
+
+        if !self.filemap_cache.contains(span.hi) {
+            // Unfortunately, macro expansion still sometimes generates Spans
+            // that malformed in this way.
+            return TAG_INVALID_SPAN.encode(self)
+        }
+
+        TAG_VALID_SPAN.encode(self)?;
+        span.lo.encode(self)?;
+
+        // Encode length which is usually less than span.hi and profits more
+        // from the variable-length integer encoding that we use.
+        let len = span.hi - span.lo;
+        len.encode(self)
+
+        // Don't encode the expansion context.
     }
 }
 
@@ -151,6 +190,12 @@ impl<'a, 'tcx> SpecializedEncoder<ty::GenericPredicates<'tcx>> for EncodeContext
                           predicates: &ty::GenericPredicates<'tcx>)
                           -> Result<(), Self::Error> {
         ty_codec::encode_predicates(self, predicates, |ecx| &mut ecx.predicate_shorthands)
+    }
+}
+
+impl<'a, 'tcx> SpecializedEncoder<Fingerprint> for EncodeContext<'a, 'tcx> {
+    fn specialized_encode(&mut self, f: &Fingerprint) -> Result<(), Self::Error> {
+        f.encode_opaque(&mut self.opaque)
     }
 }
 
@@ -587,7 +632,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
         debug!("IsolatedEncoder::encode_struct_ctor({:?})", def_id);
         let tcx = self.tcx;
         let adt_def = tcx.adt_def(adt_def_id);
-        let variant = adt_def.struct_variant();
+        let variant = adt_def.non_enum_variant();
 
         let data = VariantData {
             ctor_kind: variant.ctor_kind,
@@ -820,14 +865,15 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
 
     fn encode_fn_arg_names_for_body(&mut self, body_id: hir::BodyId)
                                     -> LazySeq<ast::Name> {
-        let _ignore = self.tcx.dep_graph.in_ignore();
-        let body = self.tcx.hir.body(body_id);
-        self.lazy_seq(body.arguments.iter().map(|arg| {
-            match arg.pat.node {
-                PatKind::Binding(_, _, name, _) => name.node,
-                _ => Symbol::intern("")
-            }
-        }))
+        self.tcx.dep_graph.with_ignore(|| {
+            let body = self.tcx.hir.body(body_id);
+            self.lazy_seq(body.arguments.iter().map(|arg| {
+                match arg.pat.node {
+                    PatKind::Binding(_, _, name, _) => name.node,
+                    _ => Symbol::intern("")
+                }
+            }))
+        })
     }
 
     fn encode_fn_arg_names(&mut self, names: &[Spanned<ast::Name>])
@@ -897,7 +943,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
             hir::ItemTy(..) => EntryKind::Type,
             hir::ItemEnum(..) => EntryKind::Enum(get_repr_options(&tcx, def_id)),
             hir::ItemStruct(ref struct_def, _) => {
-                let variant = tcx.adt_def(def_id).struct_variant();
+                let variant = tcx.adt_def(def_id).non_enum_variant();
 
                 // Encode def_ids for each field and method
                 // for methods, write all the stuff get_trait_method
@@ -918,7 +964,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 }), repr_options)
             }
             hir::ItemUnion(..) => {
-                let variant = tcx.adt_def(def_id).struct_variant();
+                let variant = tcx.adt_def(def_id).non_enum_variant();
                 let repr_options = get_repr_options(&tcx, def_id);
 
                 EntryKind::Union(self.lazy(&VariantData {
@@ -927,17 +973,6 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                     struct_ctor: None,
                     ctor_sig: None,
                 }), repr_options)
-            }
-            hir::ItemAutoImpl(..) => {
-                let data = ImplData {
-                    polarity: hir::ImplPolarity::Positive,
-                    defaultness: hir::Defaultness::Final,
-                    parent_impl: None,
-                    coerce_unsized_info: None,
-                    trait_ref: tcx.impl_trait_ref(def_id).map(|trait_ref| self.lazy(&trait_ref)),
-                };
-
-                EntryKind::AutoImpl(self.lazy(&data))
             }
             hir::ItemImpl(_, polarity, defaultness, ..) => {
                 let trait_ref = tcx.impl_trait_ref(def_id);
@@ -1011,7 +1046,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) => {
                     let def = self.tcx.adt_def(def_id);
-                    self.lazy_seq(def.struct_variant().fields.iter().map(|f| {
+                    self.lazy_seq(def.non_enum_variant().fields.iter().map(|f| {
                         assert!(f.did.is_local());
                         f.did.index
                     }))
@@ -1533,7 +1568,6 @@ impl<'a, 'b, 'tcx> IndexBuilder<'a, 'b, 'tcx> {
             hir::ItemGlobalAsm(..) |
             hir::ItemExternCrate(..) |
             hir::ItemUse(..) |
-            hir::ItemAutoImpl(..) |
             hir::ItemTy(..) |
             hir::ItemTraitAlias(..) => {
                 // no sub-item recording needed in these cases
@@ -1648,6 +1682,7 @@ pub fn encode_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             lazy_state: LazyState::NoNode,
             type_shorthands: Default::default(),
             predicate_shorthands: Default::default(),
+            filemap_cache: tcx.sess.codemap().files()[0].clone(),
         };
 
         // Encode the rustc version string in a predictable location.

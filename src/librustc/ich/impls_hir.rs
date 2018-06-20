@@ -148,6 +148,11 @@ impl_stable_hash_for!(enum hir::LifetimeName {
     Name(name)
 });
 
+impl_stable_hash_for!(struct hir::Label {
+    span,
+    name
+});
+
 impl_stable_hash_for!(struct hir::Lifetime {
     id,
     span,
@@ -606,6 +611,11 @@ impl<'gcx> HashStable<StableHashingContext<'gcx>> for hir::MatchSource {
     }
 }
 
+impl_stable_hash_for!(enum hir::GeneratorMovability {
+    Static,
+    Movable
+});
+
 impl_stable_hash_for!(enum hir::CaptureClause {
     CaptureByValue,
     CaptureByRef
@@ -614,7 +624,7 @@ impl_stable_hash_for!(enum hir::CaptureClause {
 impl_stable_hash_for_spanned!(usize);
 
 impl_stable_hash_for!(struct hir::Destination {
-    ident,
+    label,
     target_id
 });
 
@@ -854,7 +864,6 @@ impl_stable_hash_for!(enum hir::Item_ {
     ItemUnion(variant_data, generics),
     ItemTrait(is_auto, unsafety, generics, bounds, item_refs),
     ItemTraitAlias(generics, bounds),
-    ItemAutoImpl(unsafety, trait_ref),
     ItemImpl(unsafety, impl_polarity, impl_defaultness, generics, trait_ref, ty, impl_item_refs)
 });
 

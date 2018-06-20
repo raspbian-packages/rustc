@@ -27,7 +27,7 @@ pub struct Diagnostic {
     pub suggestions: Vec<CodeSuggestion>,
 }
 
-#[derive(Clone, Debug, PartialEq, Hash, RustcEncodable, RustcDecodable)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub enum DiagnosticId {
     Error(String),
     Lint(String),
@@ -100,9 +100,6 @@ impl Diagnostic {
 
     /// Cancel the diagnostic (a structured diagnostic must either be emitted or
     /// canceled or it will panic when dropped).
-    /// BEWARE: if this DiagnosticBuilder is an error, then creating it will
-    /// bump the error count on the Handler and canceling it won't undo that.
-    /// If you want to decrement the error count you should use `Handler::cancel`.
     pub fn cancel(&mut self) {
         self.level = Level::Cancelled;
     }
@@ -225,6 +222,7 @@ impl Diagnostic {
             }],
             msg: msg.to_owned(),
             show_code_when_inline: false,
+            approximate: false,
         });
         self
     }
@@ -255,6 +253,7 @@ impl Diagnostic {
             }],
             msg: msg.to_owned(),
             show_code_when_inline: true,
+            approximate: false,
         });
         self
     }
@@ -270,6 +269,41 @@ impl Diagnostic {
             }).collect(),
             msg: msg.to_owned(),
             show_code_when_inline: true,
+            approximate: false,
+        });
+        self
+    }
+
+    /// This is a suggestion that may contain mistakes or fillers and should
+    /// be read and understood by a human.
+    pub fn span_approximate_suggestion(&mut self, sp: Span, msg: &str,
+                                       suggestion: String) -> &mut Self {
+        self.suggestions.push(CodeSuggestion {
+            substitutions: vec![Substitution {
+                parts: vec![SubstitutionPart {
+                    snippet: suggestion,
+                    span: sp,
+                }],
+            }],
+            msg: msg.to_owned(),
+            show_code_when_inline: true,
+            approximate: true,
+        });
+        self
+    }
+
+    pub fn span_approximate_suggestions(&mut self, sp: Span, msg: &str,
+                                        suggestions: Vec<String>) -> &mut Self {
+        self.suggestions.push(CodeSuggestion {
+            substitutions: suggestions.into_iter().map(|snippet| Substitution {
+                parts: vec![SubstitutionPart {
+                    snippet,
+                    span: sp,
+                }],
+            }).collect(),
+            msg: msg.to_owned(),
+            show_code_when_inline: true,
+            approximate: true,
         });
         self
     }
@@ -282,6 +316,10 @@ impl Diagnostic {
     pub fn code(&mut self, s: DiagnosticId) -> &mut Self {
         self.code = Some(s);
         self
+    }
+
+    pub fn get_code(&self) -> Option<DiagnosticId> {
+        self.code.clone()
     }
 
     pub fn message(&self) -> String {

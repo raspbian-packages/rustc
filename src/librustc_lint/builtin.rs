@@ -56,31 +56,6 @@ use bad_style::{MethodLateContext, method_context};
 pub use lint::builtin::*;
 
 declare_lint! {
-    pub AUTO_IMPL,
-    Deny,
-    "The form `impl Foo for .. {}` will be removed, please use `auto trait Foo {}`"
-}
-
-#[derive(Copy, Clone)]
-pub struct AutoImpl;
-
-impl LintPass for AutoImpl {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(AUTO_IMPL)
-    }
-}
-
-impl EarlyLintPass for AutoImpl {
-    fn check_item(&mut self, cx: &EarlyContext, item: &ast::Item) {
-        let msg = "The form `impl Foo for .. {}` will be removed, please use `auto trait Foo {}`";
-        match item.node {
-            ast::ItemKind::AutoImpl(..) => cx.span_lint(AUTO_IMPL, item.span, msg),
-            _ => ()
-        }
-     }
-}
-
-declare_lint! {
     WHILE_TRUE,
     Warn,
     "suggest using `loop { }` instead of `while true { }`"
@@ -1179,9 +1154,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                         let msg = "function is marked #[no_mangle], but not exported";
                         let mut err = cx.struct_span_lint(PRIVATE_NO_MANGLE_FNS, it.span, msg);
                         let insertion_span = it.span.with_hi(it.span.lo());
-                        err.span_suggestion(insertion_span,
-                                            "try making it public",
-                                            "pub ".to_owned());
+                        if it.vis == hir::Visibility::Inherited {
+                            err.span_suggestion(insertion_span,
+                                                "try making it public",
+                                                "pub ".to_owned());
+                        }
                         err.emit();
                     }
                     if generics.is_type_parameterized() {
@@ -1202,9 +1179,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                        let msg = "static is marked #[no_mangle], but not exported";
                        let mut err = cx.struct_span_lint(PRIVATE_NO_MANGLE_STATICS, it.span, msg);
                        let insertion_span = it.span.with_hi(it.span.lo());
-                       err.span_suggestion(insertion_span,
-                                           "try making it public",
-                                           "pub ".to_owned());
+                       if it.vis == hir::Visibility::Inherited {
+                           err.span_suggestion(insertion_span,
+                                               "try making it public",
+                                               "pub ".to_owned());
+                       }
                        err.emit();
                 }
             }
@@ -1214,8 +1193,13 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                     // don't have anything to attach a symbol to
                     let msg = "const items should never be #[no_mangle]";
                     let mut err = cx.struct_span_lint(NO_MANGLE_CONST_ITEMS, it.span, msg);
+
+                    // account for "pub const" (#45562)
+                    let start = cx.tcx.sess.codemap().span_to_snippet(it.span)
+                        .map(|snippet| snippet.find("const").unwrap_or(0))
+                        .unwrap_or(0) as u32;
                     // `const` is 5 chars
-                    let const_span = it.span.with_hi(BytePos(it.span.lo().0 + 5));
+                    let const_span = it.span.with_hi(BytePos(it.span.lo().0 + start + 5));
                     err.span_suggestion(const_span,
                                         "try a static value",
                                         "pub static".to_owned());

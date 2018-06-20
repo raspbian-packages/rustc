@@ -123,6 +123,8 @@ pub use core::slice::{from_raw_parts, from_raw_parts_mut};
 pub use core::slice::{from_ref, from_ref_mut};
 #[unstable(feature = "slice_get_slice", issue = "35729")]
 pub use core::slice::SliceIndex;
+#[unstable(feature = "exact_chunks", issue = "47115")]
+pub use core::slice::{ExactChunks, ExactChunksMut};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Basic slice extension methods
@@ -606,14 +608,17 @@ impl<T> [T] {
         core_slice::SliceExt::windows(self, size)
     }
 
-    /// Returns an iterator over `size` elements of the slice at a
-    /// time. The chunks are slices and do not overlap. If `size` does
+    /// Returns an iterator over `chunk_size` elements of the slice at a
+    /// time. The chunks are slices and do not overlap. If `chunk_size` does
     /// not divide the length of the slice, then the last chunk will
-    /// not have length `size`.
+    /// not have length `chunk_size`.
+    ///
+    /// See [`exact_chunks`] for a variant of this iterator that returns chunks
+    /// of always exactly `chunk_size` elements.
     ///
     /// # Panics
     ///
-    /// Panics if `size` is 0.
+    /// Panics if `chunk_size` is 0.
     ///
     /// # Examples
     ///
@@ -625,16 +630,53 @@ impl<T> [T] {
     /// assert_eq!(iter.next().unwrap(), &['m']);
     /// assert!(iter.next().is_none());
     /// ```
+    ///
+    /// [`exact_chunks`]: #method.exact_chunks
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn chunks(&self, size: usize) -> Chunks<T> {
-        core_slice::SliceExt::chunks(self, size)
+    pub fn chunks(&self, chunk_size: usize) -> Chunks<T> {
+        core_slice::SliceExt::chunks(self, chunk_size)
+    }
+
+    /// Returns an iterator over `chunk_size` elements of the slice at a
+    /// time. The chunks are slices and do not overlap. If `chunk_size` does
+    /// not divide the length of the slice, then the last up to `chunk_size-1`
+    /// elements will be omitted.
+    ///
+    /// Due to each chunk having exactly `chunk_size` elements, the compiler
+    /// can often optimize the resulting code better than in the case of
+    /// [`chunks`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size` is 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(exact_chunks)]
+    ///
+    /// let slice = ['l', 'o', 'r', 'e', 'm'];
+    /// let mut iter = slice.exact_chunks(2);
+    /// assert_eq!(iter.next().unwrap(), &['l', 'o']);
+    /// assert_eq!(iter.next().unwrap(), &['r', 'e']);
+    /// assert!(iter.next().is_none());
+    /// ```
+    ///
+    /// [`chunks`]: #method.chunks
+    #[unstable(feature = "exact_chunks", issue = "47115")]
+    #[inline]
+    pub fn exact_chunks(&self, chunk_size: usize) -> ExactChunks<T> {
+        core_slice::SliceExt::exact_chunks(self, chunk_size)
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a time.
     /// The chunks are mutable slices, and do not overlap. If `chunk_size` does
     /// not divide the length of the slice, then the last chunk will not
     /// have length `chunk_size`.
+    ///
+    /// See [`exact_chunks_mut`] for a variant of this iterator that returns chunks
+    /// of always exactly `chunk_size` elements.
     ///
     /// # Panics
     ///
@@ -654,10 +696,50 @@ impl<T> [T] {
     /// }
     /// assert_eq!(v, &[1, 1, 2, 2, 3]);
     /// ```
+    ///
+    /// [`exact_chunks_mut`]: #method.exact_chunks_mut
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn chunks_mut(&mut self, chunk_size: usize) -> ChunksMut<T> {
         core_slice::SliceExt::chunks_mut(self, chunk_size)
+    }
+
+    /// Returns an iterator over `chunk_size` elements of the slice at a time.
+    /// The chunks are mutable slices, and do not overlap. If `chunk_size` does
+    /// not divide the length of the slice, then the last up to `chunk_size-1`
+    /// elements will be omitted.
+    ///
+    ///
+    /// Due to each chunk having exactly `chunk_size` elements, the compiler
+    /// can often optimize the resulting code better than in the case of
+    /// [`chunks_mut`].
+    ///
+    /// # Panics
+    ///
+    /// Panics if `chunk_size` is 0.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(exact_chunks)]
+    ///
+    /// let v = &mut [0, 0, 0, 0, 0];
+    /// let mut count = 1;
+    ///
+    /// for chunk in v.exact_chunks_mut(2) {
+    ///     for elem in chunk.iter_mut() {
+    ///         *elem += count;
+    ///     }
+    ///     count += 1;
+    /// }
+    /// assert_eq!(v, &[1, 1, 2, 2, 0]);
+    /// ```
+    ///
+    /// [`chunks_mut`]: #method.chunks_mut
+    #[unstable(feature = "exact_chunks", issue = "47115")]
+    #[inline]
+    pub fn exact_chunks_mut(&mut self, chunk_size: usize) -> ExactChunksMut<T> {
+        core_slice::SliceExt::exact_chunks_mut(self, chunk_size)
     }
 
     /// Divides one slice into two at an index.
@@ -1360,24 +1442,16 @@ impl<T> [T] {
         core_slice::SliceExt::sort_unstable_by_key(self, f);
     }
 
-    /// Permutes the slice in-place such that `self[mid..]` moves to the
-    /// beginning of the slice while `self[..mid]` moves to the end of the
-    /// slice.  Equivalently, rotates the slice `mid` places to the left
-    /// or `k = self.len() - mid` places to the right.
-    ///
-    /// This is a "k-rotation", a permutation in which item `i` moves to
-    /// position `i + k`, modulo the length of the slice.  See _Elements
-    /// of Programming_ [§10.4][eop].
-    ///
-    /// Rotation by `mid` and rotation by `k` are inverse operations.
-    ///
-    /// [eop]: https://books.google.com/books?id=CO9ULZGINlsC&pg=PA178&q=k-rotation
+    /// Rotates the slice in-place such that the first `mid` elements of the
+    /// slice move to the end while the last `self.len() - mid` elements move to
+    /// the front. After calling `rotate_left`, the element previously at index
+    /// `mid` will become the first element in the slice.
     ///
     /// # Panics
     ///
     /// This function will panic if `mid` is greater than the length of the
-    /// slice.  (Note that `mid == self.len()` does _not_ panic; it's a nop
-    /// rotation with `k == 0`, the inverse of a rotation with `mid == 0`.)
+    /// slice. Note that `mid == self.len()` does _not_ panic and is a no-op
+    /// rotation.
     ///
     /// # Complexity
     ///
@@ -1388,31 +1462,68 @@ impl<T> [T] {
     /// ```
     /// #![feature(slice_rotate)]
     ///
-    /// let mut a = [1, 2, 3, 4, 5, 6, 7];
-    /// let mid = 2;
-    /// a.rotate(mid);
-    /// assert_eq!(&a, &[3, 4, 5, 6, 7, 1, 2]);
-    /// let k = a.len() - mid;
-    /// a.rotate(k);
-    /// assert_eq!(&a, &[1, 2, 3, 4, 5, 6, 7]);
+    /// let mut a = ['a', 'b', 'c', 'd', 'e', 'f'];
+    /// a.rotate_left(2);
+    /// assert_eq!(a, ['c', 'd', 'e', 'f', 'a', 'b']);
+    /// ```
     ///
-    /// use std::ops::Range;
-    /// fn slide<T>(slice: &mut [T], range: Range<usize>, to: usize) {
-    ///     if to < range.start {
-    ///         slice[to..range.end].rotate(range.start-to);
-    ///     } else if to > range.end {
-    ///         slice[range.start..to].rotate(range.end-range.start);
-    ///     }
-    /// }
-    /// let mut v: Vec<_> = (0..10).collect();
-    /// slide(&mut v, 1..4, 7);
-    /// assert_eq!(&v, &[0, 4, 5, 6, 1, 2, 3, 7, 8, 9]);
-    /// slide(&mut v, 6..8, 1);
-    /// assert_eq!(&v, &[0, 3, 7, 4, 5, 6, 1, 2, 8, 9]);
+    /// Rotating a subslice:
+    ///
+    /// ```
+    /// #![feature(slice_rotate)]
+    ///
+    /// let mut a = ['a', 'b', 'c', 'd', 'e', 'f'];
+    /// a[1..5].rotate_left(1);
+    /// assert_eq!(a, ['a', 'c', 'd', 'e', 'b', 'f']);
     /// ```
     #[unstable(feature = "slice_rotate", issue = "41891")]
+    pub fn rotate_left(&mut self, mid: usize) {
+        core_slice::SliceExt::rotate_left(self, mid);
+    }
+
+    #[unstable(feature = "slice_rotate", issue = "41891")]
+    #[rustc_deprecated(since = "", reason = "renamed to `rotate_left`")]
     pub fn rotate(&mut self, mid: usize) {
-        core_slice::SliceExt::rotate(self, mid);
+        core_slice::SliceExt::rotate_left(self, mid);
+    }
+
+    /// Rotates the slice in-place such that the first `self.len() - k`
+    /// elements of the slice move to the end while the last `k` elements move
+    /// to the front. After calling `rotate_right`, the element previously at
+    /// index `self.len() - k` will become the first element in the slice.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if `k` is greater than the length of the
+    /// slice. Note that `k == self.len()` does _not_ panic and is a no-op
+    /// rotation.
+    ///
+    /// # Complexity
+    ///
+    /// Takes linear (in `self.len()`) time.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(slice_rotate)]
+    ///
+    /// let mut a = ['a', 'b', 'c', 'd', 'e', 'f'];
+    /// a.rotate_right(2);
+    /// assert_eq!(a, ['e', 'f', 'a', 'b', 'c', 'd']);
+    /// ```
+    ///
+    /// Rotate a subslice:
+    ///
+    /// ```
+    /// #![feature(slice_rotate)]
+    ///
+    /// let mut a = ['a', 'b', 'c', 'd', 'e', 'f'];
+    /// a[1..5].rotate_right(1);
+    /// assert_eq!(a, ['a', 'e', 'b', 'c', 'd', 'f']);
+    /// ```
+    #[unstable(feature = "slice_rotate", issue = "41891")]
+    pub fn rotate_right(&mut self, k: usize) {
+        core_slice::SliceExt::rotate_right(self, k);
     }
 
     /// Copies the elements from `src` into `self`.
@@ -1595,6 +1706,7 @@ impl<T> [T] {
     /// let x = s.to_vec();
     /// // Here, `s` and `x` can be modified independently.
     /// ```
+    #[rustc_conversion_suggestion]
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn to_vec(&self) -> Vec<T>
@@ -1725,6 +1837,14 @@ impl [u8] {
            reason = "trait should not have to exist",
            issue = "27747")]
 /// An extension trait for concatenating slices
+///
+/// While this trait is unstable, the methods are stable. `SliceConcatExt` is
+/// included in the [standard library prelude], so you can use [`join()`] and
+/// [`concat()`] as if they existed on `[T]` itself.
+///
+/// [standard library prelude]: ../../std/prelude/index.html
+/// [`join()`]: #tymethod.join
+/// [`concat()`]: #tymethod.concat
 pub trait SliceConcatExt<T: ?Sized> {
     #[unstable(feature = "slice_concat_ext",
                reason = "trait should not have to exist",

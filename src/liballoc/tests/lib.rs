@@ -23,13 +23,13 @@
 #![feature(pattern)]
 #![feature(placement_in_syntax)]
 #![feature(rand)]
-#![feature(repr_align)]
 #![feature(slice_rotate)]
 #![feature(splice)]
 #![feature(str_escape)]
 #![feature(string_retain)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
+#![feature(exact_chunks)]
 
 extern crate alloc_system;
 extern crate std_unicode;

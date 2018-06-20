@@ -25,6 +25,7 @@ pub use self::ExpnFormat::*;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::stable_hasher::StableHasher;
 use std::cell::{RefCell, Ref};
+use std::cmp;
 use std::hash::Hash;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -131,6 +132,9 @@ pub struct CodeMap {
     // -Zremap-path-prefix to all FileMaps allocated within this CodeMap.
     path_mapping: FilePathMapping,
     stable_id_to_filemap: RefCell<FxHashMap<StableFilemapId, Rc<FileMap>>>,
+    /// In case we are in a doctest, replace all file names with the PathBuf,
+    /// and add the given offsets to the line info
+    doctest_offset: Option<(FileName, isize)>,
 }
 
 impl CodeMap {
@@ -140,7 +144,17 @@ impl CodeMap {
             file_loader: Box::new(RealFileLoader),
             path_mapping,
             stable_id_to_filemap: RefCell::new(FxHashMap()),
+            doctest_offset: None,
         }
+    }
+
+    pub fn new_doctest(path_mapping: FilePathMapping,
+                       file: FileName, line: isize) -> CodeMap {
+        CodeMap {
+            doctest_offset: Some((file, line)),
+            ..CodeMap::new(path_mapping)
+        }
+
     }
 
     pub fn with_file_loader(file_loader: Box<FileLoader>,
@@ -151,6 +165,7 @@ impl CodeMap {
             file_loader,
             path_mapping,
             stable_id_to_filemap: RefCell::new(FxHashMap()),
+            doctest_offset: None,
         }
     }
 
@@ -164,7 +179,12 @@ impl CodeMap {
 
     pub fn load_file(&self, path: &Path) -> io::Result<Rc<FileMap>> {
         let src = self.file_loader.read_file(path)?;
-        Ok(self.new_filemap(path.to_owned().into(), src))
+        let filename = if let Some((ref name, _)) = self.doctest_offset {
+            name.clone()
+        } else {
+            path.to_owned().into()
+        };
+        Ok(self.new_filemap(filename, src))
     }
 
     pub fn files(&self) -> Ref<Vec<Rc<FileMap>>> {
@@ -301,6 +321,18 @@ impl CodeMap {
                  pos.file.name,
                  pos.line,
                  pos.col.to_usize() + 1)).to_string()
+    }
+
+    // If there is a doctest_offset, apply it to the line
+    pub fn doctest_offset_line(&self, mut orig: usize) -> usize {
+        if let Some((_, line)) = self.doctest_offset {
+            if line >= 0 {
+                orig = orig + line as usize;
+            } else {
+                orig = orig - (-line) as usize;
+            }
+        }
+        orig
     }
 
     /// Lookup source information about a BytePos
@@ -561,8 +593,30 @@ impl CodeMap {
         }
     }
 
-    /// Given a `Span`, try to get a shorter span ending just after the first
-    /// occurrence of `char` `c`.
+    /// Given a `Span`, get a new `Span` covering the first token and all its trailing whitespace or
+    /// the original `Span`.
+    ///
+    /// If `sp` points to `"let mut x"`, then a span pointing at `"let "` will be returned.
+    pub fn span_until_non_whitespace(&self, sp: Span) -> Span {
+        if let Ok(snippet) = self.span_to_snippet(sp) {
+            let mut offset = 0;
+            // get the bytes width of all the non-whitespace characters
+            for c in snippet.chars().take_while(|c| !c.is_whitespace()) {
+                offset += c.len_utf8();
+            }
+            // get the bytes width of all the whitespace characters after that
+            for c in snippet[offset..].chars().take_while(|c| c.is_whitespace()) {
+                offset += c.len_utf8();
+            }
+            if offset > 1 {
+                return sp.with_hi(BytePos(sp.lo().0 + offset as u32));
+            }
+        }
+        sp
+    }
+
+    /// Given a `Span`, try to get a shorter span ending just after the first occurrence of `char`
+    /// `c`.
     pub fn span_through_char(&self, sp: Span, c: char) -> Span {
         if let Ok(snippet) = self.span_to_snippet(sp) {
             if let Some(offset) = snippet.find(c) {
@@ -574,6 +628,103 @@ impl CodeMap {
 
     pub fn def_span(&self, sp: Span) -> Span {
         self.span_until_char(sp, '{')
+    }
+
+    /// Returns a new span representing just the end-point of this span
+    pub fn end_point(&self, sp: Span) -> Span {
+        let pos = sp.hi().0;
+
+        let width = self.find_width_of_character_at_span(sp, false);
+        let corrected_end_position = pos.checked_sub(width).unwrap_or(pos);
+
+        let end_point = BytePos(cmp::max(corrected_end_position, sp.lo().0));
+        sp.with_lo(end_point)
+    }
+
+    /// Returns a new span representing the next character after the end-point of this span
+    pub fn next_point(&self, sp: Span) -> Span {
+        let start_of_next_point = sp.hi().0;
+
+        let width = self.find_width_of_character_at_span(sp, true);
+        // If the width is 1, then the next span should point to the same `lo` and `hi`. However,
+        // in the case of a multibyte character, where the width != 1, the next span should
+        // span multiple bytes to include the whole character.
+        let end_of_next_point = start_of_next_point.checked_add(
+            width - 1).unwrap_or(start_of_next_point);
+
+        let end_of_next_point = BytePos(cmp::max(sp.lo().0 + 1, end_of_next_point));
+        Span::new(BytePos(start_of_next_point), end_of_next_point, sp.ctxt())
+    }
+
+    /// Finds the width of a character, either before or after the provided span.
+    fn find_width_of_character_at_span(&self, sp: Span, forwards: bool) -> u32 {
+        // Disregard malformed spans and assume a one-byte wide character.
+        if sp.lo() >= sp.hi() {
+            debug!("find_width_of_character_at_span: early return malformed span");
+            return 1;
+        }
+
+        let local_begin = self.lookup_byte_offset(sp.lo());
+        let local_end = self.lookup_byte_offset(sp.hi());
+        debug!("find_width_of_character_at_span: local_begin=`{:?}`, local_end=`{:?}`",
+               local_begin, local_end);
+
+        let start_index = local_begin.pos.to_usize();
+        let end_index = local_end.pos.to_usize();
+        debug!("find_width_of_character_at_span: start_index=`{:?}`, end_index=`{:?}`",
+               start_index, end_index);
+
+        // Disregard indexes that are at the start or end of their spans, they can't fit bigger
+        // characters.
+        if (!forwards && end_index == usize::min_value()) ||
+            (forwards && start_index == usize::max_value()) {
+            debug!("find_width_of_character_at_span: start or end of span, cannot be multibyte");
+            return 1;
+        }
+
+        let source_len = (local_begin.fm.end_pos - local_begin.fm.start_pos).to_usize();
+        debug!("find_width_of_character_at_span: source_len=`{:?}`", source_len);
+        // Ensure indexes are also not malformed.
+        if start_index > end_index || end_index > source_len {
+            debug!("find_width_of_character_at_span: source indexes are malformed");
+            return 1;
+        }
+
+        let src = local_begin.fm.external_src.borrow();
+
+        // We need to extend the snippet to the end of the src rather than to end_index so when
+        // searching forwards for boundaries we've got somewhere to search.
+        let snippet = if let Some(ref src) = local_begin.fm.src {
+            let len = src.len();
+            (&src[start_index..len])
+        } else if let Some(src) = src.get_source() {
+            let len = src.len();
+            (&src[start_index..len])
+        } else {
+            return 1;
+        };
+        debug!("find_width_of_character_at_span: snippet=`{:?}`", snippet);
+
+        let file_start_pos = local_begin.fm.start_pos.to_usize();
+        let file_end_pos = local_begin.fm.end_pos.to_usize();
+        debug!("find_width_of_character_at_span: file_start_pos=`{:?}` file_end_pos=`{:?}`",
+               file_start_pos, file_end_pos);
+
+        let mut target = if forwards { end_index + 1 } else { end_index - 1 };
+        debug!("find_width_of_character_at_span: initial target=`{:?}`", target);
+
+        while !snippet.is_char_boundary(target - start_index)
+                && target >= file_start_pos && target <= file_end_pos {
+            target = if forwards { target + 1 } else { target - 1 };
+            debug!("find_width_of_character_at_span: target=`{:?}`", target);
+        }
+        debug!("find_width_of_character_at_span: final target=`{:?}`", target);
+
+        if forwards {
+            (target - end_index) as u32
+        } else {
+            (end_index - target) as u32
+        }
     }
 
     pub fn get_filemap(&self, filename: &FileName) -> Option<Rc<FileMap>> {
@@ -680,6 +831,9 @@ impl CodeMapper for CodeMap {
                 _ => None,
             }
         )
+    }
+    fn doctest_offset_line(&self, line: usize) -> usize {
+        self.doctest_offset_line(line)
     }
 }
 

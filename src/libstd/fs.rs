@@ -211,6 +211,14 @@ pub struct DirBuilder {
     recursive: bool,
 }
 
+/// How large a buffer to pre-allocate before reading the entire file.
+fn initial_buffer_size(file: &File) -> usize {
+    // Allocate one extra byte so the buffer doesn't need to grow before the
+    // final `read` call at the end of the file.  Don't worry about `usize`
+    // overflow because reading will fail regardless in that case.
+    file.metadata().map(|m| m.len() as usize + 1).unwrap_or(0)
+}
+
 /// Read the entire contents of a file into a bytes vector.
 ///
 /// This is a convenience function for using [`File::open`] and [`read_to_end`]
@@ -246,8 +254,9 @@ pub struct DirBuilder {
 /// ```
 #[unstable(feature = "fs_read_write", issue = "46588")]
 pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    File::open(path)?.read_to_end(&mut bytes)?;
+    let mut file = File::open(path)?;
+    let mut bytes = Vec::with_capacity(initial_buffer_size(&file));
+    file.read_to_end(&mut bytes)?;
     Ok(bytes)
 }
 
@@ -287,8 +296,9 @@ pub fn read<P: AsRef<Path>>(path: P) -> io::Result<Vec<u8>> {
 /// ```
 #[unstable(feature = "fs_read_write", issue = "46588")]
 pub fn read_string<P: AsRef<Path>>(path: P) -> io::Result<String> {
-    let mut string = String::new();
-    File::open(path)?.read_to_string(&mut string)?;
+    let mut file = File::open(path)?;
+    let mut string = String::with_capacity(initial_buffer_size(&file));
+    file.read_to_string(&mut string)?;
     Ok(string)
 }
 
@@ -472,20 +482,42 @@ impl File {
         self.inner.file_attr().map(Metadata)
     }
 
-    /// Creates a new independently owned handle to the underlying file.
-    ///
-    /// The returned `File` is a reference to the same state that this object
-    /// references. Both handles will read and write with the same cursor
-    /// position.
+    /// Create a new `File` instance that shares the same underlying file handle
+    /// as the existing `File` instance. Reads, writes, and seeks will affect
+    /// both `File` instances simultaneously.
     ///
     /// # Examples
+    ///
+    /// Create two handles for a file named `foo.txt`:
     ///
     /// ```no_run
     /// use std::fs::File;
     ///
     /// # fn foo() -> std::io::Result<()> {
-    /// let mut f = File::open("foo.txt")?;
-    /// let file_copy = f.try_clone()?;
+    /// let mut file = File::open("foo.txt")?;
+    /// let file_copy = file.try_clone()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Assuming there’s a file named `foo.txt` with contents `abcdef\n`, create
+    /// two handles, seek one of them, and read the remaining bytes from the
+    /// other handle:
+    ///
+    /// ```no_run
+    /// use std::fs::File;
+    /// use std::io::SeekFrom;
+    /// use std::io::prelude::*;
+    ///
+    /// # fn foo() -> std::io::Result<()> {
+    /// let mut file = File::open("foo.txt")?;
+    /// let mut file_copy = file.try_clone()?;
+    ///
+    /// file.seek(SeekFrom::Start(3))?;
+    ///
+    /// let mut contents = vec![];
+    /// file_copy.read_to_end(&mut contents)?;
+    /// assert_eq!(contents, b"def\n");
     /// # Ok(())
     /// # }
     /// ```
@@ -991,7 +1023,7 @@ impl Metadata {
         self.0.accessed().map(FromInner::from_inner)
     }
 
-    /// Returns the creation time listed in the this metadata.
+    /// Returns the creation time listed in this metadata.
     ///
     /// The returned value corresponds to the `birthtime` field of `stat` on
     /// Unix platforms and the `ftCreationTime` field on Windows platforms.
@@ -1981,7 +2013,7 @@ impl AsInnerMut<fs_imp::DirBuilder> for DirBuilder {
     }
 }
 
-#[cfg(all(test, not(target_os = "emscripten")))]
+#[cfg(all(test, not(any(target_os = "cloudabi", target_os = "emscripten"))))]
 mod tests {
     use io::prelude::*;
 

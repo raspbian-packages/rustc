@@ -706,7 +706,7 @@ impl From<CString> for Box<CStr> {
     }
 }
 
-#[stable(feature = "shared_from_slice2", since = "1.23.0")]
+#[stable(feature = "shared_from_slice2", since = "1.24.0")]
 impl From<CString> for Arc<CStr> {
     #[inline]
     fn from(s: CString) -> Arc<CStr> {
@@ -715,7 +715,7 @@ impl From<CString> for Arc<CStr> {
     }
 }
 
-#[stable(feature = "shared_from_slice2", since = "1.23.0")]
+#[stable(feature = "shared_from_slice2", since = "1.24.0")]
 impl<'a> From<&'a CStr> for Arc<CStr> {
     #[inline]
     fn from(s: &CStr) -> Arc<CStr> {
@@ -724,7 +724,7 @@ impl<'a> From<&'a CStr> for Arc<CStr> {
     }
 }
 
-#[stable(feature = "shared_from_slice2", since = "1.23.0")]
+#[stable(feature = "shared_from_slice2", since = "1.24.0")]
 impl From<CString> for Rc<CStr> {
     #[inline]
     fn from(s: CString) -> Rc<CStr> {
@@ -733,7 +733,7 @@ impl From<CString> for Rc<CStr> {
     }
 }
 
-#[stable(feature = "shared_from_slice2", since = "1.23.0")]
+#[stable(feature = "shared_from_slice2", since = "1.24.0")]
 impl<'a> From<&'a CStr> for Rc<CStr> {
     #[inline]
     fn from(s: &CStr) -> Rc<CStr> {
@@ -1026,9 +1026,9 @@ impl CStr {
     /// The returned slice will **not** contain the trailing nul terminator that this C
     /// string has.
     ///
-    /// > **Note**: This method is currently implemented as a 0-cost cast, but
-    /// > it is planned to alter its definition in the future to perform the
-    /// > length calculation whenever this method is called.
+    /// > **Note**: This method is currently implemented as a constant-time
+    /// > cast, but it is planned to alter its definition in the future to
+    /// > perform the length calculation whenever this method is called.
     ///
     /// # Examples
     ///
@@ -1077,9 +1077,9 @@ impl CStr {
     /// it will return an error with details of where UTF-8 validation failed.
     ///
     /// > **Note**: This method is currently implemented to check for validity
-    /// > after a 0-cost cast, but it is planned to alter its definition in the
-    /// > future to perform the length calculation in addition to the UTF-8
-    /// > check whenever this method is called.
+    /// > after a constant-time cast, but it is planned to alter its definition
+    /// > in the future to perform the length calculation in addition to the
+    /// > UTF-8 check whenever this method is called.
     ///
     /// [`&str`]: ../primitive.str.html
     ///
@@ -1110,9 +1110,9 @@ impl CStr {
     /// with the result.
     ///
     /// > **Note**: This method is currently implemented to check for validity
-    /// > after a 0-cost cast, but it is planned to alter its definition in the
-    /// > future to perform the length calculation in addition to the UTF-8
-    /// > check whenever this method is called.
+    /// > after a constant-time cast, but it is planned to alter its definition
+    /// > in the future to perform the length calculation in addition to the
+    /// > UTF-8 check whenever this method is called.
     ///
     /// [`Cow`]: ../borrow/enum.Cow.html
     /// [`Borrowed`]: ../borrow/enum.Cow.html#variant.Borrowed

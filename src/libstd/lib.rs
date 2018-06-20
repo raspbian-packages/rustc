@@ -229,7 +229,7 @@
 
 // Turn warnings into errors, but only after stage0, where it can be useful for
 // code to emit warnings during language transitions
-#![deny(warnings)]
+#![cfg_attr(not(stage0), deny(warnings))]
 
 // std may use features in a platform-specific way
 #![allow(unused_features)]
@@ -260,6 +260,7 @@
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
 #![feature(exact_size_is_empty)]
+#![feature(external_doc)]
 #![feature(fs_read_write)]
 #![feature(fixed_size_array)]
 #![feature(float_from_str_radix)]
@@ -293,12 +294,10 @@
 #![feature(placement_in_syntax)]
 #![feature(placement_new_protocol)]
 #![feature(prelude_import)]
+#![feature(ptr_internals)]
 #![feature(rand)]
 #![feature(raw)]
-#![feature(repr_align)]
-#![feature(repr_simd)]
 #![feature(rustc_attrs)]
-#![feature(shared)]
 #![feature(sip_hash_13)]
 #![feature(slice_bytes)]
 #![feature(slice_concat_ext)]
@@ -316,7 +315,6 @@
 #![feature(try_from)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
-#![feature(unique)]
 #![feature(untagged_unions)]
 #![feature(unwind_attributes)]
 #![feature(vec_push_all)]
@@ -325,6 +323,7 @@
 #![feature(doc_spotlight)]
 #![cfg_attr(test, feature(update_panic_count))]
 #![cfg_attr(windows, feature(used))]
+#![cfg_attr(stage0, feature(repr_align))]
 
 #![default_lib_allocator]
 
@@ -352,9 +351,9 @@ use prelude::v1::*;
 #[cfg(test)] extern crate test;
 #[cfg(test)] extern crate rand;
 
-// We want to reexport a few macros from core but libcore has already been
+// We want to re-export a few macros from core but libcore has already been
 // imported by the compiler (via our #[no_std] attribute) In this case we just
-// add a new crate name so we can attach the reexports to it.
+// add a new crate name so we can attach the re-exports to it.
 #[macro_reexport(assert, assert_eq, assert_ne, debug_assert, debug_assert_eq,
                  debug_assert_ne, unreachable, unimplemented, write, writeln, try)]
 extern crate core as __core;
@@ -391,7 +390,7 @@ mod macros;
 // The Rust prelude
 pub mod prelude;
 
-// Public module declarations and reexports
+// Public module declarations and re-exports
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::any;
 #[stable(feature = "rust1", since = "1.0.0")]

@@ -131,7 +131,6 @@ declare_features! (
     (active, link_llvm_intrinsics, "1.0.0", Some(29602)),
     (active, linkage, "1.0.0", Some(29603)),
     (active, quote, "1.0.0", Some(29601)),
-    (active, simd, "1.0.0", Some(27731)),
 
 
     // rustc internal
@@ -156,7 +155,7 @@ declare_features! (
     // OIBIT specific features
     (active, optin_builtin_traits, "1.0.0", Some(13231)),
 
-    // macro reexport needs more discussion and stabilization
+    // macro re-export needs more discussion and stabilization
     (active, macro_reexport, "1.0.0", Some(29638)),
 
     // Allows use of #[staged_api]
@@ -344,9 +343,6 @@ declare_features! (
     // Allows the `catch {...}` expression
     (active, catch_expr, "1.17.0", Some(31436)),
 
-    // Allows `repr(align(u16))` struct attribute (RFC 1358)
-    (active, repr_align, "1.17.0", Some(33626)),
-
     // Used to preserve symbols (see llvm.used)
     (active, used, "1.18.0", Some(40289)),
 
@@ -390,9 +386,6 @@ declare_features! (
     // allow `#[must_use]` on functions and comparison operators (RFC 1940)
     (active, fn_must_use, "1.21.0", Some(43302)),
 
-    // allow '|' at beginning of match arms (RFC 1925)
-    (active, match_beginning_vert, "1.21.0", Some(44101)),
-
     // Future-proofing enums/structs with #[non_exhaustive] attribute (RFC 2008)
     (active, non_exhaustive, "1.22.0", Some(44109)),
 
@@ -430,9 +423,6 @@ declare_features! (
     // In-band lifetime bindings (e.g. `fn foo(x: &'a u8) -> &'a u8`)
     (active, in_band_lifetimes, "1.23.0", Some(44524)),
 
-    // Nested groups in `use` (RFC 2128)
-    (active, use_nested_groups, "1.23.0", Some(44494)),
-
     // generic associated types (RFC 1598)
     (active, generic_associated_types, "1.23.0", Some(44265)),
 
@@ -450,6 +440,15 @@ declare_features! (
 
     // Allows use of the :lifetime macro fragment specifier
     (active, macro_lifetime_matcher, "1.24.0", Some(46895)),
+
+    // `extern` in paths
+    (active, extern_in_paths, "1.23.0", Some(44660)),
+
+    // Allows `#[repr(transparent)]` attribute on newtype structs
+    (active, repr_transparent, "1.25.0", Some(43036)),
+
+    // Use `?` as the Kleene "at most one" operator
+    (active, macro_at_most_once_rep, "1.25.0", Some(48075)),
 );
 
 declare_features! (
@@ -470,6 +469,8 @@ declare_features! (
     (removed, unmarked_api, "1.0.0", None),
     (removed, pushpop_unsafe, "1.2.0", None),
     (removed, allocator, "1.0.0", None),
+    // Allows the `#[simd]` attribute -- removed in favor of `#[repr(simd)]`
+    (removed, simd, "1.0.0", Some(27731)),
 );
 
 declare_features! (
@@ -539,6 +540,12 @@ declare_features! (
     // Allows the sysV64 ABI to be specified on all platforms
     // instead of just the platforms on which it is the C ABI
     (accepted, abi_sysv64, "1.24.0", Some(36167)),
+    // Allows `repr(align(16))` struct attribute (RFC 1358)
+    (accepted, repr_align, "1.24.0", Some(33626)),
+    // allow '|' at beginning of match arms (RFC 1925)
+    (accepted, match_beginning_vert, "1.25.0", Some(44101)),
+    // Nested groups in `use` (RFC 2128)
+    (accepted, use_nested_groups, "1.25.0", Some(44494)),
 );
 
 // If you change this, please modify src/doc/unstable-book as well. You must
@@ -633,7 +640,6 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
     ("start", Normal, Ungated),
     ("test", Normal, Ungated),
     ("bench", Normal, Ungated),
-    ("simd", Normal, Ungated),
     ("repr", Normal, Ungated),
     ("path", Normal, Ungated),
     ("abi", Normal, Ungated),
@@ -689,9 +695,7 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
     ("thread_local", Whitelisted, Gated(Stability::Unstable,
                                         "thread_local",
                                         "`#[thread_local]` is an experimental feature, and does \
-                                         not currently handle destructors. There is no \
-                                         corresponding `#[task_local]` mapping to the task \
-                                         model",
+                                         not currently handle destructors.",
                                         cfg_fn!(thread_local))),
 
     ("rustc_on_unimplemented", Normal, Gated(Stability::Unstable,
@@ -785,6 +789,11 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                                        is just used for rustc unit tests \
                                                        and will never be stable",
                                                       cfg_fn!(rustc_attrs))),
+    ("rustc_serialize_exclude_null", Normal, Gated(Stability::Unstable,
+                                             "rustc_attrs",
+                                             "the `#[rustc_serialize_exclude_null]` attribute \
+                                              is an internal-only feature",
+                                             cfg_fn!(rustc_attrs))),
     ("rustc_synthetic", Whitelisted, Gated(Stability::Unstable,
                                                       "rustc_attrs",
                                                       "this attribute \
@@ -966,10 +975,22 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                       never be stable",
                                      cfg_fn!(rustc_attrs))),
 
+    // whitelists "identity-like" conversion methods to suggest on type mismatch
+    ("rustc_conversion_suggestion", Whitelisted, Gated(Stability::Unstable,
+                                                       "rustc_attrs",
+                                                       "this is an internal attribute that will \
+                                                        never be stable",
+                                                       cfg_fn!(rustc_attrs))),
+
     ("wasm_import_memory", Whitelisted, Gated(Stability::Unstable,
                                  "wasm_import_memory",
                                  "wasm_import_memory attribute is currently unstable",
                                  cfg_fn!(wasm_import_memory))),
+
+    ("rustc_args_required_const", Whitelisted, Gated(Stability::Unstable,
+                                 "rustc_attrs",
+                                 "never will be stable",
+                                 cfg_fn!(rustc_attrs))),
 
     // Crate level attributes
     ("crate_name", CrateLevel, Ungated),
@@ -1169,7 +1190,9 @@ fn leveled_feature_err<'a>(sess: &'a ParseSess, feature: &str, span: Span, issue
     };
 
     let mut err = match level {
-        GateStrength::Hard => diag.struct_span_err(span, &explanation),
+        GateStrength::Hard => {
+            diag.struct_span_err_with_code(span, &explanation, stringify_error_code!(E0658))
+        }
         GateStrength::Soft => diag.struct_span_warn(span, &explanation),
     };
 
@@ -1237,6 +1260,9 @@ pub const EXPLAIN_PLACEMENT_IN: &'static str =
 
 pub const EXPLAIN_UNSIZED_TUPLE_COERCION: &'static str =
     "Unsized tuple coercion is not stable enough for use and is subject to change";
+
+pub const EXPLAIN_MACRO_AT_MOST_ONCE_REP: &'static str =
+    "Using the `?` macro Kleene operator for \"at most one\" repetition is unstable";
 
 struct PostExpansionVisitor<'a> {
     context: &'a Context<'a>,
@@ -1441,15 +1467,25 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             }
         }
 
+        // allow attr_literals in #[repr(align(x))]
+        let mut is_repr_align = false;
+        if attr.path == "repr" {
+            if let Some(content) = attr.meta_item_list() {
+                is_repr_align = content.iter().any(|c| c.check_name("align"));
+            }
+        }
+
         if self.context.features.proc_macro && attr::is_known(attr) {
             return
         }
 
-        let meta = panictry!(attr.parse_meta(self.context.parse_sess));
-        if contains_novel_literal(&meta) {
-            gate_feature_post!(&self, attr_literals, attr.span,
-                               "non-string literals in attributes, or string \
-                               literals in top-level positions, are experimental");
+        if !is_repr_align {
+            let meta = panictry!(attr.parse_meta(self.context.parse_sess));
+            if contains_novel_literal(&meta) {
+                gate_feature_post!(&self, attr_literals, attr.span,
+                                   "non-string literals in attributes, or string \
+                                   literals in top-level positions, are experimental");
+            }
         }
     }
 
@@ -1467,7 +1503,7 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             ast::ItemKind::ExternCrate(_) => {
                 if let Some(attr) = attr::find_by_name(&i.attrs[..], "macro_reexport") {
                     gate_feature_post!(&self, macro_reexport, attr.span,
-                                       "macros reexports are experimental \
+                                       "macros re-exports are experimental \
                                         and possibly buggy");
                 }
             }
@@ -1501,24 +1537,16 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             }
 
             ast::ItemKind::Struct(..) => {
-                if let Some(attr) = attr::find_by_name(&i.attrs[..], "simd") {
-                    gate_feature_post!(&self, simd, attr.span,
-                                       "SIMD types are experimental and possibly buggy");
-                    self.context.parse_sess.span_diagnostic.span_warn(attr.span,
-                                                                      "the `#[simd]` attribute \
-                                                                       is deprecated, use \
-                                                                       `#[repr(simd)]` instead");
-                }
                 if let Some(attr) = attr::find_by_name(&i.attrs[..], "repr") {
                     for item in attr.meta_item_list().unwrap_or_else(Vec::new) {
                         if item.check_name("simd") {
                             gate_feature_post!(&self, repr_simd, attr.span,
                                                "SIMD types are experimental and possibly buggy");
                         }
-                        if item.check_name("align") {
-                            gate_feature_post!(&self, repr_align, attr.span,
-                                               "the struct `#[repr(align(u16))]` attribute \
-                                                is experimental");
+                        if item.check_name("transparent") {
+                            gate_feature_post!(&self, repr_transparent, attr.span,
+                                               "the `#[repr(transparent)]` attribute \
+                                               is experimental");
                         }
                     }
                 }
@@ -1528,13 +1556,6 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 gate_feature_post!(&self, trait_alias,
                                    i.span,
                                    "trait aliases are not yet fully implemented");
-            }
-
-            ast::ItemKind::AutoImpl(..) => {
-                gate_feature_post!(&self, optin_builtin_traits,
-                                   i.span,
-                                   "auto trait implementations are experimental \
-                                    and possibly buggy");
             }
 
             ast::ItemKind::Impl(_, polarity, defaultness, _, _, _, ref impl_items) => {
@@ -1671,11 +1692,6 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
     }
 
     fn visit_arm(&mut self, arm: &'a ast::Arm) {
-        if let Some(span) = arm.beginning_vert {
-            gate_feature_post!(&self, match_beginning_vert,
-                               span,
-                               "Use of a '|' at the beginning of a match arm is experimental")
-        }
         visit::walk_arm(self, arm)
     }
 
@@ -1790,33 +1806,13 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             if segment.identifier.name == keywords::Crate.name() {
                 gate_feature_post!(&self, crate_in_paths, segment.span,
                                    "`crate` in paths is experimental");
+            } else if segment.identifier.name == keywords::Extern.name() {
+                gate_feature_post!(&self, extern_in_paths, segment.span,
+                                   "`extern` in paths is experimental");
             }
         }
 
         visit::walk_path(self, path);
-    }
-
-    fn visit_use_tree(&mut self, use_tree: &'a ast::UseTree, id: NodeId, nested: bool) {
-        if nested {
-            match use_tree.kind {
-                ast::UseTreeKind::Simple(_) => {
-                    if use_tree.prefix.segments.len() != 1 {
-                        gate_feature_post!(&self, use_nested_groups, use_tree.span,
-                                           "paths in `use` groups are experimental");
-                    }
-                }
-                ast::UseTreeKind::Glob => {
-                    gate_feature_post!(&self, use_nested_groups, use_tree.span,
-                                       "glob imports in `use` groups are experimental");
-                }
-                ast::UseTreeKind::Nested(_) => {
-                    gate_feature_post!(&self, use_nested_groups, use_tree.span,
-                                       "nested groups in `use` are experimental");
-                }
-            }
-        }
-
-        visit::walk_use_tree(self, use_tree, id);
     }
 
     fn visit_vis(&mut self, vis: &'a ast::Visibility) {
@@ -1942,7 +1938,7 @@ impl FeatureChecker {
                 .span_note(ca_span, "`#![feature(custom_attribute)]` declared here")
                 .emit();
 
-            panic!(FatalError);
+            FatalError.raise();
         }
 
         if let (Some(span), None) = (self.copy_closures, self.clone_closures) {
@@ -1951,7 +1947,7 @@ impl FeatureChecker {
                   .span_note(span, "`#![feature(copy_closures)]` declared here")
                   .emit();
 
-            panic!(FatalError);
+            FatalError.raise();
         }
     }
 }

@@ -75,11 +75,13 @@ This API is completely unstable and subject to change.
 #![feature(advanced_slice_patterns)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(crate_visibility_modifier)]
 #![feature(conservative_impl_trait)]
+#![feature(copy_closures, clone_closures)]
+#![feature(crate_visibility_modifier)]
 #![feature(from_ref)]
 #![feature(match_default_bindings)]
 #![feature(never_type)]
+#![feature(option_filter)]
 #![feature(quote)]
 #![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
@@ -121,16 +123,17 @@ use std::iter;
 // registered before they are used.
 mod diagnostics;
 
+mod astconv;
 mod check;
 mod check_unused;
-mod astconv;
+mod coherence;
 mod collect;
 mod constrained_type_params;
+mod structured_errors;
 mod impl_wf_check;
-mod coherence;
+mod namespace;
 mod outlives;
 mod variance;
-mod namespace;
 
 pub struct TypeAndSubsts<'tcx> {
     substs: &'tcx Substs<'tcx>,
@@ -380,4 +383,5 @@ pub fn hir_trait_to_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, hir_trait:
     (principal, projections)
 }
 
+#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_typeck, DIAGNOSTICS }

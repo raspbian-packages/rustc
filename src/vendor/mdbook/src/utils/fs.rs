@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf, Component};
+use std::path::{Component, Path, PathBuf};
 use errors::*;
 use std::io::Read;
 use std::fs::{self, File};
@@ -6,20 +6,12 @@ use std::fs::{self, File};
 /// Takes a path to a file and try to read the file into a String
 pub fn file_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
     let path = path.as_ref();
-    let mut file = match File::open(path) {
-        Ok(f) => f,
-        Err(e) => {
-            debug!("[*]: Failed to open {:?}", path);
-            bail!(e);
-        },
-    };
 
     let mut content = String::new();
-
-    if let Err(e) = file.read_to_string(&mut content) {
-        debug!("[*]: Failed to read {:?}", path);
-        bail!(e);
-    }
+    File::open(path)
+        .chain_err(|| "Unable to open the file")?
+        .read_to_string(&mut content)
+        .chain_err(|| "Unable to read the file")?;
 
     Ok(content)
 }
@@ -44,11 +36,11 @@ pub fn file_to_string<P: AsRef<Path>>(path: P) -> Result<String> {
 ///
 /// **note:** it's not very fool-proof, if you find a situation where
 /// it doesn't return the correct path.
-/// Consider [submitting a new issue](https://github.com/azerupi/mdBook/issues)
-/// or a [pull-request](https://github.com/azerupi/mdBook/pulls) to improve it.
+/// Consider [submitting a new issue](https://github.com/rust-lang-nursery/mdBook/issues)
+/// or a [pull-request](https://github.com/rust-lang-nursery/mdBook/pulls) to improve it.
 
 pub fn path_to_root<P: Into<PathBuf>>(path: P) -> String {
-    debug!("[fn]: path_to_root");
+    debug!("path_to_root");
     // Remove filename and add "../" for every directory
 
     path.into()
@@ -59,30 +51,27 @@ pub fn path_to_root<P: Into<PathBuf>>(path: P) -> String {
             match c {
                 Component::Normal(_) => s.push_str("../"),
                 _ => {
-                    debug!("[*]: Other path component... {:?}", c);
-                },
+                    debug!("Other path component... {:?}", c);
+                }
             }
             s
         })
 }
-
-
 
 /// This function creates a file and returns it. But before creating the file
 /// it checks every directory in the path to see if it exists,
 /// and if it does not it will be created.
 
 pub fn create_file(path: &Path) -> Result<File> {
-    debug!("[fn]: create_file");
+    debug!("Creating {}", path.display());
 
     // Construct path
     if let Some(p) = path.parent() {
-        debug!("Parent directory is: {:?}", p);
+        trace!("Parent directory is: {:?}", p);
 
         fs::create_dir_all(p)?;
     }
 
-    debug!("[*]: Create file: {:?}", path);
     File::create(path).map_err(|e| e.into())
 }
 
@@ -102,22 +91,29 @@ pub fn remove_dir_content(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-///
-///
 /// Copies all files of a directory to another one except the files
 /// with the extensions given in the `ext_blacklist` array
 
-pub fn copy_files_except_ext(from: &Path, to: &Path, recursive: bool, ext_blacklist: &[&str])
-                             -> Result<()> {
-    debug!("[fn] copy_files_except_ext");
+pub fn copy_files_except_ext(
+    from: &Path,
+    to: &Path,
+    recursive: bool,
+    ext_blacklist: &[&str],
+) -> Result<()> {
+    debug!(
+        "Copying all files from {} to {} (blacklist: {:?})",
+        from.display(),
+        to.display(),
+        ext_blacklist
+    );
+
     // Check that from and to are different
     if from == to {
         return Ok(());
     }
-    debug!("[*] Loop");
+
     for entry in fs::read_dir(from)? {
         let entry = entry?;
-        debug!("[*] {:?}", entry.path());
         let metadata = entry.metadata()?;
 
         // If the entry is a dir and the recursive option is enabled, call itself
@@ -125,49 +121,58 @@ pub fn copy_files_except_ext(from: &Path, to: &Path, recursive: bool, ext_blackl
             if entry.path() == to.to_path_buf() {
                 continue;
             }
-            debug!("[*] is dir");
 
             // check if output dir already exists
             if !to.join(entry.file_name()).exists() {
                 fs::create_dir(&to.join(entry.file_name()))?;
             }
 
-            copy_files_except_ext(&from.join(entry.file_name()), &to.join(entry.file_name()), true, ext_blacklist)?;
+            copy_files_except_ext(
+                &from.join(entry.file_name()),
+                &to.join(entry.file_name()),
+                true,
+                ext_blacklist,
+            )?;
         } else if metadata.is_file() {
-
             // Check if it is in the blacklist
             if let Some(ext) = entry.path().extension() {
                 if ext_blacklist.contains(&ext.to_str().unwrap()) {
                     continue;
                 }
             }
-            debug!("[*] creating path for file: {:?}",
-                   &to.join(entry
-                                .path()
-                                .file_name()
-                                .expect("a file should have a file name...")));
+            debug!(
+                "creating path for file: {:?}",
+                &to.join(
+                    entry
+                        .path()
+                        .file_name()
+                        .expect("a file should have a file name...")
+                )
+            );
 
-            info!("[*] Copying file: {:?}\n    to {:?}",
-                  entry.path(),
-                  &to.join(entry
-                               .path()
-                               .file_name()
-                               .expect("a file should have a file name...")));
-            fs::copy(entry.path(),
-                     &to.join(entry
-                                  .path()
-                                  .file_name()
-                                  .expect("a file should have a file name...")))?;
+            debug!(
+                "Copying {:?} to {:?}",
+                entry.path(),
+                &to.join(
+                    entry
+                        .path()
+                        .file_name()
+                        .expect("a file should have a file name...")
+                )
+            );
+            fs::copy(
+                entry.path(),
+                &to.join(
+                    entry
+                        .path()
+                        .file_name()
+                        .expect("a file should have a file name..."),
+                ),
+            )?;
         }
     }
     Ok(())
 }
-
-
-// ------------------------------------------------------------------------------------------------
-// ------------------------------------------------------------------------------------------------
-
-// tests
 
 #[cfg(test)]
 mod tests {
@@ -216,7 +221,7 @@ mod tests {
 
         match copy_files_except_ext(&tmp.path(), &tmp.path().join("output"), true, &["md"]) {
             Err(e) => panic!("Error while executing the function:\n{:?}", e),
-            Ok(_) => {},
+            Ok(_) => {}
         }
 
         // Check if the correct files where created
@@ -235,6 +240,5 @@ mod tests {
         if !(&tmp.path().join("output/sub_dir_exists/file.txt")).exists() {
             panic!("output/sub_dir/file.png should exist")
         }
-
     }
 }

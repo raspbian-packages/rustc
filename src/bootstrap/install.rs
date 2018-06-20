@@ -22,6 +22,7 @@ use dist::{self, pkgname, sanitize_sh, tmpdir};
 
 use builder::{Builder, RunConfig, ShouldRun, Step};
 use cache::Interned;
+use config::Config;
 
 pub fn install_docs(builder: &Builder, stage: u32, host: Interned<String>) {
     install_sh(builder, "docs", "rust-docs", stage, Some(host));
@@ -66,18 +67,21 @@ fn install_sh(
 
     let prefix_default = PathBuf::from("/usr/local");
     let sysconfdir_default = PathBuf::from("/etc");
-    let docdir_default = PathBuf::from("share/doc/rust");
+    let datadir_default = PathBuf::from("share");
+    let docdir_default = datadir_default.join("doc/rust");
     let bindir_default = PathBuf::from("bin");
     let libdir_default = PathBuf::from("lib");
-    let mandir_default = PathBuf::from("share/man");
+    let mandir_default = datadir_default.join("man");
     let prefix = build.config.prefix.as_ref().unwrap_or(&prefix_default);
     let sysconfdir = build.config.sysconfdir.as_ref().unwrap_or(&sysconfdir_default);
+    let datadir = build.config.datadir.as_ref().unwrap_or(&datadir_default);
     let docdir = build.config.docdir.as_ref().unwrap_or(&docdir_default);
     let bindir = build.config.bindir.as_ref().unwrap_or(&bindir_default);
     let libdir = build.config.libdir.as_ref().unwrap_or(&libdir_default);
     let mandir = build.config.mandir.as_ref().unwrap_or(&mandir_default);
 
     let sysconfdir = prefix.join(sysconfdir);
+    let datadir = prefix.join(datadir);
     let docdir = prefix.join(docdir);
     let bindir = prefix.join(bindir);
     let libdir = prefix.join(libdir);
@@ -87,6 +91,7 @@ fn install_sh(
 
     let prefix = add_destdir(&prefix, &destdir);
     let sysconfdir = add_destdir(&sysconfdir, &destdir);
+    let datadir = add_destdir(&datadir, &destdir);
     let docdir = add_destdir(&docdir, &destdir);
     let bindir = add_destdir(&bindir, &destdir);
     let libdir = add_destdir(&libdir, &destdir);
@@ -106,6 +111,7 @@ fn install_sh(
         .arg(sanitize_sh(&tmpdir(build).join(&package_name).join("install.sh")))
         .arg(format!("--prefix={}", sanitize_sh(&prefix)))
         .arg(format!("--sysconfdir={}", sanitize_sh(&sysconfdir)))
+        .arg(format!("--datadir={}", sanitize_sh(&datadir)))
         .arg(format!("--docdir={}", sanitize_sh(&docdir)))
         .arg(format!("--bindir={}", sanitize_sh(&bindir)))
         .arg(format!("--libdir={}", sanitize_sh(&libdir)))
@@ -142,6 +148,19 @@ macro_rules! install {
             pub stage: u32,
             pub target: Interned<String>,
             pub host: Interned<String>,
+        }
+
+        impl $name {
+            #[allow(dead_code)]
+            fn should_build(config: &Config) -> bool {
+                config.extended && config.tools.as_ref()
+                    .map_or(true, |t| t.contains($path))
+            }
+
+            #[allow(dead_code)]
+            fn should_install(builder: &Builder) -> bool {
+                builder.config.tools.as_ref().map_or(false, |t| t.contains($path))
+            }
         }
 
         impl Step for $name {
@@ -185,32 +204,34 @@ install!((self, builder, _config),
             install_std(builder, self.stage, *target);
         }
     };
-    Cargo, "cargo", _config.extended, only_hosts: true, {
+    Cargo, "cargo", Self::should_build(_config), only_hosts: true, {
         builder.ensure(dist::Cargo { stage: self.stage, target: self.target });
         install_cargo(builder, self.stage, self.target);
     };
-    Rls, "rls", _config.extended, only_hosts: true, {
-        if builder.ensure(dist::Rls { stage: self.stage, target: self.target }).is_some() {
+    Rls, "rls", Self::should_build(_config), only_hosts: true, {
+        if builder.ensure(dist::Rls { stage: self.stage, target: self.target }).is_some() ||
+            Self::should_install(builder) {
             install_rls(builder, self.stage, self.target);
         } else {
             println!("skipping Install RLS stage{} ({})", self.stage, self.target);
         }
     };
-    Rustfmt, "rustfmt", _config.extended, only_hosts: true, {
-        if builder.ensure(dist::Rustfmt { stage: self.stage, target: self.target }).is_some() {
+    Rustfmt, "rustfmt", Self::should_build(_config), only_hosts: true, {
+        if builder.ensure(dist::Rustfmt { stage: self.stage, target: self.target }).is_some() ||
+            Self::should_install(builder) {
             install_rustfmt(builder, self.stage, self.target);
         } else {
             println!("skipping Install Rustfmt stage{} ({})", self.stage, self.target);
         }
     };
-    Analysis, "analysis", _config.extended, only_hosts: false, {
+    Analysis, "analysis", Self::should_build(_config), only_hosts: false, {
         builder.ensure(dist::Analysis {
             compiler: builder.compiler(self.stage, self.host),
             target: self.target
         });
         install_analysis(builder, self.stage, self.target);
     };
-    Src, "src", _config.extended, only_hosts: true, {
+    Src, "src", Self::should_build(_config) , only_hosts: true, {
         builder.ensure(dist::Src);
         install_src(builder, self.stage);
     }, ONLY_BUILD;

@@ -285,7 +285,7 @@ impl AtomicBool {
     #[inline]
     #[stable(feature = "atomic_access", since = "1.15.0")]
     pub fn into_inner(self) -> bool {
-        unsafe { self.v.into_inner() != 0 }
+        self.v.into_inner() != 0
     }
 
     /// Loads a value from the bool.
@@ -695,7 +695,7 @@ impl<T> AtomicPtr<T> {
     #[inline]
     #[stable(feature = "atomic_access", since = "1.15.0")]
     pub fn into_inner(self) -> *mut T {
-        unsafe { self.p.into_inner() }
+        self.p.into_inner()
     }
 
     /// Loads a value from the pointer.
@@ -944,6 +944,8 @@ macro_rules! atomic_int {
      $stable_cxchg:meta,
      $stable_debug:meta,
      $stable_access:meta,
+     $stable_from:meta,
+     $stable_nand:meta,
      $s_int_type:expr, $int_ref:expr,
      $int_type:ident $atomic_type:ident $atomic_init:ident) => {
         /// An integer type which can be safely shared between threads.
@@ -978,7 +980,7 @@ macro_rules! atomic_int {
             }
         }
 
-        #[stable(feature = "atomic_from", since = "1.23.0")]
+        #[$stable_from]
         impl From<$int_type> for $atomic_type {
             #[inline]
             fn from(v: $int_type) -> Self { Self::new(v) }
@@ -1050,7 +1052,7 @@ macro_rules! atomic_int {
             #[inline]
             #[$stable_access]
             pub fn into_inner(self) -> $int_type {
-                unsafe { self.v.into_inner() }
+                self.v.into_inner()
             }
 
             /// Loads a value from the atomic integer.
@@ -1324,6 +1326,29 @@ macro_rules! atomic_int {
                 unsafe { atomic_and(self.v.get(), val, order) }
             }
 
+            /// Bitwise "nand" with the current value.
+            ///
+            /// Performs a bitwise "nand" operation on the current value and the argument `val`, and
+            /// sets the new value to the result.
+            ///
+            /// Returns the previous value.
+            ///
+            /// # Examples
+            ///
+            /// ```
+            /// #![feature(atomic_nand)]
+            ///
+            /// use std::sync::atomic::{AtomicIsize, Ordering};
+            ///
+            /// let foo = AtomicIsize::new(0xf731);
+            /// assert_eq!(foo.fetch_nand(0x137f, Ordering::SeqCst), 0xf731);
+            /// assert_eq!(foo.load(Ordering::SeqCst), !(0xf731 & 0x137f));
+            #[inline]
+            #[$stable_nand]
+            pub fn fetch_nand(&self, val: $int_type, order: Ordering) -> $int_type {
+                unsafe { atomic_nand(self.v.get(), val, order) }
+            }
+
             /// Bitwise "or" with the current value.
             ///
             /// Performs a bitwise "or" operation on the current value and the argument `val`, and
@@ -1375,6 +1400,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "i8", "../../../std/primitive.i8.html",
     i8 AtomicI8 ATOMIC_I8_INIT
 }
@@ -1384,6 +1411,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "u8", "../../../std/primitive.u8.html",
     u8 AtomicU8 ATOMIC_U8_INIT
 }
@@ -1393,6 +1422,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "i16", "../../../std/primitive.i16.html",
     i16 AtomicI16 ATOMIC_I16_INIT
 }
@@ -1402,6 +1433,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "u16", "../../../std/primitive.u16.html",
     u16 AtomicU16 ATOMIC_U16_INIT
 }
@@ -1411,6 +1444,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "i32", "../../../std/primitive.i32.html",
     i32 AtomicI32 ATOMIC_I32_INIT
 }
@@ -1420,6 +1455,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "u32", "../../../std/primitive.u32.html",
     u32 AtomicU32 ATOMIC_U32_INIT
 }
@@ -1429,6 +1466,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "i64", "../../../std/primitive.i64.html",
     i64 AtomicI64 ATOMIC_I64_INIT
 }
@@ -1438,6 +1477,8 @@ atomic_int! {
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
     unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "integer_atomics", issue = "32976"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "u64", "../../../std/primitive.u64.html",
     u64 AtomicU64 ATOMIC_U64_INIT
 }
@@ -1447,6 +1488,8 @@ atomic_int!{
     stable(feature = "extended_compare_and_swap", since = "1.10.0"),
     stable(feature = "atomic_debug", since = "1.3.0"),
     stable(feature = "atomic_access", since = "1.15.0"),
+    stable(feature = "atomic_from", since = "1.23.0"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "isize", "../../../std/primitive.isize.html",
     isize AtomicIsize ATOMIC_ISIZE_INIT
 }
@@ -1456,6 +1499,8 @@ atomic_int!{
     stable(feature = "extended_compare_and_swap", since = "1.10.0"),
     stable(feature = "atomic_debug", since = "1.3.0"),
     stable(feature = "atomic_access", since = "1.15.0"),
+    stable(feature = "atomic_from", since = "1.23.0"),
+    unstable(feature = "atomic_nand", issue = "13226"),
     "usize", "../../../std/primitive.usize.html",
     usize AtomicUsize ATOMIC_USIZE_INIT
 }
@@ -1594,6 +1639,18 @@ unsafe fn atomic_and<T>(dst: *mut T, val: T, order: Ordering) -> T {
         AcqRel => intrinsics::atomic_and_acqrel(dst, val),
         Relaxed => intrinsics::atomic_and_relaxed(dst, val),
         SeqCst => intrinsics::atomic_and(dst, val),
+        __Nonexhaustive => panic!("invalid memory ordering"),
+    }
+}
+
+#[inline]
+unsafe fn atomic_nand<T>(dst: *mut T, val: T, order: Ordering) -> T {
+    match order {
+        Acquire => intrinsics::atomic_nand_acq(dst, val),
+        Release => intrinsics::atomic_nand_rel(dst, val),
+        AcqRel => intrinsics::atomic_nand_acqrel(dst, val),
+        Relaxed => intrinsics::atomic_nand_relaxed(dst, val),
+        SeqCst => intrinsics::atomic_nand(dst, val),
         __Nonexhaustive => panic!("invalid memory ordering"),
     }
 }

@@ -31,6 +31,7 @@ use channel;
 use util::{cp_r, libdir, is_dylib, cp_filtered, copy, replace_in_file};
 use builder::{Builder, RunConfig, ShouldRun, Step};
 use compile;
+use native;
 use tool::{self, Tool};
 use cache::{INTERNER, Interned};
 use time;
@@ -225,6 +226,8 @@ fn make_win_dist(
         "libwinspool.a",
         "libws2_32.a",
         "libwsock32.a",
+        "libdbghelp.a",
+        "libmsimg32.a",
     ];
 
     //Find mingw artifacts we want to bundle
@@ -433,6 +436,13 @@ impl Step for Rustc {
                 }
             }
 
+            // Copy over the codegen backends
+            let backends_src = builder.sysroot_codegen_backends(compiler);
+            let backends_rel = backends_src.strip_prefix(&src).unwrap();
+            let backends_dst = image.join(&backends_rel);
+            t!(fs::create_dir_all(&backends_dst));
+            cp_r(&backends_src, &backends_dst);
+
             // Man pages
             t!(fs::create_dir_all(image.join("share/man/man1")));
             let man_src = build.src.join("src/doc/man");
@@ -579,7 +589,9 @@ impl Step for Std {
         t!(fs::create_dir_all(&dst));
         let mut src = builder.sysroot_libdir(compiler, target).to_path_buf();
         src.pop(); // Remove the trailing /lib folder from the sysroot_libdir
-        cp_r(&src, &dst);
+        cp_filtered(&src, &dst, &|path| {
+            path.file_name().and_then(|s| s.to_str()) != Some("codegen-backends")
+        });
 
         let mut cmd = rust_installer(builder);
         cmd.arg("generate")
@@ -890,6 +902,12 @@ impl Step for PlainSourceTarball {
                    .arg("--vers").arg(CARGO_VENDOR_VERSION)
                    .arg("cargo-vendor")
                    .env("RUSTC", &build.initial_rustc);
+                if let Some(dir) = build.openssl_install_dir(build.config.build) {
+                    builder.ensure(native::Openssl {
+                        target: build.config.build,
+                    });
+                    cmd.env("OPENSSL_DIR", dir);
+                }
                 build.run(&mut cmd);
             }
 
@@ -1217,31 +1235,6 @@ impl Step for Rustfmt {
         Some(distdir(build).join(format!("{}-{}.tar.gz", name, target)))
     }
 }
-
-
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct DontDistWithMiriEnabled;
-
-impl Step for DontDistWithMiriEnabled {
-    type Output = PathBuf;
-    const DEFAULT: bool = true;
-
-    fn should_run(run: ShouldRun) -> ShouldRun {
-        let build_miri = run.builder.build.config.test_miri;
-        run.default_condition(build_miri)
-    }
-
-    fn make_run(run: RunConfig) {
-        run.builder.ensure(DontDistWithMiriEnabled);
-    }
-
-    fn run(self, _: &Builder) -> PathBuf {
-        panic!("Do not distribute with miri enabled.\n\
-                The distributed libraries would include all MIR (increasing binary size).
-                The distributed MIR would include validation statements.");
-    }
-}
-
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Extended {

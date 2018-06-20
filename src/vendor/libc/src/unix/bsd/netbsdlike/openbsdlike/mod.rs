@@ -176,6 +176,17 @@ s! {
         pub ifm_xflags: ::c_int,
         pub ifm_data: if_data,
     }
+
+    pub struct sockaddr_dl {
+        pub sdl_len: ::c_uchar,
+        pub sdl_family: ::c_uchar,
+        pub sdl_index: ::c_ushort,
+        pub sdl_type: ::c_uchar,
+        pub sdl_nlen: ::c_uchar,
+        pub sdl_alen: ::c_uchar,
+        pub sdl_slen: ::c_uchar,
+        pub sdl_data: [::c_char; 24],
+    }
 }
 
 pub const UT_NAMESIZE: usize = 32;
@@ -200,7 +211,11 @@ pub const ECANCELED : ::c_int = 88;
 pub const EIDRM : ::c_int = 89;
 pub const ENOMSG : ::c_int = 90;
 pub const ENOTSUP : ::c_int = 91;
-pub const ELAST : ::c_int = 91;
+pub const EBADMSG : ::c_int = 92;
+pub const ENOTRECOVERABLE : ::c_int = 93;
+pub const EOWNERDEAD : ::c_int = 94;
+pub const EPROTO : ::c_int = 95;
+pub const ELAST : ::c_int = 95;
 
 pub const F_DUPFD_CLOEXEC : ::c_int = 10;
 
@@ -357,7 +372,17 @@ pub const EIPSEC : ::c_int = 82;
 pub const ENOMEDIUM : ::c_int = 85;
 pub const EMEDIUMTYPE : ::c_int = 86;
 
+pub const EAI_BADFLAGS: ::c_int = -1;
+pub const EAI_NONAME: ::c_int = -2;
+pub const EAI_AGAIN: ::c_int = -3;
+pub const EAI_FAIL: ::c_int = -4;
+pub const EAI_NODATA: ::c_int = -5;
+pub const EAI_FAMILY: ::c_int = -6;
+pub const EAI_SOCKTYPE: ::c_int = -7;
+pub const EAI_SERVICE: ::c_int = -8;
+pub const EAI_MEMORY: ::c_int = -10;
 pub const EAI_SYSTEM: ::c_int = -11;
+pub const EAI_OVERFLOW: ::c_int = -14;
 
 pub const RUSAGE_THREAD: ::c_int = 1;
 
@@ -723,6 +748,3 @@ cfg_if! {
         // Unknown target_os
     }
 }
-
-mod other;
-pub use self::other::*;

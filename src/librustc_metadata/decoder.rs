@@ -13,12 +13,14 @@
 use cstore::{self, CrateMetadata, MetadataBlob, NativeLibrary};
 use schema::*;
 
-use rustc::hir::map::{DefKey, DefPath, DefPathData, DefPathHash};
+use rustc::hir::map::{DefKey, DefPath, DefPathData, DefPathHash,
+                      DisambiguatedDefPathData};
 use rustc::hir;
 use rustc::middle::cstore::{LinkagePreference, ExternConstBody,
                             ExternBodyNestedBodies};
 use rustc::hir::def::{self, Def, CtorKind};
-use rustc::hir::def_id::{CrateNum, DefId, DefIndex, CRATE_DEF_INDEX, LOCAL_CRATE};
+use rustc::hir::def_id::{CrateNum, DefId, DefIndex,
+                         CRATE_DEF_INDEX, LOCAL_CRATE};
 use rustc::ich::Fingerprint;
 use rustc::middle::lang_items;
 use rustc::mir;
@@ -36,7 +38,6 @@ use std::rc::Rc;
 use std::u32;
 
 use rustc_serialize::{Decodable, Decoder, SpecializedDecoder, opaque};
-use rustc_data_structures::indexed_vec::Idx;
 use syntax::attr;
 use syntax::ast::{self, Ident};
 use syntax::codemap;
@@ -264,25 +265,23 @@ impl<'a, 'tcx> SpecializedDecoder<DefId> for DecodeContext<'a, 'tcx> {
 impl<'a, 'tcx> SpecializedDecoder<DefIndex> for DecodeContext<'a, 'tcx> {
     #[inline]
     fn specialized_decode(&mut self) -> Result<DefIndex, Self::Error> {
-        Ok(DefIndex::from_u32(self.read_u32()?))
+        Ok(DefIndex::from_raw_u32(self.read_u32()?))
     }
 }
 
 impl<'a, 'tcx> SpecializedDecoder<Span> for DecodeContext<'a, 'tcx> {
     fn specialized_decode(&mut self) -> Result<Span, Self::Error> {
+        let tag = u8::decode(self)?;
+
+        if tag == TAG_INVALID_SPAN {
+            return Ok(DUMMY_SP)
+        }
+
+        debug_assert_eq!(tag, TAG_VALID_SPAN);
+
         let lo = BytePos::decode(self)?;
-        let hi = BytePos::decode(self)?;
-
-        if lo == BytePos(0) && hi == BytePos(0) {
-            // Don't try to rebase DUMMY_SP. Otherwise it will look like a valid
-            // Span again.
-            return Ok(DUMMY_SP)
-        }
-
-        if hi < lo {
-            // Consistently map invalid spans to DUMMY_SP.
-            return Ok(DUMMY_SP)
-        }
+        let len = BytePos::decode(self)?;
+        let hi = lo + len;
 
         let sess = if let Some(sess) = self.sess {
             sess
@@ -297,9 +296,7 @@ impl<'a, 'tcx> SpecializedDecoder<Span> for DecodeContext<'a, 'tcx> {
             let last_filemap = &imported_filemaps[self.last_filemap_index];
 
             if lo >= last_filemap.original_start_pos &&
-               lo <= last_filemap.original_end_pos &&
-               hi >= last_filemap.original_start_pos &&
-               hi <= last_filemap.original_end_pos {
+               lo <= last_filemap.original_end_pos {
                 last_filemap
             } else {
                 let mut a = 0;
@@ -323,16 +320,20 @@ impl<'a, 'tcx> SpecializedDecoder<Span> for DecodeContext<'a, 'tcx> {
         debug_assert!(lo >= filemap.original_start_pos &&
                       lo <= filemap.original_end_pos);
 
-        if hi < filemap.original_start_pos || hi > filemap.original_end_pos {
-            // `hi` points to a different FileMap than `lo` which is invalid.
-            // Again, map invalid Spans to DUMMY_SP.
-            return Ok(DUMMY_SP)
-        }
+        // Make sure we correctly filtered out invalid spans during encoding
+        debug_assert!(hi >= filemap.original_start_pos &&
+                      hi <= filemap.original_end_pos);
 
         let lo = (lo + filemap.translated_filemap.start_pos) - filemap.original_start_pos;
         let hi = (hi + filemap.translated_filemap.start_pos) - filemap.original_start_pos;
 
         Ok(Span::new(lo, hi, NO_EXPANSION))
+    }
+}
+
+impl<'a, 'tcx> SpecializedDecoder<Fingerprint> for DecodeContext<'a, 'tcx> {
+    fn specialized_decode(&mut self) -> Result<Fingerprint, Self::Error> {
+        Fingerprint::decode_opaque(&mut self.opaque)
     }
 }
 
@@ -404,7 +405,6 @@ impl<'tcx> EntryKind<'tcx> {
 
             EntryKind::ForeignMod |
             EntryKind::Impl(_) |
-            EntryKind::AutoImpl(_) |
             EntryKind::Field |
             EntryKind::Generator(_) |
             EntryKind::Closure(_) => return None,
@@ -453,7 +453,7 @@ impl<'a, 'tcx> CrateMetadata {
         if !self.is_proc_macro(index) {
             self.entry(index).kind.to_def(self.local_def_id(index))
         } else {
-            let kind = self.proc_macros.as_ref().unwrap()[index.as_usize() - 1].1.kind();
+            let kind = self.proc_macros.as_ref().unwrap()[index.to_proc_macro_index()].1.kind();
             Some(Def::Macro(self.local_def_id(index), kind))
         }
     }
@@ -634,7 +634,7 @@ impl<'a, 'tcx> CrateMetadata {
                     let def = Def::Macro(
                         DefId {
                             krate: self.cnum,
-                            index: DefIndex::new(id + 1)
+                            index: DefIndex::from_proc_macro_index(id),
                         },
                         ext.kind()
                     );
@@ -690,8 +690,7 @@ impl<'a, 'tcx> CrateMetadata {
                         }
                         continue;
                     }
-                    EntryKind::Impl(_) |
-                    EntryKind::AutoImpl(_) => continue,
+                    EntryKind::Impl(_) => continue,
 
                     _ => {}
                 }
@@ -704,8 +703,8 @@ impl<'a, 'tcx> CrateMetadata {
                     let vis = self.get_visibility(child_index);
                     let is_import = false;
                     callback(def::Export { def, ident, vis, span, is_import });
-                    // For non-reexport structs and variants add their constructors to children.
-                    // Reexport lists automatically contain constructors when necessary.
+                    // For non-re-export structs and variants add their constructors to children.
+                    // Re-export lists automatically contain constructors when necessary.
                     match def {
                         Def::Struct(..) => {
                             if let Some(ctor_def_id) = self.get_struct_ctor_def_id(child_index) {
@@ -1045,13 +1044,6 @@ impl<'a, 'tcx> CrateMetadata {
         self.dllimport_foreign_items.contains(&id)
     }
 
-    pub fn is_auto_impl(&self, impl_id: DefIndex) -> bool {
-        match self.entry(impl_id).kind {
-            EntryKind::AutoImpl(_) => true,
-            _ => false,
-        }
-    }
-
     pub fn fn_sig(&self,
                   id: DefIndex,
                   tcx: TyCtxt<'a, 'tcx, 'tcx>)
@@ -1070,7 +1062,23 @@ impl<'a, 'tcx> CrateMetadata {
 
     #[inline]
     pub fn def_key(&self, index: DefIndex) -> DefKey {
-        self.def_path_table.def_key(index)
+        if !self.is_proc_macro(index) {
+            self.def_path_table.def_key(index)
+        } else {
+            // FIXME(#49271) - It would be better if the DefIds were consistent
+            //                 with the DefPathTable, but for proc-macro crates
+            //                 they aren't.
+            let name = self.proc_macros
+                           .as_ref()
+                           .unwrap()[index.to_proc_macro_index()].0;
+            DefKey {
+                parent: Some(CRATE_DEF_INDEX),
+                disambiguated_data: DisambiguatedDefPathData {
+                    data: DefPathData::MacroDef(name.as_str()),
+                    disambiguator: 0,
+                }
+            }
+        }
     }
 
     // Returns the path leading to the thing with this `id`.

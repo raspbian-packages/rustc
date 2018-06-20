@@ -285,7 +285,7 @@ fn match_wild_err_arm() {
         Err(_) => println!("err")
     }
 
-    // this is a current false positive, see #1996
+    // this used to be a false positive, see #1996
     match x {
         Ok(3) => println!("ok"),
         Ok(x) if x*x == 64 => println!("ok 64"),
@@ -313,6 +313,21 @@ fn match_wild_err_arm() {
         Ok(_) => println!("ok"),
         Err(_) => {unreachable!();}
     }
+}
+
+fn match_as_ref() {
+    let owned: Option<()> = None;
+    let borrowed: Option<&()> = match owned {
+        None => None,
+        Some(ref v) => Some(v),
+    };
+
+    let mut mut_owned: Option<()> = None;
+    let borrow_mut: Option<&mut ()> = match mut_owned {
+        None => None,
+        Some(ref mut v) => Some(v),
+    };
+
 }
 
 fn main() {

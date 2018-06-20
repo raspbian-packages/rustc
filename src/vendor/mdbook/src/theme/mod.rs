@@ -1,3 +1,4 @@
+#![allow(missing_docs)] // FIXME: Document this
 use std::path::Path;
 use std::fs::File;
 use std::io::Read;
@@ -5,6 +6,7 @@ use std::io::Read;
 use errors::*;
 
 pub static INDEX: &'static [u8] = include_bytes!("index.hbs");
+pub static HEADER: &'static [u8] = include_bytes!("header.hbs");
 pub static CSS: &'static [u8] = include_bytes!("book.css");
 pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
 pub static JS: &'static [u8] = include_bytes!("book.js");
@@ -21,6 +23,7 @@ pub static AYU_HIGHLIGHT_CSS: &'static [u8] = include_bytes!("ayu-highlight.css"
 #[derive(Debug, PartialEq)]
 pub struct Theme {
     pub index: Vec<u8>,
+    pub header: Vec<u8>,
     pub css: Vec<u8>,
     pub favicon: Vec<u8>,
     pub js: Vec<u8>,
@@ -42,6 +45,7 @@ impl Theme {
         {
             let files = vec![
                 (theme_dir.join("index.hbs"), &mut theme.index),
+                (theme_dir.join("header.hbs"), &mut theme.header),
                 (theme_dir.join("book.js"), &mut theme.js),
                 (theme_dir.join("book.css"), &mut theme.css),
                 (theme_dir.join("favicon.png"), &mut theme.favicon),
@@ -68,6 +72,7 @@ impl Default for Theme {
     fn default() -> Theme {
         Theme {
             index: INDEX.to_owned(),
+            header: HEADER.to_owned(),
             css: CSS.to_owned(),
             favicon: FAVICON.to_owned(),
             js: JS.to_owned(),
@@ -134,6 +139,7 @@ mod tests {
 
         let empty = Theme {
             index: Vec::new(),
+            header: Vec::new(),
             css: Vec::new(),
             favicon: Vec::new(),
             js: Vec::new(),

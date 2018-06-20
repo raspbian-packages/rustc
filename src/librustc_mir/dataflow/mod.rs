@@ -26,10 +26,11 @@ use std::path::PathBuf;
 use std::usize;
 
 pub use self::impls::{MaybeStorageLive};
-pub use self::impls::{MaybeInitializedLvals, MaybeUninitializedLvals};
-pub use self::impls::{DefinitelyInitializedLvals, MovingOutStatements};
-pub use self::impls::EverInitializedLvals;
+pub use self::impls::{MaybeInitializedPlaces, MaybeUninitializedPlaces};
+pub use self::impls::{DefinitelyInitializedPlaces, MovingOutStatements};
+pub use self::impls::EverInitializedPlaces;
 pub use self::impls::borrows::{Borrows, BorrowData};
+pub use self::impls::HaveBeenBorrowedLocals;
 pub(crate) use self::impls::borrows::{ActiveBorrows, Reservations, ReserveOrActivateIndex};
 pub use self::at_location::{FlowAtLocation, FlowsAtLocation};
 pub(crate) use self::drop_flag_effects::*;
@@ -214,6 +215,7 @@ impl<'a, 'tcx: 'a, BD> DataflowAnalysis<'a, 'tcx, BD> where BD: BitDenotation
             }
             for j_stmt in 0..statements.len() {
                 let location = Location { block: bb, statement_index: j_stmt };
+                self.flow_state.operator.before_statement_effect(sets, location);
                 self.flow_state.operator.statement_effect(sets, location);
                 if track_intrablock {
                     sets.apply_local_effect();
@@ -222,6 +224,7 @@ impl<'a, 'tcx: 'a, BD> DataflowAnalysis<'a, 'tcx, BD> where BD: BitDenotation
 
             if terminator.is_some() {
                 let location = Location { block: bb, statement_index: statements.len() };
+                self.flow_state.operator.before_terminator_effect(sets, location);
                 self.flow_state.operator.terminator_effect(sets, location);
                 if track_intrablock {
                     sets.apply_local_effect();
@@ -365,9 +368,10 @@ pub(crate) trait DataflowResultsConsumer<'a, 'tcx: 'a> {
     fn mir(&self) -> &'a Mir<'tcx>;
 }
 
-pub fn state_for_location<T: BitDenotation>(loc: Location,
-                                            analysis: &T,
-                                            result: &DataflowResults<T>)
+pub fn state_for_location<'tcx, T: BitDenotation>(loc: Location,
+                                                  analysis: &T,
+                                                  result: &DataflowResults<T>,
+                                                  mir: &Mir<'tcx>)
     -> IdxSetBuf<T::Idx> {
     let mut entry = result.sets().on_entry_set_for(loc.block.index()).to_owned();
 
@@ -381,7 +385,15 @@ pub fn state_for_location<T: BitDenotation>(loc: Location,
         for stmt in 0..loc.statement_index {
             let mut stmt_loc = loc;
             stmt_loc.statement_index = stmt;
+            analysis.before_statement_effect(&mut sets, stmt_loc);
             analysis.statement_effect(&mut sets, stmt_loc);
+        }
+
+        // Apply the pre-statement effect of the statement we're evaluating.
+        if loc.statement_index == mir[loc.block].statements.len() {
+            analysis.before_terminator_effect(&mut sets, loc);
+        } else {
+            analysis.before_statement_effect(&mut sets, loc);
         }
     }
 
@@ -637,6 +649,21 @@ pub trait BitDenotation: BitwiseOperator {
     /// (For example, establishing the call arguments.)
     fn start_block_effect(&self, entry_set: &mut IdxSet<Self::Idx>);
 
+    /// Similar to `statement_effect`, except it applies
+    /// *just before* the statement rather than *just after* it.
+    ///
+    /// This matters for "dataflow at location" APIs, because the
+    /// before-statement effect is visible while visiting the
+    /// statement, while the after-statement effect only becomes
+    /// visible at the next statement.
+    ///
+    /// Both the before-statement and after-statement effects are
+    /// applied, in that order, before moving for the next
+    /// statement.
+    fn before_statement_effect(&self,
+                               _sets: &mut BlockSets<Self::Idx>,
+                               _location: Location) {}
+
     /// Mutates the block-sets (the flow sets for the given
     /// basic block) according to the effects of evaluating statement.
     ///
@@ -650,6 +677,21 @@ pub trait BitDenotation: BitwiseOperator {
     fn statement_effect(&self,
                         sets: &mut BlockSets<Self::Idx>,
                         location: Location);
+
+    /// Similar to `terminator_effect`, except it applies
+    /// *just before* the terminator rather than *just after* it.
+    ///
+    /// This matters for "dataflow at location" APIs, because the
+    /// before-terminator effect is visible while visiting the
+    /// terminator, while the after-terminator effect only becomes
+    /// visible at the terminator's successors.
+    ///
+    /// Both the before-terminator and after-terminator effects are
+    /// applied, in that order, before moving for the next
+    /// terminator.
+    fn before_terminator_effect(&self,
+                                _sets: &mut BlockSets<Self::Idx>,
+                                _location: Location) {}
 
     /// Mutates the block-sets (the flow sets for the given
     /// basic block) according to the effects of evaluating
@@ -820,6 +862,14 @@ impl<'a, 'tcx: 'a, D> DataflowAnalysis<'a, 'tcx, D> where D: BitDenotation
                 self.propagate_bits_into_entry_set_for(in_out, changed, real_target);
                 for target in imaginary_targets {
                     self.propagate_bits_into_entry_set_for(in_out, changed, target);
+                }
+            }
+            mir::TerminatorKind::FalseUnwind { ref real_target, unwind } => {
+                self.propagate_bits_into_entry_set_for(in_out, changed, real_target);
+                if let Some(ref unwind) = unwind {
+                    if !self.dead_unwinds.contains(&bb) {
+                        self.propagate_bits_into_entry_set_for(in_out, changed, unwind);
+                    }
                 }
             }
         }

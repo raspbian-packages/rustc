@@ -141,6 +141,10 @@ pub enum TypeVariants<'tcx> {
     /// `|a| yield a`.
     TyGenerator(DefId, ClosureSubsts<'tcx>, GeneratorInterior<'tcx>),
 
+    /// A type representin the types stored inside a generator.
+    /// This should only appear in GeneratorInteriors.
+    TyGeneratorWitness(Binder<&'tcx Slice<Ty<'tcx>>>),
+
     /// The never type `!`
     TyNever,
 
@@ -386,14 +390,21 @@ impl<'a, 'gcx, 'tcx> ClosureSubsts<'tcx> {
         state.map(move |d| d.ty.subst(tcx, self.substs))
     }
 
+    /// This is the types of the fields of a generate which
+    /// is available before the generator transformation.
+    /// It includes the upvars and the state discriminant which is u32.
+    pub fn pre_transforms_tys(self, def_id: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) ->
+        impl Iterator<Item=Ty<'tcx>> + 'a
+    {
+        self.upvar_tys(def_id, tcx).chain(iter::once(tcx.types.u32))
+    }
+
     /// This is the types of all the fields stored in a generator.
     /// It includes the upvars, state types and the state discriminant which is u32.
     pub fn field_tys(self, def_id: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) ->
         impl Iterator<Item=Ty<'tcx>> + 'a
     {
-        let upvars = self.upvar_tys(def_id, tcx);
-        let state = self.state_tys(def_id, tcx);
-        upvars.chain(iter::once(tcx.types.u32)).chain(state)
+        self.pre_transforms_tys(def_id, tcx).chain(self.state_tys(def_id, tcx))
     }
 }
 
@@ -405,19 +416,7 @@ impl<'a, 'gcx, 'tcx> ClosureSubsts<'tcx> {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct GeneratorInterior<'tcx> {
     pub witness: Ty<'tcx>,
-}
-
-impl<'tcx> GeneratorInterior<'tcx> {
-    pub fn new(witness: Ty<'tcx>) -> GeneratorInterior<'tcx> {
-        GeneratorInterior { witness }
-    }
-
-    pub fn as_slice(&self) -> &'tcx Slice<Ty<'tcx>> {
-        match self.witness.sty {
-            ty::TyTuple(s, _) => s,
-            _ => bug!(),
-        }
-    }
+    pub movable: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
@@ -646,7 +645,7 @@ impl<'tcx> PolyExistentialTraitRef<'tcx> {
 /// erase, or otherwise "discharge" these bound regions, we change the
 /// type from `Binder<T>` to just `T` (see
 /// e.g. `liberate_late_bound_regions`).
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct Binder<T>(pub T);
 
 impl<T> Binder<T> {
@@ -746,7 +745,7 @@ impl<T> Binder<T> {
 
 /// Represents the projection of an associated type. In explicit UFCS
 /// form this would be written `<T as Trait<..>>::N`.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct ProjectionTy<'tcx> {
     /// The parameters of the associated item.
     pub substs: &'tcx Substs<'tcx>,
@@ -1351,7 +1350,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
     pub fn simd_type(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Ty<'tcx> {
         match self.sty {
             TyAdt(def, substs) => {
-                def.struct_variant().fields[0].ty(tcx, substs)
+                def.non_enum_variant().fields[0].ty(tcx, substs)
             }
             _ => bug!("simd_type called on invalid type")
         }
@@ -1359,7 +1358,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
 
     pub fn simd_size(&self, _cx: TyCtxt) -> usize {
         match self.sty {
-            TyAdt(def, _) => def.struct_variant().fields.len(),
+            TyAdt(def, _) => def.non_enum_variant().fields.len(),
             _ => bug!("simd_size called on invalid type")
         }
     }
@@ -1478,13 +1477,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
-    pub fn is_uint(&self) -> bool {
-        match self.sty {
-            TyInfer(IntVar(_)) | TyUint(ast::UintTy::Us) => true,
-            _ => false
-        }
-    }
-
     pub fn is_char(&self) -> bool {
         match self.sty {
             TyChar => true,
@@ -1512,7 +1504,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
 
     pub fn is_machine(&self) -> bool {
         match self.sty {
-            TyInt(ast::IntTy::Is) | TyUint(ast::UintTy::Us) => false,
+            TyInt(ast::IntTy::Isize) | TyUint(ast::UintTy::Usize) => false,
             TyInt(..) | TyUint(..) | TyFloat(..) => true,
             _ => false,
         }
@@ -1529,18 +1521,12 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
     ///
     /// The parameter `explicit` indicates if this is an *explicit* dereference.
     /// Some types---notably unsafe ptrs---can only be dereferenced explicitly.
-    pub fn builtin_deref(&self, explicit: bool, pref: ty::LvaluePreference)
-        -> Option<TypeAndMut<'tcx>>
-    {
+    pub fn builtin_deref(&self, explicit: bool) -> Option<TypeAndMut<'tcx>> {
         match self.sty {
             TyAdt(def, _) if def.is_box() => {
                 Some(TypeAndMut {
                     ty: self.boxed_ty(),
-                    mutbl: if pref == ty::PreferMutLvalue {
-                        hir::MutMutable
-                    } else {
-                        hir::MutImmutable
-                    },
+                    mutbl: hir::MutImmutable,
                 })
             },
             TyRef(_, mt) => Some(mt),
@@ -1618,6 +1604,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
             }
             TyFnDef(..) |
             TyFnPtr(_) |
+            TyGeneratorWitness(..) |
             TyBool |
             TyChar |
             TyInt(_) |

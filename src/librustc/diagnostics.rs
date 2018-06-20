@@ -256,6 +256,28 @@ trait Foo {
 }
 ```
 
+### The trait cannot contain associated constants
+
+Just like static functions, associated constants aren't stored on the method
+table. If the trait or any subtrait contain an associated constant, they cannot
+be made into an object.
+
+```compile_fail,E0038
+trait Foo {
+    const X: i32;
+}
+
+impl Foo {}
+```
+
+A simple workaround is to use a helper method instead:
+
+```
+trait Foo {
+    fn x(&self) -> i32;
+}
+```
+
 ### The trait cannot use `Self` as a type parameter in the supertrait listing
 
 This is similar to the second sub-error, but subtler. It happens in situations
@@ -2003,7 +2025,69 @@ that refers to itself. That is permitting, since the closure would be
 invoking itself via a virtual call, and hence does not directly
 reference its own *type*.
 
-"##, }
+"##,
+
+E0692: r##"
+A `repr(transparent)` type was also annotated with other, incompatible
+representation hints.
+
+Erroneous code example:
+
+```compile_fail,E0692
+#![feature(repr_transparent)]
+
+#[repr(transparent, C)] // error: incompatible representation hints
+struct Grams(f32);
+```
+
+A type annotated as `repr(transparent)` delegates all representation concerns to
+another type, so adding more representation hints is contradictory. Remove
+either the `transparent` hint or the other hints, like this:
+
+```
+#![feature(repr_transparent)]
+
+#[repr(transparent)]
+struct Grams(f32);
+```
+
+Alternatively, move the other attributes to the contained type:
+
+```
+#![feature(repr_transparent)]
+
+#[repr(C)]
+struct Foo {
+    x: i32,
+    // ...
+}
+
+#[repr(transparent)]
+struct FooWrapper(Foo);
+```
+
+Note that introducing another `struct` just to have a place for the other
+attributes may have unintended side effects on the representation:
+
+```
+#![feature(repr_transparent)]
+
+#[repr(transparent)]
+struct Grams(f32);
+
+#[repr(C)]
+struct Float(f32);
+
+#[repr(transparent)]
+struct Grams2(Float); // this is not equivalent to `Grams` above
+```
+
+Here, `Grams2` is a not equivalent to `Grams` -- the former transparently wraps
+a (non-transparent) struct containing a single float, while `Grams` is a
+transparent wrapper around a float. This can make a difference for the ABI.
+"##,
+
+}
 
 
 register_diagnostics! {
@@ -2056,4 +2140,6 @@ register_diagnostics! {
     E0657, // `impl Trait` can only capture lifetimes bound at the fn level
     E0687, // in-band lifetimes cannot be used in `fn`/`Fn` syntax
     E0688, // in-band lifetimes cannot be mixed with explicit lifetime binders
+
+    E0906, // closures cannot be static
 }

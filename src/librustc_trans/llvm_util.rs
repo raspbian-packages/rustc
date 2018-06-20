@@ -13,17 +13,18 @@ use back::write::create_target_machine;
 use llvm;
 use rustc::session::Session;
 use rustc::session::config::PrintRequest;
-use libc::{c_int, c_char};
-use std::ffi::CString;
+use libc::c_int;
+use std::ffi::{CStr, CString};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Once;
 
-pub fn init(sess: &Session) {
+static POISONED: AtomicBool = AtomicBool::new(false);
+static INIT: Once = Once::new();
+
+pub(crate) fn init(sess: &Session) {
     unsafe {
         // Before we touch LLVM, make sure that multithreading is enabled.
-        static POISONED: AtomicBool = AtomicBool::new(false);
-        static INIT: Once = Once::new();
         INIT.call_once(|| {
             if llvm::LLVMStartMultithreaded() != 1 {
                 // use an extra bool to make sure that all future usage of LLVM
@@ -37,6 +38,13 @@ pub fn init(sess: &Session) {
         if POISONED.load(Ordering::SeqCst) {
             bug!("couldn't enable multi-threaded LLVM");
         }
+    }
+}
+
+fn require_inited() {
+    INIT.call_once(|| bug!("llvm is not initialized"));
+    if POISONED.load(Ordering::SeqCst) {
+        bug!("couldn't enable multi-threaded LLVM");
     }
 }
 
@@ -71,21 +79,22 @@ unsafe fn configure_llvm(sess: &Session) {
 // detection code will walk past the end of the feature array,
 // leading to crashes.
 
-const ARM_WHITELIST: &'static [&'static str] = &["neon\0", "vfp2\0", "vfp3\0", "vfp4\0"];
+const ARM_WHITELIST: &'static [&'static str] = &["neon\0", "v7\0", "vfp2\0", "vfp3\0", "vfp4\0"];
 
-const AARCH64_WHITELIST: &'static [&'static str] = &["neon\0"];
+const AARCH64_WHITELIST: &'static [&'static str] = &["neon\0", "v7\0"];
 
 const X86_WHITELIST: &'static [&'static str] = &["avx\0", "avx2\0", "bmi\0", "bmi2\0", "sse\0",
                                                  "sse2\0", "sse3\0", "sse4.1\0", "sse4.2\0",
                                                  "ssse3\0", "tbm\0", "lzcnt\0", "popcnt\0",
                                                  "sse4a\0", "rdrnd\0", "rdseed\0", "fma\0",
                                                  "xsave\0", "xsaveopt\0", "xsavec\0",
-                                                 "xsaves\0",
+                                                 "xsaves\0", "aes\0",
                                                  "avx512bw\0", "avx512cd\0",
                                                  "avx512dq\0", "avx512er\0",
                                                  "avx512f\0", "avx512ifma\0",
                                                  "avx512pf\0", "avx512vbmi\0",
-                                                 "avx512vl\0", "avx512vpopcntdq\0", "mmx\0"];
+                                                 "avx512vl\0", "avx512vpopcntdq\0",
+                                                 "mmx\0", "fxsr\0"];
 
 const HEXAGON_WHITELIST: &'static [&'static str] = &["hvx\0", "hvx-double\0"];
 
@@ -97,8 +106,18 @@ const POWERPC_WHITELIST: &'static [&'static str] = &["altivec\0",
 const MIPS_WHITELIST: &'static [&'static str] = &["msa\0"];
 
 pub fn target_features(sess: &Session) -> Vec<Symbol> {
+    let whitelist = target_feature_whitelist(sess);
     let target_machine = create_target_machine(sess);
+    let mut features = Vec::new();
+    for feat in whitelist {
+        if unsafe { llvm::LLVMRustHasFeature(target_machine, feat.as_ptr()) } {
+            features.push(Symbol::intern(feat.to_str().unwrap()));
+        }
+    }
+    features
+}
 
+pub fn target_feature_whitelist(sess: &Session) -> Vec<&CStr> {
     let whitelist = match &*sess.target.target.arch {
         "arm" => ARM_WHITELIST,
         "aarch64" => AARCH64_WHITELIST,
@@ -108,18 +127,13 @@ pub fn target_features(sess: &Session) -> Vec<Symbol> {
         "powerpc" | "powerpc64" => POWERPC_WHITELIST,
         _ => &[],
     };
-
-    let mut features = Vec::new();
-    for feat in whitelist {
-        assert_eq!(feat.chars().last(), Some('\0'));
-        if unsafe { llvm::LLVMRustHasFeature(target_machine, feat.as_ptr() as *const c_char) } {
-            features.push(Symbol::intern(&feat[..feat.len() - 1]));
-        }
-    }
-    features
+    whitelist.iter().map(|m| {
+        CStr::from_bytes_with_nul(m.as_bytes()).unwrap()
+    }).collect()
 }
 
 pub fn print_version() {
+    // Can be called without initializing LLVM
     unsafe {
         println!("LLVM version: {}.{}",
                  llvm::LLVMRustVersionMajor(), llvm::LLVMRustVersionMinor());
@@ -127,10 +141,12 @@ pub fn print_version() {
 }
 
 pub fn print_passes() {
+    // Can be called without initializing LLVM
     unsafe { llvm::LLVMRustPrintPasses(); }
 }
 
-pub fn print(req: PrintRequest, sess: &Session) {
+pub(crate) fn print(req: PrintRequest, sess: &Session) {
+    require_inited();
     let tm = create_target_machine(sess);
     unsafe {
         match req {
@@ -139,8 +155,4 @@ pub fn print(req: PrintRequest, sess: &Session) {
             _ => bug!("rustc_trans can't handle print request: {:?}", req),
         }
     }
-}
-
-pub fn enable_llvm_debug() {
-    unsafe { llvm::LLVMRustSetDebug(1); }
 }

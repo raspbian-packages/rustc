@@ -1,4 +1,4 @@
-rustc (1.24.1+dfsg1-1+rpi1) buster-staging; urgency=medium
+rustc (1.25.0+dfsg1-2+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
@@ -7,7 +7,37 @@ rustc (1.24.1+dfsg1-1+rpi1) buster-staging; urgency=medium
   [changes introduced in 1.24.1+dfsg1-1+rpi1 by Peter Michael Green]
   * Remove -march=native from src/binaryen/CMakeLists.txt
 
- -- Peter Michael Green <plugwash@raspbian.org>  Fri, 16 Mar 2018 00:05:34 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Wed, 20 Jun 2018 22:12:21 +0000
+
+rustc (1.25.0+dfsg1-2) unstable; urgency=medium
+
+  * Add patches for LLVM's compiler-rt to fix bugs on sparc64 and mips64.
+    (Closes: #898982)
+  * Install codegen-backends into rustc rather than libstd-rust-dev.
+    (Closes: #899087)
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 19 May 2018 13:10:33 -0700
+
+rustc (1.25.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Allow up to 15 test failures on s390x.
+  * Set CARGO_INCREMENTAL=0 on sparc64.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 18 May 2018 01:11:15 -0700
+
+rustc (1.25.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Install missing codegen-backends.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 06 Apr 2018 14:05:36 -0700
+
+rustc (1.25.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update to LLVM 6.0.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 01 Apr 2018 15:59:47 +0200
 
 rustc (1.24.1+dfsg1-1) unstable; urgency=medium
 

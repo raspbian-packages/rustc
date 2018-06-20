@@ -12,14 +12,14 @@ pub use self::Variance::*;
 pub use self::AssociatedItemContainer::*;
 pub use self::BorrowKind::*;
 pub use self::IntVarValue::*;
-pub use self::LvaluePreference::*;
 pub use self::fold::TypeFoldable;
 
 use hir::{map as hir_map, FreevarMap, TraitMap};
 use hir::def::{Def, CtorKind, ExportMap};
-use hir::def_id::{CrateNum, DefId, DefIndex, LocalDefId, CRATE_DEF_INDEX, LOCAL_CRATE};
+use hir::def_id::{CrateNum, DefId, LocalDefId, CRATE_DEF_INDEX, LOCAL_CRATE};
 use hir::map::DefPathData;
 use hir::svh::Svh;
+use ich::Fingerprint;
 use ich::StableHashingContext;
 use middle::const_val::ConstVal;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
@@ -37,8 +37,9 @@ use util::common::ErrorReported;
 use util::nodemap::{NodeSet, DefIdMap, FxHashMap, FxHashSet};
 
 use serialize::{self, Encodable, Encoder};
-use std::collections::BTreeMap;
+use std::cell::RefCell;
 use std::cmp;
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::iter::FromIterator;
@@ -497,6 +498,20 @@ impl<'tcx> Hash for TyS<'tcx> {
     }
 }
 
+impl<'tcx> Ord for TyS<'tcx> {
+    #[inline]
+    fn cmp(&self, other: &TyS<'tcx>) -> Ordering {
+        // (self as *const _).cmp(other as *const _)
+        (self as *const TyS<'tcx>).cmp(&(other as *const TyS<'tcx>))
+    }
+}
+impl<'tcx> PartialOrd for TyS<'tcx> {
+    #[inline]
+    fn partial_cmp(&self, other: &TyS<'tcx>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 impl<'tcx> TyS<'tcx> {
     pub fn is_primitive_ty(&self) -> bool {
         match self.sty {
@@ -565,6 +580,19 @@ impl<T> PartialEq for Slice<T> {
     }
 }
 impl<T> Eq for Slice<T> {}
+
+impl<T> Ord for Slice<T> {
+    #[inline]
+    fn cmp(&self, other: &Slice<T>) -> Ordering {
+        (&self.0 as *const [T]).cmp(&(&other.0 as *const [T]))
+    }
+}
+impl<T> PartialOrd for Slice<T> {
+    #[inline]
+    fn partial_cmp(&self, other: &Slice<T>) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl<T> Hash for Slice<T> {
     fn hash<H: Hasher>(&self, s: &mut H) {
@@ -756,9 +784,8 @@ pub struct Generics {
     pub regions: Vec<RegionParameterDef>,
     pub types: Vec<TypeParameterDef>,
 
-    /// Reverse map to each `TypeParameterDef`'s `index` field, from
-    /// `def_id.index` (`def_id.krate` is the same as the item's).
-    pub type_param_to_index: BTreeMap<DefIndex, u32>,
+    /// Reverse map to each `TypeParameterDef`'s `index` field
+    pub type_param_to_index: FxHashMap<DefId, u32>,
 
     pub has_self: bool,
     pub has_late_bound_regions: Option<Span>,
@@ -1101,7 +1128,7 @@ pub type PolySubtypePredicate<'tcx> = ty::Binder<SubtypePredicate<'tcx>>;
 /// equality between arbitrary types. Processing an instance of
 /// Form #2 eventually yields one of these `ProjectionPredicate`
 /// instances to normalize the LHS.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
 pub struct ProjectionPredicate<'tcx> {
     pub projection_ty: ProjectionTy<'tcx>,
     pub ty: Ty<'tcx>,
@@ -1476,17 +1503,32 @@ impl<'gcx> HashStable<StableHashingContext<'gcx>> for AdtDef {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'gcx>,
                                           hasher: &mut StableHasher<W>) {
-        let ty::AdtDef {
-            did,
-            ref variants,
-            ref flags,
-            ref repr,
-        } = *self;
+        thread_local! {
+            static CACHE: RefCell<FxHashMap<usize, Fingerprint>> =
+                RefCell::new(FxHashMap());
+        }
 
-        did.hash_stable(hcx, hasher);
-        variants.hash_stable(hcx, hasher);
-        flags.hash_stable(hcx, hasher);
-        repr.hash_stable(hcx, hasher);
+        let hash: Fingerprint = CACHE.with(|cache| {
+            let addr = self as *const AdtDef as usize;
+            *cache.borrow_mut().entry(addr).or_insert_with(|| {
+                let ty::AdtDef {
+                    did,
+                    ref variants,
+                    ref flags,
+                    ref repr,
+                } = *self;
+
+                let mut hasher = StableHasher::new();
+                did.hash_stable(hcx, &mut hasher);
+                variants.hash_stable(hcx, &mut hasher);
+                flags.hash_stable(hcx, &mut hasher);
+                repr.hash_stable(hcx, &mut hasher);
+
+                hasher.finish()
+           })
+        });
+
+        hash.hash_stable(hcx, hasher);
     }
 }
 
@@ -1499,8 +1541,9 @@ bitflags! {
         const IS_C               = 1 << 0;
         const IS_PACKED          = 1 << 1;
         const IS_SIMD            = 1 << 2;
+        const IS_TRANSPARENT     = 1 << 3;
         // Internal only for now. If true, don't reorder fields.
-        const IS_LINEAR          = 1 << 3;
+        const IS_LINEAR          = 1 << 4;
 
         // Any of these flags being set prevent field reordering optimisation.
         const IS_UNOPTIMISABLE   = ReprFlags::IS_C.bits |
@@ -1538,8 +1581,9 @@ impl ReprOptions {
         for attr in tcx.get_attrs(did).iter() {
             for r in attr::find_repr_attrs(tcx.sess.diagnostic(), attr) {
                 flags.insert(match r {
-                    attr::ReprExtern => ReprFlags::IS_C,
+                    attr::ReprC => ReprFlags::IS_C,
                     attr::ReprPacked => ReprFlags::IS_PACKED,
+                    attr::ReprTransparent => ReprFlags::IS_TRANSPARENT,
                     attr::ReprSimd => ReprFlags::IS_SIMD,
                     attr::ReprInt(i) => {
                         size = Some(i);
@@ -1551,11 +1595,6 @@ impl ReprOptions {
                     },
                 });
             }
-        }
-
-        // FIXME(eddyb) This is deprecated and should be removed.
-        if tcx.has_attr(did, "simd") {
-            flags.insert(ReprFlags::IS_SIMD);
         }
 
         // This is here instead of layout because the choice must make it into metadata.
@@ -1572,10 +1611,12 @@ impl ReprOptions {
     #[inline]
     pub fn packed(&self) -> bool { self.flags.contains(ReprFlags::IS_PACKED) }
     #[inline]
+    pub fn transparent(&self) -> bool { self.flags.contains(ReprFlags::IS_TRANSPARENT) }
+    #[inline]
     pub fn linear(&self) -> bool { self.flags.contains(ReprFlags::IS_LINEAR) }
 
     pub fn discr_type(&self) -> attr::IntType {
-        self.int.unwrap_or(attr::SignedInt(ast::IntTy::Is))
+        self.int.unwrap_or(attr::SignedInt(ast::IntTy::Isize))
     }
 
     /// Returns true if this `#[repr()]` should inhabit "smart enum
@@ -1691,10 +1732,9 @@ impl<'a, 'gcx, 'tcx> AdtDef {
         self.destructor(tcx).is_some()
     }
 
-    /// Asserts this is a struct and returns the struct's unique
-    /// variant.
-    pub fn struct_variant(&self) -> &VariantDef {
-        assert!(!self.is_enum());
+    /// Asserts this is a struct or union and returns its unique variant.
+    pub fn non_enum_variant(&self) -> &VariantDef {
+        assert!(self.is_struct() || self.is_union());
         &self.variants[0]
     }
 
@@ -1733,7 +1773,7 @@ impl<'a, 'gcx, 'tcx> AdtDef {
         match def {
             Def::Variant(vid) | Def::VariantCtor(vid, ..) => self.variant_with_id(vid),
             Def::Struct(..) | Def::StructCtor(..) | Def::Union(..) |
-            Def::TyAlias(..) | Def::AssociatedTy(..) | Def::SelfTy(..) => self.struct_variant(),
+            Def::TyAlias(..) | Def::AssociatedTy(..) | Def::SelfTy(..) => self.non_enum_variant(),
             _ => bug!("unexpected def {:?} in variant_of_def", def)
         }
     }
@@ -1865,7 +1905,12 @@ impl<'a, 'gcx, 'tcx> AdtDef {
                 vec![]
             }
 
-            TyStr | TyDynamic(..) | TySlice(_) | TyForeign(..) | TyError => {
+            TyStr |
+            TyDynamic(..) |
+            TySlice(_) |
+            TyForeign(..) |
+            TyError |
+            TyGeneratorWitness(..) => {
                 // these are never sized - return the target type
                 vec![ty]
             }
@@ -2053,21 +2098,6 @@ impl<'tcx> TyS<'tcx> {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum LvaluePreference {
-    PreferMutLvalue,
-    NoPreference
-}
-
-impl LvaluePreference {
-    pub fn from_mutbl(m: hir::Mutability) -> Self {
-        match m {
-            hir::MutMutable => PreferMutLvalue,
-            hir::MutImmutable => NoPreference,
-        }
-    }
-}
-
 impl BorrowKind {
     pub fn from_mutbl(m: hir::Mutability) -> BorrowKind {
         match m {
@@ -2143,60 +2173,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             }
             None => {
                 bug!("Node id {} is not present in the node map", id);
-            }
-        }
-    }
-
-    pub fn expr_is_lval(self, expr: &hir::Expr) -> bool {
-         match expr.node {
-            hir::ExprPath(hir::QPath::Resolved(_, ref path)) => {
-                match path.def {
-                    Def::Local(..) | Def::Upvar(..) | Def::Static(..) | Def::Err => true,
-                    _ => false,
-                }
-            }
-
-            hir::ExprType(ref e, _) => {
-                self.expr_is_lval(e)
-            }
-
-            hir::ExprUnary(hir::UnDeref, _) |
-            hir::ExprField(..) |
-            hir::ExprTupField(..) |
-            hir::ExprIndex(..) => {
-                true
-            }
-
-            // Partially qualified paths in expressions can only legally
-            // refer to associated items which are always rvalues.
-            hir::ExprPath(hir::QPath::TypeRelative(..)) |
-
-            hir::ExprCall(..) |
-            hir::ExprMethodCall(..) |
-            hir::ExprStruct(..) |
-            hir::ExprTup(..) |
-            hir::ExprIf(..) |
-            hir::ExprMatch(..) |
-            hir::ExprClosure(..) |
-            hir::ExprBlock(..) |
-            hir::ExprRepeat(..) |
-            hir::ExprArray(..) |
-            hir::ExprBreak(..) |
-            hir::ExprAgain(..) |
-            hir::ExprRet(..) |
-            hir::ExprWhile(..) |
-            hir::ExprLoop(..) |
-            hir::ExprAssign(..) |
-            hir::ExprInlineAsm(..) |
-            hir::ExprAssignOp(..) |
-            hir::ExprLit(_) |
-            hir::ExprUnary(..) |
-            hir::ExprBox(..) |
-            hir::ExprAddrOf(..) |
-            hir::ExprBinary(..) |
-            hir::ExprYield(..) |
-            hir::ExprCast(..) => {
-                false
             }
         }
     }
@@ -2319,11 +2295,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 self.adt_def(enum_did).variant_with_id(did)
             }
             Def::Struct(did) | Def::Union(did) => {
-                self.adt_def(did).struct_variant()
+                self.adt_def(did).non_enum_variant()
             }
             Def::StructCtor(ctor_did, ..) => {
                 let did = self.parent_def_id(ctor_did).expect("struct ctor has no parent");
-                self.adt_def(did).struct_variant()
+                self.adt_def(did).non_enum_variant()
             }
             _ => bug!("expect_variant_def used with unexpected def {:?}", def)
         }
@@ -2406,8 +2382,6 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     }
 
     /// Returns true if this is an `auto trait`.
-    ///
-    /// NB. For a limited time, also returns true if `impl Trait for .. { }` is in the code-base.
     pub fn trait_is_auto(self, trait_def_id: DefId) -> bool {
         self.trait_def(trait_def_id).has_auto_impl
     }
@@ -2677,6 +2651,20 @@ fn crate_hash<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     tcx.hir.crate_hash
 }
 
+fn instance_def_size_estimate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                                        instance_def: InstanceDef<'tcx>)
+                                        -> usize {
+    match instance_def {
+        InstanceDef::Item(..) |
+        InstanceDef::DropGlue(..) => {
+            let mir = tcx.instance_mir(instance_def);
+            mir.basic_blocks().iter().map(|bb| bb.statements.len()).sum()
+        },
+        // Estimate the size of other compiler-generated shims to be 1.
+        _ => 1
+    }
+}
+
 pub fn provide(providers: &mut ty::maps::Providers) {
     context::provide(providers);
     erase_regions::provide(providers);
@@ -2694,6 +2682,7 @@ pub fn provide(providers: &mut ty::maps::Providers) {
         original_crate_name,
         crate_hash,
         trait_impls_of: trait_def::trait_impls_of_provider,
+        instance_def_size_estimate,
         ..*providers
     };
 }

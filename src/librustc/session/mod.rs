@@ -14,11 +14,12 @@ pub use self::code_stats::{SizeKind, TypeSizeInfo, VariantInfo};
 use hir::def_id::CrateNum;
 use ich::Fingerprint;
 
+use ich;
 use lint;
 use middle::allocator::AllocatorKind;
 use middle::dependency_format;
 use session::search_paths::PathKind;
-use session::config::{BorrowckMode, DebugInfoLevel, OutputType};
+use session::config::{BorrowckMode, DebugInfoLevel, OutputType, Epoch};
 use ty::tls;
 use util::nodemap::{FxHashMap, FxHashSet};
 use util::common::{duration_to_secs_str, ErrorReported};
@@ -28,6 +29,7 @@ use errors::{self, DiagnosticBuilder, DiagnosticId};
 use errors::emitter::{Emitter, EmitterWriter};
 use syntax::json::JsonEmitter;
 use syntax::feature_gate;
+use syntax::symbol::Symbol;
 use syntax::parse;
 use syntax::parse::ParseSess;
 use syntax::{ast, codemap};
@@ -111,6 +113,9 @@ pub struct Session {
     pub imported_macro_spans: RefCell<HashMap<Span, (String, Span)>>,
 
     incr_comp_session: RefCell<IncrCompSession>,
+
+    /// A cache of attributes ignored by StableHashingContext
+    pub ignored_attr_names: FxHashSet<Symbol>,
 
     /// Some measurements that are being gathered during compilation.
     pub perf_stats: PerfStats,
@@ -245,7 +250,7 @@ impl Session {
     }
 
     pub fn span_fatal<S: Into<MultiSpan>>(&self, sp: S, msg: &str) -> ! {
-        panic!(self.diagnostic().span_fatal(sp, msg))
+        self.diagnostic().span_fatal(sp, msg).raise()
     }
     pub fn span_fatal_with_code<S: Into<MultiSpan>>(
         &self,
@@ -253,10 +258,10 @@ impl Session {
         msg: &str,
         code: DiagnosticId,
     ) -> ! {
-        panic!(self.diagnostic().span_fatal_with_code(sp, msg, code))
+        self.diagnostic().span_fatal_with_code(sp, msg, code).raise()
     }
     pub fn fatal(&self, msg: &str) -> ! {
-        panic!(self.diagnostic().fatal(msg))
+        self.diagnostic().fatal(msg).raise()
     }
     pub fn span_err_or_warn<S: Into<MultiSpan>>(&self, is_warning: bool, sp: S, msg: &str) {
         if is_warning {
@@ -493,9 +498,65 @@ impl Session {
             self.use_mir()
     }
 
-    pub fn lto(&self) -> bool {
-        self.opts.cg.lto || self.target.target.options.requires_lto
+    /// Calculates the flavor of LTO to use for this compilation.
+    pub fn lto(&self) -> config::Lto {
+        // If our target has codegen requirements ignore the command line
+        if self.target.target.options.requires_lto {
+            return config::Lto::Fat
+        }
+
+        // If the user specified something, return that. If they only said `-C
+        // lto` and we've for whatever reason forced off ThinLTO via the CLI,
+        // then ensure we can't use a ThinLTO.
+        match self.opts.cg.lto {
+            config::Lto::No => {}
+            config::Lto::Yes if self.opts.cli_forced_thinlto_off => {
+                return config::Lto::Fat
+            }
+            other => return other,
+        }
+
+        // Ok at this point the target doesn't require anything and the user
+        // hasn't asked for anything. Our next decision is whether or not
+        // we enable "auto" ThinLTO where we use multiple codegen units and
+        // then do ThinLTO over those codegen units. The logic below will
+        // either return `No` or `ThinLocal`.
+
+        // If processing command line options determined that we're incompatible
+        // with ThinLTO (e.g. `-C lto --emit llvm-ir`) then return that option.
+        if self.opts.cli_forced_thinlto_off {
+            return config::Lto::No
+        }
+
+        // If `-Z thinlto` specified process that, but note that this is mostly
+        // a deprecated option now that `-C lto=thin` exists.
+        if let Some(enabled) = self.opts.debugging_opts.thinlto {
+            if enabled {
+                return config::Lto::ThinLocal
+            } else {
+                return config::Lto::No
+            }
+        }
+
+        // If there's only one codegen unit and LTO isn't enabled then there's
+        // no need for ThinLTO so just return false.
+        if self.codegen_units() == 1 {
+            return config::Lto::No
+        }
+
+        // Right now ThinLTO isn't compatible with incremental compilation.
+        if self.opts.incremental.is_some() {
+            return config::Lto::No
+        }
+
+        // Now we're in "defaults" territory. By default we enable ThinLTO for
+        // optimized compiles (anything greater than O0).
+        match self.opts.optimize {
+            config::OptLevel::No => config::Lto::No,
+            _ => config::Lto::ThinLocal,
+        }
     }
+
     /// Returns the panic strategy for this compile session. If the user explicitly selected one
     /// using '-C panic', use that, otherwise use the panic strategy defined by the target.
     pub fn panic_strategy(&self) -> PanicStrategy {
@@ -647,6 +708,7 @@ impl Session {
             IncrCompSession::Active { ref session_directory, .. } => {
                 session_directory.clone()
             }
+            IncrCompSession::InvalidBecauseOfErrors { .. } => return,
             _ => bug!("Trying to invalidate IncrCompSession `{:?}`",
                       *incr_comp_session),
         };
@@ -799,42 +861,13 @@ impl Session {
         16
     }
 
-    /// Returns whether ThinLTO is enabled for this compilation
-    pub fn thinlto(&self) -> bool {
-        // If processing command line options determined that we're incompatible
-        // with ThinLTO (e.g. `-C lto --emit llvm-ir`) then return that option.
-        if let Some(enabled) = self.opts.cli_forced_thinlto {
-            return enabled
-        }
+    pub fn teach(&self, code: &DiagnosticId) -> bool {
+        self.opts.debugging_opts.teach && !self.parse_sess.span_diagnostic.code_emitted(code)
+    }
 
-        // If explicitly specified, use that with the next highest priority
-        if let Some(enabled) = self.opts.debugging_opts.thinlto {
-            return enabled
-        }
-
-        // If LTO is enabled we right now unconditionally disable ThinLTO.
-        // This'll come at a later date! (full crate graph ThinLTO)
-        if self.lto() {
-            return false
-        }
-
-        // If there's only one codegen unit or then there's no need for ThinLTO
-        // so just return false.
-        if self.codegen_units() == 1 {
-            return false
-        }
-
-        // Right now ThinLTO isn't compatible with incremental compilation.
-        if self.opts.incremental.is_some() {
-            return false
-        }
-
-        // Now we're in "defaults" territory. By default we enable ThinLTO for
-        // optimized compiles (anything greater than O0).
-        match self.opts.optimize {
-            config::OptLevel::No => false,
-            _ => true,
-        }
+    /// Are we allowed to use features from the Rust 2018 epoch?
+    pub fn rust_2018(&self) -> bool {
+        self.opts.debugging_opts.epoch >= Epoch::Epoch2018
     }
 }
 
@@ -876,22 +909,27 @@ pub fn build_session_with_codemap(sopts: config::Options,
 
     let emitter: Box<Emitter> = match (sopts.error_format, emitter_dest) {
         (config::ErrorOutputType::HumanReadable(color_config), None) => {
-            Box::new(EmitterWriter::stderr(color_config, Some(codemap.clone()), false))
+            Box::new(EmitterWriter::stderr(color_config,
+                                           Some(codemap.clone()),
+                                           false,
+                                           sopts.debugging_opts.teach))
         }
         (config::ErrorOutputType::HumanReadable(_), Some(dst)) => {
-            Box::new(EmitterWriter::new(dst, Some(codemap.clone()), false))
+            Box::new(EmitterWriter::new(dst, Some(codemap.clone()), false, false))
         }
         (config::ErrorOutputType::Json(pretty), None) => {
-            Box::new(JsonEmitter::stderr(Some(registry), codemap.clone(), pretty))
+            Box::new(JsonEmitter::stderr(Some(registry), codemap.clone(),
+                     pretty, sopts.debugging_opts.approximate_suggestions))
         }
         (config::ErrorOutputType::Json(pretty), Some(dst)) => {
-            Box::new(JsonEmitter::new(dst, Some(registry), codemap.clone(), pretty))
+            Box::new(JsonEmitter::new(dst, Some(registry), codemap.clone(),
+                     pretty, sopts.debugging_opts.approximate_suggestions))
         }
         (config::ErrorOutputType::Short(color_config), None) => {
-            Box::new(EmitterWriter::stderr(color_config, Some(codemap.clone()), true))
+            Box::new(EmitterWriter::stderr(color_config, Some(codemap.clone()), true, false))
         }
         (config::ErrorOutputType::Short(_), Some(dst)) => {
-            Box::new(EmitterWriter::new(dst, Some(codemap.clone()), true))
+            Box::new(EmitterWriter::new(dst, Some(codemap.clone()), true, false))
         }
     };
 
@@ -919,7 +957,7 @@ pub fn build_session_(sopts: config::Options,
     let host = match Target::search(config::host_triple()) {
         Ok(t) => t,
         Err(e) => {
-            panic!(span_diagnostic.fatal(&format!("Error loading host specification: {}", e)));
+            span_diagnostic.fatal(&format!("Error loading host specification: {}", e)).raise();
         }
     };
     let target_cfg = config::build_target_config(&sopts, &span_diagnostic);
@@ -945,7 +983,7 @@ pub fn build_session_(sopts: config::Options,
     let working_dir = match env::current_dir() {
         Ok(dir) => dir,
         Err(e) => {
-            panic!(p_s.span_diagnostic.fatal(&format!("Current directory is invalid: {}", e)))
+            p_s.span_diagnostic.fatal(&format!("Current directory is invalid: {}", e)).raise()
         }
     };
     let working_dir = file_path_mapping.map_prefix(working_dir);
@@ -980,6 +1018,7 @@ pub fn build_session_(sopts: config::Options,
         injected_panic_runtime: Cell::new(None),
         imported_macro_spans: RefCell::new(HashMap::new()),
         incr_comp_session: RefCell::new(IncrCompSession::NotInitialized),
+        ignored_attr_names: ich::compute_ignored_attr_names(),
         perf_stats: PerfStats {
             svh_time: Cell::new(Duration::from_secs(0)),
             incr_comp_hashes_time: Cell::new(Duration::from_secs(0)),
@@ -1066,26 +1105,26 @@ pub enum IncrCompSession {
 pub fn early_error(output: config::ErrorOutputType, msg: &str) -> ! {
     let emitter: Box<Emitter> = match output {
         config::ErrorOutputType::HumanReadable(color_config) => {
-            Box::new(EmitterWriter::stderr(color_config, None, false))
+            Box::new(EmitterWriter::stderr(color_config, None, false, false))
         }
         config::ErrorOutputType::Json(pretty) => Box::new(JsonEmitter::basic(pretty)),
         config::ErrorOutputType::Short(color_config) => {
-            Box::new(EmitterWriter::stderr(color_config, None, true))
+            Box::new(EmitterWriter::stderr(color_config, None, true, false))
         }
     };
     let handler = errors::Handler::with_emitter(true, false, emitter);
     handler.emit(&MultiSpan::new(), msg, errors::Level::Fatal);
-    panic!(errors::FatalError);
+    errors::FatalError.raise();
 }
 
 pub fn early_warn(output: config::ErrorOutputType, msg: &str) {
     let emitter: Box<Emitter> = match output {
         config::ErrorOutputType::HumanReadable(color_config) => {
-            Box::new(EmitterWriter::stderr(color_config, None, false))
+            Box::new(EmitterWriter::stderr(color_config, None, false, false))
         }
         config::ErrorOutputType::Json(pretty) => Box::new(JsonEmitter::basic(pretty)),
         config::ErrorOutputType::Short(color_config) => {
-            Box::new(EmitterWriter::stderr(color_config, None, true))
+            Box::new(EmitterWriter::stderr(color_config, None, true, false))
         }
     };
     let handler = errors::Handler::with_emitter(true, false, emitter);

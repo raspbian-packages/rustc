@@ -68,8 +68,8 @@
 //! assert_eq!(b"Oh no, a typo!\n", output.stdout.as_slice());
 //! ```
 //!
-//! Note that [`ChildStderr`] and [`ChildStdout`] implement [`Write`] and
-//! [`ChildStdin`] implements [`Read`]:
+//! Note that [`ChildStderr`] and [`ChildStdout`] implement [`Read`] and
+//! [`ChildStdin`] implements [`Write`]:
 //!
 //! ```no_run
 //! use std::process::{Command, Stdio};
@@ -1392,7 +1392,7 @@ pub fn id() -> u32 {
     ::sys::os::getpid()
 }
 
-#[cfg(all(test, not(target_os = "emscripten")))]
+#[cfg(all(test, not(any(target_os = "cloudabi", target_os = "emscripten"))))]
 mod tests {
     use io::prelude::*;
 
@@ -1842,5 +1842,11 @@ mod tests {
             }
         }
         assert!(events > 0);
+    }
+
+    #[test]
+    fn test_command_implements_send() {
+        fn take_send_type<T: Send>(_: T) {}
+        take_send_type(Command::new(""))
     }
 }

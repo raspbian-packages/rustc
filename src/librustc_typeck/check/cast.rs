@@ -107,7 +107,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             ty::TyDynamic(ref tty, ..) =>
                 Some(PointerKind::Vtable(tty.principal().map(|p| p.def_id()))),
             ty::TyAdt(def, substs) if def.is_struct() => {
-                match def.struct_variant().fields.last() {
+                match def.non_enum_variant().fields.last() {
                     None => Some(PointerKind::Thin),
                     Some(f) => {
                         let field_ty = self.field_ty(span, f, substs);
@@ -130,7 +130,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             ty::TyInfer(_) => None,
 
             ty::TyBool | ty::TyChar | ty::TyInt(..) | ty::TyUint(..) |
-            ty::TyFloat(_) | ty::TyArray(..) |
+            ty::TyFloat(_) | ty::TyArray(..) | ty::TyGeneratorWitness(..) |
             ty::TyRawPtr(_) | ty::TyRef(..) | ty::TyFnDef(..) |
             ty::TyFnPtr(..) | ty::TyClosure(..) | ty::TyGenerator(..) |
             ty::TyAdt(..) | ty::TyNever | ty::TyError => {
@@ -233,7 +233,7 @@ impl<'a, 'gcx, 'tcx> CastCheck<'tcx> {
             CastError::NeedViaPtr => {
                 let mut err = make_invalid_casting_error(fcx.tcx.sess, self.span, self.expr_ty,
                                                          self.cast_ty, fcx);
-                if self.cast_ty.is_uint() {
+                if self.cast_ty.is_integral() {
                     err.help(&format!("cast through {} first",
                                       match e {
                                           CastError::NeedViaPtr => "a raw pointer",
@@ -281,10 +281,12 @@ impl<'a, 'gcx, 'tcx> CastCheck<'tcx> {
                                 .emit();
             }
             CastError::SizedUnsizedCast => {
-                type_error_struct!(fcx.tcx.sess, self.span, self.expr_ty, E0607,
-                                 "cannot cast thin pointer `{}` to fat pointer `{}`",
-                                 self.expr_ty,
-                                 fcx.ty_to_string(self.cast_ty)).emit();
+                use structured_errors::{SizedUnsizedCastError, StructuredDiagnostic};
+                SizedUnsizedCastError::new(&fcx.tcx.sess,
+                                           self.span,
+                                           self.expr_ty,
+                                           fcx.ty_to_string(self.cast_ty))
+                    .diagnostic().emit();
             }
             CastError::UnknownCastPtrKind |
             CastError::UnknownExprPtrKind => {

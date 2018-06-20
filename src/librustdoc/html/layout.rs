@@ -10,6 +10,7 @@
 
 use std::fmt;
 use std::io;
+use std::path::PathBuf;
 
 use externalfiles::ExternalHtml;
 
@@ -31,7 +32,7 @@ pub struct Page<'a> {
 
 pub fn render<T: fmt::Display, S: fmt::Display>(
     dst: &mut io::Write, layout: &Layout, page: &Page, sidebar: &S, t: &T,
-    css_file_extension: bool)
+    css_file_extension: bool, themes: &[PathBuf])
     -> io::Result<()>
 {
     write!(dst,
@@ -47,8 +48,11 @@ r##"<!DOCTYPE html>
     <title>{title}</title>
 
     <link rel="stylesheet" type="text/css" href="{root_path}normalize.css">
-    <link rel="stylesheet" type="text/css" href="{root_path}rustdoc.css">
-    <link rel="stylesheet" type="text/css" href="{root_path}main.css">
+    <link rel="stylesheet" type="text/css" href="{root_path}rustdoc.css" id="mainThemeStyle">
+    {themes}
+    <link rel="stylesheet" type="text/css" href="{root_path}dark.css">
+    <link rel="stylesheet" type="text/css" href="{root_path}main.css" id="themeStyle">
+    <script src="{root_path}storage.js"></script>
     {css_extension}
 
     {favicon}
@@ -70,6 +74,13 @@ r##"<!DOCTYPE html>
         {sidebar}
     </nav>
 
+    <div class="theme-picker">
+        <button id="theme-picker" aria-label="Pick another theme!">
+            <img src="{root_path}brush.svg" width="18" alt="Pick another theme!">
+        </button>
+        <div id="theme-choices"></div>
+    </div>
+    <script src="{root_path}theme.js"></script>
     <nav class="sub">
         <form class="search-form js-only">
             <div class="search-container">
@@ -94,20 +105,22 @@ r##"<!DOCTYPE html>
                 <h2>Keyboard Shortcuts</h2>
 
                 <dl>
-                    <dt>?</dt>
+                    <dt><kbd>?</kbd></dt>
                     <dd>Show this help dialog</dd>
-                    <dt>S</dt>
+                    <dt><kbd>S</kbd></dt>
                     <dd>Focus the search field</dd>
-                    <dt>↑</dt>
+                    <dt><kbd>↑</kbd></dt>
                     <dd>Move up in search results</dd>
-                    <dt>↓</dt>
+                    <dt><kbd>↓</kbd></dt>
                     <dd>Move down in search results</dd>
-                    <dt>↹</dt>
+                    <dt><kbd>↹</kbd></dt>
                     <dd>Switch tab</dd>
-                    <dt>&#9166;</dt>
+                    <dt><kbd>&#9166;</kbd></dt>
                     <dd>Go to active search result</dd>
-                    <dt style="width:31px;">+ / -</dt>
-                    <dd>Collapse/expand all sections</dd>
+                    <dt><kbd>+</kbd></dt>
+                    <dd>Expand all sections</dd>
+                    <dt><kbd>-</kbd></dt>
+                    <dd>Collapse all sections</dd>
                 </dl>
             </div>
 
@@ -174,6 +187,12 @@ r##"<!DOCTYPE html>
     after_content = layout.external_html.after_content,
     sidebar   = *sidebar,
     krate     = layout.krate,
+    themes = themes.iter()
+                   .filter_map(|t| t.file_stem())
+                   .filter_map(|t| t.to_str())
+                   .map(|t| format!(r#"<link rel="stylesheet" type="text/css" href="{}{}">"#,
+                                    page.root_path, t))
+                   .collect::<String>(),
     )
 }
 

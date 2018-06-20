@@ -1,6 +1,51 @@
 # Change Log
 All notable changes to this project will be documented in this file.
 
+## 0.0.186
+* Rustup to *rustc 1.25.0-nightly (0c6091fbd 2018-02-04)*
+* Various false positive fixes
+
+## 0.0.185
+* Rustup to *rustc 1.25.0-nightly (56733bc9f 2018-02-01)*
+* New lint: [`question_mark`]
+
+## 0.0.184
+* Rustup to *rustc 1.25.0-nightly (90eb44a58 2018-01-29)*
+* New lints: [`double_comparisons`], [`empty_line_after_outer_attr`]
+
+## 0.0.183
+* Rustup to *rustc 1.25.0-nightly (21882aad7 2018-01-28)*
+* New lint: [`misaligned_transmute`]
+
+## 0.0.182
+* Rustup to *rustc 1.25.0-nightly (a0dcecff9 2018-01-24)*
+* New lint: [`decimal_literal_representation`]
+
+## 0.0.181
+* Rustup to *rustc 1.25.0-nightly (97520ccb1 2018-01-21)*
+* New lints: [`else_if_without_else`], [`option_option`], [`unit_arg`], [`unnecessary_fold`]
+* Removed [`unit_expr`]
+* Various false positive fixes for [`needless_pass_by_value`]
+
+## 0.0.180
+* Rustup to *rustc 1.25.0-nightly (3f92e8d89 2018-01-14)*
+
+## 0.0.179
+* Rustup to *rustc 1.25.0-nightly (61452e506 2018-01-09)*
+
+## 0.0.178
+* Rustup to *rustc 1.25.0-nightly (ee220daca 2018-01-07)*
+
+## 0.0.177
+* Rustup to *rustc 1.24.0-nightly (250b49205 2017-12-21)*
+* New lint: [`match_as_ref`]
+
+## 0.0.176
+* Rustup to *rustc 1.24.0-nightly (0077d128d 2017-12-14)*
+
+## 0.0.175
+* Rustup to *rustc 1.24.0-nightly (bb42071f6 2017-12-01)*
+
 ## 0.0.174
 * Rustup to *rustc 1.23.0-nightly (63739ab7b 2017-11-21)*
 
@@ -515,17 +560,21 @@ All notable changes to this project will be documented in this file.
 [`const_static_lifetime`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#const_static_lifetime
 [`crosspointer_transmute`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#crosspointer_transmute
 [`cyclomatic_complexity`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#cyclomatic_complexity
+[`decimal_literal_representation`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#decimal_literal_representation
 [`deprecated_semver`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#deprecated_semver
 [`deref_addrof`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#deref_addrof
 [`derive_hash_xor_eq`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#derive_hash_xor_eq
 [`diverging_sub_expression`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#diverging_sub_expression
 [`doc_markdown`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#doc_markdown
+[`double_comparisons`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#double_comparisons
 [`double_neg`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#double_neg
 [`double_parens`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#double_parens
 [`drop_copy`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#drop_copy
 [`drop_ref`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#drop_ref
 [`duplicate_underscore_argument`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#duplicate_underscore_argument
+[`else_if_without_else`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#else_if_without_else
 [`empty_enum`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#empty_enum
+[`empty_line_after_outer_attr`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#empty_line_after_outer_attr
 [`empty_loop`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#empty_loop
 [`enum_clike_unportable_variant`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#enum_clike_unportable_variant
 [`enum_glob_use`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#enum_glob_use
@@ -564,6 +613,7 @@ All notable changes to this project will be documented in this file.
 [`ineffective_bit_mask`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#ineffective_bit_mask
 [`infinite_iter`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#infinite_iter
 [`inline_always`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#inline_always
+[`inline_fn_without_body`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#inline_fn_without_body
 [`int_plus_one`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#int_plus_one
 [`integer_arithmetic`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#integer_arithmetic
 [`invalid_ref`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#invalid_ref
@@ -589,6 +639,7 @@ All notable changes to this project will be documented in this file.
 [`many_single_char_names`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#many_single_char_names
 [`map_clone`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#map_clone
 [`map_entry`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#map_entry
+[`match_as_ref`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#match_as_ref
 [`match_bool`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#match_bool
 [`match_overlapping_arm`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#match_overlapping_arm
 [`match_ref_pats`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#match_ref_pats
@@ -597,6 +648,7 @@ All notable changes to this project will be documented in this file.
 [`maybe_infinite_iter`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#maybe_infinite_iter
 [`mem_forget`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#mem_forget
 [`min_max`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#min_max
+[`misaligned_transmute`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#misaligned_transmute
 [`misrefactored_assign_op`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#misrefactored_assign_op
 [`missing_docs_in_private_items`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#missing_docs_in_private_items
 [`mixed_case_hex_literals`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#mixed_case_hex_literals
@@ -632,6 +684,7 @@ All notable changes to this project will be documented in this file.
 [`option_map_or_none`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#option_map_or_none
 [`option_map_unwrap_or`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#option_map_unwrap_or
 [`option_map_unwrap_or_else`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#option_map_unwrap_or_else
+[`option_option`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#option_option
 [`option_unwrap_used`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#option_unwrap_used
 [`or_fun_call`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#or_fun_call
 [`out_of_bounds_indexing`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#out_of_bounds_indexing
@@ -645,6 +698,7 @@ All notable changes to this project will be documented in this file.
 [`println_empty_string`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#println_empty_string
 [`ptr_arg`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#ptr_arg
 [`pub_enum_variant_names`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#pub_enum_variant_names
+[`question_mark`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#question_mark
 [`range_minus_one`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#range_minus_one
 [`range_plus_one`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#range_plus_one
 [`range_step_by_zero`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#range_step_by_zero
@@ -653,6 +707,7 @@ All notable changes to this project will be documented in this file.
 [`redundant_closure_call`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#redundant_closure_call
 [`redundant_pattern`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#redundant_pattern
 [`regex_macro`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#regex_macro
+[`replace_consts`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#replace_consts
 [`result_map_unwrap_or_else`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#result_map_unwrap_or_else
 [`result_unwrap_used`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#result_unwrap_used
 [`reverse_range_loop`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#reverse_range_loop
@@ -689,9 +744,10 @@ All notable changes to this project will be documented in this file.
 [`trivial_regex`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#trivial_regex
 [`type_complexity`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#type_complexity
 [`unicode_not_nfc`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unicode_not_nfc
+[`unit_arg`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unit_arg
 [`unit_cmp`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unit_cmp
-[`unit_expr`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unit_expr
 [`unnecessary_cast`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unnecessary_cast
+[`unnecessary_fold`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unnecessary_fold
 [`unnecessary_mut_passed`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unnecessary_mut_passed
 [`unnecessary_operation`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unnecessary_operation
 [`unneeded_field_pattern`]: https://rust-lang-nursery.github.io/rust-clippy/master/index.html#unneeded_field_pattern

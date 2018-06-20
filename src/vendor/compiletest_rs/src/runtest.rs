@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use common::Config;
+use common::{Config, TestPaths};
 use common::{CompileFail, ParseFail, Pretty, RunFail, RunPass, RunPassValgrind};
 use common::{Codegen, DebugInfoLldb, DebugInfoGdb, Rustdoc, CodegenUnits};
 use common::{Incremental, RunMake, Ui, MirOpt};
@@ -17,7 +17,6 @@ use errors::{self, ErrorKind, Error};
 use filetime::FileTime;
 use json;
 use header::TestProps;
-use test::TestPaths;
 use util::logv;
 
 use std::collections::HashMap;
@@ -1603,8 +1602,7 @@ actual:\n\
     }
 
     /// Given a test path like `compile-fail/foo/bar.rs` Returns a name like
-    ///
-    ///     <output>/foo/bar-stage1
+    /// `<output>/foo/bar-stage1`
     fn output_base_name(&self) -> PathBuf {
         let dir = self.config.build_base.join(&self.testpaths.relative_dir);
 

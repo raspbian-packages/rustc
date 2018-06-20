@@ -127,7 +127,7 @@ what their purpose is.
 > Note: Some people call this anti-pattern of using primitive values when a
 > complex type would be more appropriate *primitive obsession*.
 
-Listing12-6 shows the addition of a struct named `Config` defined to have
+Listing 12-6 shows the addition of a struct named `Config` defined to have
 fields named `query` and `filename`. We’ve also changed the `parse_config`
 function to return an instance of the `Config` struct and updated `main` to use
 the struct fields rather than having separate variables:
@@ -193,8 +193,8 @@ trade-off.
 > make these copies only once, and our filename and query string are very
 > small. It’s better to have a working program that’s a bit inefficient than to
 > try to hyperoptimize code on your first pass. As you become more experienced
-> with Rust, it’ll be easier to start with the desirable solution, but for now,
-> it’s perfectly acceptable to call `clone`.
+> with Rust, it’ll be easier to start with the most efficient solution, but for
+> now, it’s perfectly acceptable to call `clone`.
 
 We’ve updated `main` so it places the instance of `Config` returned by
 `parse_config` into a variable named `config`, and we updated the code that
@@ -443,8 +443,8 @@ Great! This output is much friendlier for our users.
 
 Now that we’ve finished refactoring the configuration parsing, let’s turn to
 the program’s logic. As we stated in “Separation of Concerns for Binary
-Projects” on page XX, we’ll extract a function named `run` that will hold all
-the logic currently in the `main` function that isn’t involved with setting up
+Projects”, we’ll extract a function named `run` that will hold all the logic
+currently in the `main` function that isn’t involved with setting up
 configuration or handling errors. When we’re done, `main` will be concise and
 easy to verify by inspection, and we’ll be able to write tests for all the
 other logic.
@@ -583,9 +583,9 @@ fn main() {
 We use `if let` rather than `unwrap_or_else` to check whether `run` returns an
 `Err` value and call `process::exit(1)` if it does. The `run` function doesn’t
 return a value that we want to `unwrap` in the same way that `Config::new`
-returns the `Config` instance. Because `run` returns a `()` in the success
-case, we only care about detecting an error, so we don’t need `unwrap_or_else`
-to return the unwrapped value because it would only be `()`.
+returns the `Config` instance. Because `run` returns `()` in the success case,
+we only care about detecting an error, so we don’t need `unwrap_or_else` to
+return the unwrapped value because it would only be `()`.
 
 The bodies of the `if let` and the `unwrap_or_else` functions are the same in
 both cases: we print the error and exit.
@@ -605,7 +605,8 @@ Let’s move all the code that isn’t the `main` function from *src/main.rs* to
 * The `Config::new` function definition
 
 The contents of *src/lib.rs* should have the signatures shown in Listing 12-13
-(we’ve omitted the bodies of the functions for brevity):
+(we’ve omitted the bodies of the functions for brevity). Note that this won't
+compile until we modify *src/main.rs* in the listing after this one:
 
 <span class="filename">Filename: src/lib.rs</span>
 

@@ -15,7 +15,7 @@ use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io;
 use std::mem;
-use std::process::{self, Output, Child};
+use std::process::{self, Output};
 
 #[derive(Clone)]
 pub struct Command {
@@ -91,10 +91,6 @@ impl Command {
 
     pub fn output(&mut self) -> io::Result<Output> {
         self.command().output()
-    }
-
-    pub fn spawn(&mut self) -> io::Result<Child> {
-        self.command().spawn()
     }
 
     pub fn command(&self) -> process::Command {

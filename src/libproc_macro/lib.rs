@@ -95,7 +95,7 @@ impl FromStr for TokenStream {
             // notify the expansion info that it is unhygienic
             let mark = Mark::fresh(mark);
             mark.set_expn_info(expn_info);
-            let span = call_site.with_ctxt(call_site.ctxt().apply_mark(mark));
+            let span = call_site.with_ctxt(SyntaxContext::empty().apply_mark(mark));
             let stream = parse::parse_stream_from_source_str(name, src, sess, Some(span));
             Ok(__internal::token_stream_wrap(stream))
         })
@@ -221,6 +221,21 @@ impl Span {
         }
     }
 
+    /// The `Span` for the tokens in the previous macro expansion from which
+    /// `self` was generated from, if any.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn parent(&self) -> Option<Span> {
+        self.0.ctxt().outer().expn_info().map(|i| Span(i.call_site))
+    }
+
+    /// The span for the origin source code that `self` was generated from. If
+    /// this `Span` wasn't generated from other macro expansions then the return
+    /// value is the same as `*self`.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn source(&self) -> Span {
+        Span(self.0.source_callsite())
+    }
+
     /// Get the starting line/column in the source file for this span.
     #[unstable(feature = "proc_macro", issue = "38356")]
     pub fn start(&self) -> LineColumn {
@@ -247,11 +262,25 @@ impl Span {
     #[unstable(feature = "proc_macro", issue = "38356")]
     pub fn join(&self, other: Span) -> Option<Span> {
         let self_loc = __internal::lookup_char_pos(self.0.lo());
-        let other_loc = __internal::lookup_char_pos(self.0.lo());
+        let other_loc = __internal::lookup_char_pos(other.0.lo());
 
         if self_loc.file.name != other_loc.file.name { return None }
 
         Some(Span(self.0.to(other.0)))
+    }
+
+    /// Creates a new span with the same line/column information as `self` but
+    /// that resolves symbols as though it were at `other`.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn resolved_at(&self, other: Span) -> Span {
+        Span(self.0.with_ctxt(other.0.ctxt()))
+    }
+
+    /// Creates a new span with the same name resolution behavior as `self` but
+    /// with the line/column information of `other`.
+    #[unstable(feature = "proc_macro", issue = "38356")]
+    pub fn located_at(&self, other: Span) -> Span {
+        other.resolved_at(*self)
     }
 
     diagnostic_method!(error, Level::Error);
@@ -656,7 +685,7 @@ impl TokenTree {
                 })
             }
 
-            DotEq => unreachable!(),
+            DotEq => joint!('.', Eq),
             OpenDelim(..) | CloseDelim(..) => unreachable!(),
             Whitespace | Comment | Shebang(..) | Eof => unreachable!(),
         };

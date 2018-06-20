@@ -20,6 +20,9 @@ ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 
 RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
 export RUSTC_BOOTSTRAP = 1
 endif
+ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
+export CARGO_INCREMENTAL = 0
+endif
 
 # Defines DEB_*_RUST_TYPE triples
 include debian/architecture.mk
@@ -42,8 +45,8 @@ RELEASE_CHANNEL := stable
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 # Use system LLVM (comment out to use vendored LLVM)
-LLVM_VERSION = 4.0
-OLD_LLVM_VERSION = 3.9
+LLVM_VERSION = 6.0
+OLD_LLVM_VERSION = 4.0
 # Make it easier to test against a custom LLVM
 ifneq (,$(LLVM_DESTDIR))
 LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
@@ -187,8 +190,9 @@ override_dh_auto_configure: debian/config.toml
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
 	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
-	# We excluded some embedded libraries in d/copyright
-	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
+	# Other partially-excluded vendor crates in d/copyright
+	debian/prune-checksums src/vendor/winapi-*/.cargo-checksum.json
+	debian/prune-checksums src/vendor/shlex/.cargo-checksum.json
 	# We patched this for sparc64 support
 	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
 	# We don't run ./configure because we use debian/config.toml directly
@@ -218,6 +222,9 @@ endif
 
 TEST_LOG = debian/rustc-tests.log
 FAILURES_ALLOWED = 5
+ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
+  FAILURES_ALLOWED = 15
+endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
 endif
@@ -297,6 +304,7 @@ override_dh_install-arch:
 	dh_install
 	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
 	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/
+	dh_install -prustc usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/codegen-backends/
 
 override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	dh_install
@@ -320,11 +328,13 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
 
 override_dh_installchangelogs:
-	dh_missing --list-missing || true
 	dh_installchangelogs RELEASES.md
 
 override_dh_installdocs:
 	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
+
+override_dh_missing:
+	dh_missing --list-missing
 
 override_dh_compress:
 	dh_compress -X.woff

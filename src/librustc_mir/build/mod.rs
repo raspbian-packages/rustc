@@ -373,7 +373,7 @@ fn should_abort_on_panic<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     if tcx.has_attr(tcx.hir.local_def_id(fn_id), "unwind") { return false; }
 
     // FIXME(rust-lang/rust#48251) -- Had to disable abort-on-panic
-    // for backwards compatibility reasons.
+    // for backwardsa compatibility reasons.
     false
 }
 

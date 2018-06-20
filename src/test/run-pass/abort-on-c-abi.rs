@@ -11,6 +11,7 @@
 // Since we mark some ABIs as "nounwind" to LLVM, we must make sure that
 // we never unwind through them.
 
+// ignore-cloudabi no env and process
 // ignore-emscripten no processes
 // ignore-test FIXME rust-lang/rust#48251 -- temporarily disabled
 

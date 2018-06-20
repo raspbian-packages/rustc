@@ -17,7 +17,6 @@ use rustc::hir::map::blocks::FnLikeNode;
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::def_id::DefId;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::ty::layout::LayoutOf;
 use rustc::ty::util::IntTypeExt;
 use rustc::ty::subst::{Substs, Subst};
 use rustc::util::common::ErrorReported;
@@ -133,8 +132,8 @@ fn eval_const_expr_partial<'a, 'tcx>(cx: &ConstContext<'a, 'tcx>,
                 (&LitKind::Int(I128_OVERFLOW, Signed(IntTy::I128)), _) => {
                     Some(I128(i128::min_value()))
                 },
-                (&LitKind::Int(n, _), &ty::TyInt(IntTy::Is)) |
-                (&LitKind::Int(n, Signed(IntTy::Is)), _) => {
+                (&LitKind::Int(n, _), &ty::TyInt(IntTy::Isize)) |
+                (&LitKind::Int(n, Signed(IntTy::Isize)), _) => {
                     match tcx.sess.target.isize_ty {
                         IntTy::I16 => if n == I16_OVERFLOW {
                             Some(Isize(Is16(i16::min_value())))
@@ -313,7 +312,7 @@ fn eval_const_expr_partial<'a, 'tcx>(cx: &ConstContext<'a, 'tcx>,
           if tcx.fn_sig(def_id).abi() == Abi::RustIntrinsic {
             let layout_of = |ty: Ty<'tcx>| {
                 let ty = tcx.erase_regions(&ty);
-                (tcx.at(e.span), cx.param_env).layout_of(ty).map_err(|err| {
+                tcx.at(e.span).layout_of(cx.param_env.and(ty)).map_err(|err| {
                     ConstEvalErr { span: e.span, kind: LayoutError(err) }
                 })
             };
@@ -327,6 +326,10 @@ fn eval_const_expr_partial<'a, 'tcx>(cx: &ConstContext<'a, 'tcx>,
                     let align = layout_of(substs.type_at(0))?.align.abi();
                     return Ok(mk_const(Integral(Usize(ConstUsize::new(align,
                         tcx.sess.target.usize_ty).unwrap()))));
+                }
+                "type_id" => {
+                    let type_id = tcx.type_id_hash(substs.type_at(0));
+                    return Ok(mk_const(Integral(U64(type_id))));
                 }
                 _ => signal!(e, TypeckError)
             }
@@ -478,7 +481,7 @@ fn cast_const_int<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ty::TyInt(ast::IntTy::I32) => Ok(Integral(I32(v as i128 as i32))),
         ty::TyInt(ast::IntTy::I64) => Ok(Integral(I64(v as i128 as i64))),
         ty::TyInt(ast::IntTy::I128) => Ok(Integral(I128(v as i128))),
-        ty::TyInt(ast::IntTy::Is) => {
+        ty::TyInt(ast::IntTy::Isize) => {
             Ok(Integral(Isize(ConstIsize::new_truncating(v as i128, tcx.sess.target.isize_ty))))
         },
         ty::TyUint(ast::UintTy::U8) => Ok(Integral(U8(v as u8))),
@@ -486,7 +489,7 @@ fn cast_const_int<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ty::TyUint(ast::UintTy::U32) => Ok(Integral(U32(v as u32))),
         ty::TyUint(ast::UintTy::U64) => Ok(Integral(U64(v as u64))),
         ty::TyUint(ast::UintTy::U128) => Ok(Integral(U128(v as u128))),
-        ty::TyUint(ast::UintTy::Us) => {
+        ty::TyUint(ast::UintTy::Usize) => {
             Ok(Integral(Usize(ConstUsize::new_truncating(v, tcx.sess.target.usize_ty))))
         },
         ty::TyFloat(fty) => {

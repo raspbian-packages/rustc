@@ -352,11 +352,6 @@ class RustBuild(object):
             with open(self.rustc_stamp(), 'w') as rust_stamp:
                 rust_stamp.write(self.date)
 
-            if "pc-windows-gnu" in self.build:
-                filename = "rust-mingw-{}-{}.tar.gz".format(
-                    rustc_channel, self.build)
-                self._download_stage0_helper(filename, "rust-mingw")
-
         if self.cargo().startswith(self.bin_root()) and \
                 (not os.path.exists(self.cargo()) or
                  self.program_out_of_date(self.cargo_stamp())):
@@ -608,6 +603,7 @@ class RustBuild(object):
         env["LIBRARY_PATH"] = os.path.join(self.bin_root(), "lib") + \
             (os.pathsep + env["LIBRARY_PATH"]) \
             if "LIBRARY_PATH" in env else ""
+        env["RUSTFLAGS"] = "-Cdebuginfo=2"
         env["PATH"] = os.path.join(self.bin_root(), "bin") + \
             os.pathsep + env["PATH"]
         if not os.path.isfile(self.cargo()):
@@ -641,14 +637,23 @@ class RustBuild(object):
              os.path.join(self.rust_root, ".gitmodules"),
              "--get-regexp", "path"]
         ).decode(default_encoding).splitlines()]
-        submodules = [module for module in submodules
-                      if not ((module.endswith("llvm") and
-                               self.get_toml('llvm-config')) or
-                              (module.endswith("jemalloc") and
-                               (self.get_toml('use-jemalloc') == "false" or
-                                self.get_toml('jemalloc'))))]
+        filtered_submodules = []
+        for module in submodules:
+            if module.endswith("llvm"):
+                if self.get_toml('llvm-config'):
+                    continue
+            if module.endswith("llvm-emscripten"):
+                backends = self.get_toml('codegen-backends')
+                if backends is None or not 'emscripten' in backends:
+                    continue
+            if module.endswith("jemalloc"):
+                if self.get_toml('use-jemalloc') == 'false':
+                    continue
+                if self.get_toml('jemalloc'):
+                    continue
+            filtered_submodules.append(module)
         run(["git", "submodule", "update",
-             "--init", "--recursive"] + submodules,
+             "--init", "--recursive"] + filtered_submodules,
             cwd=self.rust_root, verbose=self.verbose)
         run(["git", "submodule", "-q", "foreach", "git",
              "reset", "-q", "--hard"],

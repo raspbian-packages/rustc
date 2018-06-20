@@ -60,7 +60,7 @@
 //! sort of a minor point so I've opted to leave it for later---after all
 //! we may want to adjust precisely when coercions occur.
 
-use check::{Diverges, FnCtxt};
+use check::{Diverges, FnCtxt, Needs};
 
 use rustc::hir;
 use rustc::hir::def_id::DefId;
@@ -68,9 +68,8 @@ use rustc::infer::{Coercion, InferResult, InferOk};
 use rustc::infer::type_variable::TypeVariableOrigin;
 use rustc::lint;
 use rustc::traits::{self, ObligationCause, ObligationCauseCode};
-use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow};
-use rustc::ty::{self, LvaluePreference, TypeAndMut,
-                Ty, ClosureSubsts};
+use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability};
+use rustc::ty::{self, TypeAndMut, Ty, ClosureSubsts};
 use rustc::ty::fold::TypeFoldable;
 use rustc::ty::error::TypeError;
 use rustc::ty::relate::RelateResult;
@@ -410,9 +409,9 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
             return success(vec![], ty, obligations);
         }
 
-        let pref = LvaluePreference::from_mutbl(mt_b.mutbl);
+        let needs = Needs::maybe_mut_place(mt_b.mutbl);
         let InferOk { value: mut adjustments, obligations: o }
-            = autoderef.adjust_steps_as_infer_ok(pref);
+            = autoderef.adjust_steps_as_infer_ok(needs);
         obligations.extend(o);
         obligations.extend(autoderef.into_obligations());
 
@@ -422,8 +421,17 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
             ty::TyRef(r_borrow, _) => r_borrow,
             _ => span_bug!(span, "expected a ref type, got {:?}", ty),
         };
+        let mutbl = match mt_b.mutbl {
+            hir::MutImmutable => AutoBorrowMutability::Immutable,
+            hir::MutMutable => AutoBorrowMutability::Mutable {
+                // Deref-coercion is a case where we deliberately
+                // disallow two-phase borrows in its initial
+                // deployment; see discussion on PR #47489.
+                allow_two_phase_borrow: false,
+            }
+        };
         adjustments.push(Adjustment {
-            kind: Adjust::Borrow(AutoBorrow::Ref(r_borrow, mt_b.mutbl)),
+            kind: Adjust::Borrow(AutoBorrow::Ref(r_borrow, mutbl)),
             target: ty
         });
 
@@ -462,11 +470,17 @@ impl<'f, 'gcx, 'tcx> Coerce<'f, 'gcx, 'tcx> {
 
                 let coercion = Coercion(self.cause.span);
                 let r_borrow = self.next_region_var(coercion);
+                let mutbl = match mt_b.mutbl {
+                    hir::MutImmutable => AutoBorrowMutability::Immutable,
+                    hir::MutMutable => AutoBorrowMutability::Mutable {
+                        allow_two_phase_borrow: false,
+                    }
+                };
                 Some((Adjustment {
                     kind: Adjust::Deref(None),
                     target: mt_a.ty
                 }, Adjustment {
-                    kind: Adjust::Borrow(AutoBorrow::Ref(r_borrow, mt_b.mutbl)),
+                    kind: Adjust::Borrow(AutoBorrow::Ref(r_borrow, mutbl)),
                     target:  self.tcx.mk_ref(r_borrow, ty::TypeAndMut {
                         mutbl: mt_b.mutbl,
                         ty: mt_a.ty
@@ -872,6 +886,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 ] => {
                     match self.node_ty(expr.hir_id).sty {
                         ty::TyRef(_, mt_orig) => {
+                            let mutbl_adj: hir::Mutability = mutbl_adj.into();
                             // Reborrow that we can safely ignore, because
                             // the next adjustment can only be a Deref
                             // which will be merged into it.

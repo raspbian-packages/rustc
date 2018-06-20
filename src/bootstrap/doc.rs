@@ -12,7 +12,7 @@
 //!
 //! This module implements generation for all bits and pieces of documentation
 //! for the Rust project. This notably includes suites like the rust book, the
-//! nomicon, standalone documentation, etc.
+//! nomicon, rust by example, standalone documentation, etc.
 //!
 //! Everything here is basically just a shim around calling either `rustbook` or
 //! `rustdoc`.
@@ -69,6 +69,7 @@ book!(
     Nomicon, "src/doc/nomicon", "nomicon";
     Reference, "src/doc/reference", "reference";
     Rustdoc, "src/doc/rustdoc", "rustdoc";
+    RustByExample, "src/doc/rust-by-example", "rust-by-example";
 );
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
@@ -140,7 +141,7 @@ pub struct CargoBook {
 
 impl Step for CargoBook {
     type Output = ();
-    const DEFAULT: bool = true;
+    const DEFAULT: bool = false;
 
     fn should_run(run: ShouldRun) -> ShouldRun {
         let builder = run.builder;
@@ -159,7 +160,7 @@ impl Step for CargoBook {
 
         let target = self.target;
         let name = self.name;
-        let src = build.src.join("src/tools/cargo/src/doc/book");
+        let src = build.src.join("src/tools/cargo/src/doc");
 
         let out = build.doc_out(target);
         t!(fs::create_dir_all(&out));
@@ -418,8 +419,8 @@ impl Step for Standalone {
 
 #[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Std {
-    stage: u32,
-    target: Interned<String>,
+    pub stage: u32,
+    pub target: Interned<String>,
 }
 
 impl Step for Std {
@@ -428,7 +429,7 @@ impl Step for Std {
 
     fn should_run(run: ShouldRun) -> ShouldRun {
         let builder = run.builder;
-        run.krate("std").default_condition(builder.build.config.docs)
+        run.all_krates("std").default_condition(builder.build.config.docs)
     }
 
     fn make_run(run: RunConfig) {
@@ -616,7 +617,7 @@ impl Step for Rustc {
         t!(symlink_dir_force(&my_out, &out_dir));
 
         let mut cargo = builder.cargo(compiler, Mode::Librustc, target, "doc");
-        compile::rustc_cargo(build, target, &mut cargo);
+        compile::rustc_cargo(build, &mut cargo);
 
         if build.config.compiler_docs {
             // src/rustc/Cargo.toml contains a bin crate called rustc which

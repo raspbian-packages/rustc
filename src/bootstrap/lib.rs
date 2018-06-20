@@ -113,9 +113,8 @@
 //! More documentation can be found in each respective module below, and you can
 //! also check out the `src/bootstrap/README.md` file for more information.
 
-#![deny(warnings)]
-#![allow(stable_features)]
-#![feature(associated_consts)]
+//#![deny(warnings)]
+#![feature(core_intrinsics)]
 
 #[macro_use]
 extern crate build_helper;
@@ -151,6 +150,7 @@ use util::{exe, libdir, OutputFolder, CiEnv};
 mod cc_detect;
 mod channel;
 mod check;
+mod test;
 mod clean;
 mod compile;
 mod metadata;
@@ -264,6 +264,18 @@ struct Crate {
     build_step: String,
     test_step: String,
     bench_step: String,
+}
+
+impl Crate {
+    fn is_local(&self, build: &Build) -> bool {
+        self.path.starts_with(&build.config.src) &&
+        !self.path.to_string_lossy().ends_with("_shim")
+    }
+
+    fn local_path(&self, build: &Build) -> PathBuf {
+        assert!(self.is_local(build));
+        self.path.strip_prefix(&build.config.src).unwrap().into()
+    }
 }
 
 /// The various "modes" of invoking Cargo.
@@ -423,6 +435,9 @@ impl Build {
         if self.config.profiler {
             features.push_str(" profiler");
         }
+        if self.config.wasm_syscall {
+            features.push_str(" wasm_syscall");
+        }
         features
     }
 
@@ -431,9 +446,6 @@ impl Build {
         let mut features = String::new();
         if self.config.use_jemalloc {
             features.push_str(" jemalloc");
-        }
-        if self.config.llvm_enabled {
-            features.push_str(" llvm");
         }
         features
     }
@@ -448,12 +460,6 @@ impl Build {
         let out = self.out.join(&*compiler.host).join(format!("stage{}-tools-bin", compiler.stage));
         t!(fs::create_dir_all(&out));
         out
-    }
-
-    /// Get the directory for incremental by-products when using the
-    /// given compiler.
-    fn incremental_dir(&self, compiler: Compiler) -> PathBuf {
-        self.out.join(&*compiler.host).join(format!("stage{}-incremental", compiler.stage))
     }
 
     /// Returns the root directory for all output generated in a particular
@@ -487,6 +493,10 @@ impl Build {
     /// will likely be empty.
     fn llvm_out(&self, target: Interned<String>) -> PathBuf {
         self.out.join(&*target).join("llvm")
+    }
+
+    fn emscripten_llvm_out(&self, target: Interned<String>) -> PathBuf {
+        self.out.join(&*target).join("llvm-emscripten")
     }
 
     /// Output directory for all documentation for a target
@@ -667,7 +677,7 @@ impl Build {
         }
     }
 
-    /// Returns the path to the linker for the given target if it needs to be overriden.
+    /// Returns the path to the linker for the given target if it needs to be overridden.
     fn linker(&self, target: Interned<String>) -> Option<&Path> {
         if let Some(linker) = self.config.target_config.get(&target)
                                                        .and_then(|c| c.linker.as_ref()) {
@@ -831,7 +841,7 @@ impl Build {
         );
         let n = count.trim().parse().unwrap();
         self.prerelease_version.set(Some(n));
-        return n
+        n
     }
 
     /// Returns the value of `release` above for Rust itself.
@@ -950,22 +960,18 @@ impl Build {
         }
     }
 
-    /// Get a list of crates from a root crate.
-    ///
-    /// Returns Vec<(crate, path to crate, is_root_crate)>
-    fn crates(&self, root: &str) -> Vec<(Interned<String>, &Path)> {
-        let interned = INTERNER.intern_string(root.to_owned());
+    fn in_tree_crates(&self, root: &str) -> Vec<&Crate> {
         let mut ret = Vec::new();
-        let mut list = vec![interned];
+        let mut list = vec![INTERNER.intern_str(root)];
         let mut visited = HashSet::new();
         while let Some(krate) = list.pop() {
             let krate = &self.crates[&krate];
-            // If we can't strip prefix, then out-of-tree path
-            let path = krate.path.strip_prefix(&self.src).unwrap_or(&krate.path);
-            ret.push((krate.name, path));
-            for dep in &krate.deps {
-                if visited.insert(dep) && dep != "build_helper" {
-                    list.push(*dep);
+            if krate.is_local(self) {
+                ret.push(krate);
+                for dep in &krate.deps {
+                    if visited.insert(dep) && dep != "build_helper" {
+                        list.push(*dep);
+                    }
                 }
             }
         }

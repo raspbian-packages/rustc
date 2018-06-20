@@ -992,7 +992,8 @@ pub fn find_deprecation(diagnostic: &Handler, attrs: &[Attribute],
 /// Valid repr contents: any of the primitive integral type names (see
 /// `int_type_of_word`, below) to specify enum discriminant type; `C`, to use
 /// the same discriminant size that the corresponding C enum would or C
-/// structure layout, and `packed` to remove padding.
+/// structure layout, `packed` to remove padding, and `transparent` to elegate representation
+/// concerns to the only non-ZST field.
 pub fn find_repr_attrs(diagnostic: &Handler, attr: &Attribute) -> Vec<ReprAttr> {
     let mut acc = Vec::new();
     if attr.path == "repr" {
@@ -1008,10 +1009,10 @@ pub fn find_repr_attrs(diagnostic: &Handler, attr: &Attribute) -> Vec<ReprAttr> 
                 if let Some(mi) = item.word() {
                     let word = &*mi.name().as_str();
                     let hint = match word {
-                        // Can't use "extern" because it's not a lexical identifier.
-                        "C" => Some(ReprExtern),
+                        "C" => Some(ReprC),
                         "packed" => Some(ReprPacked),
                         "simd" => Some(ReprSimd),
+                        "transparent" => Some(ReprTransparent),
                         _ => match int_type_of_word(word) {
                             Some(ity) => Some(ReprInt(ity)),
                             None => {
@@ -1071,8 +1072,8 @@ fn int_type_of_word(s: &str) -> Option<IntType> {
         "u64" => Some(UnsignedInt(ast::UintTy::U64)),
         "i128" => Some(SignedInt(ast::IntTy::I128)),
         "u128" => Some(UnsignedInt(ast::UintTy::U128)),
-        "isize" => Some(SignedInt(ast::IntTy::Is)),
-        "usize" => Some(UnsignedInt(ast::UintTy::Us)),
+        "isize" => Some(SignedInt(ast::IntTy::Isize)),
+        "usize" => Some(UnsignedInt(ast::UintTy::Usize)),
         _ => None
     }
 }
@@ -1080,9 +1081,10 @@ fn int_type_of_word(s: &str) -> Option<IntType> {
 #[derive(PartialEq, Debug, RustcEncodable, RustcDecodable, Copy, Clone)]
 pub enum ReprAttr {
     ReprInt(IntType),
-    ReprExtern,
+    ReprC,
     ReprPacked,
     ReprSimd,
+    ReprTransparent,
     ReprAlign(u32),
 }
 

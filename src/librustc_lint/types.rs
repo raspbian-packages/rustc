@@ -140,7 +140,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
                         match lit.node {
                             ast::LitKind::Int(v, ast::LitIntType::Signed(_)) |
                             ast::LitKind::Int(v, ast::LitIntType::Unsuffixed) => {
-                                let int_type = if let ast::IntTy::Is = t {
+                                let int_type = if let ast::IntTy::Isize = t {
                                     cx.sess().target.isize_ty
                                 } else {
                                     t
@@ -163,7 +163,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
                         };
                     }
                     ty::TyUint(t) => {
-                        let uint_type = if let ast::UintTy::Us = t {
+                        let uint_type = if let ast::UintTy::Usize = t {
                             cx.sess().target.usize_ty
                         } else {
                             t
@@ -230,7 +230,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
         // warnings are consistent between 32- and 64-bit platforms
         fn int_ty_range(int_ty: ast::IntTy) -> (i128, i128) {
             match int_ty {
-                ast::IntTy::Is => (i64::min_value() as i128, i64::max_value() as i128),
+                ast::IntTy::Isize => (i64::min_value() as i128, i64::max_value() as i128),
                 ast::IntTy::I8 => (i8::min_value() as i64 as i128, i8::max_value() as i128),
                 ast::IntTy::I16 => (i16::min_value() as i64 as i128, i16::max_value() as i128),
                 ast::IntTy::I32 => (i32::min_value() as i64 as i128, i32::max_value() as i128),
@@ -241,7 +241,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
 
         fn uint_ty_range(uint_ty: ast::UintTy) -> (u128, u128) {
             match uint_ty {
-                ast::UintTy::Us => (u64::min_value() as u128, u64::max_value() as u128),
+                ast::UintTy::Usize => (u64::min_value() as u128, u64::max_value() as u128),
                 ast::UintTy::U8 => (u8::min_value() as u128, u8::max_value() as u128),
                 ast::UintTy::U16 => (u16::min_value() as u128, u16::max_value() as u128),
                 ast::UintTy::U32 => (u32::min_value() as u128, u32::max_value() as u128),
@@ -252,7 +252,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
 
         fn int_ty_bits(int_ty: ast::IntTy, isize_ty: ast::IntTy) -> u64 {
             match int_ty {
-                ast::IntTy::Is => int_ty_bits(isize_ty, isize_ty),
+                ast::IntTy::Isize => int_ty_bits(isize_ty, isize_ty),
                 ast::IntTy::I8 => 8,
                 ast::IntTy::I16 => 16 as u64,
                 ast::IntTy::I32 => 32,
@@ -263,7 +263,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
 
         fn uint_ty_bits(uint_ty: ast::UintTy, usize_ty: ast::UintTy) -> u64 {
             match uint_ty {
-                ast::UintTy::Us => uint_ty_bits(usize_ty, usize_ty),
+                ast::UintTy::Usize => uint_ty_bits(usize_ty, usize_ty),
                 ast::UintTy::U8 => 8,
                 ast::UintTy::U16 => 16,
                 ast::UintTy::U32 => 32,
@@ -387,7 +387,7 @@ fn is_ffi_safe(ty: attr::IntType) -> bool {
         attr::SignedInt(ast::IntTy::I32) | attr::UnsignedInt(ast::UintTy::U32) |
         attr::SignedInt(ast::IntTy::I64) | attr::UnsignedInt(ast::UintTy::U64) |
         attr::SignedInt(ast::IntTy::I128) | attr::UnsignedInt(ast::UintTy::U128) => true,
-        attr::SignedInt(ast::IntTy::Is) | attr::UnsignedInt(ast::UintTy::Us) => false
+        attr::SignedInt(ast::IntTy::Isize) | attr::UnsignedInt(ast::UintTy::Usize) => false
     }
 }
 
@@ -416,24 +416,35 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                 }
                 match def.adt_kind() {
                     AdtKind::Struct => {
-                        if !def.repr.c() {
+                        if !def.repr.c() && !def.repr.transparent() {
                             return FfiUnsafe("found struct without foreign-function-safe \
                                               representation annotation in foreign module, \
                                               consider adding a #[repr(C)] attribute to the type");
                         }
 
-                        if def.struct_variant().fields.is_empty() {
+                        if def.non_enum_variant().fields.is_empty() {
                             return FfiUnsafe("found zero-size struct in foreign module, consider \
                                               adding a member to this struct");
                         }
 
-                        // We can't completely trust repr(C) markings; make sure the
-                        // fields are actually safe.
+                        // We can't completely trust repr(C) and repr(transparent) markings;
+                        // make sure the fields are actually safe.
                         let mut all_phantom = true;
-                        for field in &def.struct_variant().fields {
+                        for field in &def.non_enum_variant().fields {
                             let field_ty = cx.fully_normalize_associated_types_in(
                                 &field.ty(cx, substs)
                             );
+                            // repr(transparent) types are allowed to have arbitrary ZSTs, not just
+                            // PhantomData -- skip checking all ZST fields
+                            if def.repr.transparent() {
+                                let is_zst = cx
+                                    .layout_of(cx.param_env(field.did).and(field_ty))
+                                    .map(|layout| layout.is_zst())
+                                    .unwrap_or(false);
+                                if is_zst {
+                                    continue;
+                                }
+                            }
                             let r = self.check_type_for_ffi(cache, field_ty);
                             match r {
                                 FfiSafe => {
@@ -458,13 +469,13 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                                               consider adding a #[repr(C)] attribute to the type");
                         }
 
-                        if def.struct_variant().fields.is_empty() {
+                        if def.non_enum_variant().fields.is_empty() {
                             return FfiUnsafe("found zero-size union in foreign module, consider \
                                               adding a member to this union");
                         }
 
                         let mut all_phantom = true;
-                        for field in &def.struct_variant().fields {
+                        for field in &def.non_enum_variant().fields {
                             let field_ty = cx.fully_normalize_associated_types_in(
                                 &field.ty(cx, substs)
                             );
@@ -628,6 +639,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
             ty::TyError |
             ty::TyClosure(..) |
             ty::TyGenerator(..) |
+            ty::TyGeneratorWitness(..) |
             ty::TyProjection(..) |
             ty::TyAnon(..) |
             ty::TyFnDef(..) => bug!("Unexpected type in foreign function"),

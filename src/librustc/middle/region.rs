@@ -453,6 +453,47 @@ struct RegionResolutionVisitor<'a, 'tcx: 'a> {
     terminating_scopes: FxHashSet<hir::ItemLocalId>,
 }
 
+struct ExprLocatorVisitor {
+    id: ast::NodeId,
+    result: Option<usize>,
+    expr_and_pat_count: usize,
+}
+
+// This visitor has to have the same visit_expr calls as RegionResolutionVisitor
+// since `expr_count` is compared against the results there.
+impl<'tcx> Visitor<'tcx> for ExprLocatorVisitor {
+    fn nested_visit_map<'this>(&'this mut self) -> NestedVisitorMap<'this, 'tcx> {
+        NestedVisitorMap::None
+    }
+
+    fn visit_pat(&mut self, pat: &'tcx Pat) {
+        intravisit::walk_pat(self, pat);
+
+        self.expr_and_pat_count += 1;
+
+        if pat.id == self.id {
+            self.result = Some(self.expr_and_pat_count);
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &'tcx Expr) {
+        debug!("ExprLocatorVisitor - pre-increment {} expr = {:?}",
+               self.expr_and_pat_count,
+               expr);
+
+        intravisit::walk_expr(self, expr);
+
+        self.expr_and_pat_count += 1;
+
+        debug!("ExprLocatorVisitor - post-increment {} expr = {:?}",
+               self.expr_and_pat_count,
+               expr);
+
+        if expr.id == self.id {
+            self.result = Some(self.expr_and_pat_count);
+        }
+    }
+}
 
 impl<'tcx> ScopeTree {
     pub fn record_scope_parent(&mut self, child: Scope, parent: Option<Scope>) {
@@ -612,6 +653,20 @@ impl<'tcx> ScopeTree {
         return true;
     }
 
+    /// Returns the id of the innermost containing body
+    pub fn containing_body(&self, mut scope: Scope)-> Option<hir::ItemLocalId> {
+        loop {
+            if let ScopeData::CallSite(id) = scope.data() {
+                return Some(id);
+            }
+
+            match self.opt_encl_scope(scope) {
+                None => return None,
+                Some(parent) => scope = parent,
+            }
+        }
+    }
+
     /// Finds the nearest common ancestor (if any) of two scopes.  That is, finds the smallest
     /// scope which is greater than or equal to both `scope_a` and `scope_b`.
     pub fn nearest_common_ancestor(&self,
@@ -763,9 +818,32 @@ impl<'tcx> ScopeTree {
 
     /// Checks whether the given scope contains a `yield`. If so,
     /// returns `Some((span, expr_count))` with the span of a yield we found and
-    /// the number of expressions appearing before the `yield` in the body.
+    /// the number of expressions and patterns appearing before the `yield` in the body + 1.
+    /// If there a are multiple yields in a scope, the one with the highest number is returned.
     pub fn yield_in_scope(&self, scope: Scope) -> Option<(Span, usize)> {
         self.yield_in_scope.get(&scope).cloned()
+    }
+
+    /// Checks whether the given scope contains a `yield` and if that yield could execute
+    /// after `expr`. If so, it returns the span of that `yield`.
+    /// `scope` must be inside the body.
+    pub fn yield_in_scope_for_expr(&self,
+                                   scope: Scope,
+                                   expr: ast::NodeId,
+                                   body: &'tcx hir::Body) -> Option<Span> {
+        self.yield_in_scope(scope).and_then(|(span, count)| {
+            let mut visitor = ExprLocatorVisitor {
+                id: expr,
+                result: None,
+                expr_and_pat_count: 0,
+            };
+            visitor.visit_body(body);
+            if count >= visitor.result.unwrap() {
+                Some(span)
+            } else {
+                None
+            }
+        })
     }
 
     /// Gives the number of expressions visited in a body.
@@ -872,9 +950,13 @@ fn resolve_pat<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, pat: &
         record_var_lifetime(visitor, pat.hir_id.local_id, pat.span);
     }
 
+    debug!("resolve_pat - pre-increment {} pat = {:?}", visitor.expr_and_pat_count, pat);
+
     intravisit::walk_pat(visitor, pat);
 
     visitor.expr_and_pat_count += 1;
+
+    debug!("resolve_pat - post-increment {} pat = {:?}", visitor.expr_and_pat_count, pat);
 }
 
 fn resolve_stmt<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, stmt: &'tcx hir::Stmt) {
@@ -897,7 +979,7 @@ fn resolve_stmt<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, stmt:
 }
 
 fn resolve_expr<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, expr: &'tcx hir::Expr) {
-    debug!("resolve_expr(expr.id={:?})", expr.id);
+    debug!("resolve_expr - pre-increment {} expr = {:?}", visitor.expr_and_pat_count, expr);
 
     let prev_cx = visitor.cx;
     visitor.enter_node_scope_with_dtor(expr.hir_id.local_id);
@@ -982,6 +1064,8 @@ fn resolve_expr<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, expr:
 
     visitor.expr_and_pat_count += 1;
 
+    debug!("resolve_expr post-increment {}, expr = {:?}", visitor.expr_and_pat_count, expr);
+
     if let hir::ExprYield(..) = expr.node {
         // Mark this expr's scope and all parent scopes as containing `yield`.
         let mut scope = Scope::Node(expr.hir_id.local_id);
@@ -1033,7 +1117,7 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
     //    I mean that creating a binding into a ref-counted or managed value
     //    would still count.)
     //
-    // 3. `ET`, which matches both rvalues like `foo()` as well as lvalues
+    // 3. `ET`, which matches both rvalues like `foo()` as well as places
     //    based on rvalues like `foo().x[2].y`.
     //
     // A subexpression `<rvalue>` that appears in a let initializer
@@ -1077,11 +1161,12 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
         }
     }
 
-    if let Some(pat) = pat {
-        visitor.visit_pat(pat);
-    }
+    // Make sure we visit the initializer first, so expr_and_pat_count remains correct
     if let Some(expr) = init {
         visitor.visit_expr(expr);
+    }
+    if let Some(pat) = pat {
+        visitor.visit_pat(pat);
     }
 
     /// True if `pat` match the `P&` nonterminal:
@@ -1203,7 +1288,7 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
     ///        | (ET)
     ///        | <rvalue>
     ///
-    /// Note: ET is intended to match "rvalues or lvalues based on rvalues".
+    /// Note: ET is intended to match "rvalues or places based on rvalues".
     fn record_rvalue_scope<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
                                      expr: &hir::Expr,
                                      blk_scope: Option<Scope>) {

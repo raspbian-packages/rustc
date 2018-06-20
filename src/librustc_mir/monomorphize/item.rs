@@ -18,15 +18,15 @@ use monomorphize::Instance;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::session::config::OptLevel;
-use rustc::traits;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::ty::subst::{Subst, Substs};
+use rustc::ty::subst::Substs;
 use syntax::ast;
 use syntax::attr::{self, InlineAttr};
 use std::fmt::{self, Write};
 use std::iter;
 use rustc::mir::mono::Linkage;
 use syntax_pos::symbol::Symbol;
+use syntax::codemap::Span;
 pub use rustc::mir::mono::MonoItem;
 
 pub fn linkage_by_name(name: &str) -> Option<Linkage> {
@@ -214,8 +214,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
             MonoItem::GlobalAsm(..) => return true
         };
 
-        let predicates = tcx.predicates_of(def_id).predicates.subst(tcx, substs);
-        traits::normalize_and_test_predicates(tcx, predicates)
+        tcx.substitute_normalize_and_test_predicates((def_id, &substs))
     }
 
     fn to_string(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> String {
@@ -245,6 +244,18 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
             printer.push_instance_as_string(instance, &mut result);
             result
         }
+    }
+
+    fn local_span(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Option<Span> {
+        match *self.as_mono_item() {
+            MonoItem::Fn(Instance { def, .. }) => {
+                tcx.hir.as_local_node_id(def.def_id())
+            }
+            MonoItem::Static(node_id) |
+            MonoItem::GlobalAsm(node_id) => {
+                Some(node_id)
+            }
+        }.map(|node_id| tcx.hir.span(node_id))
     }
 }
 
@@ -292,13 +303,13 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
             ty::TyChar              => output.push_str("char"),
             ty::TyStr               => output.push_str("str"),
             ty::TyNever             => output.push_str("!"),
-            ty::TyInt(ast::IntTy::Is)    => output.push_str("isize"),
+            ty::TyInt(ast::IntTy::Isize)    => output.push_str("isize"),
             ty::TyInt(ast::IntTy::I8)    => output.push_str("i8"),
             ty::TyInt(ast::IntTy::I16)   => output.push_str("i16"),
             ty::TyInt(ast::IntTy::I32)   => output.push_str("i32"),
             ty::TyInt(ast::IntTy::I64)   => output.push_str("i64"),
             ty::TyInt(ast::IntTy::I128)   => output.push_str("i128"),
-            ty::TyUint(ast::UintTy::Us)   => output.push_str("usize"),
+            ty::TyUint(ast::UintTy::Usize)   => output.push_str("usize"),
             ty::TyUint(ast::UintTy::U8)   => output.push_str("u8"),
             ty::TyUint(ast::UintTy::U16)  => output.push_str("u16"),
             ty::TyUint(ast::UintTy::U32)  => output.push_str("u32"),
@@ -413,6 +424,7 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
             ty::TyInfer(_) |
             ty::TyProjection(..) |
             ty::TyParam(_) |
+            ty::TyGeneratorWitness(_) |
             ty::TyAnon(..) => {
                 bug!("DefPathBasedNames: Trying to create type name for \
                                          unexpected type: {:?}", t);

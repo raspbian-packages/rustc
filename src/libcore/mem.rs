@@ -189,6 +189,7 @@ pub fn forget<T>(t: T) {
 /// Type | size_of::\<Type>()
 /// ---- | ---------------
 /// () | 0
+/// bool | 1
 /// u8 | 1
 /// u16 | 2
 /// u32 | 4
@@ -1024,7 +1025,7 @@ impl<T: ::fmt::Debug> ::fmt::Debug for ManuallyDrop<T> {
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: Clone> Clone for ManuallyDrop<T> {
     fn clone(&self) -> Self {
         ManuallyDrop::new(self.deref().clone())
@@ -1035,14 +1036,14 @@ impl<T: Clone> Clone for ManuallyDrop<T> {
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: Default> Default for ManuallyDrop<T> {
     fn default() -> Self {
         ManuallyDrop::new(Default::default())
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: PartialEq> PartialEq for ManuallyDrop<T> {
     fn eq(&self, other: &Self) -> bool {
         self.deref().eq(other)
@@ -1053,10 +1054,10 @@ impl<T: PartialEq> PartialEq for ManuallyDrop<T> {
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: Eq> Eq for ManuallyDrop<T> {}
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: PartialOrd> PartialOrd for ManuallyDrop<T> {
     fn partial_cmp(&self, other: &Self) -> Option<::cmp::Ordering> {
         self.deref().partial_cmp(other)
@@ -1079,14 +1080,14 @@ impl<T: PartialOrd> PartialOrd for ManuallyDrop<T> {
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: Ord> Ord for ManuallyDrop<T> {
     fn cmp(&self, other: &Self) -> ::cmp::Ordering {
         self.deref().cmp(other)
     }
 }
 
-#[stable(feature = "manually_drop", since = "1.20.0")]
+#[stable(feature = "manually_drop_impls", since = "1.22.0")]
 impl<T: ::hash::Hash> ::hash::Hash for ManuallyDrop<T> {
     fn hash<H: ::hash::Hasher>(&self, state: &mut H) {
         self.deref().hash(state);

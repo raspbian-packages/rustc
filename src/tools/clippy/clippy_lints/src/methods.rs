@@ -9,11 +9,11 @@ use std::borrow::Cow;
 use std::fmt;
 use std::iter;
 use syntax::ast;
-use syntax::codemap::Span;
-use utils::{get_trait_def_id, implements_trait, in_external_macro, in_macro, is_copy, is_self, is_self_ty,
+use syntax::codemap::{Span, BytePos};
+use utils::{get_arg_name, get_trait_def_id, implements_trait, in_external_macro, in_macro, is_copy, is_self, is_self_ty,
             iter_input_pats, last_path_segment, match_def_path, match_path, match_qpath, match_trait_method,
-            match_type, method_chain_args, return_ty, same_tys, single_segment_path, snippet, span_lint,
-            span_lint_and_sugg, span_lint_and_then, span_note_and_lint, walk_ptrs_ty, walk_ptrs_ty_depth};
+            match_type, method_chain_args, match_var, return_ty, remove_blocks, same_tys, single_segment_path, snippet,
+            span_lint, span_lint_and_sugg, span_lint_and_then, span_note_and_lint, walk_ptrs_ty, walk_ptrs_ty_depth};
 use utils::paths;
 use utils::sugg;
 use utils::const_to_u64;
@@ -361,9 +361,8 @@ declare_lint! {
 /// ```rust
 /// x.clone()
 /// ```
-declare_lint! {
+declare_restriction_lint! {
     pub CLONE_ON_REF_PTR,
-    Warn,
     "using 'clone' on a ref-counted pointer"
 }
 
@@ -623,6 +622,29 @@ declare_lint! {
     "using `as_ref` where the types before and after the call are the same"
 }
 
+
+/// **What it does:** Checks for using `fold` when a more succinct alternative exists.
+/// Specifically, this checks for `fold`s which could be replaced by `any`, `all`,
+/// `sum` or `product`.
+///
+/// **Why is this bad?** Readability.
+///
+/// **Known problems:** None.
+///
+/// **Example:**
+/// ```rust
+/// let _ = (0..3).fold(false, |acc, x| acc || x > 2);
+/// ```
+/// This could be written as:
+/// ```rust
+/// let _ = (0..3).any(|x| x > 2);
+/// ```
+declare_lint! {
+    pub UNNECESSARY_FOLD,
+    Warn,
+    "using `fold` when a more succinct alternative exists"
+}
+
 impl LintPass for Pass {
     fn get_lints(&self) -> LintArray {
         lint_array!(
@@ -653,7 +675,8 @@ impl LintPass for Pass {
             GET_UNWRAP,
             STRING_EXTEND_CHARS,
             ITER_CLONED_COLLECT,
-            USELESS_ASREF
+            USELESS_ASREF,
+            UNNECESSARY_FOLD
         )
     }
 }
@@ -717,6 +740,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                     lint_asref(cx, expr, "as_ref", arglists[0]);
                 } else if let Some(arglists) = method_chain_args(expr, &["as_mut"]) {
                     lint_asref(cx, expr, "as_mut", arglists[0]);
+                } else if let Some(arglists) = method_chain_args(expr, &["fold"]) {
+                    lint_unnecessary_fold(cx, expr, arglists[0]);
                 }
 
                 lint_or_fun_call(cx, expr, &method_call.name.as_str(), args);
@@ -1013,24 +1038,26 @@ fn lint_clone_on_copy(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr, arg_t
 fn lint_clone_on_ref_ptr(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr) {
     let (obj_ty, _) = walk_ptrs_ty_depth(cx.tables.expr_ty(arg));
 
-    let caller_type = if match_type(cx, obj_ty, &paths::RC) {
-        "Rc"
-    } else if match_type(cx, obj_ty, &paths::ARC) {
-        "Arc"
-    } else if match_type(cx, obj_ty, &paths::WEAK_RC) || match_type(cx, obj_ty, &paths::WEAK_ARC) {
-        "Weak"
-    } else {
-        return;
-    };
+    if let ty::TyAdt(_, subst) = obj_ty.sty {
+        let caller_type = if match_type(cx, obj_ty, &paths::RC) {
+            "Rc"
+        } else if match_type(cx, obj_ty, &paths::ARC) {
+            "Arc"
+        } else if match_type(cx, obj_ty, &paths::WEAK_RC) || match_type(cx, obj_ty, &paths::WEAK_ARC) {
+            "Weak"
+        } else {
+            return;
+        };
 
-    span_lint_and_sugg(
-        cx,
-        CLONE_ON_REF_PTR,
-        expr.span,
-        "using '.clone()' on a ref-counted pointer",
-        "try this",
-        format!("{}::clone(&{})", caller_type, snippet(cx, arg.span, "_")),
-    );
+        span_lint_and_sugg(
+            cx,
+            CLONE_ON_REF_PTR,
+            expr.span,
+            "using '.clone()' on a ref-counted pointer",
+            "try this",
+            format!("{}::<{}>::clone(&{})", caller_type, subst.type_at(0), snippet(cx, arg.span, "_")),
+        );
+    }
 }
 
 
@@ -1103,6 +1130,94 @@ fn lint_iter_cloned_collect(cx: &LateContext, expr: &hir::Expr, iter_args: &[hir
              more readable",
         );
     }
+}
+
+fn lint_unnecessary_fold(cx: &LateContext, expr: &hir::Expr, fold_args: &[hir::Expr]) {
+    // Check that this is a call to Iterator::fold rather than just some function called fold
+    if !match_trait_method(cx, expr, &paths::ITERATOR) {
+        return;
+    }
+
+    assert!(fold_args.len() == 3,
+        "Expected fold_args to have three entries - the receiver, the initial value and the closure");
+
+    fn check_fold_with_op(
+        cx: &LateContext,
+        fold_args: &[hir::Expr],
+        op: hir::BinOp_,
+        replacement_method_name: &str,
+        replacement_has_args: bool) {
+
+        if_chain! {
+            // Extract the body of the closure passed to fold
+            if let hir::ExprClosure(_, _, body_id, _, _) = fold_args[2].node;
+            let closure_body = cx.tcx.hir.body(body_id);
+            let closure_expr = remove_blocks(&closure_body.value);
+
+            // Check if the closure body is of the form `acc <op> some_expr(x)`
+            if let hir::ExprBinary(ref bin_op, ref left_expr, ref right_expr) = closure_expr.node;
+            if bin_op.node == op;
+
+            // Extract the names of the two arguments to the closure
+            if let Some(first_arg_ident) = get_arg_name(&closure_body.arguments[0].pat);
+            if let Some(second_arg_ident) = get_arg_name(&closure_body.arguments[1].pat);
+
+            if match_var(&*left_expr, first_arg_ident);
+            if replacement_has_args || match_var(&*right_expr, second_arg_ident);
+
+            then {
+                // Span containing `.fold(...)`
+                let next_point = cx.sess().codemap().next_point(fold_args[0].span);
+                let fold_span = next_point.with_hi(fold_args[2].span.hi() + BytePos(1));
+
+                let sugg = if replacement_has_args {
+                    format!(
+                        ".{replacement}(|{s}| {r})",
+                        replacement = replacement_method_name,
+                        s = second_arg_ident,
+                        r = snippet(cx, right_expr.span, "EXPR"),
+                    )
+                } else {
+                    format!(
+                        ".{replacement}()",
+                        replacement = replacement_method_name,
+                    )
+                };
+
+                span_lint_and_sugg(
+                    cx,
+                    UNNECESSARY_FOLD,
+                    fold_span,
+                    // TODO #2371 don't suggest e.g. .any(|x| f(x)) if we can suggest .any(f)
+                    "this `.fold` can be written more succinctly using another method",
+                    "try",
+                    sugg,
+                );
+            }
+        }
+    }
+
+    // Check if the first argument to .fold is a suitable literal
+    match fold_args[1].node {
+        hir::ExprLit(ref lit) => {
+            match lit.node {
+                ast::LitKind::Bool(false) => check_fold_with_op(
+                    cx, fold_args, hir::BinOp_::BiOr, "any", true
+                ),
+                ast::LitKind::Bool(true) => check_fold_with_op(
+                    cx, fold_args, hir::BinOp_::BiAnd, "all", true
+                ),
+                ast::LitKind::Int(0, _) => check_fold_with_op(
+                    cx, fold_args, hir::BinOp_::BiAdd, "sum", false
+                ),
+                ast::LitKind::Int(1, _) => check_fold_with_op(
+                    cx, fold_args, hir::BinOp_::BiMul, "product", false
+                ),
+                _ => return
+            }
+        }
+        _ => return
+    };
 }
 
 fn lint_iter_nth(cx: &LateContext, expr: &hir::Expr, iter_args: &[hir::Expr], is_mut: bool) {
@@ -1849,7 +1964,7 @@ impl SelfKind {
 
 fn is_as_ref_or_mut_trait(ty: &hir::Ty, self_ty: &hir::Ty, generics: &hir::Generics, name: &[&str]) -> bool {
     single_segment_ty(ty).map_or(false, |seg| {
-        generics.ty_params.iter().any(|param| {
+        generics.ty_params().any(|param| {
             param.name == seg.name && param.bounds.iter().any(|bound| {
                 if let hir::TyParamBound::TraitTyParamBound(ref ptr, ..) = *bound {
                     let path = &ptr.trait_ref.path;

@@ -56,7 +56,7 @@ it to match anywhere in the text. Anchors can be used to ensure that the
 full text matches an expression.
 
 This example also demonstrates the utility of
-[raw strings](https://doc.rust-lang.org/stable/reference.html#raw-string-literals)
+[raw strings](https://doc.rust-lang.org/stable/reference/tokens.html#raw-string-literals)
 in Rust, which
 are just like regular strings except they are prefixed with an `r` and do
 not process any escape sequences. For example, `"\\d"` is the same
@@ -514,7 +514,7 @@ another matching engine with fixed memory requirements.
 extern crate aho_corasick;
 extern crate memchr;
 extern crate thread_local;
-#[cfg(test)] extern crate quickcheck;
+#[macro_use] #[cfg(test)] extern crate quickcheck;
 extern crate regex_syntax as syntax;
 #[cfg(feature = "simd-accel")] extern crate simd;
 extern crate utf8_ranges;
@@ -641,7 +641,6 @@ mod pikevm;
 mod prog;
 mod re_builder;
 mod re_bytes;
-mod re_plugin;
 mod re_set;
 mod re_trait;
 mod re_unicode;
@@ -652,9 +651,9 @@ mod simd_accel;
 mod simd_accel;
 mod sparse;
 
-/// The `internal` module exists to support the `regex!` macro and other
-/// suspicious activity, such as testing different matching engines and
-/// supporting the `regex-debug` CLI utility.
+/// The `internal` module exists to support suspicious activity, such as
+/// testing different matching engines and supporting the `regex-debug` CLI
+/// utility.
 #[doc(hidden)]
 pub mod internal {
     pub use compile::Compiler;
@@ -662,6 +661,4 @@ pub mod internal {
     pub use input::{Char, Input, CharInput, InputAt};
     pub use literals::LiteralSearcher;
     pub use prog::{Program, Inst, EmptyLook, InstRanges};
-    pub use re_plugin::Plugin;
-    pub use re_unicode::_Regex;
 }

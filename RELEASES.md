@@ -1,16 +1,3 @@
-Version 1.24.1 (2018-03-01)
-==========================
-
- - [Do not abort when unwinding through FFI][48251]
- - [Emit UTF-16 files for linker arguments on Windows][48318]
- - [Make the error index generator work again][48308]
- - [Cargo will warn on Windows 7 if an update is needed][cargo/5069].
-
-[48251]: https://github.com/rust-lang/rust/issues/48251
-[48308]: https://github.com/rust-lang/rust/issues/48308
-[48318]: https://github.com/rust-lang/rust/issues/48318
-[cargo/5069]: https://github.com/rust-lang/cargo/pull/5069
-
 Version 1.24.0 (2018-02-15)
 ==========================
 
@@ -165,7 +152,6 @@ Stabilized APIs
 
 Cargo
 -----
-- [Cargo now supports alternative registries][cargo/4506]
 - [Cargo now supports uninstallation of multiple packages][cargo/4561]
   eg. `cargo uninstall foo bar` uninstalls `foo` and `bar`.
 - [Added unit test checking to `cargo check`][cargo/4592]
@@ -176,7 +162,6 @@ Misc
 ----
 - [Releases now ship with the Cargo book documentation.][45692]
 - [rustdoc now prints rendering warnings on every run.][45324]
-- [Release tarballs now come with rustfmt][45903]
 
 Compatibility Notes
 -------------------
@@ -210,9 +195,7 @@ Compatibility Notes
 [45852]: https://github.com/rust-lang/rust/issues/45852
 [45853]: https://github.com/rust-lang/rust/pull/45853
 [45887]: https://github.com/rust-lang/rust/pull/45887
-[45903]: https://github.com/rust-lang/rust/pull/45903
 [45920]: https://github.com/rust-lang/rust/pull/45920
-[cargo/4506]: https://github.com/rust-lang/cargo/pull/4506
 [cargo/4561]: https://github.com/rust-lang/cargo/pull/4561
 [cargo/4592]: https://github.com/rust-lang/cargo/pull/4592
 [cargo/4637]: https://github.com/rust-lang/cargo/pull/4637
@@ -708,7 +691,7 @@ Compatibility Notes
   a warning.
 - [From the pound escape, lines consisting of multiple `#`s are
   now visible][41785]
-- [It is an error to reexport private enum variants][42460]. This is
+- [It is an error to re-export private enum variants][42460]. This is
   known to break a number of crates that depend on an older version of
   mustache.
 - [On Windows, if `VCINSTALLDIR` is set incorrectly, `rustc` will try
@@ -2382,10 +2365,10 @@ Rustdoc
 -------
 
 * [Fix empty implementation section on some module pages](https://github.com/rust-lang/rust/pull/34536)
-* [Fix inlined renamed reexports in import lists](https://github.com/rust-lang/rust/pull/34479)
+* [Fix inlined renamed re-exports in import lists](https://github.com/rust-lang/rust/pull/34479)
 * [Fix search result layout for enum variants and struct fields](https://github.com/rust-lang/rust/pull/34477)
 * [Fix issues with source links to external crates](https://github.com/rust-lang/rust/pull/34387)
-* [Fix redirect pages for renamed reexports](https://github.com/rust-lang/rust/pull/34245)
+* [Fix redirect pages for renamed re-exports](https://github.com/rust-lang/rust/pull/34245)
 
 Tooling
 -------
@@ -5119,7 +5102,7 @@ Version 0.10 (2014-04-03)
     * std: The `vec` module has been renamed to `slice`.
     * std: A new vector type, `Vec<T>`, has been added in preparation for DST.
       This will become the only growable vector in the future.
-    * std: `std::io` now has more public-reexports. Types such as `BufferedReader`
+    * std: `std::io` now has more public re-exports. Types such as `BufferedReader`
       are now found at `std::io::BufferedReader` instead of
       `std::io::buffered::BufferedReader`.
     * std: `print` and `println` are no longer in the prelude, the `print!` and
@@ -5210,8 +5193,8 @@ Version 0.10 (2014-04-03)
       * render standalone markdown files.
       * the --test flag tests all code blocks by default.
       * exported macros are displayed.
-      * reexported types have their documentation inlined at the location of the
-        first reexport.
+      * re-exported types have their documentation inlined at the location of the
+        first re-export.
       * search works across crates that have been rendered to the same output
         directory.
 
@@ -5598,7 +5581,7 @@ Version 0.7 (2013-07-03)
         incl. `any`, `all`. removed.
       * std: The `finalize` method of `Drop` renamed to `drop`.
       * std: The `drop` method now takes `&mut self` instead of `&self`.
-      * std: The prelude no longer reexports any modules, only types and traits.
+      * std: The prelude no longer re-exports any modules, only types and traits.
       * std: Prelude additions: `print`, `println`, `FromStr`, `ApproxEq`, `Equiv`,
         `Iterator`, `IteratorUtil`, many numeric traits, many tuple traits.
       * std: New numeric traits: `Fractional`, `Real`, `RealExt`, `Integer`, `Ratio`,

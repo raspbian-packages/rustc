@@ -15,8 +15,8 @@ use rustc::util::common::time;
 use rustc_data_structures::fx::FxHashMap;
 use rustc_serialize::Encodable as RustcEncodable;
 use rustc_serialize::opaque::Encoder;
-use std::io::{self, Cursor, Write};
-use std::fs::{self, File};
+use std::io::{self, Cursor};
+use std::fs;
 use std::path::PathBuf;
 
 use super::data::*;
@@ -27,27 +27,28 @@ use super::work_product;
 
 pub fn save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     debug!("save_dep_graph()");
-    let _ignore = tcx.dep_graph.in_ignore();
-    let sess = tcx.sess;
-    if sess.opts.incremental.is_none() {
-        return;
-    }
+    tcx.dep_graph.with_ignore(|| {
+        let sess = tcx.sess;
+        if sess.opts.incremental.is_none() {
+            return;
+        }
 
-    time(sess.time_passes(), "persist query result cache", || {
-        save_in(sess,
-                query_cache_path(sess),
-                |e| encode_query_cache(tcx, e));
-    });
-
-    if tcx.sess.opts.debugging_opts.incremental_queries {
-        time(sess.time_passes(), "persist dep-graph", || {
+        time(sess.time_passes(), "persist query result cache", || {
             save_in(sess,
-                    dep_graph_path(sess),
-                    |e| encode_dep_graph(tcx, e));
+                    query_cache_path(sess),
+                    |e| encode_query_cache(tcx, e));
         });
-    }
 
-    dirty_clean::check_dirty_clean_annotations(tcx);
+        if tcx.sess.opts.debugging_opts.incremental_queries {
+            time(sess.time_passes(), "persist dep-graph", || {
+                save_in(sess,
+                        dep_graph_path(sess),
+                        |e| encode_dep_graph(tcx, e));
+            });
+        }
+
+        dirty_clean::check_dirty_clean_annotations(tcx);
+    })
 }
 
 pub fn save_work_products(sess: &Session, dep_graph: &DepGraph) {
@@ -56,7 +57,7 @@ pub fn save_work_products(sess: &Session, dep_graph: &DepGraph) {
     }
 
     debug!("save_work_products()");
-    let _ignore = dep_graph.in_ignore();
+    dep_graph.assert_ignored();
     let path = work_products_path(sess);
     save_in(sess, path, |e| encode_work_products(dep_graph, e));
 
@@ -124,7 +125,7 @@ fn save_in<F>(sess: &Session, path_buf: PathBuf, encode: F)
 
     // write the data out
     let data = wr.into_inner();
-    match File::create(&path_buf).and_then(|mut file| file.write_all(&data)) {
+    match fs::write(&path_buf, data) {
         Ok(_) => {
             debug!("save: data written to disk successfully");
         }

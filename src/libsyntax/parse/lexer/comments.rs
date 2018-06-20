@@ -101,7 +101,7 @@ pub fn strip_doc_comment_decoration(comment: &str) -> String {
                     break;
                 }
             }
-            if i > line.len() {
+            if i >= line.len() {
                 can_trim = false;
             }
             if !can_trim {
@@ -265,7 +265,7 @@ fn read_block_comment(rdr: &mut StringReader,
         while level > 0 {
             debug!("=== block comment level {}", level);
             if rdr.is_eof() {
-                panic!(rdr.fatal("unterminated block comment"));
+                rdr.fatal("unterminated block comment").raise();
             }
             if rdr.ch_is('\n') {
                 trim_whitespace_prefix_and_push_line(&mut lines, curr_line, col);

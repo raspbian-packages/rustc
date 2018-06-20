@@ -1294,18 +1294,6 @@ impl<'a> State<'a> {
                 self.head(&visibility_qualified(&item.vis, "union"))?;
                 self.print_struct(struct_def, generics, item.ident, item.span, true)?;
             }
-            ast::ItemKind::AutoImpl(unsafety, ref trait_ref) => {
-                self.head("")?;
-                self.print_visibility(&item.vis)?;
-                self.print_unsafety(unsafety)?;
-                self.word_nbsp("impl")?;
-                self.print_trait_ref(trait_ref)?;
-                self.s.space()?;
-                self.word_space("for")?;
-                self.word_space("..")?;
-                self.bopen()?;
-                self.bclose(item.span)?;
-            }
             ast::ItemKind::Impl(unsafety,
                           polarity,
                           defaultness,
@@ -1851,7 +1839,7 @@ impl<'a> State<'a> {
     }
 
     pub fn print_expr_maybe_paren(&mut self, expr: &ast::Expr, prec: i8) -> io::Result<()> {
-        let needs_par = parser::expr_precedence(expr) < prec;
+        let needs_par = expr.precedence().order() < prec;
         if needs_par {
             self.popen()?;
         }
@@ -2116,9 +2104,9 @@ impl<'a> State<'a> {
             ast::ExprKind::IfLet(ref pat, ref expr, ref blk, ref elseopt) => {
                 self.print_if_let(pat, expr, blk, elseopt.as_ref().map(|e| &**e))?;
             }
-            ast::ExprKind::While(ref test, ref blk, opt_ident) => {
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+            ast::ExprKind::While(ref test, ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.word_space(":")?;
                 }
                 self.head("while")?;
@@ -2126,9 +2114,9 @@ impl<'a> State<'a> {
                 self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?;
             }
-            ast::ExprKind::WhileLet(ref pat, ref expr, ref blk, opt_ident) => {
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+            ast::ExprKind::WhileLet(ref pat, ref expr, ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.word_space(":")?;
                 }
                 self.head("while let")?;
@@ -2139,9 +2127,9 @@ impl<'a> State<'a> {
                 self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?;
             }
-            ast::ExprKind::ForLoop(ref pat, ref iter, ref blk, opt_ident) => {
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+            ast::ExprKind::ForLoop(ref pat, ref iter, ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.word_space(":")?;
                 }
                 self.head("for")?;
@@ -2152,9 +2140,9 @@ impl<'a> State<'a> {
                 self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?;
             }
-            ast::ExprKind::Loop(ref blk, opt_ident) => {
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+            ast::ExprKind::Loop(ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.word_space(":")?;
                 }
                 self.head("loop")?;
@@ -2174,7 +2162,8 @@ impl<'a> State<'a> {
                 }
                 self.bclose_(expr.span, INDENT_UNIT)?;
             }
-            ast::ExprKind::Closure(capture_clause, ref decl, ref body, _) => {
+            ast::ExprKind::Closure(capture_clause, movability, ref decl, ref body, _) => {
+                self.print_movability(movability)?;
                 self.print_capture_clause(capture_clause)?;
 
                 self.print_fn_block_args(decl)?;
@@ -2249,11 +2238,11 @@ impl<'a> State<'a> {
             ast::ExprKind::Path(Some(ref qself), ref path) => {
                 self.print_qpath(path, qself, true)?
             }
-            ast::ExprKind::Break(opt_ident, ref opt_expr) => {
+            ast::ExprKind::Break(opt_label, ref opt_expr) => {
                 self.s.word("break")?;
                 self.s.space()?;
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.s.space()?;
                 }
                 if let Some(ref expr) = *opt_expr {
@@ -2261,11 +2250,11 @@ impl<'a> State<'a> {
                     self.s.space()?;
                 }
             }
-            ast::ExprKind::Continue(opt_ident) => {
+            ast::ExprKind::Continue(opt_label) => {
                 self.s.word("continue")?;
                 self.s.space()?;
-                if let Some(ident) = opt_ident {
-                    self.print_ident(ident.node)?;
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
                     self.s.space()?
                 }
             }
@@ -2786,6 +2775,14 @@ impl<'a> State<'a> {
                 self.maybe_print_comment(ty.span.lo())
             }
             ast::FunctionRetTy::Default(..) => unreachable!(),
+        }
+    }
+
+    pub fn print_movability(&mut self, movability: ast::Movability)
+                                -> io::Result<()> {
+        match movability {
+            ast::Movability::Static => self.word_space("static"),
+            ast::Movability::Movable => Ok(()),
         }
     }
 

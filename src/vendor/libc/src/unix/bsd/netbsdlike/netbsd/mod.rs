@@ -1,3 +1,6 @@
+use dox::mem;
+
+pub type c_char = i8;
 pub type clock_t = ::c_uint;
 pub type suseconds_t = ::c_int;
 pub type dev_t = u64;
@@ -5,6 +8,7 @@ pub type blksize_t = ::int32_t;
 pub type fsblkcnt_t = ::uint64_t;
 pub type fsfilcnt_t = ::uint64_t;
 pub type idtype_t = ::c_int;
+pub type mqd_t = ::c_int;
 
 s! {
     pub struct aiocb {
@@ -42,6 +46,13 @@ s! {
         __unused6: *mut ::c_void,
         __unused7: *mut ::c_void,
         __unused8: *mut ::c_void,
+    }
+
+    pub struct mq_attr {
+        pub mq_flags: ::c_long,
+        pub mq_maxmsg: ::c_long,
+        pub mq_msgsize: ::c_long,
+        pub mq_curmsgs: ::c_long,
     }
 
     pub struct sigevent {
@@ -281,6 +292,27 @@ s! {
         pub ifm_index: ::c_ushort,
         pub ifm_data: if_data,
     }
+
+    pub struct sockcred {
+        pub sc_pid: ::pid_t,
+        pub sc_uid: ::uid_t,
+        pub sc_euid: ::uid_t,
+        pub sc_gid: ::gid_t,
+        pub sc_egid: ::gid_t,
+        pub sc_ngroups: ::c_int,
+        pub sc_groups: [::gid_t; 1],
+    }
+
+    pub struct sockaddr_dl {
+        pub sdl_len: ::c_uchar,
+        pub sdl_family: ::c_uchar,
+        pub sdl_index: ::c_ushort,
+        pub sdl_type: ::uint8_t,
+        pub sdl_nlen: ::uint8_t,
+        pub sdl_alen: ::uint8_t,
+        pub sdl_slen: ::uint8_t,
+        pub sdl_data: [::c_char; 12],
+    }
 }
 
 pub const AT_FDCWD: ::c_int = -100;
@@ -316,14 +348,22 @@ pub const MS_INVALIDATE : ::c_int = 0x2;
 
 pub const RLIM_NLIMITS: ::c_int = 12;
 
-pub const ENOATTR : ::c_int = 93;
-pub const EILSEQ : ::c_int = 85;
-pub const EOVERFLOW : ::c_int = 84;
-pub const ECANCELED : ::c_int = 87;
-pub const EIDRM : ::c_int = 82;
-pub const ENOMSG : ::c_int = 83;
-pub const ENOTSUP : ::c_int = 86;
-pub const ELAST : ::c_int = 96;
+pub const EIDRM: ::c_int = 82;
+pub const ENOMSG: ::c_int = 83;
+pub const EOVERFLOW: ::c_int = 84;
+pub const EILSEQ: ::c_int = 85;
+pub const ENOTSUP: ::c_int = 86;
+pub const ECANCELED: ::c_int = 87;
+pub const EBADMSG: ::c_int = 88;
+pub const ENODATA: ::c_int = 89;
+pub const ENOSR: ::c_int = 90;
+pub const ENOSTR: ::c_int = 91;
+pub const ETIME: ::c_int = 92;
+pub const ENOATTR: ::c_int = 93;
+pub const EMULTIHOP: ::c_int = 94;
+pub const ENOLINK: ::c_int = 95;
+pub const EPROTO: ::c_int = 96;
+pub const ELAST: ::c_int = 96;
 
 pub const F_DUPFD_CLOEXEC : ::c_int = 12;
 pub const F_CLOSEM: ::c_int = 10;
@@ -862,7 +902,17 @@ pub const KERN_PROC_ENV: ::c_int = 3;
 pub const KERN_PROC_NENV: ::c_int = 4;
 pub const KERN_PROC_PATHNAME: ::c_int = 5;
 
+pub const EAI_AGAIN: ::c_int = 2;
+pub const EAI_BADFLAGS: ::c_int = 3;
+pub const EAI_FAIL: ::c_int = 4;
+pub const EAI_FAMILY: ::c_int = 5;
+pub const EAI_MEMORY: ::c_int = 6;
+pub const EAI_NODATA: ::c_int = 7;
+pub const EAI_NONAME: ::c_int = 8;
+pub const EAI_SERVICE: ::c_int = 9;
+pub const EAI_SOCKTYPE: ::c_int = 10;
 pub const EAI_SYSTEM: ::c_int = 11;
+pub const EAI_OVERFLOW: ::c_int = 14;
 
 pub const AIO_CANCELED: ::c_int = 1;
 pub const AIO_NOTCANCELED: ::c_int = 2;
@@ -902,11 +952,20 @@ pub const SOCK_NONBLOCK: ::c_int = 0x20000000;
 // http://cvsweb.netbsd.org/bsdweb.cgi/src/include/dirent.h?rev=1.36
 f! {
     pub fn dirfd(dirp: *mut ::DIR) -> ::c_int {
-        unsafe { *(dirp as *const ::c_int) }
+        *(dirp as *const ::c_int)
     }
 
     pub fn WIFCONTINUED(status: ::c_int) -> bool {
         status == 0xffff
+    }
+
+    pub fn SOCKCREDSIZE(ngrps: usize) -> usize {
+        let ngrps = if ngrps > 0 {
+            ngrps - 1
+        } else {
+            0
+        };
+        mem::size_of::<sockcred>() + mem::size_of::<::gid_t>() * ngrps
     }
 }
 
@@ -959,6 +1018,32 @@ extern {
                  flags: ::c_int,
                  data: *mut ::c_void,
                  size: ::size_t) -> ::c_int;
+    pub fn mq_open(name: *const ::c_char, oflag: ::c_int, ...) -> ::mqd_t;
+    pub fn mq_close(mqd: ::mqd_t) -> ::c_int;
+    pub fn mq_getattr(mqd: ::mqd_t, attr: *mut ::mq_attr) -> ::c_int;
+    pub fn mq_notify(mqd: ::mqd_t, notification: *const ::sigevent) -> ::c_int;
+    pub fn mq_receive(mqd: ::mqd_t,
+                      msg_ptr: *mut ::c_char,
+                      msg_len: ::size_t,
+                      msq_prio: *mut ::c_uint) -> ::ssize_t;
+    pub fn mq_send(mqd: ::mqd_t,
+                   msg_ptr: *const ::c_char,
+                   msg_len: ::size_t,
+                   msq_prio: ::c_uint) -> ::c_int;
+    pub fn mq_setattr(mqd: ::mqd_t,
+                      newattr: *const ::mq_attr,
+                      oldattr: *mut ::mq_attr) -> ::c_int;
+    pub fn mq_timedreceive(mqd: ::mqd_t,
+                           msg_ptr: *mut ::c_char,
+                           msg_len: ::size_t,
+                           msq_prio: *mut ::c_uint,
+                           abs_timeout: *const ::timespec) -> ::ssize_t;
+    pub fn mq_timedsend(mqd: ::mqd_t,
+                        msg_ptr: *const ::c_char,
+                        msg_len: ::size_t,
+                        msq_prio: ::c_uint,
+                        abs_timeout: *const ::timespec) -> ::c_int;
+    pub fn mq_unlink(name: *const ::c_char) -> ::c_int;
     pub fn ptrace(request: ::c_int,
                   pid: ::pid_t,
                   addr: *mut ::c_void,

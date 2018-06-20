@@ -12,7 +12,7 @@
 
 [package]
 name = "html-diff"
-version = "0.0.5"
+version = "0.0.6"
 authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
 description = "Library detect HTML diffs"
 categories = ["html", "diff"]

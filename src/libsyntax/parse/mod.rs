@@ -212,8 +212,8 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
         Err(e) => {
             let msg = format!("couldn't read {:?}: {}", path.display(), e);
             match spanopt {
-                Some(sp) => panic!(sess.span_diagnostic.span_fatal(sp, &msg)),
-                None => panic!(sess.span_diagnostic.fatal(&msg))
+                Some(sp) => sess.span_diagnostic.span_fatal(sp, &msg).raise(),
+                None => sess.span_diagnostic.fatal(&msg).raise()
             }
         }
     }
@@ -603,13 +603,13 @@ pub fn integer_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler
             err!(diag, |span, diag| diag.span_bug(span, "found empty literal suffix in Some"));
         }
         ty = match &*suf.as_str() {
-            "isize" => ast::LitIntType::Signed(ast::IntTy::Is),
+            "isize" => ast::LitIntType::Signed(ast::IntTy::Isize),
             "i8"  => ast::LitIntType::Signed(ast::IntTy::I8),
             "i16" => ast::LitIntType::Signed(ast::IntTy::I16),
             "i32" => ast::LitIntType::Signed(ast::IntTy::I32),
             "i64" => ast::LitIntType::Signed(ast::IntTy::I64),
             "i128" => ast::LitIntType::Signed(ast::IntTy::I128),
-            "usize" => ast::LitIntType::Unsigned(ast::UintTy::Us),
+            "usize" => ast::LitIntType::Unsigned(ast::UintTy::Usize),
             "u8"  => ast::LitIntType::Unsigned(ast::UintTy::U8),
             "u16" => ast::LitIntType::Unsigned(ast::UintTy::U16),
             "u32" => ast::LitIntType::Unsigned(ast::UintTy::U32),

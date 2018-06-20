@@ -13,8 +13,8 @@ use {Module, ModuleKind, NameBinding, NameBindingKind, PathResult};
 use Namespace::{self, MacroNS};
 use build_reduced_graph::BuildReducedGraphVisitor;
 use resolve_imports::ImportResolver;
-use rustc_data_structures::indexed_vec::Idx;
-use rustc::hir::def_id::{DefId, BUILTIN_MACROS_CRATE, CRATE_DEF_INDEX, DefIndex};
+use rustc::hir::def_id::{DefId, BUILTIN_MACROS_CRATE, CRATE_DEF_INDEX, DefIndex,
+                         DefIndexAddressSpace};
 use rustc::hir::def::{Def, Export};
 use rustc::hir::map::{self, DefCollector};
 use rustc::{ty, lint};
@@ -140,7 +140,7 @@ impl<'a> base::Resolver for Resolver<'a> {
                 let ident = path.segments[0].identifier;
                 if ident.name == keywords::DollarCrate.name() {
                     path.segments[0].identifier.name = keywords::CrateRoot.name();
-                    let module = self.0.resolve_crate_root(ident.ctxt);
+                    let module = self.0.resolve_crate_root(ident.ctxt, true);
                     if !module.is_local() {
                         let span = path.segments[0].span;
                         path.segments.insert(1, match module.kind {
@@ -188,7 +188,8 @@ impl<'a> base::Resolver for Resolver<'a> {
     fn add_builtin(&mut self, ident: ast::Ident, ext: Rc<SyntaxExtension>) {
         let def_id = DefId {
             krate: BUILTIN_MACROS_CRATE,
-            index: DefIndex::new(self.macro_map.len()),
+            index: DefIndex::from_array_index(self.macro_map.len(),
+                                              DefIndexAddressSpace::Low),
         };
         let kind = ext.kind();
         self.macro_map.insert(def_id, ext);
@@ -408,7 +409,7 @@ impl<'a> Resolver<'a> {
         def
     }
 
-    fn resolve_macro_to_def_inner(&mut self, scope: Mark, path: &ast::Path,
+    pub fn resolve_macro_to_def_inner(&mut self, scope: Mark, path: &ast::Path,
                                   kind: MacroKind, force: bool)
                                   -> Result<Def, Determinacy> {
         let ast::Path { ref segments, span } = *path;
@@ -690,8 +691,7 @@ impl<'a> Resolver<'a> {
         if let Some(suggestion) = suggestion {
             if suggestion != name {
                 if let MacroKind::Bang = kind {
-                    err.span_suggestion(span, "you could try the macro",
-                                        format!("{}!", suggestion));
+                    err.span_suggestion(span, "you could try the macro", suggestion.to_string());
                 } else {
                     err.span_suggestion(span, "try", suggestion.to_string());
                 }
@@ -755,8 +755,9 @@ impl<'a> Resolver<'a> {
             *legacy_scope = LegacyScope::Binding(self.arenas.alloc_legacy_binding(LegacyBinding {
                 parent: Cell::new(*legacy_scope), ident: ident, def_id: def_id, span: item.span,
             }));
+            let def = Def::Macro(def_id, MacroKind::Bang);
+            self.all_macros.insert(ident.name, def);
             if attr::contains_name(&item.attrs, "macro_export") {
-                let def = Def::Macro(def_id, MacroKind::Bang);
                 self.macro_exports.push(Export {
                     ident: ident.modern(),
                     def: def,

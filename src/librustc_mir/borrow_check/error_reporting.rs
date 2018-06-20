@@ -10,7 +10,7 @@
 
 use syntax_pos::Span;
 use rustc::middle::region::ScopeTree;
-use rustc::mir::{BorrowKind, Field, Local, Location, Operand};
+use rustc::mir::{BorrowKind, Field, Local, LocalKind, Location, Operand};
 use rustc::mir::{Place, ProjectionElem, Rvalue, Statement, StatementKind};
 use rustc::ty::{self, RegionKind};
 use rustc_data_structures::indexed_vec::Idx;
@@ -62,13 +62,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                 Origin::Mir,
             );
 
-            err.span_label(
-                span,
-                format!(
-                    "value {} here after move",
-                    desired_action.as_verb_in_past_tense()
-                ),
-            );
+            let mut is_loop_move = false;
             for moi in mois {
                 let move_msg = ""; //FIXME: add " (into closure)"
                 let move_span = self.mir.source_info(self.move_data.moves[*moi].source).span;
@@ -77,9 +71,19 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                         span,
                         format!("value moved{} here in previous iteration of loop", move_msg),
                     );
+                    is_loop_move = true;
                 } else {
                     err.span_label(move_span, format!("value moved{} here", move_msg));
                 };
+            }
+            if !is_loop_move {
+                err.span_label(
+                    span,
+                    format!(
+                        "value {} here after move",
+                        desired_action.as_verb_in_past_tense()
+                    ),
+                );
             }
 
             if let Some(ty) = self.retrieve_type_for_place(place) {
@@ -252,8 +256,8 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
             "immutable",
             "mutable",
         ) {
-            (BorrowKind::Shared, lft, _, BorrowKind::Mut, _, rgt) |
-            (BorrowKind::Mut, _, lft, BorrowKind::Shared, rgt, _) => self.tcx
+            (BorrowKind::Shared, lft, _, BorrowKind::Mut { .. }, _, rgt) |
+            (BorrowKind::Mut { .. }, _, lft, BorrowKind::Shared, rgt, _) => self.tcx
                 .cannot_reborrow_already_borrowed(
                     span,
                     &desc_place,
@@ -267,7 +271,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                     Origin::Mir,
                 ),
 
-            (BorrowKind::Mut, _, _, BorrowKind::Mut, _, _) => self.tcx
+            (BorrowKind::Mut { .. }, _, _, BorrowKind::Mut { .. }, _, _) => self.tcx
                 .cannot_mutably_borrow_multiply(
                     span,
                     &desc_place,
@@ -310,7 +314,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                     Origin::Mir,
                 ),
 
-            (BorrowKind::Mut, _, lft, BorrowKind::Unique, _, _) => self.tcx
+            (BorrowKind::Mut { .. }, _, lft, BorrowKind::Unique, _, _) => self.tcx
                 .cannot_reborrow_already_uniquely_borrowed(
                     span,
                     &desc_place,
@@ -358,32 +362,19 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
         let scope_tree = borrows.0.scope_tree();
         let root_place = self.prefixes(&borrow.borrowed_place, PrefixSet::All).last().unwrap();
 
-        match root_place {
-            &Place::Local(local) => {
-                if let Some(_) = self.storage_dead_or_drop_error_reported_l.replace(local) {
-                    debug!("report_does_not_live_long_enough({:?}): <suppressed>",
-                           (borrow, drop_span));
-                    return
-                }
-            }
-            &Place::Static(ref statik) => {
-                if let Some(_) = self.storage_dead_or_drop_error_reported_s
-                    .replace(statik.def_id)
-                {
-                    debug!("report_does_not_live_long_enough({:?}): <suppressed>",
-                           (borrow, drop_span));
-                    return
-                }
-            },
-            &Place::Projection(_) =>
-                unreachable!("root_place is an unreachable???")
-        };
-
         let borrow_span = self.mir.source_info(borrow.location).span;
         let proper_span = match *root_place {
             Place::Local(local) => self.mir.local_decls[local].source_info.span,
             _ => drop_span,
         };
+
+        if self.access_place_error_reported.contains(&(root_place.clone(), borrow_span)) {
+            debug!("suppressing access_place error when borrow doesn't live long enough for {:?}",
+                   borrow_span);
+            return;
+        }
+
+        self.access_place_error_reported.insert((root_place.clone(), borrow_span));
 
         match (borrow.region, &self.describe_place(&borrow.borrowed_place)) {
             (RegionKind::ReScope(_), Some(name)) => {
@@ -564,19 +555,39 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
         (place, span): (&Place<'tcx>, Span),
         assigned_span: Span,
     ) {
+        let is_arg = if let Place::Local(local) = place {
+            if let LocalKind::Arg = self.mir.local_kind(*local) {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         let mut err = self.tcx.cannot_reassign_immutable(
             span,
             &self.describe_place(place).unwrap_or("_".to_owned()),
+            is_arg,
             Origin::Mir,
         );
-        err.span_label(span, "cannot assign twice to immutable variable");
+        let msg = if is_arg {
+            "cannot assign to immutable argument"
+        } else {
+            "cannot assign twice to immutable variable"
+        };
         if span != assigned_span {
-            let value_msg = match self.describe_place(place) {
-                Some(name) => format!("`{}`", name),
-                None => "value".to_owned(),
-            };
-            err.span_label(assigned_span, format!("first assignment to {}", value_msg));
+            if is_arg {
+                err.span_label(assigned_span, "argument not declared as `mut`");
+            } else {
+                let value_msg = match self.describe_place(place) {
+                    Some(name) => format!("`{}`", name),
+                    None => "value".to_owned(),
+                };
+                err.span_label(assigned_span, format!("first assignment to {}", value_msg));
+            }
         }
+        err.span_label(span, msg);
         err.emit();
     }
 }
@@ -715,19 +726,19 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                 ty::TyAdt(def, _) => if def.is_enum() {
                     format!("{}", field.index())
                 } else {
-                    format!("{}", def.struct_variant().fields[field.index()].name)
+                    format!("{}", def.non_enum_variant().fields[field.index()].name)
                 },
                 ty::TyTuple(_, _) => format!("{}", field.index()),
                 ty::TyRef(_, tnm) | ty::TyRawPtr(tnm) => {
                     self.describe_field_from_ty(&tnm.ty, field)
                 }
                 ty::TyArray(ty, _) | ty::TySlice(ty) => self.describe_field_from_ty(&ty, field),
-                ty::TyClosure(closure_def_id, _) => {
+                ty::TyClosure(def_id, _) | ty::TyGenerator(def_id, _, _) => {
                     // Convert the def-id into a node-id. node-ids are only valid for
                     // the local code in the current crate, so this returns an `Option` in case
                     // the closure comes from another crate. But in that case we wouldn't
                     // be borrowck'ing it, so we can just unwrap:
-                    let node_id = self.tcx.hir.as_local_node_id(closure_def_id).unwrap();
+                    let node_id = self.tcx.hir.as_local_node_id(def_id).unwrap();
                     let freevar = self.tcx.with_freevars(node_id, |fv| fv[field.index()]);
 
                     self.tcx.hir.name(freevar.var_id()).to_string()
@@ -745,7 +756,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
     }
 
     // Retrieve span of given borrow from the current MIR representation
-    fn retrieve_borrow_span(&self, borrow: &BorrowData) -> Span {
+    pub fn retrieve_borrow_span(&self, borrow: &BorrowData) -> Span {
         self.mir.source_info(borrow.location).span
     }
 

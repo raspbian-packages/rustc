@@ -18,7 +18,7 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
     /// When given a `ConcreteFailure` for a function with arguments containing a named region and
     /// an anonymous region, emit an descriptive diagnostic error.
     pub(super) fn try_report_named_anon_conflict(&self) -> Option<ErrorReported> {
-        let NiceRegionError { span, sub, sup, .. } = *self;
+        let (span, sub, sup) = self.get_regions();
 
         debug!(
             "try_report_named_anon_conflict(sub={:?}, sup={:?})",
@@ -117,5 +117,18 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
             .span_label(span, format!("lifetime `{}` required", named))
             .emit();
         return Some(ErrorReported);
+    }
+
+    // This method returns whether the given Region is Named
+    pub(super) fn is_named_region(&self, region: ty::Region<'tcx>) -> bool {
+        match *region {
+            ty::ReStatic => true,
+            ty::ReFree(ref free_region) => match free_region.bound_region {
+                ty::BrNamed(..) => true,
+                _ => false,
+            },
+            ty::ReEarlyBound(_) => true,
+            _ => false,
+        }
     }
 }

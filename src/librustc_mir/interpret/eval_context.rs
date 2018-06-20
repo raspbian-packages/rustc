@@ -172,7 +172,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> LayoutOf<Ty<'tcx>> for &'a EvalContext<'a, 'tcx
     type TyLayout = EvalResult<'tcx, TyLayout<'tcx>>;
 
     fn layout_of(self, ty: Ty<'tcx>) -> Self::TyLayout {
-        (self.tcx, self.param_env).layout_of(ty)
+        self.tcx.layout_of(self.param_env.and(ty))
             .map_err(|layout| EvalErrorKind::Layout(layout).into())
     }
 }
@@ -716,6 +716,10 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     ReifyFnPointer => {
                         match self.eval_operand(operand)?.ty.sty {
                             ty::TyFnDef(def_id, substs) => {
+                                if self.tcx.has_attr(def_id, "rustc_args_required_const") {
+                                    bug!("reifying a fn ptr that requires \
+                                          const arguments");
+                                }
                                 let instance = self.resolve(def_id, substs)?;
                                 let fn_ptr = self.memory.create_fn_alloc(instance);
                                 let valty = ValTy {
@@ -950,8 +954,8 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
     }
 
     pub fn read_global_as_value(&self, gid: GlobalId, layout: TyLayout) -> Value {
-        Value::ByRef(self.tcx.interpret_interner.borrow().get_cached(gid).expect("global not cached"),
-                     layout.align)
+        let alloc = self.tcx.interpret_interner.borrow().get_cached(gid).expect("global not cached");
+        Value::ByRef(MemoryPointer::new(alloc, 0).into(), layout.align)
     }
 
     pub fn force_allocation(&mut self, place: Place) -> EvalResult<'tcx, Place> {
@@ -1165,7 +1169,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     I32 => 4,
                     I64 => 8,
                     I128 => 16,
-                    Is => self.memory.pointer_size(),
+                    Isize => self.memory.pointer_size(),
                 };
                 PrimValKind::from_int_size(size)
             }
@@ -1178,7 +1182,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     U32 => 4,
                     U64 => 8,
                     U128 => 16,
-                    Us => self.memory.pointer_size(),
+                    Usize => self.memory.pointer_size(),
                 };
                 PrimValKind::from_uint_size(size)
             }
@@ -1292,7 +1296,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     I32 => 4,
                     I64 => 8,
                     I128 => 16,
-                    Is => self.memory.pointer_size(),
+                    Isize => self.memory.pointer_size(),
                 };
                 self.memory.read_primval(ptr, ptr_align, size, true)?
             }
@@ -1305,7 +1309,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> EvalContext<'a, 'tcx, M> {
                     U32 => 4,
                     U64 => 8,
                     U128 => 16,
-                    Us => self.memory.pointer_size(),
+                    Usize => self.memory.pointer_size(),
                 };
                 self.memory.read_primval(ptr, ptr_align, size, false)?
             }

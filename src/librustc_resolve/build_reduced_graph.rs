@@ -156,7 +156,7 @@ impl<'a> Resolver<'a> {
 
                     // Disallow `use $crate;`
                     if source.name == keywords::DollarCrate.name() && path.segments.len() == 1 {
-                        let crate_root = self.resolve_crate_root(source.ctxt);
+                        let crate_root = self.resolve_crate_root(source.ctxt, true);
                         let crate_name = match crate_root.kind {
                             ModuleKind::Def(_, name) => name,
                             ModuleKind::Block(..) => unreachable!(),
@@ -400,7 +400,7 @@ impl<'a> Resolver<'a> {
                 self.insert_field_names(item_def_id, field_names);
             }
 
-            ItemKind::AutoImpl(..) | ItemKind::Impl(..) => {}
+            ItemKind::Impl(..) => {}
 
             ItemKind::Trait(..) => {
                 let def_id = self.definitions.local_def_id(item.id);
@@ -683,7 +683,7 @@ impl<'a> Resolver<'a> {
                 let (def, vis) = (binding.def(), binding.vis);
                 self.macro_exports.push(Export { ident, def, vis, span, is_import: true });
             } else {
-                span_err!(self.session, span, E0470, "reexported macro not found");
+                span_err!(self.session, span, E0470, "re-exported macro not found");
             }
         }
         used
@@ -729,7 +729,7 @@ impl<'a> Resolver<'a> {
                 }
             } else if attr.check_name("macro_reexport") {
                 let bad_macro_reexport = |this: &mut Self, span| {
-                    span_err!(this.session, span, E0467, "bad macro reexport");
+                    span_err!(this.session, span, E0467, "bad macro re-export");
                 };
                 if let Some(names) = attr.meta_item_list() {
                     for attr in names {

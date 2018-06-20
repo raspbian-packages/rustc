@@ -42,7 +42,7 @@ use rustc::hir::{Freevar, FreevarMap, TraitCandidate, TraitMap, GlobMap};
 use rustc::util::nodemap::{NodeMap, NodeSet, FxHashMap, FxHashSet, DefIdMap};
 
 use syntax::codemap::{dummy_spanned, respan};
-use syntax::ext::hygiene::{Mark, SyntaxContext};
+use syntax::ext::hygiene::{Mark, MarkKind, SyntaxContext};
 use syntax::ast::{self, Name, NodeId, Ident, SpannedIdent, FloatTy, IntTy, UintTy};
 use syntax::ext::base::SyntaxExtension;
 use syntax::ext::base::Determinacy::{self, Determined, Undetermined};
@@ -55,7 +55,7 @@ use syntax::attr;
 use syntax::ast::{Arm, BindingMode, Block, Crate, Expr, ExprKind};
 use syntax::ast::{FnDecl, ForeignItem, ForeignItemKind, GenericParam, Generics};
 use syntax::ast::{Item, ItemKind, ImplItem, ImplItemKind};
-use syntax::ast::{Local, Mutability, Pat, PatKind, Path};
+use syntax::ast::{Label, Local, Mutability, Pat, PatKind, Path};
 use syntax::ast::{QSelf, TraitItemKind, TraitRef, Ty, TyKind};
 use syntax::feature_gate::{feature_err, emit_feature_err, GateIssue};
 use syntax::parse::token;
@@ -67,6 +67,7 @@ use std::cell::{Cell, RefCell};
 use std::cmp;
 use std::collections::BTreeSet;
 use std::fmt;
+use std::iter;
 use std::mem::replace;
 use std::rc::Rc;
 
@@ -898,7 +899,7 @@ impl<'a> LexicalScopeBinding<'a> {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 enum PathResult<'a> {
     Module(Module<'a>),
     NonModule(PathResolution),
@@ -963,7 +964,7 @@ impl<'a> ModuleData<'a> {
             unresolved_invocations: RefCell::new(FxHashSet()),
             no_implicit_prelude: false,
             glob_importers: RefCell::new(Vec::new()),
-            globs: RefCell::new((Vec::new())),
+            globs: RefCell::new(Vec::new()),
             traits: RefCell::new(None),
             populated: Cell::new(normal_ancestor_id.is_local()),
             span,
@@ -1204,14 +1205,14 @@ impl PrimitiveTypeTable {
         table.intern("char", TyChar);
         table.intern("f32", TyFloat(FloatTy::F32));
         table.intern("f64", TyFloat(FloatTy::F64));
-        table.intern("isize", TyInt(IntTy::Is));
+        table.intern("isize", TyInt(IntTy::Isize));
         table.intern("i8", TyInt(IntTy::I8));
         table.intern("i16", TyInt(IntTy::I16));
         table.intern("i32", TyInt(IntTy::I32));
         table.intern("i64", TyInt(IntTy::I64));
         table.intern("i128", TyInt(IntTy::I128));
         table.intern("str", TyStr);
-        table.intern("usize", TyUint(UintTy::Us));
+        table.intern("usize", TyUint(UintTy::Usize));
         table.intern("u8", TyUint(UintTy::U8));
         table.intern("u16", TyUint(UintTy::U16));
         table.intern("u32", TyUint(UintTy::U32));
@@ -1320,6 +1321,7 @@ pub struct Resolver<'a> {
     crate_loader: &'a mut CrateLoader,
     macro_names: FxHashSet<Ident>,
     global_macros: FxHashMap<Name, &'a NameBinding<'a>>,
+    pub all_macros: FxHashMap<Name, Def>,
     lexical_macro_resolutions: Vec<(Ident, &'a Cell<LegacyScope<'a>>)>,
     macro_map: FxHashMap<DefId, Rc<SyntaxExtension>>,
     macro_defs: FxHashMap<Mark, DefId>,
@@ -1407,6 +1409,71 @@ impl<'a, 'b: 'a> ty::DefIdTree for &'a Resolver<'b> {
 
 impl<'a> hir::lowering::Resolver for Resolver<'a> {
     fn resolve_hir_path(&mut self, path: &mut hir::Path, is_value: bool) {
+        self.resolve_hir_path_cb(path, is_value,
+                                 |resolver, span, error| resolve_error(resolver, span, error))
+    }
+
+    fn resolve_str_path(&mut self, span: Span, crate_root: Option<&str>,
+                        components: &[&str], is_value: bool) -> hir::Path {
+        let mut path = hir::Path {
+            span,
+            def: Def::Err,
+            segments: iter::once(keywords::CrateRoot.name()).chain({
+                crate_root.into_iter().chain(components.iter().cloned()).map(Symbol::intern)
+            }).map(hir::PathSegment::from_name).collect(),
+        };
+
+        self.resolve_hir_path(&mut path, is_value);
+        path
+    }
+
+    fn get_resolution(&mut self, id: NodeId) -> Option<PathResolution> {
+        self.def_map.get(&id).cloned()
+    }
+
+    fn definitions(&mut self) -> &mut Definitions {
+        &mut self.definitions
+    }
+}
+
+impl<'a> Resolver<'a> {
+    /// Rustdoc uses this to resolve things in a recoverable way. ResolutionError<'a>
+    /// isn't something that can be returned because it can't be made to live that long,
+    /// and also it's a private type. Fortunately rustdoc doesn't need to know the error,
+    /// just that an error occured.
+    pub fn resolve_str_path_error(&mut self, span: Span, path_str: &str, is_value: bool)
+        -> Result<hir::Path, ()> {
+        use std::iter;
+        let mut errored = false;
+
+        let mut path = if path_str.starts_with("::") {
+            hir::Path {
+                span,
+                def: Def::Err,
+                segments: iter::once(keywords::CrateRoot.name()).chain({
+                    path_str.split("::").skip(1).map(Symbol::intern)
+                }).map(hir::PathSegment::from_name).collect(),
+            }
+        } else {
+            hir::Path {
+                span,
+                def: Def::Err,
+                segments: path_str.split("::").map(Symbol::intern)
+                                  .map(hir::PathSegment::from_name).collect(),
+            }
+        };
+        self.resolve_hir_path_cb(&mut path, is_value, |_, _, _| errored = true);
+        if errored || path.def == Def::Err {
+            Err(())
+        } else {
+            Ok(path)
+        }
+    }
+
+    /// resolve_hir_path, but takes a callback in case there was an error
+    fn resolve_hir_path_cb<F>(&mut self, path: &mut hir::Path, is_value: bool, error_callback: F)
+            where F: for<'c, 'b> FnOnce(&'c mut Resolver, Span, ResolutionError<'b>)
+        {
         let namespace = if is_value { ValueNS } else { TypeNS };
         let hir::Path { ref segments, span, ref mut def } = *path;
         let path: Vec<SpannedIdent> = segments.iter()
@@ -1418,23 +1485,15 @@ impl<'a> hir::lowering::Resolver for Resolver<'a> {
                 *def = path_res.base_def(),
             PathResult::NonModule(..) => match self.resolve_path(&path, None, true, span) {
                 PathResult::Failed(span, msg, _) => {
-                    resolve_error(self, span, ResolutionError::FailedToResolve(&msg));
+                    error_callback(self, span, ResolutionError::FailedToResolve(&msg));
                 }
                 _ => {}
             },
             PathResult::Indeterminate => unreachable!(),
             PathResult::Failed(span, msg, _) => {
-                resolve_error(self, span, ResolutionError::FailedToResolve(&msg));
+                error_callback(self, span, ResolutionError::FailedToResolve(&msg));
             }
         }
-    }
-
-    fn get_resolution(&mut self, id: NodeId) -> Option<PathResolution> {
-        self.def_map.get(&id).cloned()
-    }
-
-    fn definitions(&mut self) -> &mut Definitions {
-        &mut self.definitions
     }
 }
 
@@ -1538,6 +1597,7 @@ impl<'a> Resolver<'a> {
             crate_loader,
             macro_names: FxHashSet(),
             global_macros: FxHashMap(),
+            all_macros: FxHashMap(),
             lexical_macro_resolutions: Vec::new(),
             macro_map: FxHashMap(),
             macro_exports: Vec::new(),
@@ -1789,8 +1849,17 @@ impl<'a> Resolver<'a> {
         result
     }
 
-    fn resolve_crate_root(&mut self, mut ctxt: SyntaxContext) -> Module<'a> {
-        let module = match ctxt.adjust(Mark::root()) {
+    fn resolve_crate_root(&mut self, mut ctxt: SyntaxContext, legacy: bool) -> Module<'a> {
+        let mark = if legacy {
+            // When resolving `$crate` from a `macro_rules!` invoked in a `macro`,
+            // we don't want to pretend that the `macro_rules!` definition is in the `macro`
+            // as described in `SyntaxContext::apply_mark`, so we ignore prepended modern marks.
+            ctxt.marks().into_iter().find(|&mark| mark.kind() != MarkKind::Modern)
+        } else {
+            ctxt = ctxt.modern();
+            ctxt.adjust(Mark::root())
+        };
+        let module = match mark {
             Some(def) => self.macro_def_scope(def),
             None => return self.graph_root,
         };
@@ -1824,8 +1893,8 @@ impl<'a> Resolver<'a> {
     // generate a fake "implementation scope" containing all the
     // implementations thus found, for compatibility with old resolve pass.
 
-    fn with_scope<F>(&mut self, id: NodeId, f: F)
-        where F: FnOnce(&mut Resolver)
+    pub fn with_scope<F, T>(&mut self, id: NodeId, f: F) -> T
+        where F: FnOnce(&mut Resolver) -> T
     {
         let id = self.definitions.local_def_id(id);
         let module = self.module_map.get(&id).cloned(); // clones a reference
@@ -1836,13 +1905,14 @@ impl<'a> Resolver<'a> {
             self.ribs[TypeNS].push(Rib::new(ModuleRibKind(module)));
 
             self.finalize_current_module_macro_resolutions();
-            f(self);
+            let ret = f(self);
 
             self.current_module = orig_module;
             self.ribs[ValueNS].pop();
             self.ribs[TypeNS].pop();
+            ret
         } else {
-            f(self);
+            f(self)
         }
     }
 
@@ -1893,12 +1963,6 @@ impl<'a> Resolver<'a> {
                                              |this| visit::walk_item(this, item));
             }
 
-            ItemKind::AutoImpl(_, ref trait_ref) => {
-                self.with_optional_trait_ref(Some(trait_ref), |this, _| {
-                    // Resolve type arguments in trait path
-                    visit::walk_trait_ref(this, trait_ref);
-                });
-            }
             ItemKind::Impl(.., ref generics, ref opt_trait_ref, ref self_type, ref impl_items) =>
                 self.resolve_implementation(generics,
                                             opt_trait_ref,
@@ -1981,7 +2045,7 @@ impl<'a> Resolver<'a> {
                     segments: vec![],
                     span: use_tree.span,
                 };
-                self.resolve_use_tree(item, use_tree, &path);
+                self.resolve_use_tree(item.id, use_tree, &path);
             }
 
             ItemKind::ExternCrate(_) | ItemKind::MacroDef(..) | ItemKind::GlobalAsm(_) => {
@@ -1992,7 +2056,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn resolve_use_tree(&mut self, item: &Item, use_tree: &ast::UseTree, prefix: &Path) {
+    fn resolve_use_tree(&mut self, id: NodeId, use_tree: &ast::UseTree, prefix: &Path) {
         match use_tree.kind {
             ast::UseTreeKind::Nested(ref items) => {
                 let path = Path {
@@ -2006,10 +2070,10 @@ impl<'a> Resolver<'a> {
 
                 if items.len() == 0 {
                     // Resolve prefix of an import with empty braces (issue #28388).
-                    self.smart_resolve_path(item.id, None, &path, PathSource::ImportPrefix);
+                    self.smart_resolve_path(id, None, &path, PathSource::ImportPrefix);
                 } else {
-                    for &(ref tree, _) in items {
-                        self.resolve_use_tree(item, tree, &path);
+                    for &(ref tree, nested_id) in items {
+                        self.resolve_use_tree(nested_id, tree, &path);
                     }
                 }
             }
@@ -2565,7 +2629,8 @@ impl<'a> Resolver<'a> {
             let code = source.error_code(def.is_some());
             let (base_msg, fallback_label, base_span) = if let Some(def) = def {
                 (format!("expected {}, found {} `{}`", expected, def.kind_name(), path_str),
-                 format!("not a {}", expected), span)
+                 format!("not a {}", expected),
+                 span)
             } else {
                 let item_str = path[path.len() - 1].node;
                 let item_span = path[path.len() - 1].span;
@@ -2582,7 +2647,8 @@ impl<'a> Resolver<'a> {
                     (mod_prefix, format!("`{}`", names_to_string(mod_path)))
                 };
                 (format!("cannot find {} `{}` in {}{}", expected, item_str, mod_prefix, mod_str),
-                 format!("not found in {}", mod_str), item_span)
+                 format!("not found in {}", mod_str),
+                 item_span)
             };
             let code = DiagnosticId::Error(code.into());
             let mut err = this.session.struct_span_err_with_code(base_span, &base_msg, code);
@@ -2697,18 +2763,35 @@ impl<'a> Resolver<'a> {
                         }
                         return (err, candidates);
                     },
-                    _ if ns == ValueNS && is_struct_like(def) => {
-                        if let Def::Struct(def_id) = def {
-                            if let Some((ctor_def, ctor_vis))
-                                    = this.struct_constructors.get(&def_id).cloned() {
-                                if is_expected(ctor_def) && !this.is_accessible(ctor_vis) {
-                                    err.span_label(span, format!("constructor is not visible \
-                                                                   here due to private fields"));
-                                }
+                    (Def::Struct(def_id), _) if ns == ValueNS => {
+                        if let Some((ctor_def, ctor_vis))
+                                = this.struct_constructors.get(&def_id).cloned() {
+                            let accessible_ctor = this.is_accessible(ctor_vis);
+                            if is_expected(ctor_def) && !accessible_ctor {
+                                err.span_label(span, format!("constructor is not visible \
+                                                              here due to private fields"));
                             }
+                        } else {
+                            err.span_label(span, format!("did you mean `{} {{ /* fields */ }}`?",
+                                                         path_str));
                         }
+                        return (err, candidates);
+                    }
+                    (Def::Union(..), _) |
+                    (Def::Variant(..), _) |
+                    (Def::VariantCtor(_, CtorKind::Fictive), _) if ns == ValueNS => {
                         err.span_label(span, format!("did you mean `{} {{ /* fields */ }}`?",
                                                      path_str));
+                        return (err, candidates);
+                    }
+                    (Def::SelfTy(..), _) if ns == ValueNS => {
+                        err.span_label(span, fallback_label);
+                        err.note("can't use `Self` as a constructor, you must use the \
+                                  implemented struct");
+                        return (err, candidates);
+                    }
+                    (Def::TyAlias(_), _) | (Def::AssociatedTy(..), _) if ns == ValueNS => {
+                        err.note("can't use a type alias as a constructor");
                         return (err, candidates);
                     }
                     _ => {}
@@ -2748,7 +2831,7 @@ impl<'a> Resolver<'a> {
                                 let lint = lint::builtin::LEGACY_CONSTRUCTOR_VISIBILITY;
                                 self.session.buffer_lint(lint, id, span,
                                     "private struct constructors are not usable through \
-                                     reexports in outer modules",
+                                     re-exports in outer modules",
                                 );
                                 res = Some(PathResolution::new(ctor_def));
                             }
@@ -2788,8 +2871,8 @@ impl<'a> Resolver<'a> {
         if let Some(sp) = self.current_type_ascription.last() {
             let mut sp = *sp;
             loop {  // try to find the `:`, bail on first non-':'/non-whitespace
-                sp = sp.next_point();
-                if let Ok(snippet) = cm.span_to_snippet(sp.to(sp.next_point())) {
+                sp = cm.next_point(sp);
+                if let Ok(snippet) = cm.span_to_snippet(sp.to(cm.next_point(sp))) {
                     debug!("snippet {:?}", snippet);
                     let line_sp = cm.lookup_char_pos(sp.hi()).line;
                     let line_base_sp = cm.lookup_char_pos(base_span.lo()).line;
@@ -2982,6 +3065,8 @@ impl<'a> Resolver<'a> {
                     let msg = "There are too many initial `super`s.".to_string();
                     return PathResult::Failed(ident.span, msg, false);
                 }
+            } else if i == 0 && ns == TypeNS && name == keywords::Extern.name() {
+                continue;
             }
             allow_super = false;
 
@@ -2990,22 +3075,25 @@ impl<'a> Resolver<'a> {
                    (i == 1 && name == keywords::Crate.name() &&
                               path[0].node.name == keywords::CrateRoot.name()) {
                     // `::a::b` or `::crate::a::b`
-                    module = Some(self.resolve_crate_root(ident.node.ctxt.modern()));
+                    module = Some(self.resolve_crate_root(ident.node.ctxt, false));
                     continue
                 } else if i == 0 && name == keywords::DollarCrate.name() {
                     // `$crate::a::b`
-                    module = Some(self.resolve_crate_root(ident.node.ctxt));
+                    module = Some(self.resolve_crate_root(ident.node.ctxt, true));
                     continue
-                } else if i == 1 && self.session.features.borrow().extern_absolute_paths &&
-                                    path[0].node.name == keywords::CrateRoot.name() &&
-                                    !token::Ident(ident.node).is_path_segment_keyword() {
-                    // `::extern_crate::a::b`
-                    let crate_id = self.crate_loader.resolve_crate_from_path(name, ident.span);
-                    let crate_root =
-                        self.get_module(DefId { krate: crate_id, index: CRATE_DEF_INDEX });
-                    self.populate_module_if_necessary(crate_root);
-                    module = Some(crate_root);
-                    continue
+                } else if i == 1 && !token::Ident(ident.node).is_path_segment_keyword() {
+                    let prev_name = path[0].node.name;
+                    if prev_name == keywords::Extern.name() ||
+                       prev_name == keywords::CrateRoot.name() &&
+                       self.session.features.borrow().extern_absolute_paths {
+                        // `::extern_crate::a::b`
+                        let crate_id = self.crate_loader.resolve_crate_from_path(name, ident.span);
+                        let crate_root =
+                            self.get_module(DefId { krate: crate_id, index: CRATE_DEF_INDEX });
+                        self.populate_module_if_necessary(crate_root);
+                        module = Some(crate_root);
+                        continue
+                    }
                 }
             }
 
@@ -3015,6 +3103,7 @@ impl<'a> Resolver<'a> {
                name == keywords::SelfValue.name() && i != 0 ||
                name == keywords::SelfType.name() && i != 0 ||
                name == keywords::Super.name() && i != 0 ||
+               name == keywords::Extern.name() && i != 0 ||
                name == keywords::Crate.name() && i != 1 &&
                     path[0].node.name != keywords::CrateRoot.name() {
                 let name_str = if name == keywords::CrateRoot.name() {
@@ -3326,13 +3415,13 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn with_resolved_label<F>(&mut self, label: Option<SpannedIdent>, id: NodeId, f: F)
+    fn with_resolved_label<F>(&mut self, label: Option<Label>, id: NodeId, f: F)
         where F: FnOnce(&mut Resolver)
     {
         if let Some(label) = label {
             let def = Def::Label(id);
             self.with_label_rib(|this| {
-                this.label_ribs.last_mut().unwrap().bindings.insert(label.node, def);
+                this.label_ribs.last_mut().unwrap().bindings.insert(label.ident, def);
                 f(this);
             });
         } else {
@@ -3340,7 +3429,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    fn resolve_labeled_block(&mut self, label: Option<SpannedIdent>, id: NodeId, block: &Block) {
+    fn resolve_labeled_block(&mut self, label: Option<Label>, id: NodeId, block: &Block) {
         self.with_resolved_label(label, id, |this| this.visit_block(block));
     }
 
@@ -3363,19 +3452,19 @@ impl<'a> Resolver<'a> {
             }
 
             ExprKind::Break(Some(label), _) | ExprKind::Continue(Some(label)) => {
-                match self.search_label(label.node, |rib, id| rib.bindings.get(&id).cloned()) {
+                match self.search_label(label.ident, |rib, id| rib.bindings.get(&id).cloned()) {
                     None => {
                         // Search again for close matches...
                         // Picks the first label that is "close enough", which is not necessarily
                         // the closest match
-                        let close_match = self.search_label(label.node, |rib, ident| {
+                        let close_match = self.search_label(label.ident, |rib, ident| {
                             let names = rib.bindings.iter().map(|(id, _)| &id.name);
                             find_best_match_for_name(names, &*ident.name.as_str(), None)
                         });
                         self.record_def(expr.id, err_path_resolution());
                         resolve_error(self,
                                       label.span,
-                                      ResolutionError::UndeclaredLabel(&label.node.name.as_str(),
+                                      ResolutionError::UndeclaredLabel(&label.ident.name.as_str(),
                                                                        close_match));
                     }
                     Some(def @ Def::Label(_)) => {
@@ -3774,7 +3863,7 @@ impl<'a> Resolver<'a> {
                 self.session.buffer_lint(lint::builtin::LEGACY_IMPORTS, id, span, &msg);
             } else {
                 let mut err =
-                    self.session.struct_span_err(span, &format!("`{}` is ambiguous", name));
+                    struct_span_err!(self.session, span, E0659, "`{}` is ambiguous", name);
                 err.span_note(b1.span, &msg1);
                 match b2.def() {
                     Def::Macro(..) if b2.span == DUMMY_SP =>
@@ -3891,14 +3980,14 @@ impl<'a> Resolver<'a> {
                           container));
 
         err.span_label(span, format!("`{}` re{} here", name, new_participle));
-        if old_binding.span != syntax_pos::DUMMY_SP {
+        if old_binding.span != DUMMY_SP {
             err.span_label(self.session.codemap().def_span(old_binding.span),
                            format!("previous {} of the {} `{}` here", old_noun, old_kind, name));
         }
 
         // See https://github.com/rust-lang/rust/issues/32354
         if old_binding.is_import() || new_binding.is_import() {
-            let binding = if new_binding.is_import() {
+            let binding = if new_binding.is_import() && new_binding.span != DUMMY_SP {
                 new_binding
             } else {
                 old_binding
@@ -3909,9 +3998,21 @@ impl<'a> Resolver<'a> {
 
             if let (Ok(snippet), false) = (cm.span_to_snippet(binding.span),
                                            binding.is_renamed_extern_crate()) {
+                let suggested_name = if name.as_str().chars().next().unwrap().is_uppercase() {
+                    format!("Other{}", name)
+                } else {
+                    format!("other_{}", name)
+                };
+
                 err.span_suggestion(binding.span,
                                     rename_msg,
-                                    format!("{} as Other{}", snippet, name));
+                                    if snippet.ends_with(';') {
+                                        format!("{} as {};",
+                                                &snippet[..snippet.len()-1],
+                                                suggested_name)
+                                    } else {
+                                        format!("{} as {}", snippet, suggested_name)
+                                    });
             } else {
                 err.span_label(binding.span, rename_msg);
             }
@@ -3953,13 +4054,6 @@ impl<'a> Resolver<'a> {
                 }
             }
         }
-    }
-}
-
-fn is_struct_like(def: Def) -> bool {
-    match def {
-        Def::VariantCtor(_, CtorKind::Fictive) => true,
-        _ => PathSource::Struct.is_expected(def),
     }
 }
 
@@ -4053,7 +4147,7 @@ fn show_candidates(err: &mut DiagnosticBuilder,
 }
 
 /// A somewhat inefficient routine to obtain the name of a module.
-fn module_to_string(module: Module) -> String {
+fn module_to_string(module: Module) -> Option<String> {
     let mut names = Vec::new();
 
     fn collect_mod(names: &mut Vec<Ident>, module: Module) {
@@ -4071,12 +4165,12 @@ fn module_to_string(module: Module) -> String {
     collect_mod(&mut names, module);
 
     if names.is_empty() {
-        return "???".to_string();
+        return None;
     }
-    names_to_string(&names.into_iter()
+    Some(names_to_string(&names.into_iter()
                         .rev()
                         .map(|n| dummy_spanned(n))
-                        .collect::<Vec<_>>())
+                        .collect::<Vec<_>>()))
 }
 
 fn err_path_resolution() -> PathResolution {
@@ -4089,4 +4183,5 @@ pub enum MakeGlobMap {
     No,
 }
 
+#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_resolve, DIAGNOSTICS }

@@ -152,8 +152,7 @@ declare_lint! {
 /// ```rust
 /// let _x = 0;
 /// let y = _x + 1; // Here we are using `_x`, even though it has a leading
-/// underscore.
-///                 // We should rename `_x` to `x`
+///                 // underscore. We should rename `_x` to `x`
 /// ```
 declare_lint! {
     pub USED_UNDERSCORE_BINDING,
@@ -166,10 +165,8 @@ declare_lint! {
 /// statement.
 ///
 /// **Why is this bad?** Using a short circuit boolean condition as a statement
-/// may
-/// hide the fact that the second part is executed or not depending on the
-/// outcome of
-/// the first part.
+/// may hide the fact that the second part is executed or not depending on the
+/// outcome of the first part.
 ///
 /// **Known problems:** None.
 ///
@@ -548,11 +545,11 @@ fn check_to_owned(cx: &LateContext, expr: &Expr, other: &Expr) {
 
     // *arg impls PartialEq<other>
     if !arg_ty
-        .builtin_deref(true, ty::LvaluePreference::NoPreference)
+        .builtin_deref(true)
         .map_or(false, |tam| implements_trait(cx, tam.ty, partial_eq_trait_id, &[other_ty]))
         // arg impls PartialEq<*other>
         && !other_ty
-        .builtin_deref(true, ty::LvaluePreference::NoPreference)
+        .builtin_deref(true)
         .map_or(false, |tam| implements_trait(cx, arg_ty, partial_eq_trait_id, &[tam.ty]))
         // arg impls PartialEq<other>
         && !implements_trait(cx, arg_ty, partial_eq_trait_id, &[other_ty])

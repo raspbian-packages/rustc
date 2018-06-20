@@ -122,7 +122,7 @@ impl<'tcx> fmt::Display for BorrowData<'tcx> {
         let kind = match self.kind {
             mir::BorrowKind::Shared => "",
             mir::BorrowKind::Unique => "uniq ",
-            mir::BorrowKind::Mut => "mut ",
+            mir::BorrowKind::Mut { .. } => "mut ",
         };
         let region = format!("{}", self.region);
         let region = if region.len() > 0 { format!("{} ", region) } else { region };
@@ -131,7 +131,7 @@ impl<'tcx> fmt::Display for BorrowData<'tcx> {
 }
 
 impl ReserveOrActivateIndex {
-    fn reserved(i: BorrowIndex) -> Self { ReserveOrActivateIndex::new((i.index() * 2)) }
+    fn reserved(i: BorrowIndex) -> Self { ReserveOrActivateIndex::new(i.index() * 2) }
     fn active(i: BorrowIndex) -> Self { ReserveOrActivateIndex::new((i.index() * 2) + 1) }
 
     pub(crate) fn is_reservation(self) -> bool { self.index() % 2 == 0 }
@@ -396,8 +396,7 @@ impl<'a, 'gcx, 'tcx> Borrows<'a, 'gcx, 'tcx> {
                         // Issue #46746: Two-phase borrows handles
                         // stmts of form `Tmp = &mut Borrow` ...
                         match lhs {
-                            Place::Local(..) => {} // okay
-                            Place::Static(..) => unreachable!(), // (filtered by is_unsafe_place)
+                            Place::Local(..) | Place::Static(..) => {} // okay
                             Place::Projection(..) => {
                                 // ... can assign into projections,
                                 // e.g. `box (&mut _)`. Current
@@ -518,6 +517,7 @@ impl<'a, 'gcx, 'tcx> Borrows<'a, 'gcx, 'tcx> {
             mir::TerminatorKind::Yield {..} |
             mir::TerminatorKind::Goto {..} |
             mir::TerminatorKind::FalseEdges {..} |
+            mir::TerminatorKind::FalseUnwind {..} |
             mir::TerminatorKind::Unreachable => {}
         }
     }
@@ -537,8 +537,8 @@ impl<'a, 'gcx, 'tcx> ActiveBorrows<'a, 'gcx, 'tcx> {
             Some(_) => None,
             None => {
                 match self.0.region_span_map.get(region) {
-                    Some(span) => Some(span.end_point()),
-                    None => Some(self.0.mir.span.end_point())
+                    Some(span) => Some(self.0.tcx.sess.codemap().end_point(*span)),
+                    None => Some(self.0.tcx.sess.codemap().end_point(self.0.mir.span))
                 }
             }
         }
@@ -575,10 +575,10 @@ impl<'a, 'b, 'tcx> FindPlaceUses<'a, 'b, 'tcx> {
     /// has a reservation at the time).
     fn is_potential_use(context: PlaceContext) -> bool {
         match context {
-            // storage effects on an place do not activate it
+            // storage effects on a place do not activate it
             PlaceContext::StorageLive | PlaceContext::StorageDead => false,
 
-            // validation effects do not activate an place
+            // validation effects do not activate a place
             //
             // FIXME: Should they? Is it just another read? Or can we
             // guarantee it won't dereference the stored address? How
@@ -589,11 +589,11 @@ impl<'a, 'b, 'tcx> FindPlaceUses<'a, 'b, 'tcx> {
             // AsmOutput existed, but it's not necessarily a pure overwrite.
             // so it's possible this should activate the place.
             PlaceContext::AsmOutput |
-            // pure overwrites of an place do not activate it. (note
+            // pure overwrites of a place do not activate it. (note
             // PlaceContext::Call is solely about dest place)
             PlaceContext::Store | PlaceContext::Call => false,
 
-            // reads of an place *do* activate it
+            // reads of a place *do* activate it
             PlaceContext::Move |
             PlaceContext::Copy |
             PlaceContext::Drop |
@@ -649,11 +649,25 @@ impl<'a, 'gcx, 'tcx> BitDenotation for Reservations<'a, 'gcx, 'tcx> {
         // `_sets`.
     }
 
+    fn before_statement_effect(&self,
+                               sets: &mut BlockSets<ReserveOrActivateIndex>,
+                               location: Location) {
+        debug!("Reservations::before_statement_effect sets: {:?} location: {:?}", sets, location);
+        self.0.kill_loans_out_of_scope_at_location(sets, location, false);
+    }
+
     fn statement_effect(&self,
                         sets: &mut BlockSets<ReserveOrActivateIndex>,
                         location: Location) {
         debug!("Reservations::statement_effect sets: {:?} location: {:?}", sets, location);
         self.0.statement_effect_on_borrows(sets, location, false);
+    }
+
+    fn before_terminator_effect(&self,
+                                sets: &mut BlockSets<ReserveOrActivateIndex>,
+                                location: Location) {
+        debug!("Reservations::before_terminator_effect sets: {:?} location: {:?}", sets, location);
+        self.0.kill_loans_out_of_scope_at_location(sets, location, false);
     }
 
     fn terminator_effect(&self,
@@ -696,11 +710,25 @@ impl<'a, 'gcx, 'tcx> BitDenotation for ActiveBorrows<'a, 'gcx, 'tcx> {
         // `_sets`.
     }
 
+    fn before_statement_effect(&self,
+                               sets: &mut BlockSets<ReserveOrActivateIndex>,
+                               location: Location) {
+        debug!("ActiveBorrows::before_statement_effect sets: {:?} location: {:?}", sets, location);
+        self.0.kill_loans_out_of_scope_at_location(sets, location, true);
+    }
+
     fn statement_effect(&self,
                         sets: &mut BlockSets<ReserveOrActivateIndex>,
                         location: Location) {
         debug!("ActiveBorrows::statement_effect sets: {:?} location: {:?}", sets, location);
         self.0.statement_effect_on_borrows(sets, location, true);
+    }
+
+    fn before_terminator_effect(&self,
+                                sets: &mut BlockSets<ReserveOrActivateIndex>,
+                                location: Location) {
+        debug!("ActiveBorrows::before_terminator_effect sets: {:?} location: {:?}", sets, location);
+        self.0.kill_loans_out_of_scope_at_location(sets, location, true);
     }
 
     fn terminator_effect(&self,

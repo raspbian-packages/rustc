@@ -90,7 +90,7 @@ impl<'a> StringReader<'a> {
             Ok(tok) => tok,
             Err(_) => {
                 self.emit_fatal_errors();
-                panic!(FatalError);
+                FatalError.raise();
             }
         }
     }
@@ -191,7 +191,7 @@ impl<'a> StringReader<'a> {
         let mut sr = StringReader::new_raw(sess, filemap);
         if sr.advance_token().is_err() {
             sr.emit_fatal_errors();
-            panic!(FatalError);
+            FatalError.raise();
         }
         sr
     }
@@ -216,7 +216,7 @@ impl<'a> StringReader<'a> {
 
         if sr.advance_token().is_err() {
             sr.emit_fatal_errors();
-            panic!(FatalError);
+            FatalError.raise();
         }
         sr
     }
@@ -246,14 +246,27 @@ impl<'a> StringReader<'a> {
         self.err_span(self.mk_sp(from_pos, to_pos), m)
     }
 
+    /// Pushes a character to a message string for error reporting
+    fn push_escaped_char_for_msg(m: &mut String, c: char) {
+        match c {
+            '\u{20}'...'\u{7e}' => {
+                // Don't escape \, ' or " for user-facing messages
+                m.push(c);
+            }
+            _ => {
+                for c in c.escape_default() {
+                    m.push(c);
+                }
+            }
+        }
+    }
+
     /// Report a lexical error spanning [`from_pos`, `to_pos`), appending an
     /// escaped character to the error message
     fn fatal_span_char(&self, from_pos: BytePos, to_pos: BytePos, m: &str, c: char) -> FatalError {
         let mut m = m.to_string();
         m.push_str(": ");
-        for c in c.escape_default() {
-            m.push(c)
-        }
+        Self::push_escaped_char_for_msg(&mut m, c);
         self.fatal_span_(from_pos, to_pos, &m[..])
     }
     fn struct_fatal_span_char(&self,
@@ -264,9 +277,7 @@ impl<'a> StringReader<'a> {
                               -> DiagnosticBuilder<'a> {
         let mut m = m.to_string();
         m.push_str(": ");
-        for c in c.escape_default() {
-            m.push(c)
-        }
+        Self::push_escaped_char_for_msg(&mut m, c);
         self.sess.span_diagnostic.struct_span_fatal(self.mk_sp(from_pos, to_pos), &m[..])
     }
 
@@ -275,9 +286,7 @@ impl<'a> StringReader<'a> {
     fn err_span_char(&self, from_pos: BytePos, to_pos: BytePos, m: &str, c: char) {
         let mut m = m.to_string();
         m.push_str(": ");
-        for c in c.escape_default() {
-            m.push(c)
-        }
+        Self::push_escaped_char_for_msg(&mut m, c);
         self.err_span_(from_pos, to_pos, &m[..]);
     }
     fn struct_err_span_char(&self,
@@ -288,9 +297,7 @@ impl<'a> StringReader<'a> {
                             -> DiagnosticBuilder<'a> {
         let mut m = m.to_string();
         m.push_str(": ");
-        for c in c.escape_default() {
-            m.push(c)
-        }
+        Self::push_escaped_char_for_msg(&mut m, c);
         self.sess.span_diagnostic.struct_span_err(self.mk_sp(from_pos, to_pos), &m[..])
     }
 
@@ -647,7 +654,7 @@ impl<'a> StringReader<'a> {
                     "unterminated block comment"
                 };
                 let last_bpos = self.pos;
-                panic!(self.fatal_span_(start_bpos, last_bpos, msg));
+                self.fatal_span_(start_bpos, last_bpos, msg).raise();
             }
             let n = self.ch.unwrap();
             match n {
@@ -808,9 +815,9 @@ impl<'a> StringReader<'a> {
         for _ in 0..n_digits {
             if self.is_eof() {
                 let last_bpos = self.pos;
-                panic!(self.fatal_span_(start_bpos,
-                                        last_bpos,
-                                        "unterminated numeric character escape"));
+                self.fatal_span_(start_bpos,
+                                 last_bpos,
+                                 "unterminated numeric character escape").raise();
             }
             if self.ch_is(delim) {
                 let last_bpos = self.pos;
@@ -1025,9 +1032,9 @@ impl<'a> StringReader<'a> {
                     }
                 },
                 None => {
-                    panic!(self.fatal_span_(start_bpos,
-                                            self.pos,
-                                            "unterminated unicode escape (found EOF)"));
+                    self.fatal_span_(start_bpos,
+                                     self.pos,
+                                     "unterminated unicode escape (found EOF)").raise();
                 }
             }
             self.bump();
@@ -1283,9 +1290,9 @@ impl<'a> StringReader<'a> {
                     // lifetimes shouldn't end with a single quote
                     // if we find one, then this is an invalid character literal
                     if self.ch_is('\'') {
-                        panic!(self.fatal_span_verbose(
-                               start_with_quote, self.next_pos,
-                               String::from("character literal may only contain one codepoint")));
+                        self.fatal_span_verbose(start_with_quote, self.next_pos,
+                                String::from("character literal may only contain one codepoint"))
+                            .raise();
 
                     }
 
@@ -1332,9 +1339,8 @@ impl<'a> StringReader<'a> {
                             break;
                         }
                     }
-                    panic!(self.fatal_span_verbose(
-                           start_with_quote, pos,
-                           String::from("character literal may only contain one codepoint")));
+                    self.fatal_span_verbose(start_with_quote, pos,
+                        String::from("character literal may only contain one codepoint")).raise();
                 }
 
                 let id = if valid {
@@ -1364,9 +1370,9 @@ impl<'a> StringReader<'a> {
                 while !self.ch_is('"') {
                     if self.is_eof() {
                         let last_bpos = self.pos;
-                        panic!(self.fatal_span_(start_bpos,
-                                                last_bpos,
-                                                "unterminated double quote string"));
+                        self.fatal_span_(start_bpos,
+                                         last_bpos,
+                                         "unterminated double quote string").raise();
                     }
 
                     let ch_start = self.pos;
@@ -1399,15 +1405,15 @@ impl<'a> StringReader<'a> {
 
                 if self.is_eof() {
                     let last_bpos = self.pos;
-                    panic!(self.fatal_span_(start_bpos, last_bpos, "unterminated raw string"));
+                    self.fatal_span_(start_bpos, last_bpos, "unterminated raw string").raise();
                 } else if !self.ch_is('"') {
                     let last_bpos = self.pos;
                     let curr_char = self.ch.unwrap();
-                    panic!(self.fatal_span_char(start_bpos,
-                                                last_bpos,
-                                                "found invalid character; only `#` is allowed \
-                                                 in raw string delimitation",
-                                                curr_char));
+                    self.fatal_span_char(start_bpos,
+                                         last_bpos,
+                                         "found invalid character; only `#` is allowed \
+                                         in raw string delimitation",
+                                         curr_char).raise();
                 }
                 self.bump();
                 let content_start_bpos = self.pos;
@@ -1416,7 +1422,7 @@ impl<'a> StringReader<'a> {
                 'outer: loop {
                     if self.is_eof() {
                         let last_bpos = self.pos;
-                        panic!(self.fatal_span_(start_bpos, last_bpos, "unterminated raw string"));
+                        self.fatal_span_(start_bpos, last_bpos, "unterminated raw string").raise();
                     }
                     // if self.ch_is('"') {
                     // content_end_bpos = self.pos;
@@ -1573,9 +1579,9 @@ impl<'a> StringReader<'a> {
             // character before position `start` are an
             // ascii single quote and ascii 'b'.
             let pos = self.pos;
-            panic!(self.fatal_span_verbose(start - BytePos(2),
-                                           pos,
-                                           "unterminated byte constant".to_string()));
+            self.fatal_span_verbose(start - BytePos(2),
+                                    pos,
+                                    "unterminated byte constant".to_string()).raise();
         }
 
         let id = if valid {
@@ -1599,7 +1605,7 @@ impl<'a> StringReader<'a> {
         while !self.ch_is('"') {
             if self.is_eof() {
                 let pos = self.pos;
-                panic!(self.fatal_span_(start, pos, "unterminated double quote byte string"));
+                self.fatal_span_(start, pos, "unterminated double quote byte string").raise();
             }
 
             let ch_start = self.pos;
@@ -1631,15 +1637,15 @@ impl<'a> StringReader<'a> {
 
         if self.is_eof() {
             let pos = self.pos;
-            panic!(self.fatal_span_(start_bpos, pos, "unterminated raw string"));
+            self.fatal_span_(start_bpos, pos, "unterminated raw string").raise();
         } else if !self.ch_is('"') {
             let pos = self.pos;
             let ch = self.ch.unwrap();
-            panic!(self.fatal_span_char(start_bpos,
+            self.fatal_span_char(start_bpos,
                                         pos,
                                         "found invalid character; only `#` is allowed in raw \
                                          string delimitation",
-                                        ch));
+                                        ch).raise();
         }
         self.bump();
         let content_start_bpos = self.pos;
@@ -1648,7 +1654,7 @@ impl<'a> StringReader<'a> {
             match self.ch {
                 None => {
                     let pos = self.pos;
-                    panic!(self.fatal_span_(start_bpos, pos, "unterminated raw string"))
+                    self.fatal_span_(start_bpos, pos, "unterminated raw string").raise()
                 }
                 Some('"') => {
                     content_end_bpos = self.pos;
@@ -1746,6 +1752,7 @@ mod tests {
     fn mk_sess(cm: Rc<CodeMap>) -> ParseSess {
         let emitter = errors::emitter::EmitterWriter::new(Box::new(io::sink()),
                                                           Some(cm.clone()),
+                                                          false,
                                                           false);
         ParseSess {
             span_diagnostic: errors::Handler::with_emitter(true, false, Box::new(emitter)),

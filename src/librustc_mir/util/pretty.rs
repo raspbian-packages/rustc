@@ -189,11 +189,7 @@ fn dump_path(
     };
 
     let mut file_path = PathBuf::new();
-
-    if let Some(ref file_dir) = tcx.sess.opts.debugging_opts.dump_mir_dir {
-        let p = Path::new(file_dir);
-        file_path.push(p);
-    };
+    file_path.push(Path::new(&tcx.sess.opts.debugging_opts.dump_mir_dir));
 
     let item_name = tcx.hir
         .def_path(source.def_id)
@@ -401,17 +397,17 @@ impl<'cx, 'gcx, 'tcx> Visitor<'tcx> for ExtraComments<'cx, 'gcx, 'tcx> {
         self.super_constant(constant, location);
         let Constant { span, ty, literal } = constant;
         self.push(&format!("mir::Constant"));
-        self.push(&format!("└ span: {:?}", span));
-        self.push(&format!("└ ty: {:?}", ty));
-        self.push(&format!("└ literal: {:?}", literal));
+        self.push(&format!("+ span: {:?}", span));
+        self.push(&format!("+ ty: {:?}", ty));
+        self.push(&format!("+ literal: {:?}", literal));
     }
 
     fn visit_const(&mut self, constant: &&'tcx ty::Const<'tcx>, _: Location) {
         self.super_const(constant);
         let ty::Const { ty, val } = constant;
         self.push(&format!("ty::Const"));
-        self.push(&format!("└ ty: {:?}", ty));
-        self.push(&format!("└ val: {:?}", val));
+        self.push(&format!("+ ty: {:?}", ty));
+        self.push(&format!("+ val: {:?}", val));
     }
 
     fn visit_rvalue(&mut self, rvalue: &Rvalue<'tcx>, location: Location) {
@@ -420,15 +416,15 @@ impl<'cx, 'gcx, 'tcx> Visitor<'tcx> for ExtraComments<'cx, 'gcx, 'tcx> {
             Rvalue::Aggregate(kind, _) => match **kind {
                 AggregateKind::Closure(def_id, substs) => {
                     self.push(&format!("closure"));
-                    self.push(&format!("└ def_id: {:?}", def_id));
-                    self.push(&format!("└ substs: {:#?}", substs));
+                    self.push(&format!("+ def_id: {:?}", def_id));
+                    self.push(&format!("+ substs: {:#?}", substs));
                 }
 
                 AggregateKind::Generator(def_id, substs, interior) => {
                     self.push(&format!("generator"));
-                    self.push(&format!("└ def_id: {:?}", def_id));
-                    self.push(&format!("└ substs: {:#?}", substs));
-                    self.push(&format!("└ interior: {:?}", interior));
+                    self.push(&format!("+ def_id: {:?}", def_id));
+                    self.push(&format!("+ substs: {:#?}", substs));
+                    self.push(&format!("+ interior: {:?}", interior));
                 }
 
                 _ => {}
@@ -522,7 +518,7 @@ pub fn write_mir_intro<'a, 'gcx, 'tcx>(
     w: &mut Write,
 ) -> io::Result<()> {
     write_mir_sig(tcx, src, mir, w)?;
-    writeln!(w, " {{")?;
+    writeln!(w, "{{")?;
 
     // construct a scope tree and write it out
     let mut scope_tree: FxHashMap<VisibilityScope, Vec<VisibilityScope>> = FxHashMap();
@@ -585,13 +581,20 @@ fn write_mir_sig(tcx: TyCtxt, src: MirSource, mir: &Mir, w: &mut Write) -> io::R
                 write!(w, "{:?}: {}", Place::Local(arg), mir.local_decls[arg].ty)?;
             }
 
-            write!(w, ") -> {}", mir.return_ty())
+            write!(w, ") -> {}", mir.return_ty())?;
         }
         (hir::BodyOwnerKind::Const, _) | (hir::BodyOwnerKind::Static(_), _) | (_, Some(_)) => {
             assert_eq!(mir.arg_count, 0);
-            write!(w, ": {} =", mir.return_ty())
+            write!(w, ": {} =", mir.return_ty())?;
         }
     }
+
+    if let Some(yield_ty) = mir.yield_ty {
+        writeln!(w)?;
+        writeln!(w, "yields {}", yield_ty)?;
+    }
+
+    Ok(())
 }
 
 fn write_temp_decls(mir: &Mir, w: &mut Write) -> io::Result<()> {

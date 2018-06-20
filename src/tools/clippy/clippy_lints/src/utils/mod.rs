@@ -9,7 +9,7 @@ use rustc::lint::{LateContext, Level, Lint, LintContext};
 use rustc::session::Session;
 use rustc::traits;
 use rustc::ty::{self, Ty, TyCtxt};
-use rustc::ty::layout::LayoutOf;
+use rustc::ty::layout::Align;
 use rustc_errors;
 use std::borrow::Cow;
 use std::env;
@@ -518,6 +518,9 @@ pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: NodeI
             Node::NodeItem(&Item {
                 node: ItemFn(_, _, _, _, _, eid),
                 ..
+            }) | Node::NodeImplItem(&ImplItem {
+                node: ImplItemKind::Method(_, eid),
+                ..
             }) => match cx.tcx.hir.body(eid).value.node {
                 ExprBlock(ref block) => Some(block),
                 _ => None,
@@ -596,6 +599,20 @@ pub fn span_lint_and_then<'a, 'tcx: 'a, T: LintContext<'tcx>, F>(
     db.docs_link(lint);
 }
 
+/// Add a span lint with a suggestion on how to fix it.
+///
+/// These suggestions can be parsed by rustfix to allow it to automatically fix your code.
+/// In the example below, `help` is `"try"` and `sugg` is the suggested replacement `".any(|x| x > 2)"`.
+///
+/// ```
+/// error: This `.fold` can be more succinctly expressed as `.any`
+/// --> $DIR/methods.rs:390:13
+///     |
+/// 390 |     let _ = (0..3).fold(false, |acc, x| acc || x > 2);
+///     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ help: try: `.any(|x| x > 2)`
+///     |
+///     = note: `-D fold-any` implied by `-D warnings`
+/// ```
 pub fn span_lint_and_sugg<'a, 'tcx: 'a, T: LintContext<'tcx>>(
     cx: &'a T,
     lint: &'static Lint,
@@ -634,6 +651,7 @@ where
         ],
         msg: help_msg,
         show_code_when_inline: true,
+        approximate: false,
     };
     db.suggestions.push(sugg);
 }
@@ -940,6 +958,7 @@ pub fn opt_def_id(def: Def) -> Option<DefId> {
         Def::StructCtor(id, ..) |
         Def::Union(id) |
         Def::Trait(id) |
+        Def::TraitAlias(id) |
         Def::Method(id) |
         Def::Const(id) |
         Def::AssociatedConst(id) |
@@ -1022,7 +1041,7 @@ pub fn is_try(expr: &Expr) -> Option<&Expr> {
 }
 
 pub fn type_size<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Option<u64> {
-    (cx.tcx, cx.param_env).layout_of(ty)
+    cx.tcx.layout_of(cx.param_env.and(ty))
         .ok()
         .map(|layout| layout.size.bytes())
 }
@@ -1032,4 +1051,19 @@ pub fn type_size<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Option<u
 /// Useful for skipping long running code when it's unnecessary
 pub fn is_allowed(cx: &LateContext, lint: &'static Lint, id: NodeId) -> bool {
     cx.tcx.lint_level_at_node(lint, id).0 == Level::Allow
+}
+
+pub fn get_arg_name(pat: &Pat) -> Option<ast::Name> {
+    match pat.node {
+        PatKind::Binding(_, _, name, None) => Some(name.node),
+        PatKind::Ref(ref subpat, _) => get_arg_name(subpat),
+        _ => None,
+    }
+}
+
+/// Returns alignment for a type, or None if alignment is undefined
+pub fn alignment<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Option<Align> {
+    cx.tcx.layout_of(cx.param_env.and(ty))
+        .ok()
+        .map(|layout| layout.align)
 }

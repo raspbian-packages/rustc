@@ -82,9 +82,9 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name)
             ret.extend(build_impls(cx, did));
             clean::ForeignTypeItem
         }
-        // Never inline enum variants but leave them shown as reexports.
+        // Never inline enum variants but leave them shown as re-exports.
         Def::Variant(..) => return None,
-        // Assume that enum variants and struct types are reexported next to
+        // Assume that enum variants and struct types are re-exported next to
         // their constructors.
         Def::VariantCtor(..) |
         Def::StructCtor(..) => return Some(Vec::new()),
@@ -135,7 +135,11 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
             None
         }
     });
-    let fqn = once(crate_name).chain(relative).collect();
+    let fqn = if let clean::TypeKind::Macro = kind {
+        vec![crate_name, relative.last().unwrap()]
+    } else {
+        once(crate_name).chain(relative).collect()
+    };
     cx.renderinfo.borrow_mut().external_paths.insert(did, (fqn, kind));
 }
 
@@ -146,12 +150,14 @@ pub fn build_external_trait(cx: &DocContext, did: DefId) -> clean::Trait {
     let generics = filter_non_trait_generics(did, generics);
     let (generics, supertrait_bounds) = separate_supertrait_bounds(generics);
     let is_spotlight = load_attrs(cx, did).has_doc_flag("spotlight");
+    let is_auto = cx.tcx.trait_is_auto(did);
     clean::Trait {
         unsafety: cx.tcx.trait_def(did).unsafety,
         generics,
         items: trait_items,
         bounds: supertrait_bounds,
         is_spotlight,
+        is_auto,
     }
 }
 
@@ -186,7 +192,7 @@ fn build_enum(cx: &DocContext, did: DefId) -> clean::Enum {
 
 fn build_struct(cx: &DocContext, did: DefId) -> clean::Struct {
     let predicates = cx.tcx.predicates_of(did);
-    let variant = cx.tcx.adt_def(did).struct_variant();
+    let variant = cx.tcx.adt_def(did).non_enum_variant();
 
     clean::Struct {
         struct_type: match variant.ctor_kind {
@@ -202,7 +208,7 @@ fn build_struct(cx: &DocContext, did: DefId) -> clean::Struct {
 
 fn build_union(cx: &DocContext, did: DefId) -> clean::Union {
     let predicates = cx.tcx.predicates_of(did);
-    let variant = cx.tcx.adt_def(did).struct_variant();
+    let variant = cx.tcx.adt_def(did).non_enum_variant();
 
     clean::Union {
         struct_type: doctree::Plain,
@@ -300,27 +306,6 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
         }
     }
 
-    // If this is an auto impl, then bail out early here
-    if tcx.is_auto_impl(did) {
-        return ret.push(clean::Item {
-            inner: clean::AutoImplItem(clean::AutoImpl {
-                // FIXME: this should be decoded
-                unsafety: hir::Unsafety::Normal,
-                trait_: match associated_trait.as_ref().unwrap().clean(cx) {
-                    clean::TraitBound(polyt, _) => polyt.trait_,
-                    clean::RegionBound(..) => unreachable!(),
-                },
-            }),
-            source: tcx.def_span(did).clean(cx),
-            name: None,
-            attrs,
-            visibility: Some(clean::Inherited),
-            stability: tcx.lookup_stability(did).clean(cx),
-            deprecation: tcx.lookup_deprecation(did).clean(cx),
-            def_id: did,
-        });
-    }
-
     let for_ = tcx.type_of(did).clean(cx);
 
     // Only inline impl if the implementing type is
@@ -348,6 +333,9 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
     });
     if trait_.def_id() == tcx.lang_items().deref_trait() {
         super::build_deref_target_impls(cx, &trait_items, ret);
+    }
+    if let Some(trait_did) = trait_.def_id() {
+        record_extern_trait(cx, trait_did);
     }
 
     let provided = trait_.def_id().map(|did| {
@@ -386,7 +374,7 @@ fn build_module(cx: &DocContext, did: DefId) -> clean::Module {
     };
 
     fn fill_in(cx: &DocContext, did: DefId, items: &mut Vec<clean::Item>) {
-        // If we're reexporting a reexport it may actually reexport something in
+        // If we're re-exporting a re-export it may actually re-export something in
         // two namespaces, so the target may be listed twice. Make sure we only
         // visit each node at most once.
         let mut visited = FxHashSet();
@@ -503,4 +491,10 @@ fn separate_supertrait_bounds(mut g: clean::Generics)
         }
     });
     (g, ty_bounds)
+}
+
+pub fn record_extern_trait(cx: &DocContext, did: DefId) {
+    cx.external_traits.borrow_mut().entry(did).or_insert_with(|| {
+        build_external_trait(cx, did)
+    });
 }

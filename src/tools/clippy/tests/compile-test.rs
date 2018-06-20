@@ -46,7 +46,12 @@ fn config(dir: &'static str, mode: &'static str) -> compiletest::Config {
     config.target_rustcflags = Some(format!("-L {0} -L {0}/deps -Dwarnings", host_libs().display()));
 
     config.mode = cfg_mode;
-    config.build_base = {
+    config.build_base = if rustc_test_suite().is_some() {
+        // we don't need access to the stderr files on travis
+        let mut path = PathBuf::from(env!("OUT_DIR"));
+        path.push("test_build_base");
+        path
+    } else {
         let mut path = std::env::current_dir().unwrap();
         path.push("target/debug/test_build_base");
         path
@@ -71,22 +76,4 @@ fn compile_test() {
     prepare_env();
     run_mode("run-pass", "run-pass");
     run_mode("ui", "ui");
-}
-
-#[test]
-fn dogfood() {
-    prepare_env();
-    let files = ["src/main.rs", "src/driver.rs", "src/lib.rs", "clippy_lints/src/lib.rs"];
-    let mut config = config("dogfood", "ui");
-    config.target_rustcflags = config.target_rustcflags.map(|flags| format!("{} -Dclippy -Dclippy_pedantic -Dclippy_internal", flags));
-
-    for file in &files {
-        let paths = test::TestPaths {
-            base: PathBuf::new(),
-            file: PathBuf::from(file),
-            relative_dir: PathBuf::new(),
-        };
-
-        compiletest::runtest::run(config.clone(), &paths);
-    }
 }

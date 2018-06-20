@@ -190,7 +190,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                scope_expr_id);
         let method_names =
             self.probe_op(span, mode, None, Some(return_type), IsSuggestion(true),
-                          self_ty, scope_expr_id, ProbeScope::TraitsInScope,
+                          self_ty, scope_expr_id, ProbeScope::AllTraits,
                           |probe_cx| Ok(probe_cx.candidate_method_names()))
                 .unwrap_or(vec![]);
          method_names
@@ -199,7 +199,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                  self.probe_op(
                      span, mode, Some(method_name), Some(return_type),
                      IsSuggestion(true), self_ty, scope_expr_id,
-                     ProbeScope::TraitsInScope, |probe_cx| probe_cx.pick()
+                     ProbeScope::AllTraits, |probe_cx| probe_cx.pick()
                  ).ok().map(|pick| pick.item)
              })
             .collect()
@@ -326,13 +326,19 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     if reached_raw_pointer
                     && !self.tcx.sess.features.borrow().arbitrary_self_types {
                         // this case used to be allowed by the compiler,
-                        // so we do a future-compat lint here
+                        // so we do a future-compat lint here for the 2015 epoch
                         // (see https://github.com/rust-lang/rust/issues/46906)
-                        self.tcx.lint_node(
-                            lint::builtin::TYVAR_BEHIND_RAW_POINTER,
-                            scope_expr_id,
-                            span,
-                            &format!("the type of this value must be known in this context"));
+                        if self.tcx.sess.rust_2018() {
+                          span_err!(self.tcx.sess, span, E0908,
+                                    "the type of this value must be known \
+                                     to call a method on a raw pointer on it");
+                        } else {
+                            self.tcx.lint_node(
+                                lint::builtin::TYVAR_BEHIND_RAW_POINTER,
+                                scope_expr_id,
+                                span,
+                                &format!("the type of this value must be known in this context"));
+                        }
                     } else {
                         let t = self.structurally_resolved_type(span, final_ty);
                         assert_eq!(t, self.tcx.types.err);
@@ -494,7 +500,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                 let lang_def_id = lang_items.i128_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
-            ty::TyInt(ast::IntTy::Is) => {
+            ty::TyInt(ast::IntTy::Isize) => {
                 let lang_def_id = lang_items.isize_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
@@ -518,7 +524,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                 let lang_def_id = lang_items.u128_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
-            ty::TyUint(ast::UintTy::Us) => {
+            ty::TyUint(ast::UintTy::Usize) => {
                 let lang_def_id = lang_items.usize_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }

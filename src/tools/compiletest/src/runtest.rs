@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use common::Config;
+use common::{Config, TestPaths};
 use common::{CompileFail, ParseFail, Pretty, RunFail, RunPass, RunPassValgrind};
 use common::{Codegen, CodegenUnits, DebugInfoGdb, DebugInfoLldb, Rustdoc};
 use common::{Incremental, MirOpt, RunMake, Ui};
@@ -18,10 +18,10 @@ use errors::{self, Error, ErrorKind};
 use filetime::FileTime;
 use json;
 use header::TestProps;
-use test::TestPaths;
 use util::logv;
 use regex::Regex;
 
+use std::collections::VecDeque;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
@@ -47,6 +47,88 @@ pub fn dylib_env_var() -> &'static str {
     } else {
         "LD_LIBRARY_PATH"
     }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum DiffLine {
+    Context(String),
+    Expected(String),
+    Resulting(String),
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Mismatch {
+    pub line_number: u32,
+    pub lines: Vec<DiffLine>,
+}
+
+impl Mismatch {
+    fn new(line_number: u32) -> Mismatch {
+        Mismatch {
+            line_number: line_number,
+            lines: Vec::new(),
+        }
+    }
+}
+
+// Produces a diff between the expected output and actual output.
+pub fn make_diff(expected: &str, actual: &str, context_size: usize) -> Vec<Mismatch> {
+    let mut line_number = 1;
+    let mut context_queue: VecDeque<&str> = VecDeque::with_capacity(context_size);
+    let mut lines_since_mismatch = context_size + 1;
+    let mut results = Vec::new();
+    let mut mismatch = Mismatch::new(0);
+
+    for result in diff::lines(expected, actual) {
+        match result {
+            diff::Result::Left(str) => {
+                if lines_since_mismatch >= context_size && lines_since_mismatch > 0 {
+                    results.push(mismatch);
+                    mismatch = Mismatch::new(line_number - context_queue.len() as u32);
+                }
+
+                while let Some(line) = context_queue.pop_front() {
+                    mismatch.lines.push(DiffLine::Context(line.to_owned()));
+                }
+
+                mismatch.lines.push(DiffLine::Expected(str.to_owned()));
+                line_number += 1;
+                lines_since_mismatch = 0;
+            }
+            diff::Result::Right(str) => {
+                if lines_since_mismatch >= context_size && lines_since_mismatch > 0 {
+                    results.push(mismatch);
+                    mismatch = Mismatch::new(line_number - context_queue.len() as u32);
+                }
+
+                while let Some(line) = context_queue.pop_front() {
+                    mismatch.lines.push(DiffLine::Context(line.to_owned()));
+                }
+
+                mismatch.lines.push(DiffLine::Resulting(str.to_owned()));
+                lines_since_mismatch = 0;
+            }
+            diff::Result::Both(str, _) => {
+                if context_queue.len() >= context_size {
+                    let _ = context_queue.pop_front();
+                }
+
+                if lines_since_mismatch < context_size {
+                    mismatch.lines.push(DiffLine::Context(str.to_owned()));
+                } else if context_size > 0 {
+                    context_queue.push_back(str);
+                }
+
+                line_number += 1;
+                lines_since_mismatch += 1;
+            }
+        }
+    }
+
+    results.push(mismatch);
+    results.remove(0);
+
+    results
 }
 
 pub fn run(config: Config, testpaths: &TestPaths) {
@@ -168,6 +250,7 @@ impl<'test> TestCx<'test> {
     fn run_cfail_test(&self) {
         let proc_res = self.compile_test();
         self.check_if_test_should_compile(&proc_res);
+        self.check_no_compiler_crash(&proc_res);
 
         let output_to_check = self.get_output(&proc_res);
         let expected_errors = errors::load_errors(&self.testpaths.file, self.revision);
@@ -180,7 +263,6 @@ impl<'test> TestCx<'test> {
             self.check_error_patterns(&output_to_check, &proc_res);
         }
 
-        self.check_no_compiler_crash(&proc_res);
         self.check_forbid_output(&output_to_check, &proc_res);
     }
 
@@ -384,8 +466,7 @@ impl<'test> TestCx<'test> {
         let mut rustc = Command::new(&self.config.rustc_path);
         rustc
             .arg("-")
-            .arg("-Zunstable-options")
-            .args(&["--unpretty", &pretty_type])
+            .args(&["-Z", &format!("unpretty={}", pretty_type)])
             .args(&["--target", &self.config.target])
             .arg("-L")
             .arg(&aux_dir)
@@ -902,6 +983,13 @@ impl<'test> TestCx<'test> {
         for line in reader.lines() {
             match line {
                 Ok(line) => {
+                    let line =
+                        if line.starts_with("//") {
+                            line[2..].trim_left()
+                        } else {
+                            line.as_str()
+                        };
+
                     if line.contains("#break") {
                         breakpoint_lines.push(counter);
                     }
@@ -1322,7 +1410,7 @@ impl<'test> TestCx<'test> {
     }
 
     /// For each `aux-build: foo/bar` annotation, we check to find the
-    /// file in a `aux` directory relative to the test itself.
+    /// file in a `auxiliary` directory relative to the test itself.
     fn compute_aux_test_paths(&self, rel_ab: &str) -> TestPaths {
         let test_ab = self.testpaths
             .file
@@ -1377,9 +1465,10 @@ impl<'test> TestCx<'test> {
 
             let crate_type = if aux_props.no_prefer_dynamic {
                 None
-            } else if (self.config.target.contains("musl") && !aux_props.force_host)
-                || self.config.target.contains("wasm32")
+            } else if self.config.target.contains("cloudabi")
                 || self.config.target.contains("emscripten")
+                || (self.config.target.contains("musl") && !aux_props.force_host)
+                || self.config.target.contains("wasm32")
             {
                 // We primarily compile all auxiliary libraries as dynamic libraries
                 // to avoid code size bloat and large binaries as much as possible
@@ -2721,15 +2810,29 @@ impl<'test> TestCx<'test> {
             return 0;
         }
 
-        println!("normalized {}:\n{}\n", kind, actual);
-        println!("expected {}:\n{}\n", kind, expected);
-        println!("diff of {}:\n", kind);
-
-        for diff in diff::lines(expected, actual) {
-            match diff {
-                diff::Result::Left(l) => println!("-{}", l),
-                diff::Result::Both(l, _) => println!(" {}", l),
-                diff::Result::Right(r) => println!("+{}", r),
+        if expected.is_empty() {
+            println!("normalized {}:\n{}\n", kind, actual);
+        } else {
+            println!("diff of {}:\n", kind);
+            let diff_results = make_diff(expected, actual, 3);
+            for result in diff_results {
+                let mut line_number = result.line_number;
+                for line in result.lines {
+                    match line {
+                        DiffLine::Expected(e) => {
+                            println!("-\t{}", e);
+                            line_number += 1;
+                        },
+                        DiffLine::Context(c) => {
+                            println!("{}\t{}", line_number, c);
+                            line_number += 1;
+                        },
+                        DiffLine::Resulting(r) => {
+                            println!("+\t{}", r);
+                        },
+                    }
+                }
+                println!("");
             }
         }
 
@@ -2868,7 +2971,7 @@ fn read2_abbreviated(mut child: Child) -> io::Result<Output> {
                     *skipped += data.len();
                     if data.len() <= TAIL_LEN {
                         tail[..data.len()].copy_from_slice(data);
-                        tail.rotate(data.len());
+                        tail.rotate_left(data.len());
                     } else {
                         tail.copy_from_slice(&data[(data.len() - TAIL_LEN)..]);
                     }

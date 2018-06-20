@@ -73,6 +73,26 @@ pub enum OptLevel {
 }
 
 #[derive(Clone, Copy, PartialEq, Hash)]
+pub enum Lto {
+    /// Don't do any LTO whatsoever
+    No,
+
+    /// Do a full crate graph LTO. The flavor is determined by the compiler
+    /// (currently the default is "fat").
+    Yes,
+
+    /// Do a full crate graph LTO with ThinLTO
+    Thin,
+
+    /// Do a local graph LTO with ThinLTO (only relevant for multiple codegen
+    /// units).
+    ThinLocal,
+
+    /// Do a full crate graph LTO with "fat" LTO
+    Fat,
+}
+
+#[derive(Clone, Copy, PartialEq, Hash)]
 pub enum DebugInfoLevel {
     NoDebugInfo,
     LimitedDebugInfo,
@@ -90,6 +110,31 @@ pub enum OutputType {
     Object,
     Exe,
     DepInfo,
+}
+
+/// The epoch of the compiler (RFC 2052)
+#[derive(Clone, Copy, Hash, PartialOrd, Ord, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Epoch {
+    // epochs must be kept in order, newest to oldest
+
+    /// The 2015 epoch
+    Epoch2015,
+    /// The 2018 epoch
+    Epoch2018,
+
+    // when adding new epochs, be sure to update:
+    //
+    // - the list in the `parse_epoch` static
+    // - the match in the `parse_epoch` function
+    // - add a `rust_####()` function to the session
+    // - update the enum in Cargo's sources as well
+    //
+    // When -Zepoch becomes --epoch, there will
+    // also be a check for the epoch being nightly-only
+    // somewhere. That will need to be updated
+    // whenever we're stabilizing/introducing a new epoch
+    // as well as changing the default Cargo template.
 }
 
 impl_stable_hash_for!(enum self::OutputType {
@@ -389,7 +434,7 @@ top_level_options!(
         // commands like `--emit llvm-ir` which they're often incompatible with
         // if we otherwise use the defaults of rustc.
         cli_forced_codegen_units: Option<usize> [UNTRACKED],
-        cli_forced_thinlto: Option<bool> [UNTRACKED],
+        cli_forced_thinlto_off: bool [UNTRACKED],
     }
 );
 
@@ -528,25 +573,6 @@ impl OutputFilenames {
     pub fn filestem(&self) -> String {
         format!("{}{}", self.out_filestem, self.extra)
     }
-
-    pub fn contains_path(&self, input_path: &PathBuf) -> bool {
-        let input_path = input_path.canonicalize().ok();
-        if input_path.is_none() {
-            return false
-        }
-        match self.single_output_file {
-            Some(ref output_path) => output_path.canonicalize().ok() == input_path,
-            None => {
-                for k in self.outputs.keys() {
-                    let output_path = self.path(k.to_owned());
-                    if output_path.canonicalize().ok() == input_path {
-                        return true;
-                    }
-                }
-                false
-            }
-        }
-    }
 }
 
 pub fn host_triple() -> &'static str {
@@ -590,7 +616,7 @@ pub fn basic_options() -> Options {
         debug_assertions: true,
         actually_rustdoc: false,
         cli_forced_codegen_units: None,
-        cli_forced_thinlto: None,
+        cli_forced_thinlto_off: false,
     }
 }
 
@@ -778,11 +804,17 @@ macro_rules! options {
             Some(::rustc_back::LinkerFlavor::one_of());
         pub const parse_optimization_fuel: Option<&'static str> =
             Some("crate=integer");
+        pub const parse_unpretty: Option<&'static str> =
+            Some("`string` or `string=string`");
+        pub const parse_lto: Option<&'static str> =
+            Some("one of `thin`, `fat`, or omitted");
+        pub const parse_epoch: Option<&'static str> =
+            Some("one of: `2015`, `2018`");
     }
 
     #[allow(dead_code)]
     mod $mod_set {
-        use super::{$struct_name, Passes, SomePasses, AllPasses, Sanitizer};
+        use super::{$struct_name, Passes, SomePasses, AllPasses, Sanitizer, Lto, Epoch};
         use rustc_back::{LinkerFlavor, PanicStrategy, RelroLevel};
         use std::path::PathBuf;
 
@@ -965,6 +997,36 @@ macro_rules! options {
                 }
             }
         }
+
+        fn parse_unpretty(slot: &mut Option<String>, v: Option<&str>) -> bool {
+            match v {
+                None => false,
+                Some(s) if s.split('=').count() <= 2 => {
+                    *slot = Some(s.to_string());
+                    true
+                }
+                _ => false,
+            }
+        }
+
+        fn parse_lto(slot: &mut Lto, v: Option<&str>) -> bool {
+            *slot = match v {
+                None => Lto::Yes,
+                Some("thin") => Lto::Thin,
+                Some("fat") => Lto::Fat,
+                Some(_) => return false,
+            };
+            true
+        }
+
+        fn parse_epoch(slot: &mut Epoch, v: Option<&str>) -> bool {
+            match v {
+                Some("2015") => *slot = Epoch::Epoch2015,
+                Some("2018") => *slot = Epoch::Epoch2018,
+                _ => return false,
+            }
+            true
+        }
     }
 ) }
 
@@ -981,7 +1043,7 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
         "extra arguments to append to the linker invocation (space separated)"),
     link_dead_code: bool = (false, parse_bool, [UNTRACKED],
         "don't let linker strip dead code (turning it on can be used for code coverage)"),
-    lto: bool = (false, parse_bool, [TRACKED],
+    lto: Lto = (Lto::No, parse_lto, [TRACKED],
         "perform LLVM link-time optimizations"),
     target_cpu: Option<String> = (None, parse_opt_string, [TRACKED],
         "select target processor (rustc --print target-cpus for details)"),
@@ -1045,6 +1107,8 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
 options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
          build_debugging_options, "Z", "debugging",
          DB_OPTIONS, db_type_desc, dbsetters,
+    codegen_backend: Option<String> = (None, parse_opt_string, [TRACKED],
+        "the backend to use"),
     verbose: bool = (false, parse_bool, [UNTRACKED],
         "in general, enable more debug printouts"),
     span_free_formats: bool = (false, parse_bool, [UNTRACKED],
@@ -1057,6 +1121,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "select which borrowck is used (`ast`, `mir`, or `compare`)"),
     two_phase_borrows: bool = (false, parse_bool, [UNTRACKED],
         "use two-phase reserved/active distinction for `&mut` borrows in MIR borrowck"),
+    two_phase_beyond_autoref: bool = (false, parse_bool, [UNTRACKED],
+        "when using two-phase-borrows, allow two phases even for non-autoref `&mut` borrows"),
     time_passes: bool = (false, parse_bool, [UNTRACKED],
         "measure time of each rustc pass"),
     count_llvm_insns: bool = (false, parse_bool,
@@ -1084,8 +1150,6 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "omit landing pads for unwinding"),
     fewer_names: bool = (false, parse_bool, [TRACKED],
         "reduce memory use by retaining fewer names within compilation artifacts (LLVM-IR)"),
-    debug_llvm: bool = (false, parse_bool, [UNTRACKED],
-        "enable debug output from LLVM"),
     meta_stats: bool = (false, parse_bool, [UNTRACKED],
         "gather metadata statistics"),
     print_link_args: bool = (false, parse_bool, [UNTRACKED],
@@ -1104,13 +1168,13 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "write syntax and type analysis (in JSON format) information, in \
          addition to normal output"),
     flowgraph_print_loans: bool = (false, parse_bool, [UNTRACKED],
-        "include loan analysis data in --unpretty flowgraph output"),
+        "include loan analysis data in -Z unpretty flowgraph output"),
     flowgraph_print_moves: bool = (false, parse_bool, [UNTRACKED],
-        "include move analysis data in --unpretty flowgraph output"),
+        "include move analysis data in -Z unpretty flowgraph output"),
     flowgraph_print_assigns: bool = (false, parse_bool, [UNTRACKED],
-        "include assignment analysis data in --unpretty flowgraph output"),
+        "include assignment analysis data in -Z unpretty flowgraph output"),
     flowgraph_print_all: bool = (false, parse_bool, [UNTRACKED],
-        "include all dataflow analysis data in --unpretty flowgraph output"),
+        "include all dataflow analysis data in -Z unpretty flowgraph output"),
     print_region_graph: bool = (false, parse_bool, [UNTRACKED],
          "prints region inference graph. \
           Use with RUST_REGION_GRAPH=help for more info"),
@@ -1122,6 +1186,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "treat all errors that occur as bugs"),
     external_macro_backtrace: bool = (false, parse_bool, [UNTRACKED],
           "show macro backtraces even for non-local macros"),
+    teach: bool = (false, parse_bool, [TRACKED],
+          "show extended diagnostic help"),
     continue_parse_after_error: bool = (false, parse_bool, [TRACKED],
           "attempt to recover from parse errors (experimental)"),
     incremental: Option<String> = (None, parse_opt_string, [UNTRACKED],
@@ -1174,7 +1240,7 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "emit noalias metadata for mutable references"),
     dump_mir: Option<String> = (None, parse_opt_string, [UNTRACKED],
           "dump MIR state at various points in translation"),
-    dump_mir_dir: Option<String> = (None, parse_opt_string, [UNTRACKED],
+    dump_mir_dir: String = (String::from("mir_dump"), parse_string, [UNTRACKED],
           "the directory the MIR is dumped into"),
     dump_mir_graphviz: bool = (false, parse_bool, [UNTRACKED],
           "in addition to `.mir` files, create graphviz `.dot` files"),
@@ -1238,6 +1304,22 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
          overriding the default for the current target"),
     human_readable_cgu_names: bool = (false, parse_bool, [TRACKED],
         "generate human-readable, predictable names for codegen units"),
+    dep_info_omit_d_target: bool = (false, parse_bool, [TRACKED],
+        "in dep-info output, omit targets for tracking dependencies of the dep-info files \
+         themselves"),
+    approximate_suggestions: bool = (false, parse_bool, [UNTRACKED],
+        "include machine-applicability of suggestions in JSON output"),
+    unpretty: Option<String> = (None, parse_unpretty, [UNTRACKED],
+        "Present the input source, unstable (and less-pretty) variants;
+        valid types are any of the types for `--pretty`, as well as:
+        `flowgraph=<nodeid>` (graphviz formatted flowgraph for node),
+        `everybody_loops` (all function bodies replaced with `loop {}`),
+        `hir` (the HIR), `hir,identified`, or
+        `hir,typed` (HIR with types for each node)."),
+    epoch: Epoch = (Epoch::Epoch2015, parse_epoch, [TRACKED],
+        "The epoch to build Rust with. Newer epochs may include features
+         that require breaking changes. The default epoch is 2015 (the first
+         epoch). Crates compiled with different epochs can be linked together."),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -1310,7 +1392,7 @@ pub fn build_target_config(opts: &Options, sp: &Handler) -> Config {
             sp.struct_fatal(&format!("Error loading target specification: {}", e))
                 .help("Use `--print target-list` for a list of built-in targets")
                 .emit();
-            panic!(FatalError);
+            FatalError.raise();
         }
     };
 
@@ -1318,8 +1400,8 @@ pub fn build_target_config(opts: &Options, sp: &Handler) -> Config {
         "16" => (ast::IntTy::I16, ast::UintTy::U16),
         "32" => (ast::IntTy::I32, ast::UintTy::U32),
         "64" => (ast::IntTy::I64, ast::UintTy::U64),
-        w    => panic!(sp.fatal(&format!("target specification was invalid: \
-                                          unrecognized target-pointer-width {}", w))),
+        w    => sp.fatal(&format!("target specification was invalid: \
+                                          unrecognized target-pointer-width {}", w)).raise(),
     };
 
     Config {
@@ -1511,14 +1593,6 @@ pub fn rustc_optgroups() -> Vec<RustcOptGroup> {
                   `expanded` (crates expanded), or
                   `expanded,identified` (fully parenthesized, AST nodes with IDs).",
                  "TYPE"),
-        opt::opt("", "unpretty",
-                 "Present the input source, unstable (and less-pretty) variants;
-                  valid types are any of the types for `--pretty`, as well as:
-                  `flowgraph=<nodeid>` (graphviz formatted flowgraph for node),
-                  `everybody_loops` (all function bodies replaced with `loop {}`),
-                  `hir` (the HIR), `hir,identified`, or
-                  `hir,typed` (HIR with types for each node).",
-                 "TYPE"),
     ]);
     opts
 }
@@ -1617,8 +1691,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
     let mut debugging_opts = build_debugging_options(matches, error_format);
 
     if !debugging_opts.unstable_options && error_format == ErrorOutputType::Json(true) {
-        early_error(ErrorOutputType::Json(false),
-                    "--error-format=pretty-json is unstable");
+        early_error(ErrorOutputType::Json(false), "--error-format=pretty-json is unstable");
     }
 
     let mut output_types = BTreeMap::new();
@@ -1662,7 +1735,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
 
     let mut cg = build_codegen_options(matches, error_format);
     let mut codegen_units = cg.codegen_units;
-    let mut thinlto = None;
+    let mut disable_thinlto = false;
 
     // Issue #30063: if user requests llvm-related output to one
     // particular path, disable codegen-units.
@@ -1684,12 +1757,12 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
                     }
                     early_warn(error_format, "resetting to default -C codegen-units=1");
                     codegen_units = Some(1);
-                    thinlto = Some(false);
+                    disable_thinlto = true;
                 }
             }
             _ => {
                 codegen_units = Some(1);
-                thinlto = Some(false);
+                disable_thinlto = true;
             }
         }
     }
@@ -1719,7 +1792,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
         (&None, &None) => None,
     }.map(|m| PathBuf::from(m));
 
-    if cg.lto && incremental.is_some() {
+    if cg.lto != Lto::No && incremental.is_some() {
         early_error(error_format, "can't perform LTO when compiling incrementally");
     }
 
@@ -1919,7 +1992,7 @@ pub fn build_session_options_and_crate_config(matches: &getopts::Matches)
         debug_assertions,
         actually_rustdoc: false,
         cli_forced_codegen_units: codegen_units,
-        cli_forced_thinlto: thinlto,
+        cli_forced_thinlto_off: disable_thinlto,
     },
     cfg)
 }
@@ -2037,8 +2110,8 @@ mod dep_tracking {
     use std::hash::Hash;
     use std::path::PathBuf;
     use std::collections::hash_map::DefaultHasher;
-    use super::{Passes, CrateType, OptLevel, DebugInfoLevel,
-                OutputTypes, Externs, ErrorOutputType, Sanitizer};
+    use super::{Passes, CrateType, OptLevel, DebugInfoLevel, Lto,
+                OutputTypes, Externs, ErrorOutputType, Sanitizer, Epoch};
     use syntax::feature_gate::UnstableFeatures;
     use rustc_back::{PanicStrategy, RelroLevel};
 
@@ -2092,6 +2165,7 @@ mod dep_tracking {
     impl_dep_tracking_hash_via_hash!(RelroLevel);
     impl_dep_tracking_hash_via_hash!(Passes);
     impl_dep_tracking_hash_via_hash!(OptLevel);
+    impl_dep_tracking_hash_via_hash!(Lto);
     impl_dep_tracking_hash_via_hash!(DebugInfoLevel);
     impl_dep_tracking_hash_via_hash!(UnstableFeatures);
     impl_dep_tracking_hash_via_hash!(Externs);
@@ -2099,6 +2173,7 @@ mod dep_tracking {
     impl_dep_tracking_hash_via_hash!(cstore::NativeLibraryKind);
     impl_dep_tracking_hash_via_hash!(Sanitizer);
     impl_dep_tracking_hash_via_hash!(Option<Sanitizer>);
+    impl_dep_tracking_hash_via_hash!(Epoch);
 
     impl_dep_tracking_hash_for_sortable_vec_of!(String);
     impl_dep_tracking_hash_for_sortable_vec_of!(PathBuf);
@@ -2165,6 +2240,7 @@ mod tests {
     use lint;
     use middle::cstore;
     use session::config::{build_configuration, build_session_options_and_crate_config};
+    use session::config::Lto;
     use session::build_session;
     use std::collections::{BTreeMap, BTreeSet};
     use std::iter::FromIterator;
@@ -2641,7 +2717,7 @@ mod tests {
 
         // Make sure changing a [TRACKED] option changes the hash
         opts = reference.clone();
-        opts.cg.lto = true;
+        opts.cg.lto = Lto::Fat;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
@@ -2749,8 +2825,6 @@ mod tests {
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
         opts.debugging_opts.borrowck_stats = true;
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
-        opts.debugging_opts.debug_llvm = true;
-        assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
         opts.debugging_opts.meta_stats = true;
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
         opts.debugging_opts.print_link_args = true;
@@ -2797,7 +2871,7 @@ mod tests {
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
         opts.debugging_opts.dump_mir = Some(String::from("abc"));
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
-        opts.debugging_opts.dump_mir_dir = Some(String::from("abc"));
+        opts.debugging_opts.dump_mir_dir = String::from("abc");
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
         opts.debugging_opts.dump_mir_graphviz = true;
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());

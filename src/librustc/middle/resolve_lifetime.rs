@@ -461,10 +461,10 @@ impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
                                           intravisit::walk_item(this, item);
                 });
             }
+
             hir::ItemExternCrate(_)
             | hir::ItemUse(..)
             | hir::ItemMod(..)
-            | hir::ItemAutoImpl(..)
             | hir::ItemForeignMod(..)
             | hir::ItemGlobalAsm(..) => {
                 // These sorts of items have no lifetime parameters at all.
@@ -737,7 +737,7 @@ impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
 
     fn visit_lifetime(&mut self, lifetime_ref: &'tcx hir::Lifetime) {
         if lifetime_ref.is_elided() {
-            self.resolve_elided_lifetimes(slice::from_ref(lifetime_ref));
+            self.resolve_elided_lifetimes(slice::from_ref(lifetime_ref), false);
             return;
         }
         if lifetime_ref.is_static() {
@@ -1018,7 +1018,7 @@ fn extract_labels(ctxt: &mut LifetimeContext<'_, '_>, body: &hir::Body) {
     fn expression_label(ex: &hir::Expr) -> Option<(ast::Name, Span)> {
         match ex.node {
             hir::ExprWhile(.., Some(label)) | hir::ExprLoop(_, Some(label), _) => {
-                Some((label.node, label.span))
+                Some((label.name, label.span))
             }
             _ => None,
         }
@@ -1444,7 +1444,7 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
         }
 
         if params.lifetimes.iter().all(|l| l.is_elided()) {
-            self.resolve_elided_lifetimes(&params.lifetimes);
+            self.resolve_elided_lifetimes(&params.lifetimes, true);
         } else {
             for l in &params.lifetimes {
                 self.visit_lifetime(l);
@@ -1803,14 +1803,24 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
         }
     }
 
-    fn resolve_elided_lifetimes(&mut self, lifetime_refs: &'tcx [hir::Lifetime]) {
+    fn resolve_elided_lifetimes(&mut self, lifetime_refs: &'tcx [hir::Lifetime], deprecated: bool) {
         if lifetime_refs.is_empty() {
             return;
         }
 
         let span = lifetime_refs[0].span;
+        let id = lifetime_refs[0].id;
         let mut late_depth = 0;
         let mut scope = self.scope;
+        if deprecated {
+            self.tcx
+                .struct_span_lint_node(
+                    lint::builtin::ELIDED_LIFETIME_IN_PATH,
+                    id,
+                    span,
+                    &format!("hidden lifetime parameters are deprecated, try `Foo<'_>`"))
+                .emit();
+        }
         let error = loop {
             match *scope {
                 // Do not assign any resolution, it will be inferred.

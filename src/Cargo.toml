@@ -4,6 +4,7 @@ members = [
   "rustc",
   "libstd",
   "libtest",
+  "librustc_trans",
   "tools/cargotest",
   "tools/clippy",
   "tools/compiletest",
@@ -17,6 +18,7 @@ members = [
   "tools/remote-test-server",
   "tools/rust-installer",
   "tools/rustdoc",
+  "tools/rustdoc-themes",
 ]
 
 # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit

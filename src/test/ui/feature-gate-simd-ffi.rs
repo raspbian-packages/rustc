@@ -13,7 +13,6 @@
 
 #[repr(simd)]
 #[derive(Copy, Clone)]
-#[repr(C)]
 struct LocalSimd(u8, u8);
 
 extern {

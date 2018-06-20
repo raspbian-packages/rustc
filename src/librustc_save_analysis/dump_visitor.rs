@@ -770,8 +770,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         impl_items: &'l [ast::ImplItem],
     ) {
         if let Some(impl_data) = self.save_ctxt.get_item_data(item) {
-            down_cast_data!(impl_data, RelationData, item.span);
-            self.dumper.dump_relation(impl_data);
+            if let super::Data::RelationData(rel, imp) = impl_data {
+                self.dumper.dump_relation(rel);
+                self.dumper.dump_impl(imp);
+            } else {
+                span_bug!(item.span, "unexpected data kind: {:?}", impl_data);
+            }
         }
         self.visit_ty(&typ);
         if let &Some(ref trait_ref) = trait_ref {
@@ -1252,7 +1256,13 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                          root_item: &'l ast::Item,
                          prefix: &ast::Path) {
         let path = &use_tree.prefix;
-        let access = access_from!(self.save_ctxt, root_item);
+
+        // The access is calculated using the current tree ID, but with the root tree's visibility
+        // (since nested trees don't have their own visibility).
+        let access = Access {
+            public: root_item.vis == ast::Visibility::Public,
+            reachable: self.save_ctxt.analysis.access_levels.is_reachable(id),
+        };
 
         // The parent def id of a given use tree is always the enclosing item.
         let parent = self.save_ctxt.tcx.hir.opt_local_def_id(id)
@@ -1583,10 +1593,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                         if !self.span.filter_generated(sub_span, ex.span) {
                             let span =
                                 self.span_from_span(sub_span.expect("No span found for var ref"));
+                            let ref_id =
+                                ::id_from_def_id(def.non_enum_variant().fields[idx.node].did);
                             self.dumper.dump_ref(Ref {
                                 kind: RefKind::Variable,
                                 span,
-                                ref_id: ::id_from_def_id(def.struct_variant().fields[idx.node].did),
+                                ref_id,
                             });
                         }
                     }
@@ -1594,7 +1606,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                     _ => span_bug!(ex.span, "Expected struct or tuple type, found {:?}", ty),
                 }
             }
-            ast::ExprKind::Closure(_, ref decl, ref body, _fn_decl_span) => {
+            ast::ExprKind::Closure(_, _, ref decl, ref body, _fn_decl_span) => {
                 let mut id = String::from("$");
                 id.push_str(&ex.id.to_string());
 

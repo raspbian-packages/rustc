@@ -2,15 +2,17 @@ use rustc::lint::*;
 use rustc::hir::*;
 use rustc::ty;
 use syntax::ast;
-use utils::{is_adjusted, iter_input_pats, match_qpath, match_trait_method, match_type, paths, remove_blocks, snippet,
-            span_help_and_lint, walk_ptrs_ty, walk_ptrs_ty_depth};
+use utils::{get_arg_name, is_adjusted, iter_input_pats, match_qpath, match_trait_method, match_type,
+            paths, remove_blocks, snippet, span_help_and_lint, walk_ptrs_ty, walk_ptrs_ty_depth};
 
 /// **What it does:** Checks for mapping `clone()` over an iterator.
 ///
 /// **Why is this bad?** It makes the code less readable than using the
 /// `.cloned()` adapter.
 ///
-/// **Known problems:** None.
+/// **Known problems:** Sometimes `.cloned()` requires stricter trait
+/// bound than `.map(|e| e.clone())` (which works because of the coercion).
+/// See [#498](https://github.com/rust-lang-nursery/rust-clippy/issues/498).
 ///
 /// **Example:**
 /// ```rust
@@ -118,14 +120,6 @@ fn get_type_name(cx: &LateContext, expr: &Expr, arg: &Expr) -> Option<&'static s
         Some("Option")
     } else {
         None
-    }
-}
-
-fn get_arg_name(pat: &Pat) -> Option<ast::Name> {
-    match pat.node {
-        PatKind::Binding(_, _, name, None) => Some(name.node),
-        PatKind::Ref(ref subpat, _) => get_arg_name(subpat),
-        _ => None,
     }
 }
 

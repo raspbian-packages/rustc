@@ -47,7 +47,6 @@
 use serialize::json::{Json, ToJson};
 use std::collections::BTreeMap;
 use std::default::Default;
-use std::io::prelude::*;
 use syntax::abi::{Abi, lookup as lookup_abi};
 
 use {LinkerFlavor, PanicStrategy, RelroLevel};
@@ -148,6 +147,7 @@ supported_targets! {
     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
     ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
+    ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
     ("arm-unknown-linux-gnueabi", arm_unknown_linux_gnueabi),
     ("arm-unknown-linux-gnueabihf", arm_unknown_linux_gnueabihf),
     ("arm-unknown-linux-musleabi", arm_unknown_linux_musleabi),
@@ -157,15 +157,16 @@ supported_targets! {
     ("armv7-unknown-linux-gnueabihf", armv7_unknown_linux_gnueabihf),
     ("armv7-unknown-linux-musleabihf", armv7_unknown_linux_musleabihf),
     ("aarch64-unknown-linux-gnu", aarch64_unknown_linux_gnu),
+
     ("aarch64-unknown-linux-musl", aarch64_unknown_linux_musl),
     ("x86_64-unknown-linux-musl", x86_64_unknown_linux_musl),
     ("i686-unknown-linux-musl", i686_unknown_linux_musl),
+    ("i586-unknown-linux-musl", i586_unknown_linux_musl),
     ("mips-unknown-linux-musl", mips_unknown_linux_musl),
     ("mipsel-unknown-linux-musl", mipsel_unknown_linux_musl),
+
     ("mips-unknown-linux-uclibc", mips_unknown_linux_uclibc),
     ("mipsel-unknown-linux-uclibc", mipsel_unknown_linux_uclibc),
-
-    ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
 
     ("i686-linux-android", i686_linux_android),
     ("x86_64-linux-android", x86_64_linux_android),
@@ -320,8 +321,8 @@ pub struct TargetOptions {
     /// Relocation model to use in object file. Corresponds to `llc
     /// -relocation-model=$relocation_model`. Defaults to "pic".
     pub relocation_model: String,
-    /// Code model to use. Corresponds to `llc -code-model=$code_model`. Defaults to "default".
-    pub code_model: String,
+    /// Code model to use. Corresponds to `llc -code-model=$code_model`.
+    pub code_model: Option<String>,
     /// TLS model to use. Options are "global-dynamic" (default), "local-dynamic", "initial-exec"
     /// and "local-exec". This is similar to the -ftls-model option in GCC/Clang.
     pub tls_model: String,
@@ -465,6 +466,13 @@ pub struct TargetOptions {
     /// Whether to lower 128-bit operations to compiler_builtins calls.  Use if
     /// your backend only supports 64-bit and smaller math.
     pub i128_lowering: bool,
+
+    /// The codegen backend to use for this target, typically "llvm"
+    pub codegen_backend: String,
+
+    /// The default visibility for symbols in this target should be "hidden"
+    /// rather than "default"
+    pub default_hidden_visibility: bool,
 }
 
 impl Default for TargetOptions {
@@ -483,7 +491,7 @@ impl Default for TargetOptions {
             only_cdylib: false,
             executables: false,
             relocation_model: "pic".to_string(),
-            code_model: "default".to_string(),
+            code_model: None,
             tls_model: "global-dynamic".to_string(),
             disable_redzone: false,
             eliminate_frame_pointer: true,
@@ -534,6 +542,8 @@ impl Default for TargetOptions {
             singlethread: false,
             no_builtins: false,
             i128_lowering: false,
+            codegen_backend: "llvm".to_string(),
+            default_hidden_visibility: false,
         }
     }
 }
@@ -736,7 +746,7 @@ impl Target {
         key!(only_cdylib, bool);
         key!(executables, bool);
         key!(relocation_model);
-        key!(code_model);
+        key!(code_model, optional);
         key!(tls_model);
         key!(disable_redzone, bool);
         key!(eliminate_frame_pointer, bool);
@@ -780,6 +790,8 @@ impl Target {
         key!(requires_lto, bool);
         key!(singlethread, bool);
         key!(no_builtins, bool);
+        key!(codegen_backend);
+        key!(default_hidden_visibility, bool);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {
@@ -810,14 +822,12 @@ impl Target {
     pub fn search(target: &str) -> Result<Target, String> {
         use std::env;
         use std::ffi::OsString;
-        use std::fs::File;
+        use std::fs;
         use std::path::{Path, PathBuf};
         use serialize::json;
 
         fn load_file(path: &Path) -> Result<Target, String> {
-            let mut f = File::open(path).map_err(|e| e.to_string())?;
-            let mut contents = Vec::new();
-            f.read_to_end(&mut contents).map_err(|e| e.to_string())?;
+            let contents = fs::read(path).map_err(|e| e.to_string())?;
             let obj = json::from_reader(&mut &contents[..])
                            .map_err(|e| e.to_string())?;
             Target::from_json(obj)
@@ -978,6 +988,8 @@ impl ToJson for Target {
         target_option_val!(requires_lto);
         target_option_val!(singlethread);
         target_option_val!(no_builtins);
+        target_option_val!(codegen_backend);
+        target_option_val!(default_hidden_visibility);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()

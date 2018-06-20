@@ -26,47 +26,18 @@ as an included feature during build. All of these options are detailed below.
 
 As a general rule clippy will only work with the *latest* Rust nightly for now.
 
-### Optional dependency
-
-If you want to make clippy an optional dependency, you can do the following:
-
-In your `Cargo.toml`:
-
-```toml
-[dependencies]
-clippy = {version = "*", optional = true}
-
-[features]
-default = []
-```
-
-And, in your `main.rs` or `lib.rs`:
-
-```rust
-#![cfg_attr(feature="clippy", feature(plugin))]
-
-#![cfg_attr(feature="clippy", plugin(clippy))]
-```
-
-Then build by enabling the feature: `cargo build --features "clippy"`
-
-Instead of adding the `cfg_attr` attributes you can also run clippy on demand:
-`cargo rustc --features clippy -- -Z no-trans -Z extra-plugins=clippy`
-(the `-Z no trans`, while not necessary, will stop the compilation process after
-typechecking (and lints) have completed, which can significantly reduce the runtime).
-
 ### As a cargo subcommand (`cargo clippy`)
 
-An alternate way to use clippy is by installing clippy through cargo as a cargo
+One way to use clippy is by installing clippy through cargo as a cargo
 subcommand.
 
 ```terminal
-cargo install clippy
+cargo +nightly install clippy
 ```
 
-Now you can run clippy by invoking `cargo clippy`, or
-`rustup run nightly cargo clippy` directly from a directory that is usually
-compiled with stable.
+(The `+nightly` is not necessary if your default `rustup` install is nightly)
+
+Now you can run clippy by invoking `cargo +nightly clippy`.
 
 In case you are not using rustup, you need to set the environment flag
 `SYSROOT` during installation so clippy knows where to find `librustc` and
@@ -74,6 +45,44 @@ similar crates.
 
 ```terminal
 SYSROOT=/path/to/rustc/sysroot cargo install clippy
+```
+
+### Optional dependency
+
+In some cases you might want to include clippy in your project directly, as an
+optional dependency. To do this, just modify `Cargo.toml`:
+
+```toml
+[dependencies]
+clippy = { version = "*", optional = true }
+```
+
+And, in your `main.rs` or `lib.rs`, add these lines:
+
+```rust
+#![cfg_attr(feature="clippy", feature(plugin))]
+#![cfg_attr(feature="clippy", plugin(clippy))]
+```
+
+Then build by enabling the feature: `cargo +nightly build --features "clippy"`.
+
+Instead of adding the `cfg_attr` attributes you can also run clippy on demand:
+`cargo rustc --features clippy -- -Z no-trans -Z extra-plugins=clippy`
+(the `-Z no trans`, while not necessary, will stop the compilation process after
+typechecking (and lints) have completed, which can significantly reduce the runtime).
+
+Alternatively, to only run clippy when testing:
+
+```toml
+[dev-dependencies]
+clippy = { version = "*" }
+```
+
+and add to `main.rs` or  `lib.rs`:
+
+```
+#![cfg_attr(test, feature(plugin))]
+#![cfg_attr(test, plugin(clippy))]
 ```
 
 ### Running clippy from the command line without installing
@@ -144,7 +153,7 @@ blacklisted-names = ["toto", "tata", "titi"]
 cyclomatic-complexity-threshold = 30
 ```
 
-See the wiki for more information about which lints can be configured and the
+See the [list of lints](https://rust-lang-nursery.github.io/rust-clippy/master/index.html) for more information about which lints can be configured and the
 meaning of the variables.
 
 You can also specify the path to the configuration file with:
@@ -153,7 +162,7 @@ You can also specify the path to the configuration file with:
 #![plugin(clippy(conf_file="path/to/clippy's/configuration"))]
 ```
 
-To deactivate the “for further information visit *wiki-link*” message you can
+To deactivate the “for further information visit *lint-link*” message you can
 define the `CLIPPY_DISABLE_DOCS_LINKS` environment variable.
 
 ### Allowing/denying lints

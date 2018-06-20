@@ -262,6 +262,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 },
                 ty::TyGenerator(..) => Some(18),
                 ty::TyForeign(..) => Some(19),
+                ty::TyGeneratorWitness(..) => Some(20),
                 ty::TyInfer(..) | ty::TyError => None
             }
         }
@@ -347,7 +348,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         if direct {
             // this is a "direct", user-specified, rather than derived,
             // obligation.
-            flags.push(("direct", None));
+            flags.push(("direct".to_string(), None));
         }
 
         if let ObligationCauseCode::ItemObligation(item) = obligation.cause.code {
@@ -358,21 +359,37 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // Currently I'm leaving it for what I need for `try`.
             if self.tcx.trait_of_item(item) == Some(trait_ref.def_id) {
                 method = self.tcx.item_name(item);
-                flags.push(("from_method", None));
-                flags.push(("from_method", Some(&*method)));
+                flags.push(("from_method".to_string(), None));
+                flags.push(("from_method".to_string(), Some(method.to_string())));
             }
         }
 
         if let Some(k) = obligation.cause.span.compiler_desugaring_kind() {
             desugaring = k.as_symbol().as_str();
-            flags.push(("from_desugaring", None));
-            flags.push(("from_desugaring", Some(&*desugaring)));
+            flags.push(("from_desugaring".to_string(), None));
+            flags.push(("from_desugaring".to_string(), Some(desugaring.to_string())));
+        }
+        let generics = self.tcx.generics_of(def_id);
+        let self_ty = trait_ref.self_ty();
+        let self_ty_str = self_ty.to_string();
+        flags.push(("_Self".to_string(), Some(self_ty_str.clone())));
+
+        for param in generics.types.iter() {
+            let name = param.name.as_str().to_string();
+            let ty = trait_ref.substs.type_for_def(param);
+            let ty_str = ty.to_string();
+            flags.push((name.clone(),
+                        Some(ty_str.clone())));
+        }
+
+        if let Some(true) = self_ty.ty_to_def_id().map(|def_id| def_id.is_local()) {
+            flags.push(("crate_local".to_string(), None));
         }
 
         if let Ok(Some(command)) = OnUnimplementedDirective::of_item(
             self.tcx, trait_ref.def_id, def_id
         ) {
-            command.evaluate(self.tcx, trait_ref, &flags)
+            command.evaluate(self.tcx, trait_ref, &flags[..])
         } else {
             OnUnimplementedNote::empty()
         }
@@ -548,7 +565,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                 .map(|t| (format!(" in `{}`", t), format!("within `{}`, ", t)))
                             .unwrap_or((String::new(), String::new()));
 
-                        let OnUnimplementedNote { message, label }
+                        let OnUnimplementedNote { message, label, note }
                             = self.on_unimplemented_note(trait_ref, obligation);
                         let have_alt_message = message.is_some() || label.is_some();
 
@@ -576,6 +593,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                                      pre_message,
                                                      trait_ref,
                                                      trait_ref.self_ty()));
+                        }
+                        if let Some(ref s) = note {
+                            // If it has a custom "#[rustc_on_unimplemented]" note, let's display it
+                            err.note(s.as_str());
                         }
 
                         self.suggest_borrow_on_unsized_slice(&obligation.cause.code, &mut err);
@@ -717,93 +738,42 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     self.tcx.hir.span_if_local(did)
                 }).map(|sp| self.tcx.sess.codemap().def_span(sp)); // the sp could be an fn def
 
-                let found_ty_count =
-                    match found_trait_ref.skip_binder().substs.type_at(1).sty {
-                        ty::TyTuple(ref tys, _) => tys.len(),
-                        _ => 1,
-                    };
-                let (expected_tys, expected_ty_count) =
-                    match expected_trait_ref.skip_binder().substs.type_at(1).sty {
-                        ty::TyTuple(ref tys, _) =>
-                            (tys.iter().map(|t| &t.sty).collect(), tys.len()),
-                        ref sty => (vec![sty], 1),
-                    };
-                if found_ty_count == expected_ty_count {
+                let found = match found_trait_ref.skip_binder().substs.type_at(1).sty {
+                    ty::TyTuple(ref tys, _) => tys.iter()
+                        .map(|_| ArgKind::empty()).collect::<Vec<_>>(),
+                    _ => vec![ArgKind::empty()],
+                };
+                let expected = match expected_trait_ref.skip_binder().substs.type_at(1).sty {
+                    ty::TyTuple(ref tys, _) => tys.iter()
+                        .map(|t| match t.sty {
+                            ty::TypeVariants::TyTuple(ref tys, _) => ArgKind::Tuple(
+                                span,
+                                tys.iter()
+                                    .map(|ty| ("_".to_owned(), format!("{}", ty.sty)))
+                                    .collect::<Vec<_>>()
+                            ),
+                            _ => ArgKind::Arg("_".to_owned(), format!("{}", t.sty)),
+                        }).collect(),
+                    ref sty => vec![ArgKind::Arg("_".to_owned(), format!("{}", sty))],
+                };
+                if found.len()== expected.len() {
                     self.report_closure_arg_mismatch(span,
                                                      found_span,
                                                      found_trait_ref,
                                                      expected_trait_ref)
                 } else {
-                    let expected_tuple = if expected_ty_count == 1 {
-                        expected_tys.first().and_then(|t| {
-                            if let &&ty::TyTuple(ref tuptys, _) = t {
-                                Some(tuptys.len())
-                            } else {
-                                None
-                            }
-                        })
-                    } else {
-                        None
-                    };
-
-                    // FIXME(#44150): Expand this to "N args expected but a N-tuple found."
-                    // Type of the 1st expected argument is somehow provided as type of a
-                    // found one in that case.
-                    //
-                    // ```
-                    // [1i32, 2, 3].sort_by(|(a, b)| ..)
-                    // //           ^^^^^^^ --------
-                    // // expected_trait_ref:  std::ops::FnMut<(&i32, &i32)>
-                    // //    found_trait_ref:  std::ops::FnMut<(&i32,)>
-                    // ```
-
-                    let (closure_span, closure_args) = found_did
+                    let (closure_span, found) = found_did
                         .and_then(|did| self.tcx.hir.get_if_local(did))
-                        .and_then(|node| {
-                            if let hir::map::NodeExpr(
-                                &hir::Expr {
-                                    node: hir::ExprClosure(_, ref decl, id, span, _),
-                                    ..
-                                }) = node
-                            {
-                                let ty_snips = decl.inputs.iter()
-                                    .map(|ty| {
-                                        self.tcx.sess.codemap().span_to_snippet(ty.span).ok()
-                                            .and_then(|snip| {
-                                                // filter out dummy spans
-                                                if snip == "," || snip == "|" {
-                                                    None
-                                                } else {
-                                                    Some(snip)
-                                                }
-                                            })
-                                    })
-                                    .collect::<Vec<Option<String>>>();
+                        .map(|node| {
+                            let (found_span, found) = self.get_fn_like_arguments(node);
+                            (Some(found_span), found)
+                        }).unwrap_or((found_span, found));
 
-                                let body = self.tcx.hir.body(id);
-                                let pat_snips = body.arguments.iter()
-                                    .map(|arg|
-                                        self.tcx.sess.codemap().span_to_snippet(arg.pat.span).ok())
-                                    .collect::<Option<Vec<String>>>();
-
-                                Some((span, pat_snips, ty_snips))
-                            } else {
-                                None
-                            }
-                        })
-                        .map(|(span, pat, ty)| (Some(span), Some((pat, ty))))
-                        .unwrap_or((None, None));
-                    let closure_args = closure_args.and_then(|(pat, ty)| Some((pat?, ty)));
-
-                    self.report_arg_count_mismatch(
-                        span,
-                        closure_span.or(found_span),
-                        expected_ty_count,
-                        expected_tuple,
-                        found_ty_count,
-                        closure_args,
-                        found_trait_ty.is_closure()
-                    )
+                    self.report_arg_count_mismatch(span,
+                                                   closure_span,
+                                                   expected,
+                                                   found,
+                                                   found_trait_ty.is_closure())
                 }
             }
 
@@ -845,94 +815,151 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    fn get_fn_like_arguments(&self, node: hir::map::Node) -> (Span, Vec<ArgKind>) {
+        match node {
+            hir::map::NodeExpr(&hir::Expr {
+                node: hir::ExprClosure(_, ref _decl, id, span, _),
+                ..
+            }) => {
+                (self.tcx.sess.codemap().def_span(span), self.tcx.hir.body(id).arguments.iter()
+                    .map(|arg| {
+                        if let hir::Pat {
+                            node: hir::PatKind::Tuple(args, _),
+                            span,
+                            ..
+                        } = arg.pat.clone().into_inner() {
+                            ArgKind::Tuple(
+                                span,
+                                args.iter().map(|pat| {
+                                    let snippet = self.tcx.sess.codemap()
+                                        .span_to_snippet(pat.span).unwrap();
+                                    (snippet, "_".to_owned())
+                                }).collect::<Vec<_>>(),
+                            )
+                        } else {
+                            let name = self.tcx.sess.codemap()
+                                .span_to_snippet(arg.pat.span).unwrap();
+                            ArgKind::Arg(name, "_".to_owned())
+                        }
+                    })
+                    .collect::<Vec<ArgKind>>())
+            }
+            hir::map::NodeItem(&hir::Item {
+                span,
+                node: hir::ItemFn(ref decl, ..),
+                ..
+            }) |
+            hir::map::NodeImplItem(&hir::ImplItem {
+                span,
+                node: hir::ImplItemKind::Method(hir::MethodSig { ref decl, .. }, _),
+                ..
+            }) |
+            hir::map::NodeTraitItem(&hir::TraitItem {
+                span,
+                node: hir::TraitItemKind::Method(hir::MethodSig { ref decl, .. }, _),
+                ..
+            }) => {
+                (self.tcx.sess.codemap().def_span(span), decl.inputs.iter()
+                        .map(|arg| match arg.clone().into_inner().node {
+                    hir::TyTup(ref tys) => ArgKind::Tuple(
+                        arg.span,
+                        tys.iter()
+                            .map(|_| ("_".to_owned(), "_".to_owned()))
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => ArgKind::Arg("_".to_owned(), "_".to_owned())
+                }).collect::<Vec<ArgKind>>())
+            }
+            _ => panic!("non-FnLike node found: {:?}", node),
+        }
+    }
+
     fn report_arg_count_mismatch(
         &self,
         span: Span,
         found_span: Option<Span>,
-        expected: usize,
-        expected_tuple: Option<usize>,
-        found: usize,
-        closure_args: Option<(Vec<String>, Vec<Option<String>>)>,
-        is_closure: bool
+        expected_args: Vec<ArgKind>,
+        found_args: Vec<ArgKind>,
+        is_closure: bool,
     ) -> DiagnosticBuilder<'tcx> {
-        use std::borrow::Cow;
-
         let kind = if is_closure { "closure" } else { "function" };
 
-        let args_str = |n, distinct| format!(
-                "{} {}argument{}",
-                n,
-                if distinct && n >= 2 { "distinct " } else { "" },
-                if n == 1 { "" } else { "s" },
-            );
-
-        let expected_str = if let Some(n) = expected_tuple {
-            assert!(expected == 1);
-            if closure_args.as_ref().map(|&(ref pats, _)| pats.len()) == Some(n) {
-                Cow::from("a single tuple as argument")
-            } else {
-                // be verbose when numbers differ
-                Cow::from(format!("a single {}-tuple as argument", n))
+        let args_str = |arguments: &Vec<ArgKind>, other: &Vec<ArgKind>| {
+            let arg_length = arguments.len();
+            let distinct = match &other[..] {
+                &[ArgKind::Tuple(..)] => true,
+                _ => false,
+            };
+            match (arg_length, arguments.get(0)) {
+                (1, Some(&ArgKind::Tuple(_, ref fields))) => {
+                    format!("a single {}-tuple as argument", fields.len())
+                }
+                _ => format!("{} {}argument{}",
+                             arg_length,
+                             if distinct && arg_length > 1 { "distinct " } else { "" },
+                             if arg_length == 1 { "" } else { "s" }),
             }
-        } else {
-            Cow::from(args_str(expected, false))
         };
 
-        let found_str = if expected_tuple.is_some() {
-            args_str(found, true)
-        } else {
-            args_str(found, false)
-        };
+        let expected_str = args_str(&expected_args, &found_args);
+        let found_str = args_str(&found_args, &expected_args);
 
-
-        let mut err = struct_span_err!(self.tcx.sess, span, E0593,
+        let mut err = struct_span_err!(
+            self.tcx.sess,
+            span,
+            E0593,
             "{} is expected to take {}, but it takes {}",
             kind,
             expected_str,
             found_str,
         );
 
-        err.span_label(
-            span,
-            format!(
-                "expected {} that takes {}",
-                kind,
-                expected_str,
-            )
-        );
+        err.span_label(span, format!( "expected {} that takes {}", kind, expected_str));
 
-        if let Some(span) = found_span {
-            if let (Some(expected_tuple), Some((pats, tys))) = (expected_tuple, closure_args) {
-                if expected_tuple != found || pats.len() != found {
-                    err.span_label(span, format!("takes {}", found_str));
-                } else {
+        if let Some(found_span) = found_span {
+            err.span_label(found_span, format!("takes {}", found_str));
+
+            if let &[ArgKind::Tuple(_, ref fields)] = &found_args[..] {
+                if fields.len() == expected_args.len() {
+                    let sugg = fields.iter()
+                        .map(|(name, _)| name.to_owned())
+                        .collect::<Vec<String>>().join(", ");
+                    err.span_suggestion(found_span,
+                                        "change the closure to take multiple arguments instead of \
+                                         a single tuple",
+                                        format!("|{}|", sugg));
+                }
+            }
+            if let &[ArgKind::Tuple(_, ref fields)] = &expected_args[..] {
+                if fields.len() == found_args.len() && is_closure {
                     let sugg = format!(
                         "|({}){}|",
-                        pats.join(", "),
-
+                        found_args.iter()
+                            .map(|arg| match arg {
+                                ArgKind::Arg(name, _) => name.to_owned(),
+                                _ => "_".to_owned(),
+                            })
+                            .collect::<Vec<String>>()
+                            .join(", "),
                         // add type annotations if available
-                        if tys.iter().any(|ty| ty.is_some()) {
-                            Cow::from(format!(
-                                ": ({})",
-                                tys.into_iter().map(|ty| if let Some(ty) = ty {
-                                    ty
-                                } else {
-                                    "_".to_string()
-                                }).collect::<Vec<String>>().join(", ")
-                            ))
+                        if found_args.iter().any(|arg| match arg {
+                            ArgKind::Arg(_, ty) => ty != "_",
+                            _ => false,
+                        }) {
+                            format!(": ({})",
+                                    fields.iter()
+                                        .map(|(_, ty)| ty.to_owned())
+                                        .collect::<Vec<String>>()
+                                        .join(", "))
                         } else {
-                            Cow::from("")
+                            "".to_owned()
                         },
                     );
-
-                    err.span_suggestion(
-                        span,
-                        "consider changing the closure to accept a tuple",
-                        sugg
-                    );
+                    err.span_suggestion(found_span,
+                                        "change the closure to accept a tuple instead of \
+                                         individual arguments",
+                                        sugg);
                 }
-            } else {
-                err.span_label(span, format!("takes {}", found_str));
             }
         }
 
@@ -1197,13 +1224,15 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
     {
         self.note_obligation_cause_code(err,
                                         &obligation.predicate,
-                                        &obligation.cause.code);
+                                        &obligation.cause.code,
+                                        &mut vec![]);
     }
 
     fn note_obligation_cause_code<T>(&self,
                                      err: &mut DiagnosticBuilder,
                                      predicate: &T,
-                                     cause_code: &ObligationCauseCode<'tcx>)
+                                     cause_code: &ObligationCauseCode<'tcx>,
+                                     obligated_types: &mut Vec<&ty::TyS<'tcx>>)
         where T: fmt::Display
     {
         let tcx = self.tcx;
@@ -1241,7 +1270,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
             ObligationCauseCode::ItemObligation(item_def_id) => {
                 let item_name = tcx.item_path_str(item_def_id);
-                err.note(&format!("required by `{}`", item_name));
+                let msg = format!("required by `{}`", item_name);
+                if let Some(sp) = tcx.hir.span_if_local(item_def_id) {
+                    let sp = tcx.sess.codemap().def_span(sp);
+                    err.span_note(sp, &msg);
+                } else {
+                    err.note(&msg);
+                }
             }
             ObligationCauseCode::ObjectCastObligation(object_ty) => {
                 err.note(&format!("required for the cast to the object type `{}`",
@@ -1256,6 +1291,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
             ObligationCauseCode::SizedReturnType => {
                 err.note("the return type of a function must have a \
+                          statically known size");
+            }
+            ObligationCauseCode::SizedYieldType => {
+                err.note("the yield type of a generator must have a \
                           statically known size");
             }
             ObligationCauseCode::AssignmentLhsSized => {
@@ -1289,12 +1328,17 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
             ObligationCauseCode::BuiltinDerivedObligation(ref data) => {
                 let parent_trait_ref = self.resolve_type_vars_if_possible(&data.parent_trait_ref);
-                err.note(&format!("required because it appears within the type `{}`",
-                                  parent_trait_ref.0.self_ty()));
+                let ty = parent_trait_ref.0.self_ty();
+                err.note(&format!("required because it appears within the type `{}`", ty));
+                obligated_types.push(ty);
+
                 let parent_predicate = parent_trait_ref.to_predicate();
-                self.note_obligation_cause_code(err,
-                                                &parent_predicate,
-                                                &data.parent_code);
+                if !self.is_recursive_obligation(obligated_types, &data.parent_code) {
+                    self.note_obligation_cause_code(err,
+                                                    &parent_predicate,
+                                                    &data.parent_code,
+                                                    obligated_types);
+                }
             }
             ObligationCauseCode::ImplDerivedObligation(ref data) => {
                 let parent_trait_ref = self.resolve_type_vars_if_possible(&data.parent_trait_ref);
@@ -1304,8 +1348,9 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                              parent_trait_ref.0.self_ty()));
                 let parent_predicate = parent_trait_ref.to_predicate();
                 self.note_obligation_cause_code(err,
-                                                &parent_predicate,
-                                                &data.parent_code);
+                                            &parent_predicate,
+                                            &data.parent_code,
+                                            obligated_types);
             }
             ObligationCauseCode::CompareImplMethodObligation { .. } => {
                 err.note(
@@ -1323,5 +1368,30 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         let suggested_limit = current_limit * 2;
         err.help(&format!("consider adding a `#![recursion_limit=\"{}\"]` attribute to your crate",
                           suggested_limit));
+    }
+
+    fn is_recursive_obligation(&self,
+                                   obligated_types: &mut Vec<&ty::TyS<'tcx>>,
+                                   cause_code: &ObligationCauseCode<'tcx>) -> bool {
+        if let ObligationCauseCode::BuiltinDerivedObligation(ref data) = cause_code {
+            let parent_trait_ref = self.resolve_type_vars_if_possible(&data.parent_trait_ref);
+            for obligated_type in obligated_types {
+                if obligated_type == &parent_trait_ref.0.self_ty() {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+}
+
+enum ArgKind {
+    Arg(String, String),
+    Tuple(Span, Vec<(String, String)>),
+}
+
+impl ArgKind {
+    fn empty() -> ArgKind {
+        ArgKind::Arg("_".to_owned(), "_".to_owned())
     }
 }

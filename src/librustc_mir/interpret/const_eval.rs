@@ -12,7 +12,7 @@ use rustc_data_structures::indexed_vec::Idx;
 use syntax::ast::Mutability;
 use syntax::codemap::Span;
 
-use rustc::mir::interpret::{EvalResult, EvalError, EvalErrorKind, GlobalId, Value, Pointer, PrimVal};
+use rustc::mir::interpret::{EvalResult, EvalError, EvalErrorKind, GlobalId, Value, MemoryPointer, Pointer, PrimVal};
 use super::{Place, EvalContext, StackPopCleanup, ValTy};
 
 use rustc_const_math::ConstInt;
@@ -67,7 +67,7 @@ pub fn eval_body<'a, 'tcx>(
             layout.align,
             None,
         )?;
-        tcx.interpret_interner.borrow_mut().cache(cid, ptr.into());
+        tcx.interpret_interner.borrow_mut().cache(cid, ptr.alloc_id);
         let cleanup = StackPopCleanup::MarkStatic(Mutability::Immutable);
         let name = ty::tls::with(|tcx| tcx.item_path_str(instance.def_id()));
         trace!("const_eval: pushing stack frame for global: {}", name);
@@ -81,8 +81,8 @@ pub fn eval_body<'a, 'tcx>(
 
         while ecx.step()? {}
     }
-    let value = tcx.interpret_interner.borrow().get_cached(cid).expect("global not cached");
-    Ok((value, instance_ty))
+    let alloc = tcx.interpret_interner.borrow().get_cached(cid).expect("global not cached");
+    Ok((MemoryPointer::new(alloc, 0).into(), instance_ty))
 }
 
 pub fn eval_body_as_integer<'a, 'tcx>(
@@ -106,7 +106,7 @@ pub fn eval_body_as_integer<'a, 'tcx>(
         TyInt(IntTy::I32) => ConstInt::I32(prim as i128 as i32),
         TyInt(IntTy::I64) => ConstInt::I64(prim as i128 as i64),
         TyInt(IntTy::I128) => ConstInt::I128(prim as i128),
-        TyInt(IntTy::Is) => ConstInt::Isize(
+        TyInt(IntTy::Isize) => ConstInt::Isize(
             ConstIsize::new(prim as i128 as i64, tcx.sess.target.isize_ty)
                 .expect("miri should already have errored"),
         ),
@@ -115,7 +115,7 @@ pub fn eval_body_as_integer<'a, 'tcx>(
         TyUint(UintTy::U32) => ConstInt::U32(prim as u32),
         TyUint(UintTy::U64) => ConstInt::U64(prim as u64),
         TyUint(UintTy::U128) => ConstInt::U128(prim),
-        TyUint(UintTy::Us) => ConstInt::Usize(
+        TyUint(UintTy::Usize) => ConstInt::Usize(
             ConstUsize::new(prim as u64, tcx.sess.target.usize_ty)
                 .expect("miri should already have errored"),
         ),
@@ -241,6 +241,12 @@ impl<'tcx> super::Machine<'tcx> for CompileTimeEvaluator {
                 let ty = substs.type_at(0);
                 let size = ecx.layout_of(ty)?.size.bytes() as u128;
                 ecx.write_primval(dest, PrimVal::from_u128(size), dest_layout.ty)?;
+            }
+
+            "type_id" => {
+                let ty = substs.type_at(0);
+                let type_id = ecx.tcx.type_id_hash(ty) as u128;
+                ecx.write_primval(dest, PrimVal::from_u128(type_id), dest_layout.ty)?;
             }
 
             name => return Err(ConstEvalError::NeedsRfc(format!("calling intrinsic `{}`", name)).into()),
@@ -488,7 +494,7 @@ fn check_ctfe_against_miri<'a, 'tcx>(
                 miri_place = ecx.place_downcast(miri_place, variant).unwrap();
                 &def.variants[variant]
             } else {
-                def.struct_variant()
+                def.non_enum_variant()
             };
             let vec = match ctfe {
                 ConstVal::Aggregate(Struct(v)) => v,
@@ -514,6 +520,7 @@ fn check_ctfe_against_miri<'a, 'tcx>(
         TyDynamic(..) => bug!("miri produced a trait object"),
         TyClosure(..) => bug!("miri produced a closure"),
         TyGenerator(..) => bug!("miri produced a generator"),
+        TyGeneratorWitness(..) => bug!("miri produced a generator witness"),
         TyNever => bug!("miri produced a value of the never type"),
         TyProjection(_) => bug!("miri produced a projection"),
         TyAnon(..) => bug!("miri produced an impl Trait type"),
