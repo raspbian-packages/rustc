@@ -25,7 +25,7 @@ def main(argv):
     triple = argv.pop(1)
     DownloadOnlyRustBuild.triple = triple
     bootstrap.RustBuild = DownloadOnlyRustBuild
-    bootstrap.bootstrap()
+    bootstrap.bootstrap(False)
 
 if __name__ == '__main__':
     main(sys.argv)

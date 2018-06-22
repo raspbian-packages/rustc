@@ -402,12 +402,10 @@ fn visit_local<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, local: &'tcx hir::Local) {
 
 fn visit_arm<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, arm: &'tcx hir::Arm) {
     for pat in &arm.pats {
-        // for struct patterns, take note of which fields used shorthand (`x`
-        // rather than `x: x`)
+        // for struct patterns, take note of which fields used shorthand (`x` rather than `x: x`)
         //
-        // FIXME: according to the rust-lang-nursery/rustc-guide book and
-        // librustc/README.md, `NodeId`s are to be phased out in favor of
-        // `HirId`s; however, we need to match the signature of `each_binding`,
+        // FIXME: according to the rust-lang-nursery/rustc-guide book, `NodeId`s are to be phased
+        // out in favor of `HirId`s; however, we need to match the signature of `each_binding`,
         // which uses `NodeIds`.
         let mut shorthand_field_ids = NodeSet();
         if let hir::PatKind::Struct(_, ref fields, _) = pat.node {
@@ -673,7 +671,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     }
 
     fn write_vars<F>(&self,
-                     wr: &mut Write,
+                     wr: &mut dyn Write,
                      ln: LiveNode,
                      mut test: F)
                      -> io::Result<()> where
@@ -694,7 +692,7 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
     fn ln_str(&self, ln: LiveNode) -> String {
         let mut wr = Vec::new();
         {
-            let wr = &mut wr as &mut Write;
+            let wr = &mut wr as &mut dyn Write;
             write!(wr, "[ln({:?}) of kind {:?} reads", ln.get(), self.ir.lnk(ln));
             self.write_vars(wr, ln, |idx| self.users[idx].reader);
             write!(wr, "  writes");

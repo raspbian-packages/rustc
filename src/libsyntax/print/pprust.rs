@@ -250,9 +250,9 @@ pub fn token_to_string(tok: &Token) -> String {
         }
 
         /* Name components */
-        token::Ident(s)             => s.to_string(),
+        token::Ident(s, false)      => s.to_string(),
+        token::Ident(s, true)       => format!("r#{}", s),
         token::Lifetime(s)          => s.to_string(),
-        token::Underscore           => "_".to_string(),
 
         /* Other */
         token::DocComment(s)        => s.to_string(),
@@ -262,24 +262,25 @@ pub fn token_to_string(tok: &Token) -> String {
         token::Shebang(s)           => format!("/* shebang: {}*/", s),
 
         token::Interpolated(ref nt) => match nt.0 {
-            token::NtExpr(ref e)        => expr_to_string(e),
-            token::NtMeta(ref e)        => meta_item_to_string(e),
-            token::NtTy(ref e)          => ty_to_string(e),
-            token::NtPath(ref e)        => path_to_string(e),
-            token::NtItem(ref e)        => item_to_string(e),
-            token::NtBlock(ref e)       => block_to_string(e),
-            token::NtStmt(ref e)        => stmt_to_string(e),
-            token::NtPat(ref e)         => pat_to_string(e),
-            token::NtIdent(ref e)       => ident_to_string(e.node),
-            token::NtTT(ref tree)       => tt_to_string(tree.clone()),
-            token::NtArm(ref e)         => arm_to_string(e),
-            token::NtImplItem(ref e)    => impl_item_to_string(e),
-            token::NtTraitItem(ref e)   => trait_item_to_string(e),
-            token::NtGenerics(ref e)    => generic_params_to_string(&e.params),
-            token::NtWhereClause(ref e) => where_clause_to_string(e),
-            token::NtArg(ref e)         => arg_to_string(e),
-            token::NtVis(ref e)         => vis_to_string(e),
-            token::NtLifetime(ref e)    => lifetime_to_string(e),
+            token::NtExpr(ref e)         => expr_to_string(e),
+            token::NtMeta(ref e)         => meta_item_to_string(e),
+            token::NtTy(ref e)           => ty_to_string(e),
+            token::NtPath(ref e)         => path_to_string(e),
+            token::NtItem(ref e)         => item_to_string(e),
+            token::NtBlock(ref e)        => block_to_string(e),
+            token::NtStmt(ref e)         => stmt_to_string(e),
+            token::NtPat(ref e)          => pat_to_string(e),
+            token::NtIdent(ref e, false) => ident_to_string(e.node),
+            token::NtIdent(ref e, true)  => format!("r#{}", ident_to_string(e.node)),
+            token::NtTT(ref tree)        => tt_to_string(tree.clone()),
+            token::NtArm(ref e)          => arm_to_string(e),
+            token::NtImplItem(ref e)     => impl_item_to_string(e),
+            token::NtTraitItem(ref e)    => trait_item_to_string(e),
+            token::NtGenerics(ref e)     => generic_params_to_string(&e.params),
+            token::NtWhereClause(ref e)  => where_clause_to_string(e),
+            token::NtArg(ref e)          => arg_to_string(e),
+            token::NtVis(ref e)          => vis_to_string(e),
+            token::NtLifetime(ref e)     => lifetime_to_string(e),
         }
     }
 }
@@ -353,7 +354,7 @@ pub fn fn_block_to_string(p: &ast::FnDecl) -> String {
 }
 
 pub fn path_to_string(p: &ast::Path) -> String {
-    to_string(|s| s.print_path(p, false, 0, false))
+    to_string(|s| s.print_path(p, false, 0))
 }
 
 pub fn path_segment_to_string(p: &ast::PathSegment) -> String {
@@ -377,7 +378,7 @@ pub fn fun_to_string(decl: &ast::FnDecl,
     to_string(|s| {
         s.head("")?;
         s.print_fn(decl, unsafety, constness, Abi::Rust, Some(name),
-                   generics, &ast::Visibility::Inherited)?;
+                   generics, &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
         s.end()?; // Close the head box
         s.end() // Close the outer box
     })
@@ -650,7 +651,7 @@ pub trait PrintState<'a> {
                     style: ast::StrStyle) -> io::Result<()> {
         let st = match style {
             ast::StrStyle::Cooked => {
-                (format!("\"{}\"", parse::escape_default(st)))
+                (format!("\"{}\"", st.escape_debug()))
             }
             ast::StrStyle::Raw(n) => {
                 (format!("r{delim}\"{string}\"{delim}",
@@ -1051,7 +1052,7 @@ impl<'a> State<'a> {
                                  &f.generic_params)?;
             }
             ast::TyKind::Path(None, ref path) => {
-                self.print_path(path, false, 0, false)?;
+                self.print_path(path, false, 0)?;
             }
             ast::TyKind::Path(Some(ref qself), ref path) => {
                 self.print_qpath(path, qself, false)?
@@ -1174,15 +1175,10 @@ impl<'a> State<'a> {
         self.print_outer_attributes(&item.attrs)?;
         self.ann.pre(self, NodeItem(item))?;
         match item.node {
-            ast::ItemKind::ExternCrate(ref optional_path) => {
+            ast::ItemKind::ExternCrate(orig_name) => {
                 self.head(&visibility_qualified(&item.vis, "extern crate"))?;
-                if let Some(p) = *optional_path {
-                    let val = p.as_str();
-                    if val.contains('-') {
-                        self.print_string(&val, ast::StrStyle::Cooked)?;
-                    } else {
-                        self.print_name(p)?;
-                    }
+                if let Some(orig_name) = orig_name {
+                    self.print_name(orig_name)?;
                     self.s.space()?;
                     self.s.word("as")?;
                     self.s.space()?;
@@ -1383,7 +1379,7 @@ impl<'a> State<'a> {
                 self.s.word(";")?;
             }
             ast::ItemKind::Mac(codemap::Spanned { ref node, .. }) => {
-                self.print_path(&node.path, false, 0, false)?;
+                self.print_path(&node.path, false, 0)?;
                 self.s.word("! ")?;
                 self.print_ident(item.ident)?;
                 self.cbox(INDENT_UNIT)?;
@@ -1408,7 +1404,7 @@ impl<'a> State<'a> {
     }
 
     fn print_trait_ref(&mut self, t: &ast::TraitRef) -> io::Result<()> {
-        self.print_path(&t.path, false, 0, false)
+        self.print_path(&t.path, false, 0)
     }
 
     fn print_formal_generic_params(
@@ -1458,21 +1454,21 @@ impl<'a> State<'a> {
     }
 
     pub fn print_visibility(&mut self, vis: &ast::Visibility) -> io::Result<()> {
-        match *vis {
-            ast::Visibility::Public => self.word_nbsp("pub"),
-            ast::Visibility::Crate(_, sugar) => match sugar {
+        match vis.node {
+            ast::VisibilityKind::Public => self.word_nbsp("pub"),
+            ast::VisibilityKind::Crate(sugar) => match sugar {
                 ast::CrateSugar::PubCrate => self.word_nbsp("pub(crate)"),
                 ast::CrateSugar::JustCrate => self.word_nbsp("crate")
             }
-            ast::Visibility::Restricted { ref path, .. } => {
-                let path = to_string(|s| s.print_path(path, false, 0, true));
+            ast::VisibilityKind::Restricted { ref path, .. } => {
+                let path = to_string(|s| s.print_path(path, false, 0));
                 if path == "self" || path == "super" {
                     self.word_nbsp(&format!("pub({})", path))
                 } else {
                     self.word_nbsp(&format!("pub(in {})", path))
                 }
             }
-            ast::Visibility::Inherited => Ok(())
+            ast::VisibilityKind::Inherited => Ok(())
         }
     }
 
@@ -1569,15 +1565,23 @@ impl<'a> State<'a> {
         self.print_outer_attributes(&ti.attrs)?;
         match ti.node {
             ast::TraitItemKind::Const(ref ty, ref default) => {
-                self.print_associated_const(ti.ident, ty,
-                                            default.as_ref().map(|expr| &**expr),
-                                            &ast::Visibility::Inherited)?;
+                self.print_associated_const(
+                    ti.ident,
+                    ty,
+                    default.as_ref().map(|expr| &**expr),
+                    &codemap::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
+                )?;
             }
             ast::TraitItemKind::Method(ref sig, ref body) => {
                 if body.is_some() {
                     self.head("")?;
                 }
-                self.print_method_sig(ti.ident, &ti.generics, sig, &ast::Visibility::Inherited)?;
+                self.print_method_sig(
+                    ti.ident,
+                    &ti.generics,
+                    sig,
+                    &codemap::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
+                )?;
                 if let Some(ref body) = *body {
                     self.nbsp()?;
                     self.print_block_with_attrs(body, &ti.attrs)?;
@@ -1591,7 +1595,7 @@ impl<'a> State<'a> {
             }
             ast::TraitItemKind::Macro(codemap::Spanned { ref node, .. }) => {
                 // code copied from ItemKind::Mac:
-                self.print_path(&node.path, false, 0, false)?;
+                self.print_path(&node.path, false, 0)?;
                 self.s.word("! ")?;
                 self.cbox(INDENT_UNIT)?;
                 self.popen()?;
@@ -1625,7 +1629,7 @@ impl<'a> State<'a> {
             }
             ast::ImplItemKind::Macro(codemap::Spanned { ref node, .. }) => {
                 // code copied from ItemKind::Mac:
-                self.print_path(&node.path, false, 0, false)?;
+                self.print_path(&node.path, false, 0)?;
                 self.s.word("! ")?;
                 self.cbox(INDENT_UNIT)?;
                 self.popen()?;
@@ -1759,11 +1763,11 @@ impl<'a> State<'a> {
                         self.print_else(e.as_ref().map(|e| &**e))
                     }
                     // "another else-if-let"
-                    ast::ExprKind::IfLet(ref pat, ref expr, ref then, ref e) => {
+                    ast::ExprKind::IfLet(ref pats, ref expr, ref then, ref e) => {
                         self.cbox(INDENT_UNIT - 1)?;
                         self.ibox(0)?;
                         self.s.word(" else if let ")?;
-                        self.print_pat(pat)?;
+                        self.print_pats(pats)?;
                         self.s.space()?;
                         self.word_space("=")?;
                         self.print_expr_as_cond(expr)?;
@@ -1797,10 +1801,10 @@ impl<'a> State<'a> {
         self.print_else(elseopt)
     }
 
-    pub fn print_if_let(&mut self, pat: &ast::Pat, expr: &ast::Expr, blk: &ast::Block,
+    pub fn print_if_let(&mut self, pats: &[P<ast::Pat>], expr: &ast::Expr, blk: &ast::Block,
                         elseopt: Option<&ast::Expr>) -> io::Result<()> {
         self.head("if let")?;
-        self.print_pat(pat)?;
+        self.print_pats(pats)?;
         self.s.space()?;
         self.word_space("=")?;
         self.print_expr_as_cond(expr)?;
@@ -1811,7 +1815,7 @@ impl<'a> State<'a> {
 
     pub fn print_mac(&mut self, m: &ast::Mac, delim: token::DelimToken)
                      -> io::Result<()> {
-        self.print_path(&m.node.path, false, 0, false)?;
+        self.print_path(&m.node.path, false, 0)?;
         self.s.word("!")?;
         match delim {
             token::Paren => self.popen()?,
@@ -1912,7 +1916,7 @@ impl<'a> State<'a> {
                          fields: &[ast::Field],
                          wth: &Option<P<ast::Expr>>,
                          attrs: &[Attribute]) -> io::Result<()> {
-        self.print_path(path, true, 0, false)?;
+        self.print_path(path, true, 0)?;
         self.s.word("{")?;
         self.print_inner_attributes_inline(attrs)?;
         self.commasep_cmnt(
@@ -2101,8 +2105,8 @@ impl<'a> State<'a> {
             ast::ExprKind::If(ref test, ref blk, ref elseopt) => {
                 self.print_if(test, blk, elseopt.as_ref().map(|e| &**e))?;
             }
-            ast::ExprKind::IfLet(ref pat, ref expr, ref blk, ref elseopt) => {
-                self.print_if_let(pat, expr, blk, elseopt.as_ref().map(|e| &**e))?;
+            ast::ExprKind::IfLet(ref pats, ref expr, ref blk, ref elseopt) => {
+                self.print_if_let(pats, expr, blk, elseopt.as_ref().map(|e| &**e))?;
             }
             ast::ExprKind::While(ref test, ref blk, opt_label) => {
                 if let Some(label) = opt_label {
@@ -2114,13 +2118,13 @@ impl<'a> State<'a> {
                 self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?;
             }
-            ast::ExprKind::WhileLet(ref pat, ref expr, ref blk, opt_label) => {
+            ast::ExprKind::WhileLet(ref pats, ref expr, ref blk, opt_label) => {
                 if let Some(label) = opt_label {
                     self.print_ident(label.ident)?;
                     self.word_space(":")?;
                 }
                 self.head("while let")?;
-                self.print_pat(pat)?;
+                self.print_pats(pats)?;
                 self.s.space()?;
                 self.word_space("=")?;
                 self.print_expr_as_cond(expr)?;
@@ -2233,7 +2237,7 @@ impl<'a> State<'a> {
                 }
             }
             ast::ExprKind::Path(None, ref path) => {
-                self.print_path(path, true, 0, false)?
+                self.print_path(path, true, 0)?
             }
             ast::ExprKind::Path(Some(ref qself), ref path) => {
                 self.print_qpath(path, qself, true)?
@@ -2369,7 +2373,11 @@ impl<'a> State<'a> {
     }
 
     pub fn print_ident(&mut self, ident: ast::Ident) -> io::Result<()> {
-        self.s.word(&ident.name.as_str())?;
+        if token::is_raw_guess(ident) {
+            self.s.word(&format!("r#{}", ident))?;
+        } else {
+            self.s.word(&ident.name.as_str())?;
+        }
         self.ann.post(self, NodeIdent(&ident))
     }
 
@@ -2393,17 +2401,12 @@ impl<'a> State<'a> {
     fn print_path(&mut self,
                   path: &ast::Path,
                   colons_before_params: bool,
-                  depth: usize,
-                  defaults_to_global: bool)
+                  depth: usize)
                   -> io::Result<()>
     {
         self.maybe_print_comment(path.span.lo())?;
 
-        let mut segments = path.segments[..path.segments.len()-depth].iter();
-        if defaults_to_global && path.is_global() {
-            segments.next();
-        }
-        for (i, segment) in segments.enumerate() {
+        for (i, segment) in path.segments[..path.segments.len() - depth].iter().enumerate() {
             if i > 0 {
                 self.s.word("::")?
             }
@@ -2442,7 +2445,7 @@ impl<'a> State<'a> {
             self.s.space()?;
             self.word_space("as")?;
             let depth = path.segments.len() - qself.position;
-            self.print_path(path, false, depth, false)?;
+            self.print_path(path, false, depth)?;
         }
         self.s.word(">")?;
         self.s.word("::")?;
@@ -2545,7 +2548,7 @@ impl<'a> State<'a> {
                 }
             }
             PatKind::TupleStruct(ref path, ref elts, ddpos) => {
-                self.print_path(path, true, 0, false)?;
+                self.print_path(path, true, 0)?;
                 self.popen()?;
                 if let Some(ddpos) = ddpos {
                     self.commasep(Inconsistent, &elts[..ddpos], |s, p| s.print_pat(p))?;
@@ -2563,13 +2566,13 @@ impl<'a> State<'a> {
                 self.pclose()?;
             }
             PatKind::Path(None, ref path) => {
-                self.print_path(path, true, 0, false)?;
+                self.print_path(path, true, 0)?;
             }
             PatKind::Path(Some(ref qself), ref path) => {
                 self.print_qpath(path, qself, false)?;
             }
             PatKind::Struct(ref path, ref fields, etc) => {
-                self.print_path(path, true, 0, false)?;
+                self.print_path(path, true, 0)?;
                 self.nbsp()?;
                 self.word_space("{")?;
                 self.commasep_cmnt(
@@ -2651,9 +2654,28 @@ impl<'a> State<'a> {
                                    |s, p| s.print_pat(p))?;
                 self.s.word("]")?;
             }
+            PatKind::Paren(ref inner) => {
+                self.popen()?;
+                self.print_pat(inner)?;
+                self.pclose()?;
+            }
             PatKind::Mac(ref m) => self.print_mac(m, token::Paren)?,
         }
         self.ann.post(self, NodePat(pat))
+    }
+
+    fn print_pats(&mut self, pats: &[P<ast::Pat>]) -> io::Result<()> {
+        let mut first = true;
+        for p in pats {
+            if first {
+                first = false;
+            } else {
+                self.s.space()?;
+                self.word_space("|")?;
+            }
+            self.print_pat(p)?;
+        }
+        Ok(())
     }
 
     fn print_arm(&mut self, arm: &ast::Arm) -> io::Result<()> {
@@ -2666,16 +2688,7 @@ impl<'a> State<'a> {
         self.ibox(0)?;
         self.maybe_print_comment(arm.pats[0].span.lo())?;
         self.print_outer_attributes(&arm.attrs)?;
-        let mut first = true;
-        for p in &arm.pats {
-            if first {
-                first = false;
-            } else {
-                self.s.space()?;
-                self.word_space("|")?;
-            }
-            self.print_pat(p)?;
-        }
+        self.print_pats(&arm.pats)?;
         self.s.space()?;
         if let Some(ref e) = arm.guard {
             self.word_space("if")?;
@@ -2936,18 +2949,17 @@ impl<'a> State<'a> {
 
     pub fn print_use_tree(&mut self, tree: &ast::UseTree) -> io::Result<()> {
         match tree.kind {
-            ast::UseTreeKind::Simple(ref ident) => {
-                self.print_path(&tree.prefix, false, 0, true)?;
-
-                if tree.prefix.segments.last().unwrap().identifier.name != ident.name {
+            ast::UseTreeKind::Simple(rename) => {
+                self.print_path(&tree.prefix, false, 0)?;
+                if let Some(rename) = rename {
                     self.s.space()?;
                     self.word_space("as")?;
-                    self.print_ident(*ident)?;
+                    self.print_ident(rename)?;
                 }
             }
             ast::UseTreeKind::Glob => {
                 if !tree.prefix.segments.is_empty() {
-                    self.print_path(&tree.prefix, false, 0, true)?;
+                    self.print_path(&tree.prefix, false, 0)?;
                     self.s.word("::")?;
                 }
                 self.s.word("*")?;
@@ -2956,7 +2968,7 @@ impl<'a> State<'a> {
                 if tree.prefix.segments.is_empty() {
                     self.s.word("{")?;
                 } else {
-                    self.print_path(&tree.prefix, false, 0, true)?;
+                    self.print_path(&tree.prefix, false, 0)?;
                     self.s.word("::{")?;
                 }
                 self.commasep(Inconsistent, &items[..], |this, &(ref tree, _)| {
@@ -3055,7 +3067,7 @@ impl<'a> State<'a> {
                       abi,
                       name,
                       &generics,
-                      &ast::Visibility::Inherited)?;
+                      &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
         self.end()
     }
 
@@ -3160,36 +3172,41 @@ mod tests {
     use ast;
     use codemap;
     use syntax_pos;
+    use with_globals;
 
     #[test]
     fn test_fun_to_string() {
-        let abba_ident = ast::Ident::from_str("abba");
+        with_globals(|| {
+            let abba_ident = ast::Ident::from_str("abba");
 
-        let decl = ast::FnDecl {
-            inputs: Vec::new(),
-            output: ast::FunctionRetTy::Default(syntax_pos::DUMMY_SP),
-            variadic: false
-        };
-        let generics = ast::Generics::default();
-        assert_eq!(fun_to_string(&decl, ast::Unsafety::Normal,
-                                 ast::Constness::NotConst,
-                                 abba_ident, &generics),
-                   "fn abba()");
+            let decl = ast::FnDecl {
+                inputs: Vec::new(),
+                output: ast::FunctionRetTy::Default(syntax_pos::DUMMY_SP),
+                variadic: false
+            };
+            let generics = ast::Generics::default();
+            assert_eq!(fun_to_string(&decl, ast::Unsafety::Normal,
+                                    ast::Constness::NotConst,
+                                    abba_ident, &generics),
+                    "fn abba()");
+        })
     }
 
     #[test]
     fn test_variant_to_string() {
-        let ident = ast::Ident::from_str("principal_skinner");
+        with_globals(|| {
+            let ident = ast::Ident::from_str("principal_skinner");
 
-        let var = codemap::respan(syntax_pos::DUMMY_SP, ast::Variant_ {
-            name: ident,
-            attrs: Vec::new(),
-            // making this up as I go.... ?
-            data: ast::VariantData::Unit(ast::DUMMY_NODE_ID),
-            disr_expr: None,
-        });
+            let var = codemap::respan(syntax_pos::DUMMY_SP, ast::Variant_ {
+                name: ident,
+                attrs: Vec::new(),
+                // making this up as I go.... ?
+                data: ast::VariantData::Unit(ast::DUMMY_NODE_ID),
+                disr_expr: None,
+            });
 
-        let varstr = variant_to_string(&var);
-        assert_eq!(varstr, "principal_skinner");
+            let varstr = variant_to_string(&var);
+            assert_eq!(varstr, "principal_skinner");
+        })
     }
 }

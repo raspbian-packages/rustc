@@ -75,6 +75,7 @@ CPUs
 cratesio
 CRLF
 cryptocurrencies
+cryptographic
 cryptographically
 CStr
 CString
@@ -213,6 +214,7 @@ iter
 iterator's
 JavaScript
 JoinHandle
+Kay's
 kinded
 lang
 latin
@@ -226,14 +228,17 @@ libreoffice
 libstd
 lifecycle
 LimitTracker
+LLVM
 lobally
 locators
+LockResult
 login
 lookup
 loopback
 lossy
 lval
 macOS
+Matsakis
 mathematic
 memoization
 metadata
@@ -269,6 +274,7 @@ namespace
 namespaced
 namespaces
 namespacing
+natively
 newfound
 NewJob
 NewsArticle
@@ -318,6 +324,7 @@ proc
 pthreads
 pushups
 QuitMessage
+quux
 RAII
 randcrate
 RangeFrom
@@ -410,7 +417,6 @@ substring
 subteams
 subtree
 subtyping
-Summarizable
 supertrait
 supertraits
 TcpListener
@@ -441,6 +447,7 @@ tuesday
 tuple
 tuples
 turbofish
+Turon
 typeof
 TypeName
 UFCS

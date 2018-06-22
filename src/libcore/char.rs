@@ -79,7 +79,7 @@ pub const MAX: char = '\u{10ffff}';
 
 /// Converts a `u32` to a `char`.
 ///
-/// Note that all [`char`]s are valid [`u32`]s, and can be casted to one with
+/// Note that all [`char`]s are valid [`u32`]s, and can be cast to one with
 /// [`as`]:
 ///
 /// ```
@@ -131,7 +131,7 @@ pub fn from_u32(i: u32) -> Option<char> {
 
 /// Converts a `u32` to a `char`, ignoring validity.
 ///
-/// Note that all [`char`]s are valid [`u32`]s, and can be casted to one with
+/// Note that all [`char`]s are valid [`u32`]s, and can be cast to one with
 /// [`as`]:
 ///
 /// ```
@@ -643,7 +643,7 @@ impl ExactSizeIterator for EscapeUnicode {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl FusedIterator for EscapeUnicode {}
 
 #[stable(feature = "char_struct_display", since = "1.16.0")]
@@ -756,7 +756,7 @@ impl ExactSizeIterator for EscapeDefault {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl FusedIterator for EscapeDefault {}
 
 #[stable(feature = "char_struct_display", since = "1.16.0")]
@@ -790,7 +790,7 @@ impl Iterator for EscapeDebug {
 #[stable(feature = "char_escape_debug", since = "1.20.0")]
 impl ExactSizeIterator for EscapeDebug { }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl FusedIterator for EscapeDebug {}
 
 #[stable(feature = "char_escape_debug", since = "1.20.0")]
@@ -902,7 +902,17 @@ impl<I: Iterator<Item = u8>> Iterator for DecodeUtf8<I> {
             }
         })
     }
+
+    #[inline]
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let (lower, upper) = self.0.size_hint();
+
+        // A code point is at most 4 bytes long.
+        let min_code_points = lower / 4;
+
+        (min_code_points, upper)
+    }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[unstable(feature = "decode_utf8", issue = "33906")]
 impl<I: FusedIterator<Item = u8>> FusedIterator for DecodeUtf8<I> {}

@@ -19,6 +19,7 @@
 #[macro_use] extern crate syntax;
 extern crate rustc_typeck;
 extern crate syntax_pos;
+extern crate rustc_data_structures;
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::def::Def;
@@ -30,14 +31,17 @@ use rustc::middle::privacy::{AccessLevel, AccessLevels};
 use rustc::ty::{self, TyCtxt, Ty, TypeFoldable};
 use rustc::ty::fold::TypeVisitor;
 use rustc::ty::maps::Providers;
+use rustc::ty::subst::UnpackedKind;
 use rustc::util::nodemap::NodeSet;
 use syntax::ast::{self, CRATE_NODE_ID, Ident};
 use syntax::symbol::keywords;
 use syntax_pos::Span;
+use syntax_pos::hygiene::SyntaxContext;
 
 use std::cmp;
 use std::mem::replace;
-use std::rc::Rc;
+use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::sync::Lrc;
 
 mod diagnostics;
 
@@ -491,9 +495,13 @@ struct NamePrivacyVisitor<'a, 'tcx: 'a> {
 }
 
 impl<'a, 'tcx> NamePrivacyVisitor<'a, 'tcx> {
-    // Checks that a field is accessible.
-    fn check_field(&mut self, span: Span, def: &'tcx ty::AdtDef, field: &'tcx ty::FieldDef) {
-        let ident = Ident { ctxt: span.ctxt().modern(), ..keywords::Invalid.ident() };
+    // Checks that a field in a struct constructor (expression or pattern) is accessible.
+    fn check_field(&mut self,
+                   use_ctxt: SyntaxContext, // Syntax context of the field name at the use site
+                   span: Span, // Span of the field pattern, e.g. `x: 0`
+                   def: &'tcx ty::AdtDef, // Definition of the struct or enum
+                   field: &'tcx ty::FieldDef) { // Definition of the field
+        let ident = Ident { ctxt: use_ctxt.modern(), ..keywords::Invalid.ident() };
         let def_id = self.tcx.adjust_ident(ident, def.did, self.current_item).1;
         if !def.is_enum() && !field.vis.is_accessible_from(def_id, self.tcx) {
             struct_span_err!(self.tcx.sess, span, E0451, "field `{}` of {} `{}` is private",
@@ -566,12 +574,17 @@ impl<'a, 'tcx> Visitor<'tcx> for NamePrivacyVisitor<'a, 'tcx> {
                     // unmentioned fields, just check them all.
                     for variant_field in &variant.fields {
                         let field = fields.iter().find(|f| f.name.node == variant_field.name);
-                        let span = if let Some(f) = field { f.span } else { base.span };
-                        self.check_field(span, adt, variant_field);
+                        let (use_ctxt, span) = match field {
+                            Some(field) => (field.name.node.to_ident().ctxt, field.span),
+                            None => (base.span.ctxt(), base.span),
+                        };
+                        self.check_field(use_ctxt, span, adt, variant_field);
                     }
                 } else {
                     for field in fields {
-                        self.check_field(field.span, adt, variant.field_named(field.name.node));
+                        let use_ctxt = field.name.node.to_ident().ctxt;
+                        let field_def = variant.field_named(field.name.node);
+                        self.check_field(use_ctxt, field.span, adt, field_def);
                     }
                 }
             }
@@ -588,7 +601,9 @@ impl<'a, 'tcx> Visitor<'tcx> for NamePrivacyVisitor<'a, 'tcx> {
                 let adt = self.tables.pat_ty(pat).ty_adt_def().unwrap();
                 let variant = adt.variant_of_def(def);
                 for field in fields {
-                    self.check_field(field.span, adt, variant.field_named(field.node.name));
+                    let use_ctxt = field.node.name.to_ident().ctxt;
+                    let field_def = variant.field_named(field.node.name);
+                    self.check_field(use_ctxt, field.span, adt, field_def);
                 }
             }
             _ => {}
@@ -611,6 +626,7 @@ struct TypePrivacyVisitor<'a, 'tcx: 'a> {
     in_body: bool,
     span: Span,
     empty_tables: &'a ty::TypeckTables<'tcx>,
+    visited_anon_tys: FxHashSet<DefId>
 }
 
 impl<'a, 'tcx> TypePrivacyVisitor<'a, 'tcx> {
@@ -781,7 +797,7 @@ impl<'a, 'tcx> Visitor<'tcx> for TypePrivacyVisitor<'a, 'tcx> {
     // Additionally, until better reachability analysis for macros 2.0 is available,
     // we prohibit access to private statics from other crates, this allows to give
     // more code internal visibility at link time. (Access to private functions
-    // is already prohibited by type privacy for funciton types.)
+    // is already prohibited by type privacy for function types.)
     fn visit_qpath(&mut self, qpath: &'tcx hir::QPath, id: ast::NodeId, span: Span) {
         let def = match *qpath {
             hir::QPath::Resolved(_, ref path) => match path.def {
@@ -930,8 +946,15 @@ impl<'a, 'tcx> TypeVisitor<'tcx> for TypePrivacyVisitor<'a, 'tcx> {
                             self.tcx.sess.span_err(self.span, &msg);
                             return true;
                         }
-                        // `Self` here is the same `TyAnon`, so skip it to avoid infinite recursion
-                        for subst in trait_ref.substs.iter().skip(1) {
+                        for subst in trait_ref.substs.iter() {
+                            // Skip repeated `TyAnon`s to avoid infinite recursion.
+                            if let UnpackedKind::Type(ty) = subst.unpack() {
+                                if let ty::TyAnon(def_id, ..) = ty.sty {
+                                    if !self.visited_anon_tys.insert(def_id) {
+                                        continue;
+                                    }
+                                }
+                            }
                             if subst.visit_with(self) {
                                 return true;
                             }
@@ -1634,13 +1657,13 @@ pub fn provide(providers: &mut Providers) {
     };
 }
 
-pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Rc<AccessLevels> {
+pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Lrc<AccessLevels> {
     tcx.privacy_access_levels(LOCAL_CRATE)
 }
 
 fn privacy_access_levels<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                    krate: CrateNum)
-                                   -> Rc<AccessLevels> {
+                                   -> Lrc<AccessLevels> {
     assert_eq!(krate, LOCAL_CRATE);
 
     let krate = tcx.hir.krate();
@@ -1664,6 +1687,7 @@ fn privacy_access_levels<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         in_body: false,
         span: krate.span,
         empty_tables: &empty_tables,
+        visited_anon_tys: FxHashSet()
     };
     intravisit::walk_crate(&mut visitor, krate);
 
@@ -1714,8 +1738,7 @@ fn privacy_access_levels<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         krate.visit_all_item_likes(&mut DeepVisitor::new(&mut visitor));
     }
 
-    Rc::new(visitor.access_levels)
+    Lrc::new(visitor.access_levels)
 }
 
-#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_privacy, DIAGNOSTICS }

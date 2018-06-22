@@ -1,8 +1,7 @@
 # Patches for upstream
 
 # pending, or forwarded
-u-powerpcspe-support.patch
-u-gperf-3.1.patch
+u-0001-Ensure-libraries-built-in-stage0-have-unique-metadat.patch
 u-reproducible-build.patch
 u-ignoretest-armhf_01.patch
 u-ignoretest-armhf_02.patch
@@ -10,10 +9,15 @@ u-ignoretest-armhf_03.patch
 u-ignoretest-armhf_05.patch
 u-ignoretest-armhf_06.patch
 u-ignoretest-arm64.patch
+u-ignoretest-arm64_02.patch
 u-ignoretest-ppc64el.patch
 u-ignoretest-ppc64el_02.patch
+u-ignoretest-ppc64el_03.patch
+u-tag-private-modules-with-doc-cfg.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
+u-fix-rustdoc-theme-test-without-rpath.patch
+u-fix-fp-target-warning.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
@@ -35,4 +39,3 @@ d-no-web-dependencies-in-doc.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
-remove--march=native-from-srcbinaryencma.patch

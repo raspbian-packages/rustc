@@ -9,14 +9,16 @@
 // except according to those terms.
 
 use super::*;
-
 use dep_graph::{DepGraph, DepKind, DepNodeIndex};
+use hir::def_id::{LOCAL_CRATE, CrateNum};
 use hir::intravisit::{Visitor, NestedVisitorMap};
 use hir::svh::Svh;
+use ich::Fingerprint;
 use middle::cstore::CrateStore;
 use session::CrateDisambiguator;
 use std::iter::repeat;
 use syntax::ast::{NodeId, CRATE_NODE_ID};
+use syntax::codemap::CodeMap;
 use syntax_pos::Span;
 
 use ich::StableHashingContext;
@@ -120,20 +122,24 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
         collector
     }
 
-    pub(super) fn finalize_and_compute_crate_hash(self,
+    pub(super) fn finalize_and_compute_crate_hash(mut self,
                                                   crate_disambiguator: CrateDisambiguator,
-                                                  cstore: &CrateStore,
+                                                  cstore: &dyn CrateStore,
+                                                  codemap: &CodeMap,
                                                   commandline_args_hash: u64)
                                                   -> (Vec<MapEntry<'hir>>, Svh) {
-        let mut node_hashes: Vec<_> = self
+        self
+            .hir_body_nodes
+            .sort_unstable_by(|&(ref d1, _), &(ref d2, _)| d1.cmp(d2));
+
+        let node_hashes = self
             .hir_body_nodes
             .iter()
-            .map(|&(def_path_hash, dep_node_index)| {
-                (def_path_hash, self.dep_graph.fingerprint_of(dep_node_index))
-            })
-            .collect();
-
-        node_hashes.sort_unstable_by(|&(ref d1, _), &(ref d2, _)| d1.cmp(d2));
+            .fold(Fingerprint::ZERO, |fingerprint , &(def_path_hash, dep_node_index)| {
+                fingerprint.combine(
+                    def_path_hash.0.combine(self.dep_graph.fingerprint_of(dep_node_index))
+                )
+            });
 
         let mut upstream_crates: Vec<_> = cstore.crates_untracked().iter().map(|&cnum| {
             let name = cstore.crate_name_untracked(cnum).as_str();
@@ -147,11 +153,25 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
             (name1, dis1).cmp(&(name2, dis2))
         });
 
+        // We hash the final, remapped names of all local source files so we
+        // don't have to include the path prefix remapping commandline args.
+        // If we included the full mapping in the SVH, we could only have
+        // reproducible builds by compiling from the same directory. So we just
+        // hash the result of the mapping instead of the mapping itself.
+        let mut source_file_names: Vec<_> = codemap
+            .files()
+            .iter()
+            .filter(|filemap| CrateNum::from_u32(filemap.crate_of_origin) == LOCAL_CRATE)
+            .map(|filemap| filemap.name_hash)
+            .collect();
+
+        source_file_names.sort_unstable();
+
         let (_, crate_dep_node_index) = self
             .dep_graph
             .with_task(DepNode::new_no_params(DepKind::Krate),
                        &self.hcx,
-                       ((node_hashes, upstream_crates),
+                       (((node_hashes, upstream_crates), source_file_names),
                         (commandline_args_hash,
                          crate_disambiguator.to_fingerprint())),
                        identity_fn);
@@ -513,7 +533,7 @@ struct HirItemLike<T> {
     hash_bodies: bool,
 }
 
-impl<'hir, T> HashStable<StableHashingContext<'hir>> for HirItemLike<T>
+impl<'a, 'hir, T> HashStable<StableHashingContext<'hir>> for HirItemLike<T>
     where T: HashStable<StableHashingContext<'hir>>
 {
     fn hash_stable<W: StableHasherResult>(&self,

@@ -39,9 +39,9 @@ use std::borrow::Cow;
 ///     assert_eq!(v.len(), 42);
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub NEEDLESS_PASS_BY_VALUE,
-    Warn,
+    style,
     "functions taking arguments by value, but not consuming them in its body"
 }
 
@@ -203,9 +203,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NeedlessPassByValue {
 
                     // Dereference suggestion
                     let sugg = |db: &mut DiagnosticBuilder| {
-                        if let ty::TypeVariants::TyAdt(ref def, ..) = ty.sty {
+                        if let ty::TypeVariants::TyAdt(def, ..) = ty.sty {
                             if let Some(span) = cx.tcx.hir.span_if_local(def.did) {
-                                let param_env = ty::ParamEnv::empty(traits::Reveal::UserFacing);
+                                let param_env = ty::ParamEnv::empty();
                                 if param_env.can_type_implement_copy(cx.tcx, ty, span).is_ok() {
                                     db.span_help(span, "consider marking this type as Copy");
                                 }
@@ -307,7 +307,7 @@ struct MovedVariablesCtxt<'a, 'tcx: 'a> {
 impl<'a, 'tcx> MovedVariablesCtxt<'a, 'tcx> {
     fn new(cx: &'a LateContext<'a, 'tcx>) -> Self {
         Self {
-            cx: cx,
+            cx,
             moved_vars: HashSet::new(),
             spans_need_deref: HashMap::new(),
         }

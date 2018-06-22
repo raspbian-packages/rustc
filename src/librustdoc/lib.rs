@@ -19,18 +19,16 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(fs_read_write)]
-#![feature(libc)]
 #![feature(set_stdio)]
-#![feature(slice_patterns)]
+#![cfg_attr(stage0, feature(slice_patterns))]
 #![feature(test)]
 #![feature(unicode)]
 #![feature(vec_remove_item)]
+#![feature(entry_and_modify)]
 
 extern crate arena;
 extern crate getopts;
 extern crate env_logger;
-extern crate html_diff;
-extern crate libc;
 extern crate rustc;
 extern crate rustc_data_structures;
 extern crate rustc_const_math;
@@ -63,10 +61,11 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc::channel;
 
+use syntax::edition::Edition;
 use externalfiles::ExternalHtml;
 use rustc::session::search_paths::SearchPaths;
-use rustc::session::config::{ErrorOutputType, RustcOptGroup, nightly_options,
-                             Externs};
+use rustc::session::config::{ErrorOutputType, RustcOptGroup, nightly_options, Externs};
+use rustc_back::target::TargetTriple;
 
 #[macro_use]
 pub mod externalfiles;
@@ -95,8 +94,6 @@ pub mod theme;
 
 use clean::AttributesExt;
 
-use html::markdown::RenderType;
-
 struct Output {
     krate: clean::Crate,
     renderinfo: html::render::RenderInfo,
@@ -105,9 +102,11 @@ struct Output {
 
 pub fn main() {
     const STACK_SIZE: usize = 32_000_000; // 32MB
-    env_logger::init().unwrap();
+    env_logger::init();
     let res = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
-        get_args().map(|args| main_args(&args)).unwrap_or(1)
+        syntax::with_globals(move || {
+            get_args().map(|args| main_args(&args)).unwrap_or(1)
+        })
     }).unwrap().join().unwrap_or(101);
     process::exit(res as i32);
 }
@@ -243,9 +242,6 @@ pub fn opts() -> Vec<RustcOptGroup> {
                       or `#![doc(html_playground_url=...)]`",
                      "URL")
         }),
-        unstable("disable-commonmark", |o| {
-            o.optflag("", "disable-commonmark", "to disable commonmark doc rendering/testing")
-        }),
         unstable("display-warnings", |o| {
             o.optflag("", "display-warnings", "to print code warnings when testing doc")
         }),
@@ -259,10 +255,6 @@ pub fn opts() -> Vec<RustcOptGroup> {
             o.optflag("", "sort-modules-by-appearance", "sort modules by where they appear in the \
                                                          program, rather than alphabetically")
         }),
-        unstable("deny-render-differences", |o| {
-            o.optflag("", "deny-render-differences", "abort doc runs when markdown rendering \
-                                                      differences are found")
-        }),
         unstable("themes", |o| {
             o.optmulti("", "themes",
                        "additional themes which will be added to the generated docs",
@@ -272,6 +264,18 @@ pub fn opts() -> Vec<RustcOptGroup> {
             o.optmulti("", "theme-checker",
                        "check if given theme is valid",
                        "FILES")
+        }),
+        unstable("resource-suffix", |o| {
+            o.optopt("",
+                     "resource-suffix",
+                     "suffix to add to CSS and JavaScript files, e.g. \"light.css\" will become \
+                      \"light-suffix.css\"",
+                     "PATH")
+        }),
+        unstable("edition", |o| {
+            o.optopt("", "edition",
+                     "edition to use when compiling rust code (default: 2015)",
+                     "EDITION")
         }),
     ]
 }
@@ -324,7 +328,7 @@ pub fn main_args(args: &[String]) -> isize {
 
     let to_check = matches.opt_strs("theme-checker");
     if !to_check.is_empty() {
-        let paths = theme::load_css_paths(include_bytes!("html/static/themes/main.css"));
+        let paths = theme::load_css_paths(include_bytes!("html/static/themes/light.css"));
         let mut errors = 0;
 
         println!("rustdoc: [theme-checker] Starting tests!");
@@ -383,12 +387,6 @@ pub fn main_args(args: &[String]) -> isize {
     let css_file_extension = matches.opt_str("e").map(|s| PathBuf::from(&s));
     let cfgs = matches.opt_strs("cfg");
 
-    let render_type = if matches.opt_present("disable-commonmark") {
-        RenderType::Hoedown
-    } else {
-        RenderType::Pulldown
-    };
-
     if let Some(ref p) = css_file_extension {
         if !p.is_file() {
             writeln!(
@@ -401,7 +399,7 @@ pub fn main_args(args: &[String]) -> isize {
 
     let mut themes = Vec::new();
     if matches.opt_present("themes") {
-        let paths = theme::load_css_paths(include_bytes!("html/static/themes/main.css"));
+        let paths = theme::load_css_paths(include_bytes!("html/static/themes/light.css"));
 
         for (theme_file, theme_s) in matches.opt_strs("themes")
                                             .iter()
@@ -425,8 +423,7 @@ pub fn main_args(args: &[String]) -> isize {
             &matches.opt_strs("html-before-content"),
             &matches.opt_strs("html-after-content"),
             &matches.opt_strs("markdown-before-content"),
-            &matches.opt_strs("markdown-after-content"),
-            render_type) {
+            &matches.opt_strs("markdown-after-content")) {
         Some(eh) => eh,
         None => return 3,
     };
@@ -436,39 +433,46 @@ pub fn main_args(args: &[String]) -> isize {
     let display_warnings = matches.opt_present("display-warnings");
     let linker = matches.opt_str("linker").map(PathBuf::from);
     let sort_modules_alphabetically = !matches.opt_present("sort-modules-by-appearance");
+    let resource_suffix = matches.opt_str("resource-suffix");
+
+    let edition = matches.opt_str("edition").unwrap_or("2015".to_string());
+    let edition = match edition.parse() {
+        Ok(e) => e,
+        Err(_) => {
+            print_error("could not parse edition");
+            return 1;
+        }
+    };
 
     match (should_test, markdown_input) {
         (true, true) => {
             return markdown::test(input, cfgs, libs, externs, test_args, maybe_sysroot,
-                                  render_type, display_warnings, linker)
+                                  display_warnings, linker, edition)
         }
         (true, false) => {
             return test::run(Path::new(input), cfgs, libs, externs, test_args, crate_name,
-                             maybe_sysroot, render_type, display_warnings, linker)
+                             maybe_sysroot, display_warnings, linker, edition)
         }
         (false, true) => return markdown::render(Path::new(input),
                                                  output.unwrap_or(PathBuf::from("doc")),
                                                  &matches, &external_html,
-                                                 !matches.opt_present("markdown-no-toc"),
-                                                 render_type),
+                                                 !matches.opt_present("markdown-no-toc")),
         (false, false) => {}
     }
 
     let output_format = matches.opt_str("w");
-    let deny_render_differences = matches.opt_present("deny-render-differences");
-    let res = acquire_input(PathBuf::from(input), externs, &matches, move |out| {
+    let res = acquire_input(PathBuf::from(input), externs, edition, &matches, move |out| {
         let Output { krate, passes, renderinfo } = out;
         info!("going to format");
         match output_format.as_ref().map(|s| &**s) {
             Some("html") | None => {
                 html::render::run(krate, &external_html, playground_url,
                                   output.unwrap_or(PathBuf::from("doc")),
+                                  resource_suffix.unwrap_or(String::new()),
                                   passes.into_iter().collect(),
                                   css_file_extension,
                                   renderinfo,
-                                  render_type,
                                   sort_modules_alphabetically,
-                                  deny_render_differences,
                                   themes)
                     .expect("failed to generate documentation");
                 0
@@ -498,14 +502,15 @@ fn print_error<T>(error_message: T) where T: Display {
 /// and files and then generates the necessary rustdoc output for formatting.
 fn acquire_input<R, F>(input: PathBuf,
                        externs: Externs,
+                       edition: Edition,
                        matches: &getopts::Matches,
                        f: F)
                        -> Result<R, String>
 where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
     match matches.opt_str("r").as_ref().map(|s| &**s) {
-        Some("rust") => Ok(rust_input(input, externs, matches, f)),
+        Some("rust") => Ok(rust_input(input, externs, edition, matches, f)),
         Some(s) => Err(format!("unknown input format: {}", s)),
-        None => Ok(rust_input(input, externs, matches, f))
+        None => Ok(rust_input(input, externs, edition, matches, f))
     }
 }
 
@@ -531,8 +536,14 @@ fn parse_externs(matches: &getopts::Matches) -> Result<Externs, String> {
 /// generated from the cleaned AST of the crate.
 ///
 /// This form of input will run all of the plug/cleaning passes
-fn rust_input<R, F>(cratefile: PathBuf, externs: Externs, matches: &getopts::Matches, f: F) -> R
-where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
+fn rust_input<R, F>(cratefile: PathBuf,
+                    externs: Externs,
+                    edition: Edition,
+                    matches: &getopts::Matches,
+                    f: F) -> R
+where R: 'static + Send,
+      F: 'static + Send + FnOnce(Output) -> R
+{
     let mut default_passes = !matches.opt_present("no-defaults");
     let mut passes = matches.opt_strs("passes");
     let mut plugins = matches.opt_strs("plugins");
@@ -554,16 +565,17 @@ where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
         paths.add_path(s, ErrorOutputType::default());
     }
     let cfgs = matches.opt_strs("cfg");
-    let triple = matches.opt_str("target");
+    let triple = matches.opt_str("target").map(|target| {
+        if target.ends_with(".json") {
+            TargetTriple::TargetPath(PathBuf::from(target))
+        } else {
+            TargetTriple::TargetTriple(target)
+        }
+    });
     let maybe_sysroot = matches.opt_str("sysroot").map(PathBuf::from);
     let crate_name = matches.opt_str("crate-name");
     let crate_version = matches.opt_str("crate-version");
     let plugin_path = matches.opt_str("plugin-path");
-    let render_type = if matches.opt_present("disable-commonmark") {
-        RenderType::Hoedown
-    } else {
-        RenderType::Pulldown
-    };
 
     info!("starting to run rustc");
     let display_warnings = matches.opt_present("display-warnings");
@@ -573,12 +585,14 @@ where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
     });
 
     let (tx, rx) = channel();
-    rustc_driver::monitor(move || {
+
+    rustc_driver::monitor(move || syntax::with_globals(move || {
         use rustc::session::config::Input;
 
         let (mut krate, renderinfo) =
             core::run_core(paths, cfgs, externs, Input::File(cratefile), triple, maybe_sysroot,
-                           display_warnings, force_unstable_if_unmarked, render_type);
+                           display_warnings, crate_name.clone(),
+                           force_unstable_if_unmarked, edition);
 
         info!("finished with rustc");
 
@@ -641,7 +655,7 @@ where R: 'static + Send, F: 'static + Send + FnOnce(Output) -> R {
         let krate = pm.run_plugins(krate);
 
         tx.send(f(Output { krate: krate, renderinfo: renderinfo, passes: passes })).unwrap();
-    });
+    }));
     rx.recv().unwrap()
 }
 

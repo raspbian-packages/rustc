@@ -28,27 +28,28 @@ use astconv::{AstConv, Bounds};
 use lint;
 use constrained_type_params as ctp;
 use middle::lang_items::SizedTraitLangItem;
-use middle::const_val::ConstVal;
 use middle::resolve_lifetime as rl;
-use rustc::traits::Reveal;
+use rustc::mir::mono::Linkage;
 use rustc::ty::subst::Substs;
 use rustc::ty::{ToPredicate, ReprOptions};
 use rustc::ty::{self, AdtKind, ToPolyTraitRef, Ty, TyCtxt};
 use rustc::ty::maps::Providers;
 use rustc::ty::util::IntTypeExt;
-use util::nodemap::FxHashMap;
-
-use rustc_const_math::ConstInt;
+use rustc::ty::util::Discr;
+use rustc::util::captures::Captures;
+use rustc::util::nodemap::{FxHashSet, FxHashMap};
 
 use syntax::{abi, ast};
+use syntax::ast::MetaItemKind;
+use syntax::attr::{InlineAttr, list_contains_name, mark_used};
 use syntax::codemap::Spanned;
 use syntax::symbol::{Symbol, keywords};
 use syntax_pos::{Span, DUMMY_SP};
 
-use rustc::hir::{self, map as hir_map};
+use rustc::hir::{self, map as hir_map, TransFnAttrs, TransFnAttrFlags, Unsafety};
 use rustc::hir::intravisit::{self, Visitor, NestedVisitorMap};
 use rustc::hir::def::{Def, CtorKind};
-use rustc::hir::def_id::DefId;
+use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 
 ///////////////////////////////////////////////////////////////////////////
 // Main entry point
@@ -71,6 +72,7 @@ pub fn provide(providers: &mut Providers) {
         impl_trait_ref,
         impl_polarity,
         is_foreign_item,
+        trans_fn_attrs,
         ..*providers
     };
 }
@@ -239,7 +241,7 @@ fn type_param_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let param_owner_def_id = tcx.hir.local_def_id(param_owner);
     let generics = tcx.generics_of(param_owner_def_id);
     let index = generics.type_param_to_index[&def_id];
-    let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id));
+    let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id).as_str());
 
     // Don't look for bounds where the type parameter isn't in scope.
     let parent = if item_def_id == param_owner_def_id {
@@ -355,39 +357,6 @@ fn is_param<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn ensure_no_param_bounds(tcx: TyCtxt,
-                          span: Span,
-                          generics: &hir::Generics,
-                          thing: &'static str) {
-    let mut warn = false;
-
-    for ty_param in generics.ty_params() {
-        if !ty_param.bounds.is_empty() {
-            warn = true;
-        }
-    }
-
-    for lft_param in generics.lifetimes() {
-        if !lft_param.bounds.is_empty() {
-            warn = true;
-        }
-    }
-
-    if !generics.where_clause.predicates.is_empty() {
-        warn = true;
-    }
-
-    if warn {
-        // According to accepted RFC #XXX, we should
-        // eventually accept these, but it will not be
-        // part of this PR. Still, convert to warning to
-        // make bootstrapping easier.
-        span_warn!(tcx.sess, span, E0122,
-                   "generic bounds are ignored in {}",
-                   thing);
-    }
-}
-
 fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
     let it = tcx.hir.expect_item(item_id);
     debug!("convert: item {} with id {}", it.name, it.id);
@@ -448,13 +417,7 @@ fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
                 convert_variant_ctor(tcx, struct_def.id());
             }
         },
-        hir::ItemTy(_, ref generics) => {
-            ensure_no_param_bounds(tcx, it.span, generics, "type aliases");
-            tcx.generics_of(def_id);
-            tcx.type_of(def_id);
-            tcx.predicates_of(def_id);
-        }
-        hir::ItemStatic(..) | hir::ItemConst(..) | hir::ItemFn(..) => {
+        hir::ItemTy(..) | hir::ItemStatic(..) | hir::ItemConst(..) | hir::ItemFn(..) => {
             tcx.generics_of(def_id);
             tcx.type_of(def_id);
             tcx.predicates_of(def_id);
@@ -507,30 +470,17 @@ fn convert_variant_ctor<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 fn convert_enum_variant_types<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         def_id: DefId,
                                         variants: &[hir::Variant]) {
-    let param_env = ty::ParamEnv::empty(Reveal::UserFacing);
     let def = tcx.adt_def(def_id);
     let repr_type = def.repr.discr_type();
     let initial = repr_type.initial_discriminant(tcx);
-    let mut prev_discr = None::<ConstInt>;
+    let mut prev_discr = None::<Discr<'tcx>>;
 
     // fill the discriminant values and field types
     for variant in variants {
-        let wrapped_discr = prev_discr.map_or(initial, |d| d.wrap_incr());
+        let wrapped_discr = prev_discr.map_or(initial, |d| d.wrap_incr(tcx));
         prev_discr = Some(if let Some(e) = variant.node.disr_expr {
             let expr_did = tcx.hir.local_def_id(e.node_id);
-            let substs = Substs::identity_for_item(tcx, expr_did);
-            let result = tcx.at(variant.span).const_eval(param_env.and((expr_did, substs)));
-
-            // enum variant evaluation happens before the global constant check
-            // so we need to report the real error
-            if let Err(ref err) = result {
-                err.report(tcx, variant.span, "enum discriminant");
-            }
-
-            match result {
-                Ok(&ty::Const { val: ConstVal::Integral(x), .. }) => Some(x),
-                _ => None
-            }
+            def.eval_explicit_discr(tcx, expr_did)
         } else if let Some(discr) = repr_type.disr_incr(tcx, prev_discr) {
             Some(discr)
         } else {
@@ -711,7 +661,7 @@ fn trait_def<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     };
 
     let paren_sugar = tcx.has_attr(def_id, "rustc_paren_sugar");
-    if paren_sugar && !tcx.sess.features.borrow().unboxed_closures {
+    if paren_sugar && !tcx.features().unboxed_closures {
         let mut err = tcx.sess.struct_span_err(
             item.span,
             "the `#[rustc_paren_sugar]` attribute is a temporary means of controlling \
@@ -889,7 +839,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
                     opt_self = Some(ty::TypeParameterDef {
                         index: 0,
-                        name: keywords::SelfType.name(),
+                        name: keywords::SelfType.name().as_str(),
                         def_id: tcx.hir.local_def_id(param_id),
                         has_default: false,
                         object_lifetime_default: rl::Set1::Empty,
@@ -953,7 +903,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
 
         if !allow_defaults && p.default.is_some() {
-            if !tcx.sess.features.borrow().default_type_parameter_fallback {
+            if !tcx.features().default_type_parameter_fallback {
                 tcx.lint_node(
                     lint::builtin::INVALID_TYPE_PARAM_DEFAULT,
                     p.id,
@@ -965,7 +915,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         ty::TypeParameterDef {
             index: type_start + i as u32,
-            name: p.name,
+            name: p.name.as_str(),
             def_id: tcx.hir.local_def_id(p.id),
             has_default: p.default.is_some(),
             object_lifetime_default:
@@ -984,7 +934,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // add a dummy parameter for the closure kind
         types.push(ty::TypeParameterDef {
             index: type_start,
-            name: Symbol::intern("<closure_kind>"),
+            name: Symbol::intern("<closure_kind>").as_str(),
             def_id,
             has_default: false,
             object_lifetime_default: rl::Set1::Empty,
@@ -995,7 +945,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // add a dummy parameter for the closure signature
         types.push(ty::TypeParameterDef {
             index: type_start + 1,
-            name: Symbol::intern("<closure_signature>"),
+            name: Symbol::intern("<closure_signature>").as_str(),
             def_id,
             has_default: false,
             object_lifetime_default: rl::Set1::Empty,
@@ -1006,7 +956,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         tcx.with_freevars(node_id, |fv| {
             types.extend(fv.iter().zip(2..).map(|(_, i)| ty::TypeParameterDef {
                 index: type_start + i,
-                name: Symbol::intern("<upvar>"),
+                name: Symbol::intern("<upvar>").as_str(),
                 def_id,
                 has_default: false,
                 object_lifetime_default: rl::Set1::Empty,
@@ -1332,7 +1282,7 @@ fn is_unsized<'gcx: 'tcx, 'tcx>(astconv: &AstConv<'gcx, 'tcx>,
 fn early_bound_lifetimes_from_generics<'a, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     ast_generics: &'a hir::Generics)
-    -> impl Iterator<Item=&'a hir::LifetimeDef>
+    -> impl Iterator<Item=&'a hir::LifetimeDef> + Captures<'tcx>
 {
     ast_generics
         .lifetimes()
@@ -1364,6 +1314,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let node = tcx.hir.get(node_id);
 
     let mut is_trait = None;
+    let mut is_default_impl_trait = None;
 
     let icx = ItemCtxt::new(tcx, def_id);
     let no_generics = hir::Generics::empty();
@@ -1373,8 +1324,13 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         NodeItem(item) => {
             match item.node {
+                ItemImpl(_, _, defaultness, ref generics, ..) => {
+                    if defaultness.is_default() {
+                        is_default_impl_trait = tcx.impl_trait_ref(def_id);
+                    }
+                    generics
+                }
                 ItemFn(.., ref generics, _) |
-                ItemImpl(_, _, _, ref generics, ..) |
                 ItemTy(_, ref generics) |
                 ItemEnum(_, ref generics) |
                 ItemStruct(_, ref generics) |
@@ -1446,6 +1402,18 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         predicates.push(trait_ref.to_poly_trait_ref().to_predicate());
     }
 
+    // In default impls, we can assume that the self type implements
+    // the trait. So in:
+    //
+    //     default impl Foo for Bar { .. }
+    //
+    // we add a default where clause `Foo: Bar`. We do a similar thing for traits
+    // (see below). Recall that a default impl is not itself an impl, but rather a
+    // set of defaults that can be incorporated into another impl.
+    if let Some(trait_ref) = is_default_impl_trait {
+        predicates.push(trait_ref.to_poly_trait_ref().to_predicate());
+    }
+
     // Collect the region predicates that were declared inline as
     // well. In the case of parameters declared on a fn or method, we
     // have to be careful to only iterate over early-bound regions.
@@ -1468,7 +1436,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // Collect the predicates that were written inline by the user on each
     // type parameter (e.g., `<T:Foo>`).
     for param in ast_generics.ty_params() {
-        let param_ty = ty::ParamTy::new(index, param.name).to_ty(tcx);
+        let param_ty = ty::ParamTy::new(index, param.name.as_str()).to_ty(tcx);
         index += 1;
 
         let bounds = compute_bounds(&icx,
@@ -1674,7 +1642,7 @@ fn compute_sig_of_foreign_fn_decl<'a, 'tcx>(
     // feature gate SIMD types in FFI, since I (huonw) am not sure the
     // ABIs are handled at all correctly.
     if abi != abi::Abi::RustIntrinsic && abi != abi::Abi::PlatformIntrinsic
-            && !tcx.sess.features.borrow().simd_ffi {
+            && !tcx.features().simd_ffi {
         let check = |ast_ty: &hir::Ty, ty: Ty| {
             if ty.is_simd() {
                 tcx.sess.struct_span_err(ast_ty.span,
@@ -1704,4 +1672,205 @@ fn is_foreign_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         Some(_) => false,
         _ => bug!("is_foreign_item applied to non-local def-id {:?}", def_id)
     }
+}
+
+fn from_target_feature(
+    tcx: TyCtxt,
+    attr: &ast::Attribute,
+    whitelist: &FxHashSet<String>,
+    target_features: &mut Vec<Symbol>,
+) {
+    let list = match attr.meta_item_list() {
+        Some(list) => list,
+        None => {
+            let msg = "#[target_feature] attribute must be of the form \
+                       #[target_feature(..)]";
+            tcx.sess.span_err(attr.span, &msg);
+            return
+        }
+    };
+
+    for item in list {
+        if !item.check_name("enable") {
+            let msg = "#[target_feature(..)] only accepts sub-keys of `enable` \
+                       currently";
+            tcx.sess.span_err(item.span, &msg);
+            continue
+        }
+        let value = match item.value_str() {
+            Some(list) => list,
+            None => {
+                let msg = "#[target_feature] attribute must be of the form \
+                           #[target_feature(enable = \"..\")]";
+                tcx.sess.span_err(item.span, &msg);
+                continue
+            }
+        };
+        let value = value.as_str();
+        for feature in value.split(',') {
+            if whitelist.contains(feature) {
+                target_features.push(Symbol::intern(feature));
+                continue
+            }
+
+            let msg = format!("the feature named `{}` is not valid for \
+                               this target", feature);
+            let mut err = tcx.sess.struct_span_err(item.span, &msg);
+
+            if feature.starts_with("+") {
+                let valid = whitelist.contains(&feature[1..]);
+                if valid {
+                    err.help("consider removing the leading `+` in the feature name");
+                }
+            }
+            err.emit();
+        }
+    }
+}
+
+fn linkage_by_name<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId, name: &str) -> Linkage {
+    use rustc::mir::mono::Linkage::*;
+
+    // Use the names from src/llvm/docs/LangRef.rst here. Most types are only
+    // applicable to variable declarations and may not really make sense for
+    // Rust code in the first place but whitelist them anyway and trust that
+    // the user knows what s/he's doing. Who knows, unanticipated use cases
+    // may pop up in the future.
+    //
+    // ghost, dllimport, dllexport and linkonce_odr_autohide are not supported
+    // and don't have to be, LLVM treats them as no-ops.
+    match name {
+        "appending" => Appending,
+        "available_externally" => AvailableExternally,
+        "common" => Common,
+        "extern_weak" => ExternalWeak,
+        "external" => External,
+        "internal" => Internal,
+        "linkonce" => LinkOnceAny,
+        "linkonce_odr" => LinkOnceODR,
+        "private" => Private,
+        "weak" => WeakAny,
+        "weak_odr" => WeakODR,
+        _ => {
+            let span = tcx.hir.span_if_local(def_id);
+            if let Some(span) = span {
+                tcx.sess.span_fatal(span, "invalid linkage specified")
+            } else {
+                tcx.sess.fatal(&format!("invalid linkage specified: {}", name))
+            }
+        }
+    }
+}
+
+fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAttrs {
+    let attrs = tcx.get_attrs(id);
+
+    let mut trans_fn_attrs = TransFnAttrs::new();
+
+    let whitelist = tcx.target_features_whitelist(LOCAL_CRATE);
+
+    let mut inline_span = None;
+    for attr in attrs.iter() {
+        if attr.check_name("cold") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::COLD;
+        } else if attr.check_name("allocator") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::ALLOCATOR;
+        } else if attr.check_name("unwind") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::UNWIND;
+        } else if attr.check_name("rustc_allocator_nounwind") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::RUSTC_ALLOCATOR_NOUNWIND;
+        } else if attr.check_name("naked") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::NAKED;
+        } else if attr.check_name("no_mangle") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::NO_MANGLE;
+        } else if attr.check_name("rustc_std_internal_symbol") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::RUSTC_STD_INTERNAL_SYMBOL;
+        } else if attr.check_name("no_debug") {
+            trans_fn_attrs.flags |= TransFnAttrFlags::NO_DEBUG;
+        } else if attr.check_name("inline") {
+            trans_fn_attrs.inline = attrs.iter().fold(InlineAttr::None, |ia, attr| {
+                if attr.path != "inline" {
+                    return ia;
+                }
+                let meta = match attr.meta() {
+                    Some(meta) => meta.node,
+                    None => return ia,
+                };
+                match meta {
+                    MetaItemKind::Word => {
+                        mark_used(attr);
+                        InlineAttr::Hint
+                    }
+                    MetaItemKind::List(ref items) => {
+                        mark_used(attr);
+                        inline_span = Some(attr.span);
+                        if items.len() != 1 {
+                            span_err!(tcx.sess.diagnostic(), attr.span, E0534,
+                                        "expected one argument");
+                            InlineAttr::None
+                        } else if list_contains_name(&items[..], "always") {
+                            InlineAttr::Always
+                        } else if list_contains_name(&items[..], "never") {
+                            InlineAttr::Never
+                        } else {
+                            span_err!(tcx.sess.diagnostic(), items[0].span, E0535,
+                                        "invalid argument");
+
+                            InlineAttr::None
+                        }
+                    }
+                    _ => ia,
+                }
+            });
+        } else if attr.check_name("export_name") {
+            if let s @ Some(_) = attr.value_str() {
+                trans_fn_attrs.export_name = s;
+            } else {
+                struct_span_err!(tcx.sess, attr.span, E0558,
+                                    "export_name attribute has invalid format")
+                    .span_label(attr.span, "did you mean #[export_name=\"*\"]?")
+                    .emit();
+            }
+        } else if attr.check_name("target_feature") {
+            // handle deprecated #[target_feature = "..."]
+            if let Some(val) = attr.value_str() {
+                for feat in val.as_str().split(",").map(|f| f.trim()) {
+                    if !feat.is_empty() && !feat.contains('\0') {
+                        trans_fn_attrs.target_features.push(Symbol::intern(feat));
+                    }
+                }
+                let msg = "#[target_feature = \"..\"] is deprecated and will \
+                           eventually be removed, use \
+                           #[target_feature(enable = \"..\")] instead";
+                tcx.sess.span_warn(attr.span, &msg);
+                continue
+            }
+
+            if tcx.fn_sig(id).unsafety() == Unsafety::Normal {
+                let msg = "#[target_feature(..)] can only be applied to \
+                           `unsafe` function";
+                tcx.sess.span_err(attr.span, msg);
+            }
+            from_target_feature(tcx, attr, &whitelist, &mut trans_fn_attrs.target_features);
+        } else if attr.check_name("linkage") {
+            if let Some(val) = attr.value_str() {
+                trans_fn_attrs.linkage = Some(linkage_by_name(tcx, id, &val.as_str()));
+            }
+        }
+    }
+
+    // If a function uses #[target_feature] it can't be inlined into general
+    // purpose functions as they wouldn't have the right target features
+    // enabled. For that reason we also forbid #[inline(always)] as it can't be
+    // respected.
+    if trans_fn_attrs.target_features.len() > 0 {
+        if trans_fn_attrs.inline == InlineAttr::Always {
+            if let Some(span) = inline_span {
+                tcx.sess.span_err(span, "cannot use #[inline(always)] with \
+                                         #[target_feature]");
+            }
+        }
+    }
+
+    trans_fn_attrs
 }

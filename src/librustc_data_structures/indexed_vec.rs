@@ -8,12 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::collections::range::RangeArgument;
 use std::fmt::Debug;
 use std::iter::{self, FromIterator};
 use std::slice;
 use std::marker::PhantomData;
-use std::ops::{Index, IndexMut, Range};
+use std::ops::{Index, IndexMut, Range, RangeBounds};
 use std::fmt;
 use std::vec;
 use std::u32;
@@ -29,12 +28,16 @@ pub trait Idx: Copy + 'static + Eq + Debug {
 }
 
 impl Idx for usize {
+    #[inline]
     fn new(idx: usize) -> Self { idx }
+    #[inline]
     fn index(self) -> usize { self }
 }
 
 impl Idx for u32 {
+    #[inline]
     fn new(idx: usize) -> Self { assert!(idx <= u32::MAX as usize); idx as u32 }
+    #[inline]
     fn index(self) -> usize { self as usize }
 }
 
@@ -73,11 +76,13 @@ macro_rules! newtype_index {
         pub struct $type($($pub)* u32);
 
         impl Idx for $type {
+            #[inline]
             fn new(value: usize) -> Self {
                 assert!(value < ($max) as usize);
                 $type(value as u32)
             }
 
+            #[inline]
             fn index(self) -> usize {
                 self.0 as usize
             }
@@ -204,7 +209,7 @@ macro_rules! newtype_index {
                           $($tokens)*);
     );
 
-    // The case where no derives are added, but encodable is overriden. Don't
+    // The case where no derives are added, but encodable is overridden. Don't
     // derive serialization traits
     (@pub          [$($pub:tt)*]
      @type         [$type:ident]
@@ -324,7 +329,7 @@ macro_rules! newtype_index {
     );
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct IndexVec<I: Idx, T> {
     pub raw: Vec<T>,
     _marker: PhantomData<fn(&I)>
@@ -442,13 +447,13 @@ impl<I: Idx, T> IndexVec<I, T> {
     }
 
     #[inline]
-    pub fn drain<'a, R: RangeArgument<usize>>(
+    pub fn drain<'a, R: RangeBounds<usize>>(
         &'a mut self, range: R) -> impl Iterator<Item=T> + 'a {
         self.raw.drain(range)
     }
 
     #[inline]
-    pub fn drain_enumerated<'a, R: RangeArgument<usize>>(
+    pub fn drain_enumerated<'a, R: RangeBounds<usize>>(
         &'a mut self, range: R) -> impl Iterator<Item=(I, T)> + 'a {
         self.raw.drain(range).enumerate().map(IntoIdx { _marker: PhantomData })
     }
@@ -481,6 +486,28 @@ impl<I: Idx, T> IndexVec<I, T> {
     #[inline]
     pub fn get_mut(&mut self, index: I) -> Option<&mut T> {
         self.raw.get_mut(index.index())
+    }
+
+    /// Return mutable references to two distinct elements, a and b. Panics if a == b.
+    #[inline]
+    pub fn pick2_mut(&mut self, a: I, b: I) -> (&mut T, &mut T) {
+        let (ai, bi) = (a.index(), b.index());
+        assert!(ai != bi);
+
+        if ai < bi {
+            let (c1, c2) = self.raw.split_at_mut(bi);
+            (&mut c1[ai], &mut c2[0])
+        } else {
+            let (c2, c1) = self.pick2_mut(b, a);
+            (c1, c2)
+        }
+    }
+
+    pub fn convert_index_type<Ix: Idx>(self) -> IndexVec<Ix, T> {
+        IndexVec {
+            raw: self.raw,
+            _marker: PhantomData,
+        }
     }
 }
 

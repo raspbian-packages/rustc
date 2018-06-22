@@ -14,11 +14,13 @@
 #![deny(warnings)]
 
 #![feature(box_patterns)]
-#![feature(conservative_impl_trait)]
+#![cfg_attr(stage0, feature(conservative_impl_trait))]
 #![feature(fs_read_write)]
-#![feature(i128_type)]
+#![cfg_attr(stage0, feature(i128_type))]
 #![feature(libc)]
+#![feature(macro_lifetime_matcher)]
 #![feature(proc_macro_internals)]
+#![feature(macro_lifetime_matcher)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(specialization)]
@@ -39,6 +41,7 @@ extern crate proc_macro;
 #[macro_use]
 extern crate rustc;
 extern crate rustc_back;
+#[macro_use]
 extern crate rustc_data_structures;
 
 mod diagnostics;
@@ -53,11 +56,11 @@ mod isolated_encoder;
 mod schema;
 mod native_libs;
 mod link_args;
+mod foreign_modules;
 
 pub mod creader;
 pub mod cstore;
 pub mod dynamic_lib;
 pub mod locator;
 
-#[cfg(not(stage0))] // remove after the next snapshot
 __build_diagnostic_array! { librustc_metadata, DIAGNOSTICS }

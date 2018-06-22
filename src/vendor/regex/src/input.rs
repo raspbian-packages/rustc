@@ -16,7 +16,7 @@ use std::u32;
 
 use syntax;
 
-use literals::LiteralSearcher;
+use literal::LiteralSearcher;
 use prog::InstEmptyLook;
 use utf8::{decode_utf8, decode_last_utf8};
 
@@ -371,7 +371,7 @@ impl Char {
     ///
     /// If the character is absent, then false is returned.
     pub fn is_word_char(self) -> bool {
-        char::from_u32(self.0).map_or(false, syntax::is_word_char)
+        char::from_u32(self.0).map_or(false, syntax::is_word_character)
     }
 
     /// Returns true iff the byte is a word byte.

@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use back::wasm;
+use cc::windows_registry;
 use super::archive::{ArchiveBuilder, ArchiveConfig};
 use super::bytecode::RLIB_BYTECODE_EXTENSION;
 use super::linker::Linker;
@@ -15,6 +17,7 @@ use super::command::Command;
 use super::rpath::RPathConfig;
 use super::rpath;
 use metadata::METADATA_FILENAME;
+use rustc_back::LinkerFlavor;
 use rustc::session::config::{self, NoDebugInfo, OutputFilenames, OutputType, PrintRequest};
 use rustc::session::config::{RUST_CGU_EXT, Lto};
 use rustc::session::filesearch;
@@ -27,14 +30,15 @@ use rustc::util::common::time;
 use rustc::util::fs::fix_windows_verbatim_for_gcc;
 use rustc::hir::def_id::CrateNum;
 use tempdir::TempDir;
-use rustc_back::{PanicStrategy, RelroLevel, LinkerFlavor};
+use rustc_back::{PanicStrategy, RelroLevel};
+use rustc_back::target::TargetTriple;
+use rustc_data_structures::fx::FxHashSet;
 use context::get_reloc_model;
 use llvm;
 
 use std::ascii;
 use std::char;
 use std::env;
-use std::ffi::OsString;
 use std::fmt;
 use std::fs;
 use std::io;
@@ -57,9 +61,7 @@ pub use rustc_trans_utils::link::{find_crate_name, filename_for_input, default_o
 // The third parameter is for env vars, used on windows to set up the
 // path for MSVC to find its DLLs, and gcc to find its bundled
 // toolchain
-pub fn get_linker(sess: &Session) -> (PathBuf, Command, Vec<(OsString, OsString)>) {
-    let envs = vec![("PATH".into(), command_path(sess))];
-
+pub fn get_linker(sess: &Session) -> (PathBuf, Command) {
     // If our linker looks like a batch script on Windows then to execute this
     // we'll need to spawn `cmd` explicitly. This is primarily done to handle
     // emscripten where the linker is `emcc.bat` and needs to be spawned as
@@ -74,56 +76,57 @@ pub fn get_linker(sess: &Session) -> (PathBuf, Command, Vec<(OsString, OsString)
                 return Command::bat_script(linker)
             }
         }
-        Command::new(linker)
+        match sess.linker_flavor() {
+            LinkerFlavor::Lld(f) => Command::lld(linker, f),
+            _ => Command::new(linker),
+
+        }
     };
 
-    if let Some(ref linker) = sess.opts.cg.linker {
-        (linker.clone(), cmd(linker), envs)
-    } else if sess.target.target.options.is_like_msvc {
-        let (cmd, envs) = msvc_link_exe_cmd(sess);
-        (PathBuf::from("link.exe"), cmd, envs)
-    } else {
-        let linker = PathBuf::from(&sess.target.target.options.linker);
-        let cmd = cmd(&linker);
-        (linker, cmd, envs)
-    }
-}
+    let msvc_tool = windows_registry::find_tool(&sess.opts.target_triple.triple(), "link.exe");
 
-#[cfg(windows)]
-pub fn msvc_link_exe_cmd(sess: &Session) -> (Command, Vec<(OsString, OsString)>) {
-    use cc::windows_registry;
+    let linker_path = sess.opts.cg.linker.as_ref().map(|s| &**s)
+        .or(sess.target.target.options.linker.as_ref().map(|s| s.as_ref()))
+        .unwrap_or(match sess.linker_flavor() {
+            LinkerFlavor::Msvc => {
+                msvc_tool.as_ref().map(|t| t.path()).unwrap_or("link.exe".as_ref())
+            }
+            LinkerFlavor::Em if cfg!(windows) => "emcc.bat".as_ref(),
+            LinkerFlavor::Em => "emcc".as_ref(),
+            LinkerFlavor::Gcc => "cc".as_ref(),
+            LinkerFlavor::Ld => "ld".as_ref(),
+            LinkerFlavor::Lld(_) => "lld".as_ref(),
+        });
 
-    let target = &sess.opts.target_triple;
-    let tool = windows_registry::find_tool(target, "link.exe");
+    let mut cmd = cmd(linker_path);
 
-    if let Some(tool) = tool {
-        let mut cmd = Command::new(tool.path());
-        cmd.args(tool.args());
-        for &(ref k, ref v) in tool.env() {
-            cmd.env(k, v);
-        }
-        let envs = tool.env().to_vec();
-        (cmd, envs)
-    } else {
-        debug!("Failed to locate linker.");
-        (Command::new("link.exe"), vec![])
-    }
-}
-
-#[cfg(not(windows))]
-pub fn msvc_link_exe_cmd(_sess: &Session) -> (Command, Vec<(OsString, OsString)>) {
-    (Command::new("link.exe"), vec![])
-}
-
-fn command_path(sess: &Session) -> OsString {
     // The compiler's sysroot often has some bundled tools, so add it to the
     // PATH for the child.
     let mut new_path = sess.host_filesearch(PathKind::All)
                            .get_tools_search_paths();
-    if let Some(path) = env::var_os("PATH") {
-        new_path.extend(env::split_paths(&path));
+    let mut msvc_changed_path = false;
+    if sess.target.target.options.is_like_msvc {
+        if let Some(ref tool) = msvc_tool {
+            cmd.args(tool.args());
+            for &(ref k, ref v) in tool.env() {
+                if k == "PATH" {
+                    new_path.extend(env::split_paths(v));
+                    msvc_changed_path = true;
+                } else {
+                    cmd.env(k, v);
+                }
+            }
+        }
     }
-    env::join_paths(new_path).unwrap()
+
+    if !msvc_changed_path {
+        if let Some(path) = env::var_os("PATH") {
+            new_path.extend(env::split_paths(&path));
+        }
+    }
+    cmd.env("PATH", env::join_paths(new_path).unwrap());
+
+    (linker_path.to_path_buf(), cmd)
 }
 
 pub fn remove(sess: &Session, path: &Path) {
@@ -166,7 +169,9 @@ pub(crate) fn link_binary(sess: &Session,
 
     // Remove the temporary object file and metadata if we aren't saving temps
     if !sess.opts.cg.save_temps {
-        if sess.opts.output_types.should_trans() {
+        if sess.opts.output_types.should_trans() &&
+            !preserve_objects_for_their_debuginfo(sess)
+        {
             for obj in trans.modules.iter().filter_map(|m| m.object.as_ref()) {
                 remove(sess, obj);
             }
@@ -188,6 +193,52 @@ pub(crate) fn link_binary(sess: &Session,
     }
 
     out_filenames
+}
+
+/// Returns a boolean indicating whether we should preserve the object files on
+/// the filesystem for their debug information. This is often useful with
+/// split-dwarf like schemes.
+fn preserve_objects_for_their_debuginfo(sess: &Session) -> bool {
+    // If the objects don't have debuginfo there's nothing to preserve.
+    if sess.opts.debuginfo == NoDebugInfo {
+        return false
+    }
+
+    // If we're only producing artifacts that are archives, no need to preserve
+    // the objects as they're losslessly contained inside the archives.
+    let output_linked = sess.crate_types.borrow()
+        .iter()
+        .any(|x| *x != config::CrateTypeRlib && *x != config::CrateTypeStaticlib);
+    if !output_linked {
+        return false
+    }
+
+    // If we're on OSX then the equivalent of split dwarf is turned on by
+    // default. The final executable won't actually have any debug information
+    // except it'll have pointers to elsewhere. Historically we've always run
+    // `dsymutil` to "link all the dwarf together" but this is actually sort of
+    // a bummer for incremental compilation! (the whole point of split dwarf is
+    // that you don't do this sort of dwarf link).
+    //
+    // Basically as a result this just means that if we're on OSX and we're
+    // *not* running dsymutil then the object files are the only source of truth
+    // for debug information, so we must preserve them.
+    if sess.target.target.options.is_like_osx {
+        match sess.opts.debugging_opts.run_dsymutil {
+            // dsymutil is not being run, preserve objects
+            Some(false) => return true,
+
+            // dsymutil is being run, no need to preserve the objects
+            Some(true) => return false,
+
+            // The default historical behavior was to always run dsymutil, so
+            // we're preserving that temporarily, but we're likely to switch the
+            // default soon.
+            None => return false,
+        }
+    }
+
+    false
 }
 
 fn filename_for_metadata(sess: &Session, crate_name: &str, outputs: &OutputFilenames) -> PathBuf {
@@ -564,15 +615,8 @@ fn link_natively(sess: &Session,
     info!("preparing {:?} to {:?}", crate_type, out_filename);
     let flavor = sess.linker_flavor();
 
-    // The "binaryen linker" is massively special, so skip everything below.
-    if flavor == LinkerFlavor::Binaryen {
-        return link_binaryen(sess, crate_type, out_filename, trans, tmpdir);
-    }
-
     // The invocations of cc share some flags across platforms
-    let (pname, mut cmd, envs) = get_linker(sess);
-    // This will set PATH on windows
-    cmd.envs(envs);
+    let (pname, mut cmd) = get_linker(sess);
 
     let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     if let Some(args) = sess.target.target.options.pre_link_args.get(&flavor) {
@@ -649,12 +693,9 @@ fn link_natively(sess: &Session,
     let mut i = 0;
     loop {
         i += 1;
-        prog = time(sess.time_passes(), "running linker", || {
+        prog = time(sess, "running linker", || {
             exec_linker(sess, &mut cmd, tmpdir)
         });
-        if !retry_on_segfault || i > 3 {
-            break
-        }
         let output = match prog {
             Ok(ref output) => output,
             Err(_) => break,
@@ -665,6 +706,32 @@ fn link_natively(sess: &Session,
         let mut out = output.stderr.clone();
         out.extend(&output.stdout);
         let out = String::from_utf8_lossy(&out);
+
+        // Check to see if the link failed with "unrecognized command line option:
+        // '-no-pie'" for gcc or "unknown argument: '-no-pie'" for clang. If so,
+        // reperform the link step without the -no-pie option. This is safe because
+        // if the linker doesn't support -no-pie then it should not default to
+        // linking executables as pie. Different versions of gcc seem to use
+        // different quotes in the error message so don't check for them.
+        if sess.target.target.options.linker_is_gnu &&
+           sess.linker_flavor() != LinkerFlavor::Ld &&
+           (out.contains("unrecognized command line option") ||
+            out.contains("unknown argument")) &&
+           out.contains("-no-pie") &&
+           cmd.get_args().iter().any(|e| e.to_string_lossy() == "-no-pie") {
+            info!("linker output: {:?}", out);
+            warn!("Linker does not support -no-pie command line option. Retrying without.");
+            for arg in cmd.take_args() {
+                if arg.to_string_lossy() != "-no-pie" {
+                    cmd.arg(arg);
+                }
+            }
+            info!("{:?}", &cmd);
+            continue;
+        }
+        if !retry_on_segfault || i > 3 {
+            break
+        }
         let msg_segv = "clang: error: unable to execute command: Segmentation fault: 11";
         let msg_bus  = "clang: error: unable to execute command: Bus error: 10";
         if !(out.contains(msg_segv) || out.contains(msg_bus)) {
@@ -736,12 +803,22 @@ fn link_natively(sess: &Session,
 
 
     // On macOS, debuggers need this utility to get run to do some munging of
-    // the symbols
-    if sess.target.target.options.is_like_osx && sess.opts.debuginfo != NoDebugInfo {
+    // the symbols. Note, though, that if the object files are being preserved
+    // for their debug information there's no need for us to run dsymutil.
+    if sess.target.target.options.is_like_osx &&
+        sess.opts.debuginfo != NoDebugInfo &&
+        !preserve_objects_for_their_debuginfo(sess)
+    {
         match Command::new("dsymutil").arg(out_filename).output() {
             Ok(..) => {}
             Err(e) => sess.fatal(&format!("failed to run dsymutil: {}", e)),
         }
+    }
+
+    if sess.opts.target_triple == TargetTriple::from_triple("wasm32-unknown-unknown") {
+        wasm::rewrite_imports(&out_filename, &trans.crate_info.wasm_imports);
+        wasm::add_custom_sections(&out_filename,
+                                  &trans.crate_info.wasm_custom_sections);
     }
 }
 
@@ -760,11 +837,14 @@ fn exec_linker(sess: &Session, cmd: &mut Command, tmpdir: &Path)
     if !cmd.very_likely_to_exceed_some_spawn_limit() {
         match cmd.command().stdout(Stdio::piped()).stderr(Stdio::piped()).spawn() {
             Ok(child) => return child.wait_with_output(),
-            Err(ref e) if command_line_too_big(e) => {}
+            Err(ref e) if command_line_too_big(e) => {
+                info!("command line to linker was too big: {}", e);
+            }
             Err(e) => return Err(e)
         }
     }
 
+    info!("falling back to passing arguments to linker via an @-file");
     let mut cmd2 = cmd.clone();
     let mut args = String::new();
     for arg in cmd2.take_args() {
@@ -789,6 +869,7 @@ fn exec_linker(sess: &Session, cmd: &mut Command, tmpdir: &Path)
     };
     fs::write(&file, &bytes)?;
     cmd2.arg(format!("@{}", file.display()));
+    info!("invoking linker {:?}", cmd2);
     return cmd2.output();
 
     #[cfg(unix)]
@@ -909,16 +990,31 @@ fn link_args(cmd: &mut Linker,
 
     let used_link_args = &trans.crate_info.link_args;
 
-    if crate_type == config::CrateTypeExecutable &&
-       t.options.position_independent_executables {
-        let empty_vec = Vec::new();
-        let args = sess.opts.cg.link_args.as_ref().unwrap_or(&empty_vec);
-        let more_args = &sess.opts.cg.link_arg;
-        let mut args = args.iter().chain(more_args.iter()).chain(used_link_args.iter());
+    if crate_type == config::CrateTypeExecutable {
+        let mut position_independent_executable = false;
 
-        if get_reloc_model(sess) == llvm::RelocMode::PIC
-            && !sess.crt_static() && !args.any(|x| *x == "-static") {
+        if t.options.position_independent_executables {
+            let empty_vec = Vec::new();
+            let args = sess.opts.cg.link_args.as_ref().unwrap_or(&empty_vec);
+            let more_args = &sess.opts.cg.link_arg;
+            let mut args = args.iter().chain(more_args.iter()).chain(used_link_args.iter());
+
+            if get_reloc_model(sess) == llvm::RelocMode::PIC
+                && !sess.crt_static() && !args.any(|x| *x == "-static") {
+                position_independent_executable = true;
+            }
+        }
+
+        if position_independent_executable {
             cmd.position_independent_executable();
+        } else {
+            // recent versions of gcc can be configured to generate position
+            // independent executables by default. We have to pass -no-pie to
+            // explicitly turn that off. Not applicable to ld.
+            if sess.target.target.options.linker_is_gnu
+                && sess.linker_flavor() != LinkerFlavor::Ld {
+                cmd.no_position_independent_executable();
+            }
         }
     }
 
@@ -933,7 +1029,11 @@ fn link_args(cmd: &mut Linker,
         RelroLevel::Partial => {
             cmd.partial_relro();
         },
-        RelroLevel::Off => {},
+        RelroLevel::Off => {
+            cmd.no_relro();
+        },
+        RelroLevel::None => {
+        },
     }
 
     // Pass optimization flags down to the linker.
@@ -989,12 +1089,16 @@ fn link_args(cmd: &mut Linker,
         cmd.build_static_executable();
     }
 
+    if sess.opts.debugging_opts.pgo_gen.is_some() {
+        cmd.pgo_gen();
+    }
+
     // FIXME (#2397): At some point we want to rpath our guesses as to
     // where extern libraries might live, based on the
     // addl_lib_search_paths
     if sess.opts.cg.rpath {
         let sysroot = sess.sysroot();
-        let target_triple = &sess.opts.target_triple;
+        let target_triple = sess.opts.target_triple.triple();
         let mut get_install_prefix_lib_path = || {
             let install_prefix = option_env!("CFG_PREFIX").expect("CFG_PREFIX");
             let tlib = filesearch::relative_target_lib_path(sysroot, target_triple);
@@ -1092,9 +1196,56 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
     // crates.
     let deps = &trans.crate_info.used_crates_dynamic;
 
+    // There's a few internal crates in the standard library (aka libcore and
+    // libstd) which actually have a circular dependence upon one another. This
+    // currently arises through "weak lang items" where libcore requires things
+    // like `rust_begin_unwind` but libstd ends up defining it. To get this
+    // circular dependence to work correctly in all situations we'll need to be
+    // sure to correctly apply the `--start-group` and `--end-group` options to
+    // GNU linkers, otherwise if we don't use any other symbol from the standard
+    // library it'll get discarded and the whole application won't link.
+    //
+    // In this loop we're calculating the `group_end`, after which crate to
+    // pass `--end-group` and `group_start`, before which crate to pass
+    // `--start-group`. We currently do this by passing `--end-group` after
+    // the first crate (when iterating backwards) that requires a lang item
+    // defined somewhere else. Once that's set then when we've defined all the
+    // necessary lang items we'll pass `--start-group`.
+    //
+    // Note that this isn't amazing logic for now but it should do the trick
+    // for the current implementation of the standard library.
+    let mut group_end = None;
+    let mut group_start = None;
+    let mut end_with = FxHashSet();
+    let info = &trans.crate_info;
+    for &(cnum, _) in deps.iter().rev() {
+        if let Some(missing) = info.missing_lang_items.get(&cnum) {
+            end_with.extend(missing.iter().cloned());
+            if end_with.len() > 0 && group_end.is_none() {
+                group_end = Some(cnum);
+            }
+        }
+        end_with.retain(|item| info.lang_item_to_crate.get(item) != Some(&cnum));
+        if end_with.len() == 0 && group_end.is_some() {
+            group_start = Some(cnum);
+            break
+        }
+    }
+
+    // If we didn't end up filling in all lang items from upstream crates then
+    // we'll be filling it in with our crate. This probably means we're the
+    // standard library itself, so skip this for now.
+    if group_end.is_some() && group_start.is_none() {
+        group_end = None;
+    }
+
     let mut compiler_builtins = None;
 
     for &(cnum, _) in deps.iter() {
+        if group_start == Some(cnum) {
+            cmd.group_start();
+        }
+
         // We may not pass all crates through to the linker. Some crates may
         // appear statically in an existing dylib, meaning we'll pick up all the
         // symbols from the dylib.
@@ -1120,6 +1271,10 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
             Linkage::Dynamic => {
                 add_dynamic_crate(cmd, sess, &src.dylib.as_ref().unwrap().0)
             }
+        }
+
+        if group_end == Some(cnum) {
+            cmd.group_end();
         }
     }
 
@@ -1243,7 +1398,7 @@ fn add_upstream_rust_crates(cmd: &mut Linker,
         let name = cratepath.file_name().unwrap().to_str().unwrap();
         let name = &name[3..name.len() - 5]; // chop off lib/.rlib
 
-        time(sess.time_passes(), &format!("altering {}.rlib", name), || {
+        time(sess, &format!("altering {}.rlib", name), || {
             let cfg = archive_config(sess, &dst, Some(cratepath));
             let mut archive = ArchiveBuilder::new(cfg);
             archive.update_symbols();
@@ -1401,33 +1556,6 @@ fn relevant_lib(sess: &Session, lib: &NativeLibrary) -> bool {
     match lib.cfg {
         Some(ref cfg) => attr::cfg_matches(cfg, &sess.parse_sess, None),
         None => true,
-    }
-}
-
-/// For now "linking with binaryen" is just "move the one module we generated in
-/// the backend to the final output"
-///
-/// That is, all the heavy lifting happens during the `back::write` phase. Here
-/// we just clean up after that.
-///
-/// Note that this is super temporary and "will not survive the night", this is
-/// guaranteed to get removed as soon as a linker for wasm exists. This should
-/// not be used for anything other than wasm.
-fn link_binaryen(sess: &Session,
-                 _crate_type: config::CrateType,
-                 out_filename: &Path,
-                 trans: &CrateTranslation,
-                 _tmpdir: &Path) {
-    assert!(trans.allocator_module.is_none());
-    assert_eq!(trans.modules.len(), 1);
-
-    let object = trans.modules[0].object.as_ref().expect("object must exist");
-    let res = fs::hard_link(object, out_filename)
-        .or_else(|_| fs::copy(object, out_filename).map(|_| ()));
-    if let Err(e) = res {
-        sess.fatal(&format!("failed to create `{}`: {}",
-                            out_filename.display(),
-                            e));
     }
 }
 

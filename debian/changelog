@@ -1,13 +1,59 @@
-rustc (1.25.0+dfsg1-2+rpi1) buster-staging; urgency=medium
+rustc (1.26.1+dfsg1-3+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
-  [changes introduced in 1.24.1+dfsg1-1+rpi1 by Peter Michael Green]
-  * Remove -march=native from src/binaryen/CMakeLists.txt
 
- -- Raspbian forward porter <root@raspbian.org>  Wed, 20 Jun 2018 22:12:21 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Fri, 22 Jun 2018 18:21:22 +0000
+
+rustc (1.26.1+dfsg1-3) unstable; urgency=medium
+
+  * Fix build-dep version range to build against myself.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 31 May 2018 09:25:17 -0700
+
+rustc (1.26.1+dfsg1-2) unstable; urgency=medium
+
+  * Also ignore test_loading_cosine on ppc64el.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 30 May 2018 20:58:46 -0700
+
+rustc (1.26.1+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 30 May 2018 08:18:04 -0700
+
+rustc (1.26.0+dfsg1-1~exp4) experimental; urgency=medium
+
+  * Try alternative patch to ignore x86 stdsimd tests suggested by upstream.
+  * Bump up allowed-test-failures to 8 to account for the fact that we're now
+    double-counting some failures.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 29 May 2018 20:36:56 -0700
+
+rustc (1.26.0+dfsg1-1~exp3) experimental; urgency=medium
+
+  * Ignore some irrelevant tests on ppc64 and non-x86 platforms.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 29 May 2018 09:32:38 -0700
+
+rustc (1.26.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Add Breaks+Replaces for older libstd-rust-dev with codegen-backends.
+    (Closes: #899180)
+  * Backport some test and packaging fixes from Ubuntu.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 22 May 2018 22:00:53 -0700
+
+rustc (1.26.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update to latest Standards-Version; no changes required.
+  * Update doc-base files. (Closes: #876831)
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 20 May 2018 03:11:45 -0700
 
 rustc (1.25.0+dfsg1-2) unstable; urgency=medium
 

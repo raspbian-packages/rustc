@@ -22,9 +22,9 @@ use utils::{iter_input_pats, span_lint, type_is_unsafe_function};
 /// fn foo(x: u32, y: u32, name: &str, c: Color, w: f32, h: f32, a: f32, b:
 /// f32) { .. }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub TOO_MANY_ARGUMENTS,
-    Warn,
+    complexity,
     "functions with too many arguments"
 }
 
@@ -48,9 +48,9 @@ declare_lint! {
 /// ```rust
 /// pub fn foo(x: *const u8) { println!("{}", unsafe { *x }); }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub NOT_UNSAFE_PTR_ARG_DEREF,
-    Warn,
+    correctness,
     "public functions dereferencing raw pointer arguments but not marked `unsafe`"
 }
 
@@ -62,7 +62,7 @@ pub struct Functions {
 impl Functions {
     pub fn new(threshold: u64) -> Self {
         Self {
-            threshold: threshold,
+            threshold,
         }
     }
 }
@@ -156,7 +156,7 @@ impl<'a, 'tcx> Functions {
             if !raw_ptrs.is_empty() {
                 let tables = cx.tcx.body_tables(body.id());
                 let mut v = DerefVisitor {
-                    cx: cx,
+                    cx,
                     ptrs: raw_ptrs,
                     tables,
                 };

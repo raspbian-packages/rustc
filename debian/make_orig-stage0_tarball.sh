@@ -7,10 +7,14 @@
 set -e
 
 upstream_version="$(dpkg-parsechangelog -SVersion | sed -e 's/\(.*\)-.*/\1/g')"
-upstream_bootstrap_arch="${upstream_bootstrap_arch:-amd64 arm64 armel armhf i386 powerpc ppc64el s390x}"
+upstream_bootstrap_arch="${upstream_bootstrap_arch:-amd64 arm64 armhf i386 mips64 mips64el powerpc ppc64 ppc64el s390x}"
 
 rm -f stage0/*/*.sha256
 mkdir -p stage0 build && ln -sf ../stage0 build/cache
+if [ -n "$(find stage0/ -type f)" ]; then
+	echo >&2 "$0: NOTE: extra artifacts in stage0/ will be included:"
+	find stage0/ -type f
+fi
 for deb_host_arch in $upstream_bootstrap_arch; do
 	make -s --no-print-directory -f debian/architecture-test.mk "rust-for-deb_${deb_host_arch}" | {
 	read deb_host_arch rust_triplet
@@ -19,7 +23,10 @@ for deb_host_arch in $upstream_bootstrap_arch; do
 	}
 done
 
-tar --mtime=@"${SOURCE_DATE_EPOCH:-$(date +%s)}" --clamp-mtime \
+echo >&2 "building stage0 tar file now, this will take a while..."
+stamp=@${SOURCE_DATE_EPOCH:-$(date +%s)}
+touch --date="$stamp" stage0/dpkg-source-dont-rename-parent-directory
+tar --mtime="$stamp" --clamp-mtime \
   --owner=root --group=root \
   -cJf "../rustc_${upstream_version}.orig-stage0.tar.xz" \
   --transform "s/^stage0\///" \

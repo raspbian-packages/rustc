@@ -1,3 +1,11 @@
+# 0.2.8
+
+* Fix an inverted condition on MinGW [#22](https://github.com/softprops/atty/pull/22)
+
+# 0.2.7
+
+* Change `||` to `&&` for whether MSYS is a tty [#24](https://github.com/softprops/atty/pull/24/)
+
 # 0.2.6
 
 * updated winapi dependency to [0.3](https://retep998.github.io/blog/winapi-0.3/) [#18](https://github.com/softprops/atty/pull/18)

@@ -10,12 +10,12 @@
 
 use hair::*;
 use rustc_data_structures::indexed_vec::Idx;
-use rustc_const_math::ConstInt;
 use hair::cx::Cx;
 use hair::cx::block;
 use hair::cx::to_ref::ToRef;
 use rustc::hir::def::{Def, CtorKind};
 use rustc::middle::const_val::ConstVal;
+use rustc::mir::interpret::{GlobalId, Value, PrimVal};
 use rustc::ty::{self, AdtKind, VariantDef, Ty};
 use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability};
 use rustc::ty::cast::CastKind as TyCastKind;
@@ -100,7 +100,7 @@ fn apply_adjustment<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             ExprKind::Deref { arg: expr.to_ref() }
         }
         Adjust::Deref(Some(deref)) => {
-            let call = deref.method_call(cx.tcx, expr.ty);
+            let call = deref.method_call(cx.tcx(), expr.ty);
 
             expr = Expr {
                 temp_lifetime,
@@ -227,7 +227,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
 
                 let arg_tys = args.iter().map(|e| cx.tables().expr_ty_adjusted(e));
                 let tupled_args = Expr {
-                    ty: cx.tcx.mk_tup(arg_tys, false),
+                    ty: cx.tcx.mk_tup(arg_tys),
                     temp_lifetime,
                     span: expr.span,
                     kind: ExprKind::Tuple { fields: args.iter().map(ToRef::to_ref).collect() },
@@ -314,7 +314,9 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             }
         }
 
-        hir::ExprLit(..) => ExprKind::Literal { literal: cx.const_eval_literal(expr) },
+        hir::ExprLit(ref lit) => ExprKind::Literal {
+            literal: cx.const_eval_literal(&lit.node, expr_ty, lit.span, false),
+        },
 
         hir::ExprBinary(op, ref lhs, ref rhs) => {
             if cx.tables().is_method_call(expr) {
@@ -400,9 +402,10 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             if cx.tables().is_method_call(expr) {
                 overloaded_operator(cx, expr, vec![arg.to_ref()])
             } else {
-                // FIXME runtime-overflow
-                if let hir::ExprLit(_) = arg.node {
-                    ExprKind::Literal { literal: cx.const_eval_literal(expr) }
+                if let hir::ExprLit(ref lit) = arg.node {
+                    ExprKind::Literal {
+                        literal: cx.const_eval_literal(&lit.node, expr_ty, lit.span, true),
+                    }
                 } else {
                     ExprKind::Unary {
                         op: UnOp::Neg,
@@ -508,10 +511,22 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             let c = &cx.tcx.hir.body(count).value;
             let def_id = cx.tcx.hir.body_owner_def_id(count);
             let substs = Substs::identity_for_item(cx.tcx.global_tcx(), def_id);
-            let count = match cx.tcx.at(c.span).const_eval(cx.param_env.and((def_id, substs))) {
-                Ok(&ty::Const { val: ConstVal::Integral(ConstInt::Usize(u)), .. }) => u,
-                Ok(other) => bug!("constant evaluation of repeat count yielded {:?}", other),
-                Err(s) => cx.fatal_const_eval_err(&s, c.span, "expression")
+            let instance = ty::Instance::resolve(
+                cx.tcx.global_tcx(),
+                cx.param_env,
+                def_id,
+                substs,
+            ).unwrap();
+            let global_id = GlobalId {
+                instance,
+                promoted: None
+            };
+            let count = match cx.tcx.at(c.span).const_eval(cx.param_env.and(global_id)) {
+                Ok(cv) => cv.val.unwrap_u64(),
+                Err(e) => {
+                    e.report(cx.tcx, cx.tcx.def_span(def_id), "array length");
+                    0
+                },
             };
 
             ExprKind::Repeat {
@@ -590,12 +605,84 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             // Check to see if this cast is a "coercion cast", where the cast is actually done
             // using a coercion (or is a no-op).
             if let Some(&TyCastKind::CoercionCast) = cx.tables()
-                                                       .cast_kinds()
-                                                       .get(source.hir_id) {
+                                                    .cast_kinds()
+                                                    .get(source.hir_id) {
                 // Convert the lexpr to a vexpr.
                 ExprKind::Use { source: source.to_ref() }
             } else {
-                ExprKind::Cast { source: source.to_ref() }
+                // check whether this is casting an enum variant discriminant
+                // to prevent cycles, we refer to the discriminant initializer
+                // which is always an integer and thus doesn't need to know the
+                // enum's layout (or its tag type) to compute it during const eval
+                // Example:
+                // enum Foo {
+                //     A,
+                //     B = A as isize + 4,
+                // }
+                // The correct solution would be to add symbolic computations to miri,
+                // so we wouldn't have to compute and store the actual value
+                let var = if let hir::ExprPath(ref qpath) = source.node {
+                    let def = cx.tables().qpath_def(qpath, source.hir_id);
+                    cx
+                        .tables()
+                        .node_id_to_type(source.hir_id)
+                        .ty_adt_def()
+                        .and_then(|adt_def| {
+                        match def {
+                            Def::VariantCtor(variant_id, CtorKind::Const) => {
+                                let idx = adt_def.variant_index_with_id(variant_id);
+                                let (d, o) = adt_def.discriminant_def_for_variant(idx);
+                                use rustc::ty::util::IntTypeExt;
+                                let ty = adt_def.repr.discr_type().to_ty(cx.tcx());
+                                Some((d, o, ty))
+                            }
+                            _ => None,
+                        }
+                    })
+                } else {
+                    None
+                };
+                let source = if let Some((did, offset, ty)) = var {
+                    let mk_const = |val| Expr {
+                        temp_lifetime,
+                        ty,
+                        span: expr.span,
+                        kind: ExprKind::Literal {
+                            literal: Literal::Value {
+                                value: cx.tcx().mk_const(ty::Const {
+                                    val,
+                                    ty,
+                                }),
+                            },
+                        },
+                    }.to_ref();
+                    let offset = mk_const(
+                        ConstVal::Value(Value::ByVal(PrimVal::Bytes(offset as u128))),
+                    );
+                    match did {
+                        Some(did) => {
+                            // in case we are offsetting from a computed discriminant
+                            // and not the beginning of discriminants (which is always `0`)
+                            let substs = Substs::identity_for_item(cx.tcx(), did);
+                            let lhs = mk_const(ConstVal::Unevaluated(did, substs));
+                            let bin = ExprKind::Binary {
+                                op: BinOp::Add,
+                                lhs,
+                                rhs: offset,
+                            };
+                            Expr {
+                                temp_lifetime,
+                                ty,
+                                span: expr.span,
+                                kind: bin,
+                            }.to_ref()
+                        },
+                        None => offset,
+                    }
+                } else {
+                    source.to_ref()
+                };
+                ExprKind::Cast { source }
             }
         }
         hir::ExprType(ref source, _) => return source.make_mirror(cx),
@@ -634,8 +721,8 @@ fn method_callee<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         span: expr.span,
         kind: ExprKind::Literal {
             literal: Literal::Value {
-                value: cx.tcx.mk_const(ty::Const {
-                    val: ConstVal::Function(def_id, substs),
+                value: cx.tcx().mk_const(ty::Const {
+                    val: ConstVal::Value(Value::ByVal(PrimVal::Undef)),
                     ty
                 }),
             },
@@ -682,13 +769,13 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
     let substs = cx.tables().node_substs(expr.hir_id);
     match def {
         // A regular function, constructor function or a constant.
-        Def::Fn(def_id) |
-        Def::Method(def_id) |
-        Def::StructCtor(def_id, CtorKind::Fn) |
-        Def::VariantCtor(def_id, CtorKind::Fn) => ExprKind::Literal {
+        Def::Fn(_) |
+        Def::Method(_) |
+        Def::StructCtor(_, CtorKind::Fn) |
+        Def::VariantCtor(_, CtorKind::Fn) => ExprKind::Literal {
             literal: Literal::Value {
                 value: cx.tcx.mk_const(ty::Const {
-                    val: ConstVal::Function(def_id, substs),
+                    val: ConstVal::Value(Value::ByVal(PrimVal::Undef)),
                     ty: cx.tables().node_id_to_type(expr.hir_id)
                 }),
             },

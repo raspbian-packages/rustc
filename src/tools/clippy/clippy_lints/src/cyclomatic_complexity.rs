@@ -19,9 +19,9 @@ use utils::{in_macro, is_allowed, match_type, paths, span_help_and_lint, LimitSt
 /// complexity.
 ///
 /// **Example:** No. You'll see it when you get the warning.
-declare_lint! {
+declare_clippy_lint! {
     pub CYCLOMATIC_COMPLEXITY,
-    Warn,
+    complexity,
     "functions that should be split up into multiple functions"
 }
 
@@ -63,7 +63,7 @@ impl CyclomaticComplexity {
             divergence: 0,
             short_circuits: 0,
             returns: 0,
-            cx: cx,
+            cx,
         };
         helper.visit_expr(expr);
         let CCHelper {

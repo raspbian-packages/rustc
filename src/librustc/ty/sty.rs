@@ -15,16 +15,16 @@ use hir::def_id::DefId;
 use middle::const_val::ConstVal;
 use middle::region;
 use rustc_data_structures::indexed_vec::Idx;
-use ty::subst::{Substs, Subst};
+use ty::subst::{Substs, Subst, Kind, UnpackedKind};
 use ty::{self, AdtDef, TypeFlags, Ty, TyCtxt, TypeFoldable};
 use ty::{Slice, TyS};
-use ty::subst::Kind;
+use util::captures::Captures;
 
 use std::iter;
 use std::cmp::Ordering;
 use syntax::abi;
 use syntax::ast::{self, Name};
-use syntax::symbol::keywords;
+use syntax::symbol::{keywords, InternedString};
 
 use serialize;
 
@@ -149,11 +149,7 @@ pub enum TypeVariants<'tcx> {
     TyNever,
 
     /// A tuple type.  For example, `(i32, bool)`.
-    /// The bool indicates whether this is a unit tuple and was created by
-    /// defaulting a diverging type variable with feature(never_type) disabled.
-    /// It's only purpose is for raising future-compatibility warnings for when
-    /// diverging type variables start defaulting to ! instead of ().
-    TyTuple(&'tcx Slice<Ty<'tcx>>, bool),
+    TyTuple(&'tcx Slice<Ty<'tcx>>),
 
     /// The projection of an associated type.  For example,
     /// `<T as Trait<..>>::N`.
@@ -297,8 +293,8 @@ impl<'tcx> ClosureSubsts<'tcx> {
         let generics = tcx.generics_of(def_id);
         let parent_len = generics.parent_count();
         SplitClosureSubsts {
-            closure_kind_ty: self.substs[parent_len].as_type().expect("CK should be a type"),
-            closure_sig_ty: self.substs[parent_len + 1].as_type().expect("CS should be a type"),
+            closure_kind_ty: self.substs.type_at(parent_len),
+            closure_sig_ty: self.substs.type_at(parent_len + 1),
             upvar_kinds: &self.substs[parent_len + 2..],
         }
     }
@@ -308,7 +304,13 @@ impl<'tcx> ClosureSubsts<'tcx> {
         impl Iterator<Item=Ty<'tcx>> + 'tcx
     {
         let SplitClosureSubsts { upvar_kinds, .. } = self.split(def_id, tcx);
-        upvar_kinds.iter().map(|t| t.as_type().expect("upvar should be type"))
+        upvar_kinds.iter().map(|t| {
+            if let UnpackedKind::Type(ty) = t.unpack() {
+                ty
+            } else {
+                bug!("upvar should be type")
+            }
+        })
     }
 
     /// Returns the closure kind for this closure; may return a type
@@ -383,9 +385,11 @@ impl<'a, 'gcx, 'tcx> ClosureSubsts<'tcx> {
     /// This returns the types of the MIR locals which had to be stored across suspension points.
     /// It is calculated in rustc_mir::transform::generator::StateTransform.
     /// All the types here must be in the tuple in GeneratorInterior.
-    pub fn state_tys(self, def_id: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) ->
-        impl Iterator<Item=Ty<'tcx>> + 'a
-    {
+    pub fn state_tys(
+        self,
+        def_id: DefId,
+        tcx: TyCtxt<'a, 'gcx, 'tcx>,
+    ) -> impl Iterator<Item=Ty<'tcx>> + Captures<'gcx> + 'a {
         let state = tcx.generator_layout(def_id).fields.iter();
         state.map(move |d| d.ty.subst(tcx, self.substs))
     }
@@ -402,7 +406,7 @@ impl<'a, 'gcx, 'tcx> ClosureSubsts<'tcx> {
     /// This is the types of all the fields stored in a generator.
     /// It includes the upvars, state types and the state discriminant which is u32.
     pub fn field_tys(self, def_id: DefId, tcx: TyCtxt<'a, 'gcx, 'tcx>) ->
-        impl Iterator<Item=Ty<'tcx>> + 'a
+        impl Iterator<Item=Ty<'tcx>> + Captures<'gcx> + 'a
     {
         self.pre_transforms_tys(def_id, tcx).chain(self.state_tys(def_id, tcx))
     }
@@ -620,7 +624,7 @@ impl<'a, 'gcx, 'tcx> ExistentialTraitRef<'tcx> {
         ty::TraitRef {
             def_id: self.def_id,
             substs: tcx.mk_substs(
-                iter::once(Kind::from(self_ty)).chain(self.substs.iter().cloned()))
+                iter::once(self_ty.into()).chain(self.substs.iter().cloned()))
         }
     }
 }
@@ -645,7 +649,7 @@ impl<'tcx> PolyExistentialTraitRef<'tcx> {
 /// erase, or otherwise "discharge" these bound regions, we change the
 /// type from `Binder<T>` to just `T` (see
 /// e.g. `liberate_late_bound_regions`).
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct Binder<T>(pub T);
 
 impl<T> Binder<T> {
@@ -745,7 +749,7 @@ impl<T> Binder<T> {
 
 /// Represents the projection of an associated type. In explicit UFCS
 /// form this would be written `<T as Trait<..>>::N`.
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
 pub struct ProjectionTy<'tcx> {
     /// The parameters of the associated item.
     pub substs: &'tcx Substs<'tcx>,
@@ -860,16 +864,16 @@ impl<'tcx> PolyFnSig<'tcx> {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
 pub struct ParamTy {
     pub idx: u32,
-    pub name: Name,
+    pub name: InternedString,
 }
 
 impl<'a, 'gcx, 'tcx> ParamTy {
-    pub fn new(index: u32, name: Name) -> ParamTy {
+    pub fn new(index: u32, name: InternedString) -> ParamTy {
         ParamTy { idx: index, name: name }
     }
 
     pub fn for_self() -> ParamTy {
-        ParamTy::new(0, keywords::SelfType.name())
+        ParamTy::new(0, keywords::SelfType.name().as_str())
     }
 
     pub fn for_def(def: &ty::TypeParameterDef) -> ParamTy {
@@ -881,8 +885,10 @@ impl<'a, 'gcx, 'tcx> ParamTy {
     }
 
     pub fn is_self(&self) -> bool {
-        if self.name == keywords::SelfType.name() {
-            assert_eq!(self.idx, 0);
+        // FIXME(#50125): Ignoring `Self` with `idx != 0` might lead to weird behavior elsewhere,
+        // but this should only be possible when using `-Z continue-parse-after-error` like
+        // `compile-fail/issue-36638.rs`.
+        if self.name == keywords::SelfType.name().as_str() && self.idx == 0 {
             true
         } else {
             false
@@ -990,10 +996,11 @@ pub type Region<'tcx> = &'tcx RegionKind;
 /// the inference variable is supposed to satisfy the relation
 /// *for every value of the skolemized region*. To ensure that doesn't
 /// happen, you can use `leak_check`. This is more clearly explained
-/// by infer/higher_ranked/README.md.
+/// by the [rustc guide].
 ///
 /// [1]: http://smallcultfollowing.com/babysteps/blog/2013/10/29/intermingled-parameter-lists/
 /// [2]: http://smallcultfollowing.com/babysteps/blog/2013/11/04/intermingled-parameter-lists/
+/// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/trait-hrtb.html
 #[derive(Clone, PartialEq, Eq, Hash, Copy, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub enum RegionKind {
     // Region bound in a type or fn declaration which will be
@@ -1042,6 +1049,9 @@ pub enum RegionKind {
     /// `ClosureRegionRequirements` that are produced by MIR borrowck.
     /// See `ClosureRegionRequirements` for more details.
     ReClosureBound(RegionVid),
+
+    /// Canonicalized region, used only when preparing a trait query.
+    ReCanonical(CanonicalVar),
 }
 
 impl<'tcx> serialize::UseSpecializedDecodable for Region<'tcx> {}
@@ -1091,7 +1101,12 @@ pub enum InferTy {
     FreshTy(u32),
     FreshIntTy(u32),
     FreshFloatTy(u32),
+
+    /// Canonicalized type variable, used only when preparing a trait query.
+    CanonicalTy(CanonicalVar),
 }
+
+newtype_index!(CanonicalVar);
 
 /// A `ProjectionPredicate` for an `ExistentialTraitRef`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
@@ -1127,7 +1142,7 @@ impl<'a, 'tcx, 'gcx> ExistentialProjection<'tcx> {
             projection_ty: ty::ProjectionTy {
                 item_def_id: self.item_def_id,
                 substs: tcx.mk_substs(
-                iter::once(Kind::from(self_ty)).chain(self.substs.iter().cloned())),
+                iter::once(self_ty.into()).chain(self.substs.iter().cloned())),
             },
             ty: self.ty,
         }
@@ -1213,6 +1228,10 @@ impl RegionKind {
             }
             ty::ReErased => {
             }
+            ty::ReCanonical(..) => {
+                flags = flags | TypeFlags::HAS_FREE_REGIONS;
+                flags = flags | TypeFlags::HAS_CANONICAL_VARS;
+            }
             ty::ReClosureBound(..) => {
                 flags = flags | TypeFlags::HAS_FREE_REGIONS;
             }
@@ -1262,7 +1281,7 @@ impl RegionKind {
 impl<'a, 'gcx, 'tcx> TyS<'tcx> {
     pub fn is_nil(&self) -> bool {
         match self.sty {
-            TyTuple(ref tys, _) => tys.is_empty(),
+            TyTuple(ref tys) => tys.is_empty(),
             _ => false,
         }
     }
@@ -1270,15 +1289,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
     pub fn is_never(&self) -> bool {
         match self.sty {
             TyNever => true,
-            _ => false,
-        }
-    }
-
-    /// Test whether this is a `()` which was produced by defaulting a
-    /// diverging type variable with feature(never_type) disabled.
-    pub fn is_defaulted_unit(&self) -> bool {
-        match self.sty {
-            TyTuple(_, true) => true,
             _ => false,
         }
     }
@@ -1293,6 +1303,13 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
     pub fn is_ty_var(&self) -> bool {
         match self.sty {
             TyInfer(TyVar(_)) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_ty_infer(&self) -> bool {
+        match self.sty {
+            TyInfer(_) => true,
             _ => false,
         }
     }
@@ -1660,7 +1677,6 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
 pub struct Const<'tcx> {
     pub ty: Ty<'tcx>,
 
-    // FIXME(eddyb) Replace this with a miri value.
     pub val: ConstVal<'tcx>,
 }
 

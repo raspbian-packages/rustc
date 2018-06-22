@@ -25,4 +25,3 @@ impl Foo for Meeshka {
 
 fn main() {
 }
-

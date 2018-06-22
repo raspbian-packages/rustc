@@ -17,9 +17,9 @@ use utils::{is_direct_expn_of, match_def_path, opt_def_id, paths, resolve_node, 
 /// ```rust
 /// panic!("This `panic!` is probably missing a parameter there: {}");
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub PANIC_PARAMS,
-    Warn,
+    style,
     "missing parameters in `panic!` calls"
 }
 
@@ -48,6 +48,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             if let Some(par) = string.as_str().find('{');
             if string.as_str()[par..].contains('}');
             if params[0].span.source_callee().is_none();
+            if params[0].span.lo() != params[0].span.hi();
             then {
                 span_lint(cx, PANIC_PARAMS, params[0].span,
                           "you probably are missing some parameter in your format string");

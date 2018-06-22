@@ -18,9 +18,9 @@ use utils::{in_macro, snippet, span_lint_and_then};
 /// ```rust
 ///  const FOO: &[(&str, &str, fn(&Bar) -> bool)] = &[...]
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CONST_STATIC_LIFETIME,
-    Warn,
+    style,
     "Using explicit `'static` lifetime for constants when elision rules would allow omitting them."
 }
 
@@ -87,21 +87,5 @@ impl EarlyLintPass for StaticConst {
         }
     }
 
-    fn check_trait_item(&mut self, cx: &EarlyContext, item: &TraitItem) {
-        if !in_macro(item.span) {
-            // Match only constants...
-            if let TraitItemKind::Const(ref var_type, _) = item.node {
-                self.visit_type(var_type, cx);
-            }
-        }
-    }
-
-    fn check_impl_item(&mut self, cx: &EarlyContext, item: &ImplItem) {
-        if !in_macro(item.span) {
-            // Match only constants...
-            if let ImplItemKind::Const(ref var_type, _) = item.node {
-                self.visit_type(var_type, cx);
-            }
-        }
-    }
+    // Don't check associated consts because `'static` cannot be elided on those (issue #2438)
 }

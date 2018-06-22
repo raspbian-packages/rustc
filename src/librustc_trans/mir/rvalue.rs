@@ -30,7 +30,6 @@ use type_of::LayoutLlvmExt;
 use value::Value;
 
 use super::{FunctionCx, LocalRef};
-use super::constant::const_scalar_checked_binop;
 use super::operand::{OperandRef, OperandValue};
 use super::place::PlaceRef;
 
@@ -122,7 +121,6 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                     }
                 }
 
-                let count = count.as_u64();
                 let count = C_usize(bx.cx, count);
                 let end = dest.project_index(&bx, count).llval;
 
@@ -401,7 +399,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                                                              lhs.immediate(), rhs.immediate(),
                                                              lhs.layout.ty);
                 let val_ty = op.ty(bx.tcx(), lhs.layout.ty, rhs.layout.ty);
-                let operand_ty = bx.tcx().intern_tup(&[val_ty, bx.tcx().types.bool], false);
+                let operand_ty = bx.tcx().intern_tup(&[val_ty, bx.tcx().types.bool]);
                 let operand = OperandRef {
                     val: result,
                     layout: bx.cx.layout_of(operand_ty)
@@ -497,7 +495,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
         if let mir::Place::Local(index) = *place {
             if let LocalRef::Operand(Some(op)) = self.locals[index] {
                 if let ty::TyArray(_, n) = op.layout.ty.sty {
-                    let n = n.val.to_const_int().unwrap().to_u64().unwrap();
+                    let n = n.val.unwrap_u64();
                     return common::C_usize(bx.cx, n);
                 }
             }
@@ -643,14 +641,6 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
         if !bx.cx.check_overflow {
             let val = self.trans_scalar_binop(bx, op, lhs, rhs, input_ty);
             return OperandValue::Pair(val, C_bool(bx.cx, false));
-        }
-
-        // First try performing the operation on constants, which
-        // will only succeed if both operands are constant.
-        // This is necessary to determine when an overflow Assert
-        // will always panic at runtime, and produce a warning.
-        if let Some((val, of)) = const_scalar_checked_binop(bx.tcx(), op, lhs, rhs, input_ty) {
-            return OperandValue::Pair(val, C_bool(bx.cx, of));
         }
 
         let (val, of) = match op {
@@ -844,7 +834,7 @@ fn cast_float_to_int(bx: &Builder,
     // They are exactly equal to int_ty::{MIN,MAX} if float_ty has enough significand bits.
     // Otherwise, int_ty::MAX must be rounded towards zero, as it is one less than a power of two.
     // int_ty::MIN, however, is either zero or a negative power of two and is thus exactly
-    // representable. Note that this only works if float_ty's exponent range is sufficently large.
+    // representable. Note that this only works if float_ty's exponent range is sufficiently large.
     // f16 or 256 bit integers would break this property. Right now the smallest float type is f32
     // with exponents ranging up to 127, which is barely enough for i128::MIN = -2^127.
     // On the other hand, f_max works even if int_ty::MAX is greater than float_ty::MAX. Because

@@ -1,10 +1,11 @@
-#![feature(plugin, box_syntax, inclusive_range_syntax)]
+#![feature(plugin, box_syntax)]
 
 
 #![warn(no_effect, unnecessary_operation)]
 #![allow(dead_code)]
 #![allow(path_statements)]
 #![allow(deref_addrof)]
+#![allow(redundant_field_names)]
 #![feature(untagged_unions)]
 
 struct Unit;

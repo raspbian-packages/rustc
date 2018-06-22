@@ -21,9 +21,9 @@ use utils::{get_parent_expr, span_lint, span_note_and_lint};
 /// let a = {x = 1; 1} + x;
 /// // Unclear whether a is 1 or 2.
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub EVAL_ORDER_DEPENDENCE,
-    Warn,
+    complexity,
     "whether a variable read occurs before a write depends on sub-expression evaluation order"
 }
 
@@ -43,9 +43,9 @@ declare_lint! {
 /// let x = (a, b, c, panic!());
 /// // can simply be replaced by `panic!()`
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub DIVERGING_SUB_EXPRESSION,
-    Warn,
+    complexity,
     "whether an expression contains a diverging sub expression"
 }
 
@@ -67,8 +67,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for EvalOrderDependence {
                     if path.segments.len() == 1 {
                         if let def::Def::Local(var) = cx.tables.qpath_def(qpath, lhs.hir_id) {
                             let mut visitor = ReadVisitor {
-                                cx: cx,
-                                var: var,
+                                cx,
+                                var,
                                 write_expr: expr,
                                 last_expr: expr,
                             };
@@ -82,13 +82,13 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for EvalOrderDependence {
     }
     fn check_stmt(&mut self, cx: &LateContext<'a, 'tcx>, stmt: &'tcx Stmt) {
         match stmt.node {
-            StmtExpr(ref e, _) | StmtSemi(ref e, _) => DivergenceVisitor { cx: cx }.maybe_walk_expr(e),
+            StmtExpr(ref e, _) | StmtSemi(ref e, _) => DivergenceVisitor { cx }.maybe_walk_expr(e),
             StmtDecl(ref d, _) => if let DeclLocal(ref local) = d.node {
                 if let Local {
                     init: Some(ref e), ..
                 } = **local
                 {
-                    DivergenceVisitor { cx: cx }.visit_expr(e);
+                    DivergenceVisitor { cx }.visit_expr(e);
                 }
             },
         }

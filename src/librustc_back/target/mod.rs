@@ -47,6 +47,8 @@
 use serialize::json::{Json, ToJson};
 use std::collections::BTreeMap;
 use std::default::Default;
+use std::{fmt, io};
+use std::path::{Path, PathBuf};
 use syntax::abi::{Abi, lookup as lookup_abi};
 
 use {LinkerFlavor, PanicStrategy, RelroLevel};
@@ -58,7 +60,6 @@ mod arm_base;
 mod bitrig_base;
 mod cloudabi_base;
 mod dragonfly_base;
-mod emscripten_base;
 mod freebsd_base;
 mod haiku_base;
 mod linux_base;
@@ -147,6 +148,7 @@ supported_targets! {
     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
     ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
+    ("sparc-unknown-linux-gnu", sparc_unknown_linux_gnu),
     ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
     ("arm-unknown-linux-gnueabi", arm_unknown_linux_gnueabi),
     ("arm-unknown-linux-gnueabihf", arm_unknown_linux_gnueabihf),
@@ -187,6 +189,7 @@ supported_targets! {
     ("x86_64-unknown-openbsd", x86_64_unknown_openbsd),
 
     ("i686-unknown-netbsd", i686_unknown_netbsd),
+    ("powerpc-unknown-netbsd", powerpc_unknown_netbsd),
     ("sparc64-unknown-netbsd", sparc64_unknown_netbsd),
     ("x86_64-unknown-netbsd", x86_64_unknown_netbsd),
     ("x86_64-rumprun-netbsd", x86_64_rumprun_netbsd),
@@ -277,8 +280,8 @@ pub struct TargetOptions {
     /// Whether the target is built-in or loaded from a custom target specification.
     pub is_builtin: bool,
 
-    /// Linker to invoke. Defaults to "cc".
-    pub linker: String,
+    /// Linker to invoke
+    pub linker: Option<String>,
 
     /// Linker arguments that are unconditionally passed *before* any
     /// user-defined libraries.
@@ -344,9 +347,8 @@ pub struct TargetOptions {
     pub staticlib_suffix: String,
     /// OS family to use for conditional compilation. Valid options: "unix", "windows".
     pub target_family: Option<String>,
-    /// Whether the target toolchain is like OpenBSD's.
-    /// Only useful for compiling against OpenBSD, for configuring abi when returning a struct.
-    pub is_like_openbsd: bool,
+    /// Whether the target toolchain's ABI supports returning small structs as an integer.
+    pub abi_return_struct_as_int: bool,
     /// Whether the target toolchain is like macOS's. Only useful for compiling against iOS/macOS,
     /// in particular running dsymutil and some other stuff like `-dead_strip`. Defaults to false.
     pub is_like_osx: bool,
@@ -473,6 +475,9 @@ pub struct TargetOptions {
     /// The default visibility for symbols in this target should be "hidden"
     /// rather than "default"
     pub default_hidden_visibility: bool,
+
+    /// Whether or not bitcode is embedded in object files
+    pub embed_bitcode: bool,
 }
 
 impl Default for TargetOptions {
@@ -481,7 +486,7 @@ impl Default for TargetOptions {
     fn default() -> TargetOptions {
         TargetOptions {
             is_builtin: false,
-            linker: option_env!("CFG_DEFAULT_LINKER").unwrap_or("cc").to_string(),
+            linker: option_env!("CFG_DEFAULT_LINKER").map(|s| s.to_string()),
             pre_link_args: LinkArgs::new(),
             post_link_args: LinkArgs::new(),
             asm_args: Vec::new(),
@@ -502,7 +507,7 @@ impl Default for TargetOptions {
             staticlib_prefix: "lib".to_string(),
             staticlib_suffix: ".a".to_string(),
             target_family: None,
-            is_like_openbsd: false,
+            abi_return_struct_as_int: false,
             is_like_osx: false,
             is_like_solaris: false,
             is_like_windows: false,
@@ -514,7 +519,7 @@ impl Default for TargetOptions {
             has_rpath: false,
             no_default_libraries: true,
             position_independent_executables: false,
-            relro_level: RelroLevel::Off,
+            relro_level: RelroLevel::None,
             pre_link_objects_exe: Vec::new(),
             pre_link_objects_dll: Vec::new(),
             post_link_objects: Vec::new(),
@@ -544,6 +549,7 @@ impl Default for TargetOptions {
             i128_lowering: false,
             codegen_backend: "llvm".to_string(),
             default_hidden_visibility: false,
+            embed_bitcode: false,
         }
     }
 }
@@ -731,7 +737,7 @@ impl Target {
         }
 
         key!(is_builtin, bool);
-        key!(linker);
+        key!(linker, optional);
         key!(pre_link_args, link_args);
         key!(pre_link_objects_exe, list);
         key!(pre_link_objects_dll, list);
@@ -757,7 +763,7 @@ impl Target {
         key!(staticlib_prefix);
         key!(staticlib_suffix);
         key!(target_family, optional);
-        key!(is_like_openbsd, bool);
+        key!(abi_return_struct_as_int, bool);
         key!(is_like_osx, bool);
         key!(is_like_solaris, bool);
         key!(is_like_windows, bool);
@@ -792,6 +798,7 @@ impl Target {
         key!(no_builtins, bool);
         key!(codegen_backend);
         key!(default_hidden_visibility, bool);
+        key!(embed_bitcode, bool);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {
@@ -819,11 +826,10 @@ impl Target {
     ///
     /// The error string could come from any of the APIs called, including
     /// filesystem access and JSON decoding.
-    pub fn search(target: &str) -> Result<Target, String> {
+    pub fn search(target_triple: &TargetTriple) -> Result<Target, String> {
         use std::env;
         use std::ffi::OsString;
         use std::fs;
-        use std::path::{Path, PathBuf};
         use serialize::json;
 
         fn load_file(path: &Path) -> Result<Target, String> {
@@ -833,35 +839,40 @@ impl Target {
             Target::from_json(obj)
         }
 
-        if let Ok(t) = load_specific(target) {
-            return Ok(t)
-        }
+        match target_triple {
+            &TargetTriple::TargetTriple(ref target_triple) => {
+                // check if triple is in list of supported targets
+                if let Ok(t) = load_specific(target_triple) {
+                    return Ok(t)
+                }
 
-        let path = Path::new(target);
+                // search for a file named `target_triple`.json in RUST_TARGET_PATH
+                let path = {
+                    let mut target = target_triple.to_string();
+                    target.push_str(".json");
+                    PathBuf::from(target)
+                };
 
-        if path.is_file() {
-            return load_file(&path);
-        }
+                let target_path = env::var_os("RUST_TARGET_PATH")
+                                    .unwrap_or(OsString::new());
 
-        let path = {
-            let mut target = target.to_string();
-            target.push_str(".json");
-            PathBuf::from(target)
-        };
+                // FIXME 16351: add a sane default search path?
 
-        let target_path = env::var_os("RUST_TARGET_PATH")
-                              .unwrap_or(OsString::new());
-
-        // FIXME 16351: add a sane default search path?
-
-        for dir in env::split_paths(&target_path) {
-            let p =  dir.join(&path);
-            if p.is_file() {
-                return load_file(&p);
+                for dir in env::split_paths(&target_path) {
+                    let p =  dir.join(&path);
+                    if p.is_file() {
+                        return load_file(&p);
+                    }
+                }
+                Err(format!("Could not find specification for target {:?}", target_triple))
+            }
+            &TargetTriple::TargetPath(ref target_path) => {
+                if target_path.is_file() {
+                    return load_file(&target_path);
+                }
+                Err(format!("Target path {:?} is not a valid file", target_path))
             }
         }
-
-        Err(format!("Could not find specification for target {:?}", target))
     }
 }
 
@@ -955,7 +966,7 @@ impl ToJson for Target {
         target_option_val!(staticlib_prefix);
         target_option_val!(staticlib_suffix);
         target_option_val!(target_family);
-        target_option_val!(is_like_openbsd);
+        target_option_val!(abi_return_struct_as_int);
         target_option_val!(is_like_osx);
         target_option_val!(is_like_solaris);
         target_option_val!(is_like_windows);
@@ -990,6 +1001,7 @@ impl ToJson for Target {
         target_option_val!(no_builtins);
         target_option_val!(codegen_backend);
         target_option_val!(default_hidden_visibility);
+        target_option_val!(embed_bitcode);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()
@@ -1006,5 +1018,63 @@ fn maybe_jemalloc() -> Option<String> {
         Some("alloc_jemalloc".to_string())
     } else {
         None
+    }
+}
+
+/// Either a target triple string or a path to a JSON file.
+#[derive(PartialEq, Clone, Debug, Hash, RustcEncodable, RustcDecodable)]
+pub enum TargetTriple {
+    TargetTriple(String),
+    TargetPath(PathBuf),
+}
+
+impl TargetTriple {
+    /// Creates a target triple from the passed target triple string.
+    pub fn from_triple(triple: &str) -> Self {
+        TargetTriple::TargetTriple(triple.to_string())
+    }
+
+    /// Creates a target triple from the passed target path.
+    pub fn from_path(path: &Path) -> Result<Self, io::Error> {
+        let canonicalized_path = path.canonicalize()?;
+        Ok(TargetTriple::TargetPath(canonicalized_path))
+    }
+
+    /// Returns a string triple for this target.
+    ///
+    /// If this target is a path, the file name (without extension) is returned.
+    pub fn triple(&self) -> &str {
+        match self {
+            &TargetTriple::TargetTriple(ref triple) => triple,
+            &TargetTriple::TargetPath(ref path) => {
+                path.file_stem().expect("target path must not be empty").to_str()
+                    .expect("target path must be valid unicode")
+            }
+        }
+    }
+
+    /// Returns an extended string triple for this target.
+    ///
+    /// If this target is a path, a hash of the path is appended to the triple returned
+    /// by `triple()`.
+    pub fn debug_triple(&self) -> String {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+
+        let triple = self.triple();
+        if let &TargetTriple::TargetPath(ref path) = self {
+            let mut hasher = DefaultHasher::new();
+            path.hash(&mut hasher);
+            let hash = hasher.finish();
+            format!("{}-{}", triple, hash)
+        } else {
+            triple.to_owned()
+        }
+    }
+}
+
+impl fmt::Display for TargetTriple {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.debug_triple())
     }
 }

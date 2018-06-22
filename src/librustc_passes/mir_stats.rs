@@ -12,7 +12,6 @@
 // pieces of MIR. The resulting numbers are good approximations but not
 // completely accurate (some things might be counted twice, others missed).
 
-use rustc_const_math::{ConstUsize};
 use rustc::mir::{AggregateKind, AssertMessage, BasicBlock, BasicBlockData};
 use rustc::mir::{Constant, Literal, Location, Local, LocalDecl};
 use rustc::mir::{Place, PlaceElem, PlaceProjection};
@@ -91,6 +90,7 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
             StatementKind::StorageLive(..) => "StatementKind::StorageLive",
             StatementKind::StorageDead(..) => "StatementKind::StorageDead",
             StatementKind::InlineAsm { .. } => "StatementKind::InlineAsm",
+            StatementKind::UserAssertTy(..) => "StatementKind::UserAssertTy",
             StatementKind::Nop => "StatementKind::Nop",
         }, &statement.kind);
         self.super_statement(block, statement, location);
@@ -263,13 +263,6 @@ impl<'a, 'tcx> mir_visit::Visitor<'tcx> for StatCollector<'a, 'tcx> {
                    _: Location) {
         self.record("Const", constant);
         self.super_const(constant);
-    }
-
-    fn visit_const_usize(&mut self,
-                         const_usize: &ConstUsize,
-                         _: Location) {
-        self.record("ConstUsize", const_usize);
-        self.super_const_usize(const_usize);
     }
 
     fn visit_local_decl(&mut self,

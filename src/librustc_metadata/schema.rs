@@ -15,12 +15,14 @@ use rustc::hir;
 use rustc::hir::def::{self, CtorKind};
 use rustc::hir::def_id::{DefIndex, DefId, CrateNum};
 use rustc::ich::StableHashingContext;
-use rustc::middle::cstore::{DepKind, LinkagePreference, NativeLibrary};
+use rustc::middle::exported_symbols::{ExportedSymbol, SymbolExportLevel};
+use rustc::middle::cstore::{DepKind, LinkagePreference, NativeLibrary, ForeignModule};
 use rustc::middle::lang_items;
 use rustc::mir;
 use rustc::session::CrateDisambiguator;
 use rustc::ty::{self, Ty, ReprOptions};
 use rustc_back::PanicStrategy;
+use rustc_back::target::TargetTriple;
 
 use rustc_serialize as serialize;
 use syntax::{ast, attr};
@@ -185,7 +187,7 @@ pub enum LazyState {
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct CrateRoot {
     pub name: Symbol,
-    pub triple: String,
+    pub triple: TargetTriple,
     pub hash: hir::svh::Svh,
     pub disambiguator: CrateDisambiguator,
     pub panic_strategy: PanicStrategy,
@@ -199,10 +201,14 @@ pub struct CrateRoot {
     pub lang_items: LazySeq<(DefIndex, usize)>,
     pub lang_items_missing: LazySeq<lang_items::LangItem>,
     pub native_libraries: LazySeq<NativeLibrary>,
+    pub foreign_modules: LazySeq<ForeignModule>,
     pub codemap: LazySeq<syntax_pos::FileMap>,
     pub def_path_table: Lazy<hir::map::definitions::DefPathTable>,
     pub impls: LazySeq<TraitImpls>,
-    pub exported_symbols: LazySeq<DefIndex>,
+    pub exported_symbols: LazySeq<(ExportedSymbol, SymbolExportLevel)>,
+    pub wasm_custom_sections: LazySeq<DefIndex>,
+    pub interpret_alloc_index: LazySeq<u32>,
+
     pub index: LazySeq<index::Index>,
 }
 
@@ -225,9 +231,9 @@ pub struct TraitImpls {
     pub impls: LazySeq<DefIndex>,
 }
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for TraitImpls {
+impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for TraitImpls {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let TraitImpls {
             trait_id: (krate, def_index),
@@ -308,9 +314,9 @@ pub enum EntryKind<'tcx> {
     AssociatedConst(AssociatedContainer, u8),
 }
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for EntryKind<'gcx> {
+impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for EntryKind<'gcx> {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         mem::discriminant(self).hash_stable(hcx, hasher);
         match *self {

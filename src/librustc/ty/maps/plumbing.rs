@@ -84,7 +84,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             let span = self.sess.codemap().def_span(span);
             let mut err =
                 struct_span_err!(self.sess, span, E0391,
-                                 "unsupported cyclic reference between types/traits detected");
+                                 "cyclic dependency detected");
             err.span_label(span, "cyclic reference");
 
             err.span_note(self.sess.codemap().def_span(stack[0].0),
@@ -147,7 +147,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 }
                 match self.dep_graph.try_mark_green(self.global_tcx(), &dep_node) {
                     Some(dep_node_index) => {
-                        debug_assert!(self.dep_graph.is_green(dep_node_index));
+                        debug_assert!(self.dep_graph.is_green(&dep_node));
                         self.dep_graph.read_index(dep_node_index);
                         Some(dep_node_index)
                     }
@@ -164,8 +164,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 macro_rules! profq_msg {
     ($tcx:expr, $msg:expr) => {
         if cfg!(debug_assertions) {
-            if  $tcx.sess.profile_queries() {
-                profq_msg($msg)
+            if $tcx.sess.profile_queries() {
+                profq_msg($tcx.sess, $msg)
             }
         }
     }
@@ -181,6 +181,19 @@ macro_rules! profq_key {
             } else { None }
         } else { None }
     }
+}
+
+macro_rules! handle_cycle_error {
+    ([][$this: expr]) => {{
+        Value::from_cycle_error($this.global_tcx())
+    }};
+    ([fatal_cycle$(, $modifiers:ident)*][$this:expr]) => {{
+        $this.tcx.sess.abort_if_errors();
+        unreachable!();
+    }};
+    ([$other:ident$(, $modifiers:ident)*][$($args:tt)*]) => {
+        handle_cycle_error!([$($modifiers),*][$($args)*])
+    };
 }
 
 macro_rules! define_maps {
@@ -390,7 +403,7 @@ macro_rules! define_maps {
                                                   dep_node: &DepNode)
                                                   -> Result<$V, CycleError<'a, $tcx>>
             {
-                debug_assert!(tcx.dep_graph.is_green(dep_node_index));
+                debug_assert!(tcx.dep_graph.is_green(dep_node));
 
                 // First we try to load the result from the on-disk cache
                 let result = if Self::cache_on_disk(key) &&
@@ -478,7 +491,16 @@ macro_rules! define_maps {
                      span: Span,
                      dep_node: DepNode)
                      -> Result<($V, DepNodeIndex), CycleError<'a, $tcx>> {
-                debug_assert!(tcx.dep_graph.node_color(&dep_node).is_none());
+                // If the following assertion triggers, it can have two reasons:
+                // 1. Something is wrong with DepNode creation, either here or
+                //    in DepGraph::try_mark_green()
+                // 2. Two distinct query keys get mapped to the same DepNode
+                //    (see for example #48923)
+                assert!(!tcx.dep_graph.dep_node_exists(&dep_node),
+                        "Forcing query with already existing DepNode.\n\
+                          - query-key: {:?}\n\
+                          - dep-node: {:?}",
+                        key, dep_node);
 
                 profq_msg!(tcx, ProfileQueriesMsg::ProviderBegin);
                 let res = tcx.cycle_check(span, Query::$name(key), || {
@@ -564,7 +586,7 @@ macro_rules! define_maps {
             pub fn $name(self, key: $K) -> $V {
                 queries::$name::try_get(self.tcx, self.span, key).unwrap_or_else(|mut e| {
                     e.emit();
-                    Value::from_cycle_error(self.global_tcx())
+                    handle_cycle_error!([$($modifiers)*][self])
                 })
             })*
         }
@@ -583,7 +605,7 @@ macro_rules! define_maps {
 
 macro_rules! define_map_struct {
     (tcx: $tcx:tt,
-     input: ($(([$(modifiers:tt)*] [$($attr:tt)*] [$name:ident]))*)) => {
+     input: ($(([$($modifiers:tt)*] [$($attr:tt)*] [$name:ident]))*)) => {
         pub struct Maps<$tcx> {
             providers: IndexVec<CrateNum, Providers<$tcx>>,
             query_stack: RefCell<Vec<(Span, Query<$tcx>)>>,
@@ -759,7 +781,9 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::FulfillObligation |
         DepKind::VtableMethods |
         DepKind::EraseRegionsTy |
-        DepKind::NormalizeTy |
+        DepKind::NormalizeProjectionTy |
+        DepKind::NormalizeTyAfterErasingRegions |
+        DepKind::DropckOutlives |
         DepKind::SubstituteNormalizeAndTestPredicates |
         DepKind::InstanceDefSizeEstimate |
 
@@ -838,9 +862,10 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::RvaluePromotableMap => { force!(rvalue_promotable_map, def_id!()); }
         DepKind::ImplParent => { force!(impl_parent, def_id!()); }
         DepKind::TraitOfItem => { force!(trait_of_item, def_id!()); }
-        DepKind::IsExportedSymbol => { force!(is_exported_symbol, def_id!()); }
+        DepKind::IsReachableNonGeneric => { force!(is_reachable_non_generic, def_id!()); }
         DepKind::IsMirAvailable => { force!(is_mir_available, def_id!()); }
         DepKind::ItemAttrs => { force!(item_attrs, def_id!()); }
+        DepKind::TransFnAttrs => { force!(trans_fn_attrs, def_id!()); }
         DepKind::FnArgNames => { force!(fn_arg_names, def_id!()); }
         DepKind::DylibDepFormats => { force!(dylib_dependency_formats, krate!()); }
         DepKind::IsPanicRuntime => { force!(is_panic_runtime, krate!()); }
@@ -855,7 +880,10 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::GetPanicStrategy => { force!(panic_strategy, krate!()); }
         DepKind::IsNoBuiltins => { force!(is_no_builtins, krate!()); }
         DepKind::ImplDefaultness => { force!(impl_defaultness, def_id!()); }
-        DepKind::ExportedSymbolIds => { force!(exported_symbol_ids, krate!()); }
+        DepKind::CheckItemWellFormed => { force!(check_item_well_formed, def_id!()); }
+        DepKind::CheckTraitItemWellFormed => { force!(check_trait_item_well_formed, def_id!()); }
+        DepKind::CheckImplItemWellFormed => { force!(check_impl_item_well_formed, def_id!()); }
+        DepKind::ReachableNonGenerics => { force!(reachable_non_generics, krate!()); }
         DepKind::NativeLibraries => { force!(native_libraries, krate!()); }
         DepKind::PluginRegistrarFn => { force!(plugin_registrar_fn, krate!()); }
         DepKind::DeriveRegistrarFn => { force!(derive_registrar_fn, krate!()); }
@@ -867,6 +895,9 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
             force!(all_trait_implementations, krate!());
         }
 
+        DepKind::DllimportForeignItems => {
+            force!(dllimport_foreign_items, krate!());
+        }
         DepKind::IsDllimportForeignItem => {
             force!(is_dllimport_foreign_item, def_id!());
         }
@@ -898,8 +929,6 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         }
         DepKind::UsedCrateSource => { force!(used_crate_source, krate!()); }
         DepKind::PostorderCnums => { force!(postorder_cnums, LOCAL_CRATE); }
-        DepKind::HasCloneClosures => { force!(has_clone_closures, krate!()); }
-        DepKind::HasCopyClosures => { force!(has_copy_closures, krate!()); }
 
         DepKind::Freevars => { force!(freevars, def_id!()); }
         DepKind::MaybeUnusedTraitImport => {
@@ -912,17 +941,18 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::CollectAndPartitionTranslationItems => {
             force!(collect_and_partition_translation_items, LOCAL_CRATE);
         }
-        DepKind::ExportName => { force!(export_name, def_id!()); }
-        DepKind::ContainsExternIndicator => {
-            force!(contains_extern_indicator, def_id!());
-        }
-        DepKind::IsTranslatedFunction => { force!(is_translated_function, def_id!()); }
+        DepKind::IsTranslatedItem => { force!(is_translated_item, def_id!()); }
         DepKind::OutputFilenames => { force!(output_filenames, LOCAL_CRATE); }
 
         DepKind::TargetFeaturesWhitelist => { force!(target_features_whitelist, LOCAL_CRATE); }
-        DepKind::TargetFeaturesEnabled => { force!(target_features_enabled, def_id!()); }
 
         DepKind::GetSymbolExportLevel => { force!(symbol_export_level, def_id!()); }
+        DepKind::Features => { force!(features_query, LOCAL_CRATE); }
+
+        DepKind::ProgramClausesFor => { force!(program_clauses_for, def_id!()); }
+        DepKind::WasmCustomSections => { force!(wasm_custom_sections, krate!()); }
+        DepKind::WasmImportModuleMap => { force!(wasm_import_module_map, krate!()); }
+        DepKind::ForeignModules => { force!(foreign_modules, krate!()); }
     }
 
     true
@@ -983,10 +1013,11 @@ impl_load_from_cache!(
     MirConstQualif => mir_const_qualif,
     SymbolName => def_symbol_name,
     ConstIsRvaluePromotableToStatic => const_is_rvalue_promotable_to_static,
-    ContainsExternIndicator => contains_extern_indicator,
     CheckMatch => check_match,
     TypeOfItem => type_of,
     GenericsOfItem => generics_of,
     PredicatesOfItem => predicates_of,
     UsedTraitImports => used_trait_imports,
+    TransFnAttrs => trans_fn_attrs,
+    SpecializationGraph => specialization_graph_of,
 );

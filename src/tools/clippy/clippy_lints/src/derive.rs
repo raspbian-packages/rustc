@@ -28,9 +28,9 @@ use utils::{is_automatically_derived, is_copy, match_path, span_lint_and_then};
 ///     ...
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub DERIVE_HASH_XOR_EQ,
-    Warn,
+    correctness,
     "deriving `Hash` but implementing `PartialEq` explicitly"
 }
 
@@ -43,7 +43,7 @@ declare_lint! {
 /// nothing more than copy the object, which is what `#[derive(Copy, Clone)]`
 /// gets you.
 ///
-/// **Known problems:** None.
+/// **Known problems:** Bounds of generic types are sometimes wrong: https://github.com/rust-lang/rust/issues/26925
 ///
 /// **Example:**
 /// ```rust
@@ -54,9 +54,9 @@ declare_lint! {
 ///     ..
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub EXPL_IMPL_CLONE_ON_COPY,
-    Warn,
+    pedantic,
     "implementing `Clone` explicitly on `Copy` types"
 }
 
@@ -149,7 +149,7 @@ fn check_copy_clone<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, item: &Item, trait_ref
                     }
                 }
                 for subst in substs {
-                    if let Some(subst) = subst.as_type() {
+                    if let ty::subst::UnpackedKind::Type(subst) = subst.unpack() {
                         if let ty::TyParam(_) = subst.sty {
                             return;
                         }

@@ -5,10 +5,11 @@ use rustc::lint::*;
 use rustc::middle::expr_use_visitor::*;
 use rustc::middle::mem_categorization::{cmt, Categorization};
 use rustc::ty::{self, Ty};
+use rustc::ty::layout::LayoutOf;
 use rustc::util::nodemap::NodeSet;
 use syntax::ast::NodeId;
 use syntax::codemap::Span;
-use utils::{span_lint, type_size};
+use utils::span_lint;
 
 pub struct Pass {
     pub too_large_for_stack: u64,
@@ -31,9 +32,9 @@ pub struct Pass {
 ///     println!("{}", *x);
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub BOXED_LOCAL,
-    Warn,
+    perf,
     "using `Box<T>` where unnecessary"
 }
 
@@ -65,7 +66,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
     ) {
         let fn_def_id = cx.tcx.hir.local_def_id(node_id);
         let mut v = EscapeDelegate {
-            cx: cx,
+            cx,
             set: NodeSet(),
             too_large_for_stack: self.too_large_for_stack,
         };
@@ -164,7 +165,7 @@ impl<'a, 'tcx> EscapeDelegate<'a, 'tcx> {
         // Large types need to be boxed to avoid stack
         // overflows.
         if ty.is_box() {
-            type_size(self.cx, ty.boxed_ty()).unwrap_or(0) > self.too_large_for_stack
+            self.cx.layout_of(ty.boxed_ty()).ok().map_or(0, |l| l.size.bytes()) > self.too_large_for_stack
         } else {
             false
         }

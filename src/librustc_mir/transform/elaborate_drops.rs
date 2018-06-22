@@ -19,6 +19,7 @@ use rustc::hir;
 use rustc::ty::{self, TyCtxt};
 use rustc::mir::*;
 use rustc::middle::const_val::ConstVal;
+use rustc::mir::interpret::{Value, PrimVal};
 use rustc::util::nodemap::FxHashMap;
 use rustc_data_structures::indexed_set::IdxSetBuf;
 use rustc_data_structures::indexed_vec::Idx;
@@ -49,7 +50,7 @@ impl MirPass for ElaborateDrops {
             (hir::BodyOwnerKind::Fn, None) => {},
             _ => return
         }
-        let param_env = tcx.param_env(src.def_id);
+        let param_env = tcx.param_env(src.def_id).with_reveal_all();
         let move_data = MoveData::gather_moves(mir, tcx).unwrap();
         let elaborate_patch = {
             let mir = &*mir;
@@ -541,7 +542,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
             ty: self.tcx.types.bool,
             literal: Literal::Value {
                 value: self.tcx.mk_const(ty::Const {
-                    val: ConstVal::Bool(val),
+                    val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(val as u128))),
                     ty: self.tcx.types.bool
                 })
             }

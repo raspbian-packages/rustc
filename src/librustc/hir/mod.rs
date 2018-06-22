@@ -30,12 +30,14 @@ pub use self::Visibility::{Public, Inherited};
 use hir::def::Def;
 use hir::def_id::{DefId, DefIndex, LocalDefId, CRATE_DEF_INDEX};
 use util::nodemap::{NodeMap, FxHashSet};
+use mir::mono::Linkage;
 
 use syntax_pos::{Span, DUMMY_SP};
 use syntax::codemap::{self, Spanned};
 use syntax::abi::Abi;
 use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, MetaItem};
+use syntax::attr::InlineAttr;
 use syntax::ext::hygiene::SyntaxContext;
 use syntax::ptr::P;
 use syntax::symbol::{Symbol, keywords};
@@ -43,6 +45,7 @@ use syntax::tokenstream::TokenStream;
 use syntax::util::ThinVec;
 use syntax::util::parser::ExprPrecedence;
 use ty::AdtKind;
+use ty::maps::Providers;
 
 use rustc_data_structures::indexed_vec;
 
@@ -200,9 +203,31 @@ pub struct Lifetime {
 
 #[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Copy)]
 pub enum LifetimeName {
+    /// User typed nothing. e.g. the lifetime in `&u32`.
     Implicit,
+
+    /// User typed `'_`.
     Underscore,
+
+    /// Synthetic name generated when user elided a lifetime in an impl header,
+    /// e.g. the lifetimes in cases like these:
+    ///
+    ///     impl Foo for &u32
+    ///     impl Foo<'_> for u32
+    ///
+    /// in that case, we rewrite to
+    ///
+    ///     impl<'f> Foo for &'f u32
+    ///     impl<'f> Foo<'f> for u32
+    ///
+    /// where `'f` is something like `Fresh(0)`. The indices are
+    /// unique per impl, but not necessarily continuous.
+    Fresh(usize),
+
+    /// User wrote `'static`
     Static,
+
+    /// Some user-given name like `'x`
     Name(Name),
 }
 
@@ -211,7 +236,7 @@ impl LifetimeName {
         use self::LifetimeName::*;
         match *self {
             Implicit => keywords::Invalid.name(),
-            Underscore => Symbol::intern("'_"),
+            Fresh(_) | Underscore => keywords::UnderscoreLifetime.name(),
             Static => keywords::StaticLifetime.name(),
             Name(name) => name,
         }
@@ -232,7 +257,13 @@ impl Lifetime {
         use self::LifetimeName::*;
         match self.name {
             Implicit | Underscore => true,
-            Static | Name(_) => false,
+
+            // It might seem surprising that `Fresh(_)` counts as
+            // *not* elided -- but this is because, as far as the code
+            // in the compiler is concerned -- `Fresh(_)` variants act
+            // equivalently to "some fresh name". They correspond to
+            // early-bound regions on an impl, in other words.
+            Fresh(_) | Static | Name(_) => false,
         }
     }
 
@@ -392,6 +423,15 @@ pub enum TyParamBound {
     RegionTyParamBound(Lifetime),
 }
 
+impl TyParamBound {
+    pub fn span(&self) -> Span {
+        match self {
+            &TraitTyParamBound(ref t, ..) => t.span,
+            &RegionTyParamBound(ref l) => l.span,
+        }
+    }
+}
+
 /// A modifier on a bound, currently this is only used for `?Sized`, where the
 /// modifier is `Maybe`. Negative bounds should also be handled here.
 #[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -411,6 +451,7 @@ pub struct TyParam {
     pub span: Span,
     pub pure_wrt_drop: bool,
     pub synthetic: Option<SyntheticTyParamKind>,
+    pub attrs: HirVec<Attribute>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -543,7 +584,7 @@ impl Generics {
 }
 
 /// Synthetic Type Parameters are converted to an other form during lowering, this allows
-/// to track the original form they had. Usefull for error messages.
+/// to track the original form they had. Useful for error messages.
 #[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum SyntheticTyParamKind {
     ImplTrait
@@ -565,6 +606,16 @@ pub enum WherePredicate {
     RegionPredicate(WhereRegionPredicate),
     /// An equality predicate (unsupported)
     EqPredicate(WhereEqPredicate),
+}
+
+impl WherePredicate {
+    pub fn span(&self) -> Span {
+        match self {
+            &WherePredicate::BoundPredicate(ref p) => p.span,
+            &WherePredicate::RegionPredicate(ref p) => p.span,
+            &WherePredicate::EqPredicate(ref p) => p.span,
+        }
+    }
 }
 
 /// A type bound, eg `for<'c> Foo: Send+Clone+'c`
@@ -601,9 +652,9 @@ pub type CrateConfig = HirVec<P<MetaItem>>;
 /// The top-level data structure that stores the entire contents of
 /// the crate currently being compiled.
 ///
-/// For more details, see the module-level [README].
+/// For more details, see the [rustc guide].
 ///
-/// [README]: https://github.com/rust-lang/rust/blob/master/src/librustc/hir/README.md.
+/// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/hir.html
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Debug)]
 pub struct Crate {
     pub module: Mod,
@@ -2008,9 +2059,9 @@ pub struct Item {
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Item_ {
-    /// An `extern crate` item, with optional original crate name,
+    /// An `extern crate` item, with optional *original* crate name if the crate was renamed.
     ///
-    /// e.g. `extern crate foo` or `extern crate foo_bar as foo`
+    /// E.g. `extern crate foo` or `extern crate foo_bar as foo`
     ItemExternCrate(Option<Name>),
 
     /// `use foo::bar::*;` or `use foo::bar::baz as quux;`
@@ -2204,3 +2255,57 @@ pub type TraitMap = NodeMap<Vec<TraitCandidate>>;
 // Map from the NodeId of a glob import to a list of items which are actually
 // imported.
 pub type GlobMap = NodeMap<FxHashSet<Name>>;
+
+
+pub fn provide(providers: &mut Providers) {
+    providers.describe_def = map::describe_def;
+}
+
+#[derive(Clone, RustcEncodable, RustcDecodable, Hash)]
+pub struct TransFnAttrs {
+    pub flags: TransFnAttrFlags,
+    pub inline: InlineAttr,
+    pub export_name: Option<Symbol>,
+    pub target_features: Vec<Symbol>,
+    pub linkage: Option<Linkage>,
+}
+
+bitflags! {
+    #[derive(RustcEncodable, RustcDecodable)]
+    pub struct TransFnAttrFlags: u8 {
+        const COLD                      = 0b0000_0001;
+        const ALLOCATOR                 = 0b0000_0010;
+        const UNWIND                    = 0b0000_0100;
+        const RUSTC_ALLOCATOR_NOUNWIND  = 0b0000_1000;
+        const NAKED                     = 0b0001_0000;
+        const NO_MANGLE                 = 0b0010_0000;
+        const RUSTC_STD_INTERNAL_SYMBOL = 0b0100_0000;
+        const NO_DEBUG                  = 0b1000_0000;
+    }
+}
+
+impl TransFnAttrs {
+    pub fn new() -> TransFnAttrs {
+        TransFnAttrs {
+            flags: TransFnAttrFlags::empty(),
+            inline: InlineAttr::None,
+            export_name: None,
+            target_features: vec![],
+            linkage: None,
+        }
+    }
+
+    /// True if `#[inline]` or `#[inline(always)]` is present.
+    pub fn requests_inline(&self) -> bool {
+        match self.inline {
+            InlineAttr::Hint | InlineAttr::Always => true,
+            InlineAttr::None | InlineAttr::Never => false,
+        }
+    }
+
+    /// True if `#[no_mangle]` or `#[export_name(...)]` is present.
+    pub fn contains_extern_indicator(&self) -> bool {
+        self.flags.contains(TransFnAttrFlags::NO_MANGLE) || self.export_name.is_some()
+    }
+}
+

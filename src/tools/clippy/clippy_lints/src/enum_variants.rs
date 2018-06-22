@@ -22,9 +22,9 @@ use utils::{camel_case_from, camel_case_until, in_macro};
 ///     HummingbirdCake,
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ENUM_VARIANT_NAMES,
-    Warn,
+    style,
     "enums where all variants share a prefix/postfix"
 }
 
@@ -43,9 +43,9 @@ declare_lint! {
 ///     HummingbirdCake,
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub PUB_ENUM_VARIANT_NAMES,
-    Allow,
+    pedantic,
     "enums where all variants share a prefix/postfix"
 }
 
@@ -62,9 +62,9 @@ declare_lint! {
 ///     struct BlackForestCake;
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub STUTTER,
-    Allow,
+    pedantic,
     "type names prefixed/postfixed with their containing module's name"
 }
 
@@ -92,9 +92,9 @@ declare_lint! {
 ///     ...
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MODULE_INCEPTION,
-    Warn,
+    style,
     "modules that have the same name as their parent module"
 }
 
@@ -107,7 +107,7 @@ impl EnumVariantNames {
     pub fn new(threshold: u64) -> Self {
         Self {
             modules: Vec::new(),
-            threshold: threshold,
+            threshold,
         }
     }
 }
@@ -260,7 +260,7 @@ impl EarlyLintPass for EnumVariantNames {
                             );
                         }
                     }
-                    if item.vis == Visibility::Public {
+                    if item.vis.node == VisibilityKind::Public {
                         let matching = partial_match(mod_camel, &item_camel);
                         let rmatching = partial_rmatch(mod_camel, &item_camel);
                         let nchars = mod_camel.chars().count();
@@ -284,8 +284,8 @@ impl EarlyLintPass for EnumVariantNames {
             }
         }
         if let ItemKind::Enum(ref def, _) = item.node {
-            let lint = match item.vis {
-                Visibility::Public => PUB_ENUM_VARIANT_NAMES,
+            let lint = match item.vis.node {
+                VisibilityKind::Public => PUB_ENUM_VARIANT_NAMES,
                 _ => ENUM_VARIANT_NAMES,
             };
             check_variant(cx, self.threshold, def, &item_name, item_name_chars, item.span, lint);

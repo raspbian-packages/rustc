@@ -26,25 +26,25 @@
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(unsize)]
-#![feature(i128_type)]
-#![feature(i128)]
-#![feature(conservative_impl_trait)]
+#![cfg_attr(stage0, feature(conservative_impl_trait))]
+#![cfg_attr(stage0, feature(i128_type, i128))]
 #![feature(specialization)]
 #![feature(optin_builtin_traits)]
-#![feature(underscore_lifetimes)]
+#![cfg_attr(stage0, feature(underscore_lifetimes))]
 #![feature(macro_vis_matcher)]
 #![feature(allow_internal_unstable)]
+#![cfg_attr(stage0, feature(universal_impl_trait))]
 
 #![cfg_attr(unix, feature(libc))]
 #![cfg_attr(test, feature(test))]
 
 extern crate core;
+extern crate ena;
 #[macro_use]
 extern crate log;
 extern crate serialize as rustc_serialize; // used by deriving
 #[cfg(unix)]
 extern crate libc;
-extern crate parking_lot;
 #[macro_use]
 extern crate cfg_if;
 extern crate stable_deref_trait;
@@ -63,16 +63,24 @@ pub mod indexed_vec;
 pub mod obligation_forest;
 pub mod sip128;
 pub mod snapshot_map;
-pub mod snapshot_vec;
+pub use ena::snapshot_vec;
 pub mod stable_hasher;
 pub mod transitive_relation;
-pub mod unify;
+pub use ena::unify;
 pub mod fx;
 pub mod tuple_slice;
 pub mod control_flow_graph;
 pub mod flock;
 pub mod sync;
 pub mod owning_ref;
+
+pub struct OnDrop<F: Fn()>(pub F);
+
+impl<F: Fn()> Drop for OnDrop<F> {
+      fn drop(&mut self) {
+            (self.0)();
+      }
+}
 
 // See comments in src/librustc/lib.rs
 #[doc(hidden)]

@@ -78,6 +78,9 @@
 #![deny(missing_docs, missing_debug_implementations)]
 #![doc(html_root_url = "https://docs.rs/jobserver/0.1")]
 
+#[macro_use]
+extern crate log;
+
 use std::env;
 use std::io;
 use std::process::Command;
@@ -396,7 +399,7 @@ mod imp {
                             Ordering};
     use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
     use std::sync::{Arc, Once, ONCE_INIT};
-    use std::thread::{JoinHandle, Builder};
+    use std::thread::{self, JoinHandle, Builder};
     use std::time::Duration;
 
     use self::libc::c_int;
@@ -420,6 +423,7 @@ mod imp {
             for _ in 0..limit {
                 (&client.write).write(&[b'|'])?;
             }
+            info!("created a jobserver: {:?}", client);
             Ok(client)
         }
 
@@ -472,11 +476,13 @@ mod imp {
             // If we're called from `make` *without* the leading + on our rule
             // then we'll have `MAKEFLAGS` env vars but won't actually have
             // access to the file descriptors.
-            if is_pipe(read) && is_pipe(write) {
+            if is_valid_fd(read) && is_valid_fd(write) {
+                info!("using env fds {} and {}", read, write);
                 drop(set_cloexec(read, true));
                 drop(set_cloexec(write, true));
                 Some(Client::from_fds(read, write))
             } else {
+                info!("one of {} or {} isn't a pipe", read, write);
                 None
             }
         }
@@ -645,29 +651,17 @@ mod imp {
                         Err(RecvTimeoutError::Timeout) => {}
                     }
                 }
+                thread::yield_now();
             }
-            if !done {
-                panic!("failed to shut down worker thread");
+            if done {
+                drop(self.thread.join());
             }
-            drop(self.thread.join());
         }
     }
 
-    #[allow(unused_assignments)]
-    fn is_pipe(fd: c_int) -> bool {
+    fn is_valid_fd(fd: c_int) -> bool {
         unsafe {
-            let mut stat = mem::zeroed();
-            if libc::fstat(fd, &mut stat) == 0 {
-                // On android arm and i686 mode_t is u16 and st_mode is u32,
-                // this generates a type mismatch when S_IFIFO (declared as mode_t)
-                // is used in operations with st_mode, so we use this workaround
-                // to get the value of S_IFIFO with the same type of st_mode.
-                let mut s_ififo = stat.st_mode;
-                s_ififo = libc::S_IFIFO as _;
-                stat.st_mode & s_ififo == s_ififo
-            } else {
-                false
-            }
+            return libc::fcntl(fd, libc::F_GETFD) != -1;
         }
     }
 
@@ -814,6 +808,7 @@ mod imp {
                     if create_limit != limit {
                         client.acquire()?;
                     }
+                    info!("created jobserver {:?}", client);
                     return Ok(client)
                 }
             }
@@ -832,8 +827,10 @@ mod imp {
                                      FALSE,
                                      name.as_ptr());
             if sem.is_null() {
+                info!("failed to open environment semaphore {}", s);
                 None
             } else {
+                info!("opened environment semaphore {}", s);
                 Some(Client {
                     sem: Handle(sem),
                     name: s.to_string(),

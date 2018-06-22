@@ -7,7 +7,7 @@ use rustc::ty::{self, TyCtxt};
 use semver::Version;
 use syntax::ast::{Attribute, AttrStyle, Lit, LitKind, MetaItemKind, NestedMetaItem, NestedMetaItemKind};
 use syntax::codemap::Span;
-use utils::{in_macro, match_def_path, opt_def_id, paths, snippet_opt, span_lint, span_lint_and_then};
+use utils::{in_macro, last_line_of_span, match_def_path, opt_def_id, paths, snippet_opt, span_lint, span_lint_and_then};
 
 /// **What it does:** Checks for items annotated with `#[inline(always)]`,
 /// unless the annotated function is empty or simply panics.
@@ -29,9 +29,9 @@ use utils::{in_macro, match_def_path, opt_def_id, paths, snippet_opt, span_lint,
 /// #[inline(always)]
 /// fn not_quite_hot_code(..) { ... }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub INLINE_ALWAYS,
-    Warn,
+    pedantic,
     "use of `#[inline(always)]`"
 }
 
@@ -53,9 +53,9 @@ declare_lint! {
 /// #[allow(unused_import)]
 /// use foo::bar;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub USELESS_ATTRIBUTE,
-    Warn,
+    correctness,
     "use of lint attributes on `extern crate` items"
 }
 
@@ -72,9 +72,9 @@ declare_lint! {
 /// #[deprecated(since = "forever")]
 /// fn something_else(..) { ... }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub DEPRECATED_SEMVER,
-    Warn,
+    correctness,
     "use of `#[deprecated(since = \"x\")]` where x is not semver"
 }
 
@@ -103,9 +103,9 @@ declare_lint! {
 /// #[inline(always)]
 /// fn this_is_fine_too(..) { ... }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub EMPTY_LINE_AFTER_OUTER_ATTR,
-    Warn,
+    style,
     "empty line after outer attribute"
 }
 
@@ -156,17 +156,19 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for AttrPass {
                                             }
                                         }
                                     }
-                                    if let Some(mut sugg) = snippet_opt(cx, attr.span) {
-                                        if sugg.len() > 1 {
+                                    let line_span = last_line_of_span(cx, attr.span);
+
+                                    if let Some(mut sugg) = snippet_opt(cx, line_span) {
+                                        if sugg.contains("#[") {
                                             span_lint_and_then(
                                                 cx,
                                                 USELESS_ATTRIBUTE,
-                                                attr.span,
+                                                line_span,
                                                 "useless lint attribute",
                                                 |db| {
-                                                    sugg.insert(1, '!');
+                                                    sugg = sugg.replacen("#[", "#![", 1);
                                                     db.span_suggestion(
-                                                        attr.span,
+                                                        line_span,
                                                         "if you just forgot a `!`, use",
                                                         sugg,
                                                     );
@@ -265,22 +267,22 @@ fn check_attrs(cx: &LateContext, span: Span, name: &Name, attrs: &[Attribute]) {
             return;
         }
         if attr.style == AttrStyle::Outer {
-            if !is_present_in_source(cx, attr.span) {
+            if attr.tokens.is_empty() || !is_present_in_source(cx, attr.span) {
                 return;
             }
 
-            let attr_to_item_span = Span::new(attr.span.lo(), span.lo(), span.ctxt());
+            let begin_of_attr_to_item = Span::new(attr.span.lo(), span.lo(), span.ctxt());
+            let end_of_attr_to_item = Span::new(attr.span.hi(), span.lo(), span.ctxt());
 
-            if let Some(snippet) = snippet_opt(cx, attr_to_item_span) {
+            if let Some(snippet) = snippet_opt(cx, end_of_attr_to_item) {
                 let lines = snippet.split('\n').collect::<Vec<_>>();
-                if lines.iter().filter(|l| l.trim().is_empty()).count() > 1 {
+                if lines.iter().filter(|l| l.trim().is_empty()).count() > 2 {
                     span_lint(
                         cx,
                         EMPTY_LINE_AFTER_OUTER_ATTR,
-                        attr_to_item_span,
+                        begin_of_attr_to_item,
                         "Found an empty line after an outer attribute. Perhaps you forgot to add a '!' to make it an inner attribute?"
-                        );
-
+                    );
                 }
             }
         }

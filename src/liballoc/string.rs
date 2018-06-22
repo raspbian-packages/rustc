@@ -59,18 +59,18 @@
 use core::fmt;
 use core::hash;
 use core::iter::{FromIterator, FusedIterator};
-use core::ops::{self, Add, AddAssign, Index, IndexMut};
+use core::ops::Bound::{Excluded, Included, Unbounded};
+use core::ops::{self, Add, AddAssign, Index, IndexMut, RangeBounds};
 use core::ptr;
 use core::str::pattern::Pattern;
 use std_unicode::lossy;
 use std_unicode::char::{decode_utf16, REPLACEMENT_CHARACTER};
 
 use borrow::{Cow, ToOwned};
-use range::RangeArgument;
-use Bound::{Excluded, Included, Unbounded};
 use str::{self, from_boxed_utf8_unchecked, FromStr, Utf8Error, Chars};
 use vec::Vec;
 use boxed::Box;
+use super::allocator::CollectionAllocErr;
 
 /// A UTF-8 encoded, growable string.
 ///
@@ -364,7 +364,7 @@ impl String {
     ///
     /// Given that the `String` is empty, this will not allocate any initial
     /// buffer. While that means that this initial operation is very
-    /// inexpensive, but may cause excessive allocation later, when you add
+    /// inexpensive, it may cause excessive allocation later when you add
     /// data. If you have an idea of how much data the `String` will hold,
     /// consider the [`with_capacity`] method to prevent excessive
     /// re-allocation.
@@ -920,6 +920,79 @@ impl String {
         self.vec.reserve_exact(additional)
     }
 
+    /// Tries to reserve capacity for at least `additional` more elements to be inserted
+    /// in the given `String`. The collection may reserve more space to avoid
+    /// frequent reallocations. After calling `reserve`, capacity will be
+    /// greater than or equal to `self.len() + additional`. Does nothing if
+    /// capacity is already sufficient.
+    ///
+    /// # Errors
+    ///
+    /// If the capacity overflows, or the allocator reports a failure, then an error
+    /// is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(try_reserve)]
+    /// use std::collections::CollectionAllocErr;
+    ///
+    /// fn process_data(data: &str) -> Result<String, CollectionAllocErr> {
+    ///     let mut output = String::new();
+    ///
+    ///     // Pre-reserve the memory, exiting if we can't
+    ///     output.try_reserve(data.len())?;
+    ///
+    ///     // Now we know this can't OOM in the middle of our complex work
+    ///     output.push_str(data);
+    ///
+    ///     Ok(output)
+    /// }
+    /// # process_data("rust").expect("why is the test harness OOMing on 4 bytes?");
+    /// ```
+    #[unstable(feature = "try_reserve", reason = "new API", issue="48043")]
+    pub fn try_reserve(&mut self, additional: usize) -> Result<(), CollectionAllocErr> {
+        self.vec.try_reserve(additional)
+    }
+
+    /// Tries to reserves the minimum capacity for exactly `additional` more elements to
+    /// be inserted in the given `String`. After calling `reserve_exact`,
+    /// capacity will be greater than or equal to `self.len() + additional`.
+    /// Does nothing if the capacity is already sufficient.
+    ///
+    /// Note that the allocator may give the collection more space than it
+    /// requests. Therefore capacity can not be relied upon to be precisely
+    /// minimal. Prefer `reserve` if future insertions are expected.
+    ///
+    /// # Errors
+    ///
+    /// If the capacity overflows, or the allocator reports a failure, then an error
+    /// is returned.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(try_reserve)]
+    /// use std::collections::CollectionAllocErr;
+    ///
+    /// fn process_data(data: &str) -> Result<String, CollectionAllocErr> {
+    ///     let mut output = String::new();
+    ///
+    ///     // Pre-reserve the memory, exiting if we can't
+    ///     output.try_reserve(data.len())?;
+    ///
+    ///     // Now we know this can't OOM in the middle of our complex work
+    ///     output.push_str(data);
+    ///
+    ///     Ok(output)
+    /// }
+    /// # process_data("rust").expect("why is the test harness OOMing on 4 bytes?");
+    /// ```
+    #[unstable(feature = "try_reserve", reason = "new API", issue="48043")]
+    pub fn try_reserve_exact(&mut self, additional: usize) -> Result<(), CollectionAllocErr>  {
+        self.vec.try_reserve_exact(additional)
+    }
+
     /// Shrinks the capacity of this `String` to match its length.
     ///
     /// # Examples
@@ -939,6 +1012,34 @@ impl String {
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn shrink_to_fit(&mut self) {
         self.vec.shrink_to_fit()
+    }
+
+    /// Shrinks the capacity of this `String` with a lower bound.
+    ///
+    /// The capacity will remain at least as large as both the length
+    /// and the supplied value.
+    ///
+    /// Panics if the current capacity is smaller than the supplied
+    /// minimum capacity.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(shrink_to)]
+    /// let mut s = String::from("foo");
+    ///
+    /// s.reserve(100);
+    /// assert!(s.capacity() >= 100);
+    ///
+    /// s.shrink_to(10);
+    /// assert!(s.capacity() >= 10);
+    /// s.shrink_to(0);
+    /// assert!(s.capacity() >= 3);
+    /// ```
+    #[inline]
+    #[unstable(feature = "shrink_to", reason = "new API", issue="0")]
+    pub fn shrink_to(&mut self, min_capacity: usize) {
+        self.vec.shrink_to(min_capacity)
     }
 
     /// Appends the given [`char`] to the end of this `String`.
@@ -1103,8 +1204,6 @@ impl String {
     /// # Examples
     ///
     /// ```
-    /// #![feature(string_retain)]
-    ///
     /// let mut s = String::from("f_o_ob_ar");
     ///
     /// s.retain(|c| c != '_');
@@ -1112,7 +1211,7 @@ impl String {
     /// assert_eq!(s, "foobar");
     /// ```
     #[inline]
-    #[unstable(feature = "string_retain", issue = "43874")]
+    #[stable(feature = "string_retain", since = "1.26.0")]
     pub fn retain<F>(&mut self, mut f: F)
         where F: FnMut(char) -> bool
     {
@@ -1384,7 +1483,7 @@ impl String {
     /// ```
     #[stable(feature = "drain", since = "1.6.0")]
     pub fn drain<R>(&mut self, range: R) -> Drain
-        where R: RangeArgument<usize>
+        where R: RangeBounds<usize>
     {
         // Memory safety
         //
@@ -1448,7 +1547,7 @@ impl String {
     /// ```
     #[unstable(feature = "splice", reason = "recently added", issue = "44643")]
     pub fn splice<R>(&mut self, range: R, replace_with: &str)
-        where R: RangeArgument<usize>
+        where R: RangeBounds<usize>
     {
         // Memory safety
         //
@@ -1502,7 +1601,6 @@ impl FromUtf8Error {
     /// Basic usage:
     ///
     /// ```
-    /// #![feature(from_utf8_error_as_bytes)]
     /// // some invalid bytes, in a vector
     /// let bytes = vec![0, 159];
     ///
@@ -1510,7 +1608,7 @@ impl FromUtf8Error {
     ///
     /// assert_eq!(&[0, 159], value.unwrap_err().as_bytes());
     /// ```
-    #[unstable(feature = "from_utf8_error_as_bytes", reason = "recently added", issue = "40895")]
+    #[stable(feature = "from_utf8_error_as_bytes", since = "1.26.0")]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes[..]
     }
@@ -1876,7 +1974,7 @@ impl ops::Index<ops::RangeFull> for String {
         unsafe { str::from_utf8_unchecked(&self.vec) }
     }
 }
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[stable(feature = "inclusive_range", since = "1.26.0")]
 impl ops::Index<ops::RangeInclusive<usize>> for String {
     type Output = str;
 
@@ -1885,7 +1983,7 @@ impl ops::Index<ops::RangeInclusive<usize>> for String {
         Index::index(&**self, index)
     }
 }
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[stable(feature = "inclusive_range", since = "1.26.0")]
 impl ops::Index<ops::RangeToInclusive<usize>> for String {
     type Output = str;
 
@@ -1923,14 +2021,14 @@ impl ops::IndexMut<ops::RangeFull> for String {
         unsafe { str::from_utf8_unchecked_mut(&mut *self.vec) }
     }
 }
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[stable(feature = "inclusive_range", since = "1.26.0")]
 impl ops::IndexMut<ops::RangeInclusive<usize>> for String {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeInclusive<usize>) -> &mut str {
         IndexMut::index_mut(&mut **self, index)
     }
 }
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
+#[stable(feature = "inclusive_range", since = "1.26.0")]
 impl ops::IndexMut<ops::RangeToInclusive<usize>> for String {
     #[inline]
     fn index_mut(&mut self, index: ops::RangeToInclusive<usize>) -> &mut str {
@@ -2254,5 +2352,5 @@ impl<'a> DoubleEndedIterator for Drain<'a> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a> FusedIterator for Drain<'a> {}

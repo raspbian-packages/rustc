@@ -15,9 +15,9 @@ use std::collections::{HashMap, HashSet};
 /// **Known problems:** None.
 ///
 /// **Example:** Wrong ordering of the util::paths constants.
-declare_lint! {
+declare_clippy_lint! {
     pub CLIPPY_LINTS_INTERNAL,
-    Allow,
+    internal,
     "various things that will negatively affect your clippy experience"
 }
 
@@ -45,9 +45,9 @@ declare_lint! {
 ///     }
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub LINT_WITHOUT_LINT_PASS,
-    Warn,
+    internal,
     "declaring a lint without associating it in a LintPass"
 }
 
@@ -123,7 +123,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for LintWithoutLintPass {
             } else if is_lint_array_type(ty) && item.vis == Visibility::Inherited && item.name == "ARRAY" {
                 let mut collector = LintCollector {
                     output: &mut self.registered_lints,
-                    cx: cx,
+                    cx,
                 };
                 collector.visit_expr(&cx.tcx.hir.body(body_id).value);
             }

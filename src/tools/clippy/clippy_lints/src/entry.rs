@@ -24,9 +24,9 @@ use utils::{get_item_name, match_type, paths, snippet, span_lint_and_then, walk_
 /// ```rust
 /// m.entry(k).or_insert(v);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MAP_ENTRY,
-    Warn,
+    perf,
     "use of `contains_key` followed by `insert` on a `HashMap` or `BTreeMap`"
 }
 
@@ -55,12 +55,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for HashMapLint {
                     };
 
                     let mut visitor = InsertVisitor {
-                        cx: cx,
+                        cx,
                         span: expr.span,
-                        ty: ty,
-                        map: map,
-                        key: key,
-                        sole_expr: sole_expr,
+                        ty,
+                        map,
+                        key,
+                        sole_expr,
                     };
 
                     walk_expr(&mut visitor, &**then_block);
@@ -68,11 +68,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for HashMapLint {
             } else if let Some(ref else_block) = *else_block {
                 if let Some((ty, map, key)) = check_cond(cx, check) {
                     let mut visitor = InsertVisitor {
-                        cx: cx,
+                        cx,
                         span: expr.span,
-                        ty: ty,
-                        map: map,
-                        key: key,
+                        ty,
+                        map,
+                        key,
                         sole_expr: false,
                     };
 

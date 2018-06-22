@@ -1,20 +1,21 @@
-error[E0265]: recursive constant
-  --> $DIR/issue-36163.rs:11:1
+error[E0391]: cyclic dependency detected
+  --> $DIR/issue-36163.rs:11:18
    |
-11 | const A: i32 = Foo::B; //~ ERROR E0265
-   | ^^^^^^^^^^^^^^^^^^^^^^ recursion not allowed in constant
-
-error[E0265]: recursive constant
+LL | const A: isize = Foo::B as isize; //~ ERROR E0391
+   |                  ^^^^^^^^^^^^^^^ cyclic reference
+   |
+note: the cycle begins when processing `Foo::B::{{initializer}}`...
   --> $DIR/issue-36163.rs:14:9
    |
-14 |     B = A, //~ ERROR E0265
-   |         ^ recursion not allowed in constant
-
-error[E0265]: recursive constant
-  --> $DIR/issue-36163.rs:18:9
+LL |     B = A,
+   |         ^
+note: ...which then requires processing `A`...
+  --> $DIR/issue-36163.rs:14:9
    |
-18 |     C = Bar::C, //~ ERROR E0265
-   |         ^^^^^^ recursion not allowed in constant
+LL |     B = A,
+   |         ^
+   = note: ...which then again requires processing `Foo::B::{{initializer}}`, completing the cycle.
 
-error: aborting due to 3 previous errors
+error: aborting due to previous error
 
+For more information about this error, try `rustc --explain E0391`.

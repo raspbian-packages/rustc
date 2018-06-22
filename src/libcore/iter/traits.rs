@@ -706,7 +706,7 @@ pub trait ExactSizeIterator: Iterator {
     /// ```
     /// #![feature(exact_size_is_empty)]
     ///
-    /// let mut one_element = 0..1;
+    /// let mut one_element = std::iter::once(0);
     /// assert!(!one_element.is_empty());
     ///
     /// assert_eq!(one_element.next(), Some(0));
@@ -901,6 +901,15 @@ impl<I, T, E> Iterator for ResultShunt<I, E>
             None => None,
         }
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        if self.error.is_some() {
+            (0, Some(0))
+        } else {
+            let (_, upper) = self.iter.size_hint();
+            (0, upper)
+        }
+    }
 }
 
 #[stable(feature = "iter_arith_traits_result", since="1.16.0")]
@@ -959,10 +968,10 @@ impl<T, U, E> Product<Result<U, E>> for Result<T, E>
 /// [`None`]: ../../std/option/enum.Option.html#variant.None
 /// [`Iterator::fuse`]: ../../std/iter/trait.Iterator.html#method.fuse
 /// [`Fuse`]: ../../std/iter/struct.Fuse.html
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 pub trait FusedIterator: Iterator {}
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, I: FusedIterator + ?Sized> FusedIterator for &'a mut I {}
 
 /// An iterator that reports an accurate length using size_hint.

@@ -58,4 +58,25 @@ mod foo {
 #[allow(missing_docs)]
 fn three_attributes() { assert!(true) }
 
+// This should not produce a warning
+#[doc = "
+Returns the escaped value of the textual representation of
+
+"]
+pub fn function() -> bool {
+    true
+}
+
+// This should not produce a warning
+#[derive(Clone, Copy)]
+pub enum FooFighter {
+    Bar1,
+
+    Bar2,
+
+    Bar3,
+
+    Bar4
+}
+
 fn main() { }

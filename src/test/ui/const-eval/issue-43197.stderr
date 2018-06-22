@@ -1,28 +1,38 @@
-warning: constant evaluation error: attempt to subtract with overflow
-  --> $DIR/issue-43197.rs:18:20
+warning: attempt to subtract with overflow
+  --> $DIR/issue-43197.rs:20:20
    |
-18 |     const X: u32 = 0-1; //~ ERROR constant evaluation error
+LL |     const X: u32 = 0-1;
    |                    ^^^
    |
    = note: #[warn(const_err)] on by default
 
-warning: constant evaluation error: attempt to subtract with overflow
-  --> $DIR/issue-43197.rs:20:20
+warning: this constant cannot be used
+  --> $DIR/issue-43197.rs:20:5
    |
-20 |     const Y: u32 = foo(0-1); //~ ERROR constant evaluation error
-   |                    ^^^^^^^^
+LL |     const X: u32 = 0-1;
+   |     ^^^^^^^^^^^^^^^^^^^ attempt to subtract with overflow
 
-error[E0080]: constant evaluation error
-  --> $DIR/issue-43197.rs:18:20
+warning: attempt to subtract with overflow
+  --> $DIR/issue-43197.rs:23:24
    |
-18 |     const X: u32 = 0-1; //~ ERROR constant evaluation error
-   |                    ^^^ attempt to subtract with overflow
+LL |     const Y: u32 = foo(0-1);
+   |                        ^^^
 
-error[E0080]: constant evaluation error
-  --> $DIR/issue-43197.rs:20:24
+warning: this constant cannot be used
+  --> $DIR/issue-43197.rs:23:5
    |
-20 |     const Y: u32 = foo(0-1); //~ ERROR constant evaluation error
-   |                        ^^^ attempt to subtract with overflow
+LL |     const Y: u32 = foo(0-1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^ attempt to subtract with overflow
 
-error: aborting due to 2 previous errors
+warning: constant evaluation error
+  --> $DIR/issue-43197.rs:26:23
+   |
+LL |     println!("{} {}", X, Y);
+   |                       ^ referenced constant has errors
+
+warning: constant evaluation error
+  --> $DIR/issue-43197.rs:26:26
+   |
+LL |     println!("{} {}", X, Y);
+   |                          ^ referenced constant has errors
 

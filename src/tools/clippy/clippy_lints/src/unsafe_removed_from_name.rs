@@ -19,9 +19,9 @@ use utils::span_lint;
 /// extern crate crossbeam;
 /// use crossbeam::{spawn_unsafe as spawn};
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNSAFE_REMOVED_FROM_NAME,
-    Warn,
+    style,
     "`unsafe` removed from API names on import"
 }
 
@@ -43,7 +43,7 @@ impl EarlyLintPass for UnsafeNameRemoval {
 
 fn check_use_tree(use_tree: &UseTree, cx: &EarlyContext, span: &Span) {
     match use_tree.kind {
-        UseTreeKind::Simple(new_name) => {
+        UseTreeKind::Simple(Some(new_name)) => {
             let old_name = use_tree
                 .prefix
                 .segments
@@ -52,6 +52,7 @@ fn check_use_tree(use_tree: &UseTree, cx: &EarlyContext, span: &Span) {
                 .identifier;
             unsafe_to_safe_check(old_name, new_name, cx, span);
         }
+        UseTreeKind::Simple(None) |
         UseTreeKind::Glob => {},
         UseTreeKind::Nested(ref nested_use_tree) => {
             for &(ref use_tree, _) in nested_use_tree {

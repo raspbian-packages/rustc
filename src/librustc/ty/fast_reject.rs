@@ -28,7 +28,7 @@ pub type SimplifiedType = SimplifiedTypeGen<DefId>;
 /// because we sometimes need to use SimplifiedTypeGen values as stable sorting
 /// keys (in which case we use a DefPathHash as id-type) but in the general case
 /// the non-stable but fast to construct DefId-version is the better choice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, RustcEncodable, RustcDecodable)]
 pub enum SimplifiedTypeGen<D>
     where D: Copy + Debug + Ord + Eq + Hash
 {
@@ -97,7 +97,7 @@ pub fn simplify_type<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
             Some(GeneratorWitnessSimplifiedType(tys.skip_binder().len()))
         }
         ty::TyNever => Some(NeverSimplifiedType),
-        ty::TyTuple(ref tys, _) => {
+        ty::TyTuple(ref tys) => {
             Some(TupleSimplifiedType(tys.len()))
         }
         ty::TyFnPtr(ref f) => {
@@ -154,12 +154,12 @@ impl<D: Copy + Debug + Ord + Eq + Hash> SimplifiedTypeGen<D> {
     }
 }
 
-impl<'gcx, D> HashStable<StableHashingContext<'gcx>> for SimplifiedTypeGen<D>
+impl<'a, 'gcx, D> HashStable<StableHashingContext<'a>> for SimplifiedTypeGen<D>
     where D: Copy + Debug + Ord + Eq + Hash +
-             HashStable<StableHashingContext<'gcx>>,
+             HashStable<StableHashingContext<'a>>,
 {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         mem::discriminant(self).hash_stable(hcx, hasher);
         match *self {

@@ -1,6 +1,11 @@
---- rustc-1.24.0+dfsg1/src/libcompiler_builtins/build.rs.orig	2018-02-12 16:56:07.000000000 -0200
-+++ rustc-1.24.0+dfsg1/src/libcompiler_builtins/build.rs	2018-03-02 07:22:10.124164162 -0300
-@@ -52,9 +52,9 @@
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Subject: rustc: Please include patch to disable kernel helpers on armel
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=891902
+Forwarded: not-needed
+
+--- a/src/libcompiler_builtins/build.rs
++++ b/src/libcompiler_builtins/build.rs
+@@ -46,9 +46,9 @@
      }
  
      // Only emit the ARM Linux atomic emulation on pre-ARMv6 architectures.
@@ -12,4 +17,4 @@
 +    // }
  }
  
- #[cfg(feature = "gen-tests")]
+ #[cfg(feature = "c")]

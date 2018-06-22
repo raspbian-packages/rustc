@@ -1,11 +1,13 @@
 use byteorder::{ReadBytesExt, WriteBytesExt, LittleEndian, BigEndian};
-use std::collections::{btree_map, BTreeMap, HashMap, HashSet, VecDeque};
-use std::{ptr, mem, io};
+use std::collections::{btree_map, BTreeMap, VecDeque};
+use std::{ptr, io};
 
-use rustc::ty::{Instance, TyCtxt};
+use rustc::ty::Instance;
+use rustc::ty::maps::TyCtxtAt;
 use rustc::ty::layout::{self, Align, TargetDataLayout};
 use syntax::ast::Mutability;
 
+use rustc_data_structures::fx::{FxHashSet, FxHashMap};
 use rustc::mir::interpret::{MemoryPointer, AllocId, Allocation, AccessKind, UndefMask, Value, Pointer,
                             EvalResult, PrimVal, EvalErrorKind};
 
@@ -19,8 +21,6 @@ use super::{EvalContext, Machine};
 pub enum MemoryKind<T> {
     /// Error if deallocated except during a stack pop
     Stack,
-    /// A mutable Static. All the others are interned in the tcx
-    MutableStatic, // FIXME: move me into the machine, rustc const eval doesn't need them
     /// Additional memory kinds a machine wishes to distinguish from the builtin ones
     Machine(T),
 }
@@ -29,43 +29,35 @@ pub enum MemoryKind<T> {
 // Top-level interpreter memory
 ////////////////////////////////////////////////////////////////////////////////
 
-pub struct Memory<'a, 'tcx: 'a, M: Machine<'tcx>> {
+pub struct Memory<'a, 'mir, 'tcx: 'a + 'mir, M: Machine<'mir, 'tcx>> {
     /// Additional data required by the Machine
     pub data: M::MemoryData,
 
     /// Helps guarantee that stack allocations aren't deallocated via `rust_deallocate`
-    alloc_kind: HashMap<AllocId, MemoryKind<M::MemoryKinds>>,
+    alloc_kind: FxHashMap<AllocId, MemoryKind<M::MemoryKinds>>,
 
     /// Actual memory allocations (arbitrary bytes, may contain pointers into other allocations).
-    alloc_map: HashMap<AllocId, Allocation>,
+    alloc_map: FxHashMap<AllocId, Allocation>,
 
     /// Actual memory allocations (arbitrary bytes, may contain pointers into other allocations).
     ///
     /// Stores statics while they are being processed, before they are interned and thus frozen
-    uninitialized_statics: HashMap<AllocId, Allocation>,
-
-    /// Number of virtual bytes allocated.
-    memory_usage: u64,
-
-    /// Maximum number of virtual bytes that may be allocated.
-    memory_size: u64,
+    uninitialized_statics: FxHashMap<AllocId, Allocation>,
 
     /// The current stack frame.  Used to check accesses against locks.
     pub cur_frame: usize,
 
-    pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    pub tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
-    pub fn new(tcx: TyCtxt<'a, 'tcx, 'tcx>, max_memory: u64, data: M::MemoryData) -> Self {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
+    pub fn new(tcx: TyCtxtAt<'a, 'tcx, 'tcx>, data: M::MemoryData) -> Self {
         Memory {
             data,
-            alloc_kind: HashMap::new(),
-            alloc_map: HashMap::new(),
-            uninitialized_statics: HashMap::new(),
+            alloc_kind: FxHashMap::default(),
+            alloc_map: FxHashMap::default(),
+            uninitialized_statics: FxHashMap::default(),
             tcx,
-            memory_size: max_memory,
-            memory_usage: 0,
             cur_frame: usize::max_value(),
         }
     }
@@ -77,7 +69,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
     }
 
     pub fn create_fn_alloc(&mut self, instance: Instance<'tcx>) -> MemoryPointer {
-        let id = self.tcx.interpret_interner.borrow_mut().create_fn_alloc(instance);
+        let id = self.tcx.interpret_interner.create_fn_alloc(instance);
         MemoryPointer::new(id, 0)
     }
 
@@ -93,22 +85,15 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         align: Align,
         kind: Option<MemoryKind<M::MemoryKinds>>,
     ) -> EvalResult<'tcx, MemoryPointer> {
-        if self.memory_size - self.memory_usage < size {
-            return err!(OutOfMemory {
-                allocation_size: size,
-                memory_size: self.memory_size,
-                memory_usage: self.memory_usage,
-            });
-        }
-        self.memory_usage += size;
         assert_eq!(size as usize as u64, size);
         let alloc = Allocation {
             bytes: vec![0; size as usize],
             relocations: BTreeMap::new(),
             undef_mask: UndefMask::new(size),
             align,
+            runtime_mutability: Mutability::Immutable,
         };
-        let id = self.tcx.interpret_interner.borrow_mut().reserve();
+        let id = self.tcx.interpret_interner.reserve();
         M::add_lock(self, id);
         match kind {
             Some(kind @ MemoryKind::Stack) |
@@ -119,7 +104,6 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             None => {
                 self.uninitialized_statics.insert(id, alloc);
             },
-            Some(MemoryKind::MutableStatic) => bug!("don't allocate mutable statics directly")
         }
         Ok(MemoryPointer::new(id, 0))
     }
@@ -164,10 +148,6 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 
     pub fn deallocate_local(&mut self, ptr: MemoryPointer) -> EvalResult<'tcx> {
         match self.alloc_kind.get(&ptr.alloc_id).cloned() {
-            // for a constant like `const FOO: &i32 = &1;` the local containing
-            // the `1` is referred to by the global. We transitively marked everything
-            // the global refers to as static itself, so we don't free it here
-            Some(MemoryKind::MutableStatic) => Ok(()),
             Some(MemoryKind::Stack) => self.deallocate(ptr, None, MemoryKind::Stack),
             // Happens if the memory was interned into immutable memory
             None => Ok(()),
@@ -192,12 +172,12 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
                     "uninitializedstatic".to_string(),
                     format!("{:?}", kind),
                 ))
-            } else if self.tcx.interpret_interner.borrow().get_fn(ptr.alloc_id).is_some() {
+            } else if self.tcx.interpret_interner.get_fn(ptr.alloc_id).is_some() {
                 return err!(DeallocatedWrongMemoryKind(
                     "function".to_string(),
                     format!("{:?}", kind),
                 ))
-            } else if self.tcx.interpret_interner.borrow().get_alloc(ptr.alloc_id).is_some() {
+            } else if self.tcx.interpret_interner.get_alloc(ptr.alloc_id).is_some() {
                 return err!(DeallocatedWrongMemoryKind(
                     "static".to_string(),
                     format!("{:?}", kind),
@@ -228,7 +208,6 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             }
         }
 
-        self.memory_usage -= alloc.bytes.len() as u64;
         debug!("deallocated : {}", ptr.alloc_id);
 
         Ok(())
@@ -238,7 +217,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         self.tcx.data_layout.pointer_size.bytes()
     }
 
-    pub fn endianess(&self) -> layout::Endian {
+    pub fn endianness(&self) -> layout::Endian {
         self.tcx.data_layout.endian
     }
 
@@ -292,7 +271,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 /// Allocation accessors
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
     pub fn get(&self, id: AllocId) -> EvalResult<'tcx, &Allocation> {
         // normal alloc?
         match self.alloc_map.get(&id) {
@@ -301,11 +280,10 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             None => match self.uninitialized_statics.get(&id) {
                 Some(alloc) => Ok(alloc),
                 None => {
-                    let int = self.tcx.interpret_interner.borrow();
                     // static alloc?
-                    int.get_alloc(id)
+                    self.tcx.interpret_interner.get_alloc(id)
                         // no alloc? produce an error
-                        .ok_or_else(|| if int.get_fn(id).is_some() {
+                        .ok_or_else(|| if self.tcx.interpret_interner.get_fn(id).is_some() {
                             EvalErrorKind::DerefFunctionPointer.into()
                         } else {
                             EvalErrorKind::DanglingPointerDeref.into()
@@ -326,11 +304,10 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             None => match self.uninitialized_statics.get_mut(&id) {
                 Some(alloc) => Ok(alloc),
                 None => {
-                    let int = self.tcx.interpret_interner.borrow();
                     // no alloc or immutable alloc? produce an error
-                    if int.get_alloc(id).is_some() {
+                    if self.tcx.interpret_interner.get_alloc(id).is_some() {
                         err!(ModifiedConstantMemory)
-                    } else if int.get_fn(id).is_some() {
+                    } else if self.tcx.interpret_interner.get_fn(id).is_some() {
                         err!(DerefFunctionPointer)
                     } else {
                         err!(DanglingPointerDeref)
@@ -347,7 +324,6 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         debug!("reading fn ptr: {}", ptr.alloc_id);
         self.tcx
             .interpret_interner
-            .borrow()
             .get_fn(ptr.alloc_id)
             .ok_or(EvalErrorKind::ExecuteMemory.into())
     }
@@ -363,7 +339,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         allocs.sort();
         allocs.dedup();
         let mut allocs_to_print = VecDeque::from(allocs);
-        let mut allocs_seen = HashSet::new();
+        let mut allocs_seen = FxHashSet::default();
 
         while let Some(id) = allocs_to_print.pop_front() {
             let mut msg = format!("Alloc {:<5} ", format!("{}:", id));
@@ -376,27 +352,25 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
                     Some(a) => (a, match self.alloc_kind[&id] {
                         MemoryKind::Stack => " (stack)".to_owned(),
                         MemoryKind::Machine(m) => format!(" ({:?})", m),
-                        MemoryKind::MutableStatic => " (static mut)".to_owned(),
                     }),
                     // uninitialized static alloc?
                     None => match self.uninitialized_statics.get(&id) {
                         Some(a) => (a, " (static in the process of initialization)".to_owned()),
                         None => {
-                            let int = self.tcx.interpret_interner.borrow();
                             // static alloc?
-                            match int.get_alloc(id) {
+                            match self.tcx.interpret_interner.get_alloc(id) {
                                 Some(a) => (a, "(immutable)".to_owned()),
-                                None => if let Some(func) = int.get_fn(id) {
+                                None => if let Some(func) = self.tcx.interpret_interner.get_fn(id) {
                                     trace!("{} {}", msg, func);
-                    continue;
+                                    continue;
                                 } else {
-                            trace!("{} (deallocated)", msg);
-                            continue;
+                                    trace!("{} (deallocated)", msg);
+                                    continue;
                                 },
-                }
+                            }
                         },
                     },
-            };
+                };
 
             for i in 0..(alloc.bytes.len() as u64) {
                 if let Some(&target_id) = alloc.relocations.get(&i) {
@@ -441,14 +415,9 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 
     pub fn leak_report(&self) -> usize {
         trace!("### LEAK REPORT ###");
-        let kinds = &self.alloc_kind;
         let leaks: Vec<_> = self.alloc_map
             .keys()
-            .filter_map(|key| if kinds[key] != MemoryKind::MutableStatic {
-                Some(*key)
-            } else {
-                None
-            })
+            .cloned()
             .collect();
         let n = leaks.len();
         self.dump_allocs(leaks);
@@ -457,7 +426,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 /// Byte accessors
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
     fn get_bytes_unchecked(
         &self,
         ptr: MemoryPointer,
@@ -521,7 +490,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 /// Reading and writing
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
     /// mark an allocation pointed to by a static as static and initialized
     fn mark_inner_allocation_initialized(
         &mut self,
@@ -529,80 +498,47 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         mutability: Mutability,
     ) -> EvalResult<'tcx> {
         match self.alloc_kind.get(&alloc) {
-            // do not go into immutable statics
-            None |
-            // or mutable statics
-            Some(&MemoryKind::MutableStatic) => Ok(()),
+            // do not go into statics
+            None => Ok(()),
             // just locals and machine allocs
-            Some(_) => self.mark_static_initalized(alloc, mutability),
+            Some(_) => self.mark_static_initialized(alloc, mutability),
         }
     }
 
     /// mark an allocation as static and initialized, either mutable or not
-    pub fn mark_static_initalized(
+    pub fn mark_static_initialized(
         &mut self,
         alloc_id: AllocId,
         mutability: Mutability,
     ) -> EvalResult<'tcx> {
         trace!(
-            "mark_static_initalized {:?}, mutability: {:?}",
+            "mark_static_initialized {:?}, mutability: {:?}",
             alloc_id,
             mutability
         );
-        if mutability == Mutability::Immutable {
-            let alloc = self.alloc_map.remove(&alloc_id);
-            let kind = self.alloc_kind.remove(&alloc_id);
-            assert_ne!(kind, Some(MemoryKind::MutableStatic));
-            let uninit = self.uninitialized_statics.remove(&alloc_id);
-            if let Some(alloc) = alloc.or(uninit) {
-                let alloc = self.tcx.intern_const_alloc(alloc);
-                self.tcx.interpret_interner.borrow_mut().intern_at_reserved(alloc_id, alloc);
-                // recurse into inner allocations
-                for &alloc in alloc.relocations.values() {
-                    self.mark_inner_allocation_initialized(alloc, mutability)?;
-                }
+        // The machine handled it
+        if M::mark_static_initialized(self, alloc_id, mutability)? {
+            return Ok(())
+        }
+        let alloc = self.alloc_map.remove(&alloc_id);
+        match self.alloc_kind.remove(&alloc_id) {
+            None => {},
+            Some(MemoryKind::Machine(_)) => bug!("machine didn't handle machine alloc"),
+            Some(MemoryKind::Stack) => {},
+        }
+        let uninit = self.uninitialized_statics.remove(&alloc_id);
+        if let Some(mut alloc) = alloc.or(uninit) {
+            // ensure llvm knows not to put this into immutable memroy
+            alloc.runtime_mutability = mutability;
+            let alloc = self.tcx.intern_const_alloc(alloc);
+            self.tcx.interpret_interner.intern_at_reserved(alloc_id, alloc);
+            // recurse into inner allocations
+            for &alloc in alloc.relocations.values() {
+                self.mark_inner_allocation_initialized(alloc, mutability)?;
             }
-            return Ok(());
+        } else {
+            bug!("no allocation found for {:?}", alloc_id);
         }
-        // We are marking the static as initialized, so move it out of the uninit map
-        if let Some(uninit) = self.uninitialized_statics.remove(&alloc_id) {
-            self.alloc_map.insert(alloc_id, uninit);
-        }
-        // do not use `self.get_mut(alloc_id)` here, because we might have already marked a
-        // sub-element or have circular pointers (e.g. `Rc`-cycles)
-        let relocations = match self.alloc_map.get_mut(&alloc_id) {
-            Some(&mut Allocation {
-                     ref mut relocations,
-                     ..
-                 }) => {
-                match self.alloc_kind.get(&alloc_id) {
-                    // const eval results can refer to "locals".
-                    // E.g. `const Foo: &u32 = &1;` refers to the temp local that stores the `1`
-                    None |
-                    Some(&MemoryKind::Stack) => {},
-                    Some(&MemoryKind::Machine(m)) => M::mark_static_initialized(m)?,
-                    Some(&MemoryKind::MutableStatic) => {
-                        trace!("mark_static_initalized: skipping already initialized static referred to by static currently being initialized");
-                        return Ok(());
-                    },
-                }
-                // overwrite or insert
-                self.alloc_kind.insert(alloc_id, MemoryKind::MutableStatic);
-                // take out the relocations vector to free the borrow on self, so we can call
-                // mark recursively
-                mem::replace(relocations, Default::default())
-            }
-            None => return err!(DanglingPointerDeref),
-        };
-        // recurse into inner allocations
-        for &alloc in relocations.values() {
-            self.mark_inner_allocation_initialized(alloc, mutability)?;
-        }
-        // put back the relocations
-        self.alloc_map
-            .get_mut(&alloc_id)
-            .expect("checked above")
-            .relocations = relocations;
         Ok(())
     }
 
@@ -720,9 +656,9 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         Ok(())
     }
 
-    pub fn read_primval(&self, ptr: MemoryPointer, ptr_align: Align, size: u64, signed: bool) -> EvalResult<'tcx, PrimVal> {
+    pub fn read_primval(&self, ptr: MemoryPointer, ptr_align: Align, size: u64) -> EvalResult<'tcx, PrimVal> {
         self.check_relocation_edges(ptr, size)?; // Make sure we don't read part of a pointer as a pointer
-        let endianess = self.endianess();
+        let endianness = self.endianness();
         let bytes = self.get_bytes_unchecked(ptr, size, ptr_align.min(self.int_align(size)))?;
         // Undef check happens *after* we established that the alignment is correct.
         // We must not return Ok() for unaligned pointers!
@@ -730,11 +666,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             return Ok(PrimVal::Undef.into());
         }
         // Now we do the actual reading
-        let bytes = if signed {
-            read_target_int(endianess, bytes).unwrap() as u128
-        } else {
-            read_target_uint(endianess, bytes).unwrap()
-        };
+        let bytes = read_target_uint(endianness, bytes).unwrap();
         // See if we got a pointer
         if size != self.pointer_size() {
             if self.relocations(ptr, size)?.count() != 0 {
@@ -751,12 +683,12 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
         Ok(PrimVal::Bytes(bytes))
     }
 
-    pub fn read_ptr_sized_unsigned(&self, ptr: MemoryPointer, ptr_align: Align) -> EvalResult<'tcx, PrimVal> {
-        self.read_primval(ptr, ptr_align, self.pointer_size(), false)
+    pub fn read_ptr_sized(&self, ptr: MemoryPointer, ptr_align: Align) -> EvalResult<'tcx, PrimVal> {
+        self.read_primval(ptr, ptr_align, self.pointer_size())
     }
 
     pub fn write_primval(&mut self, ptr: MemoryPointer, ptr_align: Align, val: PrimVal, size: u64, signed: bool) -> EvalResult<'tcx> {
-        let endianess = self.endianess();
+        let endianness = self.endianness();
 
         let bytes = match val {
             PrimVal::Ptr(val) => {
@@ -764,19 +696,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
                 val.offset as u128
             }
 
-            PrimVal::Bytes(bytes) => {
-                // We need to mask here, or the byteorder crate can die when given a u64 larger
-                // than fits in an integer of the requested size.
-                let mask = match size {
-                    1 => !0u8 as u128,
-                    2 => !0u16 as u128,
-                    4 => !0u32 as u128,
-                    8 => !0u64 as u128,
-                    16 => !0,
-                    n => bug!("unexpected PrimVal::Bytes size: {}", n),
-                };
-                bytes & mask
-            }
+            PrimVal::Bytes(bytes) => bytes,
 
             PrimVal::Undef => {
                 self.mark_definedness(PrimVal::Ptr(ptr).into(), size, false)?;
@@ -788,9 +708,9 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
             let align = self.int_align(size);
             let dst = self.get_bytes_mut(ptr, size, ptr_align.min(align))?;
             if signed {
-                write_target_int(endianess, dst, bytes as i128).unwrap();
+                write_target_int(endianness, dst, bytes as i128).unwrap();
             } else {
-                write_target_uint(endianess, dst, bytes).unwrap();
+                write_target_uint(endianness, dst, bytes).unwrap();
             }
         }
 
@@ -829,7 +749,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 /// Relocations
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
     fn relocations(
         &self,
         ptr: MemoryPointer,
@@ -883,7 +803,7 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 /// Undefined bytes
-impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
     // FIXME(solson): This is a very naive, slow version.
     fn copy_undef_mask(
         &mut self,
@@ -941,43 +861,37 @@ impl<'a, 'tcx, M: Machine<'tcx>> Memory<'a, 'tcx, M> {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Methods to access integers in the target endianess
+// Methods to access integers in the target endianness
 ////////////////////////////////////////////////////////////////////////////////
 
-fn write_target_uint(
-    endianess: layout::Endian,
+pub fn write_target_uint(
+    endianness: layout::Endian,
     mut target: &mut [u8],
     data: u128,
 ) -> Result<(), io::Error> {
     let len = target.len();
-    match endianess {
+    match endianness {
         layout::Endian::Little => target.write_uint128::<LittleEndian>(data, len),
         layout::Endian::Big => target.write_uint128::<BigEndian>(data, len),
     }
 }
-fn write_target_int(
-    endianess: layout::Endian,
+
+pub fn write_target_int(
+    endianness: layout::Endian,
     mut target: &mut [u8],
     data: i128,
 ) -> Result<(), io::Error> {
     let len = target.len();
-    match endianess {
+    match endianness {
         layout::Endian::Little => target.write_int128::<LittleEndian>(data, len),
         layout::Endian::Big => target.write_int128::<BigEndian>(data, len),
     }
 }
 
-fn read_target_uint(endianess: layout::Endian, mut source: &[u8]) -> Result<u128, io::Error> {
-    match endianess {
+pub fn read_target_uint(endianness: layout::Endian, mut source: &[u8]) -> Result<u128, io::Error> {
+    match endianness {
         layout::Endian::Little => source.read_uint128::<LittleEndian>(source.len()),
         layout::Endian::Big => source.read_uint128::<BigEndian>(source.len()),
-    }
-}
-
-fn read_target_int(endianess: layout::Endian, mut source: &[u8]) -> Result<i128, io::Error> {
-    match endianess {
-        layout::Endian::Little => source.read_int128::<LittleEndian>(source.len()),
-        layout::Endian::Big => source.read_int128::<BigEndian>(source.len()),
     }
 }
 
@@ -985,9 +899,9 @@ fn read_target_int(endianess: layout::Endian, mut source: &[u8]) -> Result<i128,
 // Unaligned accesses
 ////////////////////////////////////////////////////////////////////////////////
 
-pub trait HasMemory<'a, 'tcx: 'a, M: Machine<'tcx>> {
-    fn memory_mut(&mut self) -> &mut Memory<'a, 'tcx, M>;
-    fn memory(&self) -> &Memory<'a, 'tcx, M>;
+pub trait HasMemory<'a, 'mir, 'tcx: 'a + 'mir, M: Machine<'mir, 'tcx>> {
+    fn memory_mut(&mut self) -> &mut Memory<'a, 'mir, 'tcx, M>;
+    fn memory(&self) -> &Memory<'a, 'mir, 'tcx, M>;
 
     /// Convert the value into a pointer (or a pointer-sized integer).  If the value is a ByRef,
     /// this may have to perform a load.
@@ -997,7 +911,7 @@ pub trait HasMemory<'a, 'tcx: 'a, M: Machine<'tcx>> {
     ) -> EvalResult<'tcx, Pointer> {
         Ok(match value {
             Value::ByRef(ptr, align) => {
-                self.memory().read_ptr_sized_unsigned(ptr.to_ptr()?, align)?
+                self.memory().read_ptr_sized(ptr.to_ptr()?, align)?
             }
             Value::ByVal(ptr) |
             Value::ByValPair(ptr, _) => ptr,
@@ -1011,8 +925,8 @@ pub trait HasMemory<'a, 'tcx: 'a, M: Machine<'tcx>> {
         match value {
             Value::ByRef(ref_ptr, align) => {
                 let mem = self.memory();
-                let ptr = mem.read_ptr_sized_unsigned(ref_ptr.to_ptr()?, align)?.into();
-                let vtable = mem.read_ptr_sized_unsigned(
+                let ptr = mem.read_ptr_sized(ref_ptr.to_ptr()?, align)?.into();
+                let vtable = mem.read_ptr_sized(
                     ref_ptr.offset(mem.pointer_size(), &mem.tcx.data_layout)?.to_ptr()?,
                     align
                 )?.to_ptr()?;
@@ -1033,8 +947,8 @@ pub trait HasMemory<'a, 'tcx: 'a, M: Machine<'tcx>> {
         match value {
             Value::ByRef(ref_ptr, align) => {
                 let mem = self.memory();
-                let ptr = mem.read_ptr_sized_unsigned(ref_ptr.to_ptr()?, align)?.into();
-                let len = mem.read_ptr_sized_unsigned(
+                let ptr = mem.read_ptr_sized(ref_ptr.to_ptr()?, align)?.into();
+                let len = mem.read_ptr_sized(
                     ref_ptr.offset(mem.pointer_size(), &mem.tcx.data_layout)?.to_ptr()?,
                     align
                 )?.to_bytes()? as u64;
@@ -1051,31 +965,31 @@ pub trait HasMemory<'a, 'tcx: 'a, M: Machine<'tcx>> {
     }
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> HasMemory<'a, 'tcx, M> for Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> HasMemory<'a, 'mir, 'tcx, M> for Memory<'a, 'mir, 'tcx, M> {
     #[inline]
-    fn memory_mut(&mut self) -> &mut Memory<'a, 'tcx, M> {
+    fn memory_mut(&mut self) -> &mut Memory<'a, 'mir, 'tcx, M> {
         self
     }
 
     #[inline]
-    fn memory(&self) -> &Memory<'a, 'tcx, M> {
+    fn memory(&self) -> &Memory<'a, 'mir, 'tcx, M> {
         self
     }
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> HasMemory<'a, 'tcx, M> for EvalContext<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> HasMemory<'a, 'mir, 'tcx, M> for EvalContext<'a, 'mir, 'tcx, M> {
     #[inline]
-    fn memory_mut(&mut self) -> &mut Memory<'a, 'tcx, M> {
+    fn memory_mut(&mut self) -> &mut Memory<'a, 'mir, 'tcx, M> {
         &mut self.memory
     }
 
     #[inline]
-    fn memory(&self) -> &Memory<'a, 'tcx, M> {
+    fn memory(&self) -> &Memory<'a, 'mir, 'tcx, M> {
         &self.memory
     }
 }
 
-impl<'a, 'tcx, M: Machine<'tcx>> layout::HasDataLayout for &'a Memory<'a, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> layout::HasDataLayout for &'a Memory<'a, 'mir, 'tcx, M> {
     #[inline]
     fn data_layout(&self) -> &TargetDataLayout {
         &self.tcx.data_layout

@@ -36,12 +36,11 @@
 #![feature(str_internals)]
 #![feature(decode_utf8)]
 #![feature(fn_traits)]
-#![feature(fused)]
 #![feature(lang_items)]
 #![feature(non_exhaustive)]
 #![feature(staged_api)]
-#![feature(try_from)]
 #![feature(unboxed_closures)]
+#![feature(try_from)]
 
 mod bool_trie;
 mod tables;

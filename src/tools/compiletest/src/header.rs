@@ -226,12 +226,14 @@ pub struct TestProps {
     pub must_compile_successfully: bool,
     // rustdoc will test the output of the `--test` option
     pub check_test_line_numbers_match: bool,
-    // The test must be compiled and run successfully. Only used in UI tests for
-    // now.
+    // The test must be compiled and run successfully. Only used in UI tests for now.
     pub run_pass: bool,
+    // Do not pass `-Z ui-testing` to UI tests
+    pub disable_ui_testing_normalization: bool,
     // customized normalization rules
     pub normalize_stdout: Vec<(String, String)>,
     pub normalize_stderr: Vec<(String, String)>,
+    pub failure_status: i32,
 }
 
 impl TestProps {
@@ -258,8 +260,10 @@ impl TestProps {
             must_compile_successfully: false,
             check_test_line_numbers_match: false,
             run_pass: false,
+            disable_ui_testing_normalization: false,
             normalize_stdout: vec![],
             normalize_stderr: vec![],
+            failure_status: 101,
         }
     }
 
@@ -377,11 +381,20 @@ impl TestProps {
                     config.parse_must_compile_successfully(ln) || self.run_pass;
             }
 
+            if !self.disable_ui_testing_normalization {
+                self.disable_ui_testing_normalization =
+                    config.parse_disable_ui_testing_normalization(ln);
+            }
+
             if let Some(rule) = config.parse_custom_normalization(ln, "normalize-stdout") {
                 self.normalize_stdout.push(rule);
             }
             if let Some(rule) = config.parse_custom_normalization(ln, "normalize-stderr") {
                 self.normalize_stderr.push(rule);
+            }
+
+            if let Some(code) = config.parse_failure_status(ln) {
+                self.failure_status = code;
             }
         });
 
@@ -488,8 +501,19 @@ impl Config {
         self.parse_name_directive(line, "pretty-compare-only")
     }
 
+    fn parse_failure_status(&self, line: &str) -> Option<i32> {
+        match self.parse_name_value_directive(line, "failure-status") {
+            Some(code) => code.trim().parse::<i32>().ok(),
+            _ => None,
+        }
+    }
+
     fn parse_must_compile_successfully(&self, line: &str) -> bool {
         self.parse_name_directive(line, "must-compile-successfully")
+    }
+
+    fn parse_disable_ui_testing_normalization(&self, line: &str) -> bool {
+        self.parse_name_directive(line, "disable-ui-testing-normalization")
     }
 
     fn parse_check_test_line_numbers_match(&self, line: &str) -> bool {

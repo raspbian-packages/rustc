@@ -80,7 +80,25 @@ pub struct Demangle<'a> {
 // Note that this demangler isn't quite as fancy as it could be. We have lots
 // of other information in our symbols like hashes, version, type information,
 // etc. Additionally, this doesn't handle glue symbols at all.
-pub fn demangle(s: &str) -> Demangle {
+pub fn demangle(mut s: &str) -> Demangle {
+    // During ThinLTO LLVM may import and rename internal symbols, so strip out
+    // those endings first as they're on of the last manglings applied to symbol
+    // names.
+    let llvm = ".llvm.";
+    if let Some(i) = s.find(llvm) {
+        let candidate = &s[i + llvm.len()..];
+        let all_hex = candidate.chars().all(|c| {
+            match c {
+                'A' ... 'F' | '0' ... '9' | '@' => true,
+                _ => false,
+            }
+        });
+
+        if all_hex {
+            s = &s[..i];
+        }
+    }
+
     // First validate the symbol. If it doesn't look like anything we're
     // expecting, we just print it literally. Note that we must handle non-rust
     // symbols because we could have any function in the backtrace.
@@ -99,22 +117,36 @@ pub fn demangle(s: &str) -> Demangle {
         valid = false;
     }
 
+    // only work with ascii text
+    if inner.bytes().any(|c| c & 0x80 != 0) {
+        valid = false;
+    }
+
     let mut elements = 0;
     if valid {
-        let mut chars = inner.chars();
+        let mut chars = inner.chars().peekable();
         while valid {
-            let mut i = 0;
-            for c in chars.by_ref() {
-                if c.is_digit(10) {
-                    i = i * 10 + c as usize - '0' as usize;
-                } else {
-                    break;
+            let mut i = 0usize;
+            while let Some(&c) = chars.peek() {
+                if !c.is_digit(10) {
+                    break
                 }
+                chars.next();
+                let next = i.checked_mul(10)
+                    .and_then(|i| i.checked_add(c as usize - '0' as usize));
+                i = match next {
+                    Some(i) => i,
+                    None => {
+                        valid = false;
+                        break
+                    }
+                };
             }
+
             if i == 0 {
                 valid = chars.next().is_none();
                 break;
-            } else if chars.by_ref().take(i - 1).count() != i - 1 {
+            } else if chars.by_ref().take(i).count() != i {
                 valid = false;
             } else {
                 elements += 1;
@@ -357,5 +389,25 @@ mod tests {
         t_nohash!("_ZN3foo16ffaf221e174051e9E", "foo::ffaf221e174051e9");
         // Not a valid hash, has a non-hex-digit.
         t_nohash!("_ZN3foo17hg5af221e174051e9E", "foo::hg5af221e174051e9");
+    }
+
+    #[test]
+    fn demangle_thinlto() {
+        // One element, no hash.
+        t!("_ZN3fooE.llvm.9D1C9369", "foo");
+        t!("_ZN3fooE.llvm.9D1C9369@@16", "foo");
+        t_nohash!("_ZN9backtrace3foo17hbb467fcdaea5d79bE.llvm.A5310EB9", "backtrace::foo");
+    }
+
+    #[test]
+    fn dont_panic() {
+        super::demangle("_ZN2222222222222222222222EE").to_string();
+        super::demangle("_ZN5*70527e27.ll34csaғE").to_string();
+        super::demangle("_ZN5*70527a54.ll34_$b.1E").to_string();
+        super::demangle("\
+            _ZN5~saäb4e\n\
+            2734cOsbE\n\
+            5usage20h)3\0\0\0\0\0\0\07e2734cOsbE\
+        ").to_string();
     }
 }

@@ -91,7 +91,7 @@ mod tests {
 
     #[test]
     fn test_loading_cosine() {
-        if cfg!(windows) {
+        if cfg!(any(windows, target_arch = "aarch64", all(target_arch = "powerpc64", target_endian = "little"))) {
             return
         }
 

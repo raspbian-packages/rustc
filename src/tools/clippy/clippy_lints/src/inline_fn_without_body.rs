@@ -20,9 +20,9 @@ use utils::sugg::DiagnosticBuilderExt;
 ///     fn name(&self) -> &'static str;
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub INLINE_FN_WITHOUT_BODY,
-    Warn,
+    correctness,
     "use of `#[inline]` on trait methods without bodies"
 }
 
@@ -37,11 +37,8 @@ impl LintPass for Pass {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
     fn check_trait_item(&mut self, cx: &LateContext<'a, 'tcx>, item: &'tcx TraitItem) {
-        match item.node {
-            TraitItemKind::Method(_, TraitMethod::Required(_)) => {
-                check_attrs(cx, &item.name, &item.attrs);
-            },
-            _ => {},
+        if let TraitItemKind::Method(_, TraitMethod::Required(_)) = item.node {
+            check_attrs(cx, &item.name, &item.attrs);
         }
     }
 }

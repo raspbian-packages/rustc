@@ -18,8 +18,9 @@ use utils::{higher, sugg};
 /// ```rust
 /// a += 1;
 /// ```
-declare_restriction_lint! {
+declare_clippy_lint! {
     pub ASSIGN_OPS,
+    restriction,
     "any compound assignment operation"
 }
 
@@ -37,9 +38,9 @@ declare_restriction_lint! {
 /// ...
 /// a = a + b;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ASSIGN_OP_PATTERN,
-    Warn,
+    style,
     "assigning the result of an operation on a variable to that same variable"
 }
 
@@ -57,9 +58,9 @@ declare_lint! {
 /// ...
 /// a += a + b;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MISREFACTORED_ASSIGN_OP,
-    Warn,
+    complexity,
     "having a variable on both sides of an assign op"
 }
 
@@ -202,9 +203,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for AssignOps {
                     };
 
                     let mut visitor = ExprVisitor {
-                        assignee: assignee,
+                        assignee,
                         counter: 0,
-                        cx: cx
+                        cx
                     };
 
                     walk_expr(&mut visitor, e);
@@ -253,7 +254,7 @@ struct ExprVisitor<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx: 'a> Visitor<'tcx> for ExprVisitor<'a, 'tcx> {
     fn visit_expr(&mut self, expr: &'tcx hir::Expr) {
-        if SpanlessEq::new(self.cx).ignore_fn().eq_expr(self.assignee, &expr) {
+        if SpanlessEq::new(self.cx).ignore_fn().eq_expr(self.assignee, expr) {
             self.counter += 1;
         }
 

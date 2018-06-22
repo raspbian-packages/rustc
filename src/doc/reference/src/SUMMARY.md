@@ -34,6 +34,7 @@
         - [Traits](items/traits.md)
         - [Implementations](items/implementations.md)
         - [External blocks](items/external-blocks.md)
+    - [Associated Items](items/associated-items.md)
     - [Visibility and Privacy](visibility-and-privacy.md)
     - [Attributes](attributes.md)
 
@@ -44,6 +45,7 @@
         - [Path expressions](expressions/path-expr.md)
         - [Block expressions](expressions/block-expr.md)
         - [Operator expressions](expressions/operator-expr.md)
+        - [Grouped expressions](expressions/grouped-expr.md)
         - [Array and index expressions](expressions/array-expr.md)
         - [Tuple and index expressions](expressions/tuple-expr.md)
         - [Struct expressions](expressions/struct-expr.md)
@@ -66,6 +68,7 @@
     - [Subtyping](subtyping.md)
     - [Type coercions](type-coercions.md)
     - [Destructors](destructors.md)
+    - [Lifetime elision](lifetime-elision.md)
 
 - [Special types and traits](special-types-and-traits.md)
 

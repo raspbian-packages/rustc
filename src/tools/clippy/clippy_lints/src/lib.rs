@@ -2,16 +2,18 @@
 
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
-#![feature(i128_type)]
-#![feature(i128)]
 #![feature(rustc_private)]
 #![feature(slice_patterns)]
 #![feature(stmt_expr_attributes)]
 #![feature(conservative_impl_trait)]
-#![feature(inclusive_range_syntax, range_contains)]
+#![feature(range_contains)]
 #![feature(macro_vis_matcher)]
 #![allow(unknown_lints, indexing_slicing, shadow_reuse, missing_docs_in_private_items)]
 #![recursion_limit = "256"]
+
+// FIXME(mark-i-m) remove after i128 stablization merges
+#![allow(stable_features)]
+#![feature(i128, i128_type)]
 
 #[macro_use]
 extern crate rustc;
@@ -37,7 +39,6 @@ extern crate regex_syntax;
 
 extern crate quine_mc_cluskey;
 
-extern crate rustc_const_eval;
 extern crate rustc_const_math;
 extern crate rustc_errors;
 extern crate rustc_plugin;
@@ -59,9 +60,33 @@ extern crate url;
 #[macro_use]
 extern crate if_chain;
 
-macro_rules! declare_restriction_lint {
-    { pub $name:tt, $description:tt } => {
+macro_rules! declare_clippy_lint {
+    { pub $name:tt, style, $description:tt } => {
+        declare_lint! { pub $name, Warn, $description }
+    };
+    { pub $name:tt, correctness, $description:tt } => {
+        declare_lint! { pub $name, Deny, $description }
+    };
+    { pub $name:tt, complexity, $description:tt } => {
+        declare_lint! { pub $name, Warn, $description }
+    };
+    { pub $name:tt, perf, $description:tt } => {
+        declare_lint! { pub $name, Warn, $description }
+    };
+    { pub $name:tt, pedantic, $description:tt } => {
         declare_lint! { pub $name, Allow, $description }
+    };
+    { pub $name:tt, restriction, $description:tt } => {
+        declare_lint! { pub $name, Allow, $description }
+    };
+    { pub $name:tt, nursery, $description:tt } => {
+        declare_lint! { pub $name, Allow, $description }
+    };
+    { pub $name:tt, internal, $description:tt } => {
+        declare_lint! { pub $name, Allow, $description }
+    };
+    { pub $name:tt, internal_warn, $description:tt } => {
+        declare_lint! { pub $name, Warn, $description }
     };
 }
 
@@ -151,6 +176,7 @@ pub mod print;
 pub mod ptr;
 pub mod question_mark;
 pub mod ranges;
+pub mod redundant_field_names;
 pub mod reference;
 pub mod regex;
 pub mod replace_consts;
@@ -158,6 +184,7 @@ pub mod returns;
 pub mod serde_api;
 pub mod shadow;
 pub mod strings;
+pub mod suspicious_trait_impl;
 pub mod swap;
 pub mod temporary_assignment;
 pub mod transmute;
@@ -373,57 +400,62 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
     reg.register_late_lint_pass(box types::UnitArg);
     reg.register_late_lint_pass(box double_comparison::DoubleComparisonPass);
     reg.register_late_lint_pass(box question_mark::QuestionMarkPass);
+    reg.register_late_lint_pass(box suspicious_trait_impl::SuspiciousImpl);
+    reg.register_late_lint_pass(box redundant_field_names::RedundantFieldNames);
 
-    reg.register_lint_group("clippy_restrictions", vec![
+
+    reg.register_lint_group("clippy_restriction", vec![
         arithmetic::FLOAT_ARITHMETIC,
         arithmetic::INTEGER_ARITHMETIC,
         array_indexing::INDEXING_SLICING,
         assign_ops::ASSIGN_OPS,
         else_if_without_else::ELSE_IF_WITHOUT_ELSE,
-        methods::CLONE_ON_REF_PTR,
-        misc::FLOAT_CMP_CONST,
-    ]);
-
-    reg.register_lint_group("clippy_pedantic", vec![
-        booleans::NONMINIMAL_BOOL,
-        empty_enum::EMPTY_ENUM,
-        enum_glob_use::ENUM_GLOB_USE,
-        enum_variants::PUB_ENUM_VARIANT_NAMES,
-        enum_variants::STUTTER,
-        fallible_impl_from::FALLIBLE_IMPL_FROM,
-        if_not_else::IF_NOT_ELSE,
-        infinite_iter::MAYBE_INFINITE_ITER,
-        int_plus_one::INT_PLUS_ONE,
-        items_after_statements::ITEMS_AFTER_STATEMENTS,
-        matches::SINGLE_MATCH_ELSE,
+        literal_representation::DECIMAL_LITERAL_REPRESENTATION,
         mem_forget::MEM_FORGET,
-        methods::FILTER_MAP,
-        methods::OPTION_MAP_UNWRAP_OR,
-        methods::OPTION_MAP_UNWRAP_OR_ELSE,
+        methods::CLONE_ON_REF_PTR,
         methods::OPTION_UNWRAP_USED,
-        methods::RESULT_MAP_UNWRAP_OR_ELSE,
         methods::RESULT_UNWRAP_USED,
         methods::WRONG_PUB_SELF_CONVENTION,
-        misc::USED_UNDERSCORE_BINDING,
-        misc_early::UNSEPARATED_LITERAL_SUFFIX,
+        misc::FLOAT_CMP_CONST,
         missing_doc::MISSING_DOCS_IN_PRIVATE_ITEMS,
-        mut_mut::MUT_MUT,
-        mutex_atomic::MUTEX_INTEGER,
-        non_expressive_names::SIMILAR_NAMES,
         print::PRINT_STDOUT,
         print::USE_DEBUG,
-        ranges::RANGE_PLUS_ONE,
-        replace_consts::REPLACE_CONSTS,
         shadow::SHADOW_REUSE,
         shadow::SHADOW_SAME,
         shadow::SHADOW_UNRELATED,
         strings::STRING_ADD,
+    ]);
+
+    reg.register_lint_group("clippy_pedantic", vec![
+        attrs::INLINE_ALWAYS,
+        copies::MATCH_SAME_ARMS,
+        derive::EXPL_IMPL_CLONE_ON_COPY,
+        doc::DOC_MARKDOWN,
+        empty_enum::EMPTY_ENUM,
+        enum_glob_use::ENUM_GLOB_USE,
+        enum_variants::PUB_ENUM_VARIANT_NAMES,
+        enum_variants::STUTTER,
+        if_not_else::IF_NOT_ELSE,
+        infinite_iter::MAYBE_INFINITE_ITER,
+        items_after_statements::ITEMS_AFTER_STATEMENTS,
+        matches::SINGLE_MATCH_ELSE,
+        methods::FILTER_MAP,
+        methods::OPTION_MAP_UNWRAP_OR,
+        methods::OPTION_MAP_UNWRAP_OR_ELSE,
+        methods::RESULT_MAP_UNWRAP_OR_ELSE,
+        misc::USED_UNDERSCORE_BINDING,
+        misc_early::UNSEPARATED_LITERAL_SUFFIX,
+        mut_mut::MUT_MUT,
+        needless_continue::NEEDLESS_CONTINUE,
+        non_expressive_names::SIMILAR_NAMES,
+        replace_consts::REPLACE_CONSTS,
         strings::STRING_ADD_ASSIGN,
         types::CAST_POSSIBLE_TRUNCATION,
         types::CAST_POSSIBLE_WRAP,
         types::CAST_PRECISION_LOSS,
         types::CAST_SIGN_LOSS,
         types::INVALID_UPCAST_COMPARISONS,
+        types::LINKEDLIST,
         unicode::NON_ASCII_LITERAL,
         unicode::UNICODE_NOT_NFC,
         use_self::USE_SELF,
@@ -441,7 +473,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         assign_ops::MISREFACTORED_ASSIGN_OP,
         attrs::DEPRECATED_SEMVER,
         attrs::EMPTY_LINE_AFTER_OUTER_ATTR,
-        attrs::INLINE_ALWAYS,
         attrs::USELESS_ATTRIBUTE,
         bit_mask::BAD_BIT_MASK,
         bit_mask::INEFFECTIVE_BIT_MASK,
@@ -450,16 +481,14 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         block_in_if_condition::BLOCK_IN_IF_CONDITION_EXPR,
         block_in_if_condition::BLOCK_IN_IF_CONDITION_STMT,
         booleans::LOGIC_BUG,
+        booleans::NONMINIMAL_BOOL,
         bytecount::NAIVE_BYTECOUNT,
         collapsible_if::COLLAPSIBLE_IF,
         const_static_lifetime::CONST_STATIC_LIFETIME,
         copies::IF_SAME_THEN_ELSE,
         copies::IFS_SAME_COND,
-        copies::MATCH_SAME_ARMS,
         cyclomatic_complexity::CYCLOMATIC_COMPLEXITY,
         derive::DERIVE_HASH_XOR_EQ,
-        derive::EXPL_IMPL_CLONE_ON_COPY,
-        doc::DOC_MARKDOWN,
         double_comparison::DOUBLE_COMPARISONS,
         double_parens::DOUBLE_PARENS,
         drop_forget_ref::DROP_COPY,
@@ -489,6 +518,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         if_let_redundant_pattern_matching::IF_LET_REDUNDANT_PATTERN_MATCHING,
         infinite_iter::INFINITE_ITER,
         inline_fn_without_body::INLINE_FN_WITHOUT_BODY,
+        int_plus_one::INT_PLUS_ONE,
         invalid_ref::INVALID_REF,
         large_enum_variant::LARGE_ENUM_VARIANT,
         len_zero::LEN_WITHOUT_IS_EMPTY,
@@ -496,7 +526,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         let_if_seq::USELESS_LET_IF_SEQ,
         lifetimes::NEEDLESS_LIFETIMES,
         lifetimes::UNUSED_LIFETIMES,
-        literal_representation::DECIMAL_LITERAL_REPRESENTATION,
         literal_representation::INCONSISTENT_DIGIT_GROUPING,
         literal_representation::LARGE_DIGIT_GROUPS,
         literal_representation::UNREADABLE_LITERAL,
@@ -514,6 +543,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         loops::NEVER_LOOP,
         loops::REVERSE_RANGE_LOOP,
         loops::UNUSED_COLLECT,
+        loops::WHILE_IMMUTABLE_CONDITION,
         loops::WHILE_LET_LOOP,
         loops::WHILE_LET_ON_ITERATOR,
         map_clone::MAP_CLONE,
@@ -566,7 +596,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         needless_bool::NEEDLESS_BOOL,
         needless_borrow::NEEDLESS_BORROW,
         needless_borrowed_ref::NEEDLESS_BORROWED_REFERENCE,
-        needless_continue::NEEDLESS_CONTINUE,
         needless_pass_by_value::NEEDLESS_PASS_BY_VALUE,
         needless_update::NEEDLESS_UPDATE,
         neg_multiply::NEG_MULTIPLY,
@@ -591,6 +620,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         ranges::ITERATOR_STEP_BY_ZERO,
         ranges::RANGE_MINUS_ONE,
         ranges::RANGE_ZIP_WITH_LEN,
+        redundant_field_names::REDUNDANT_FIELD_NAMES,
         reference::DEREF_ADDROF,
         regex::INVALID_REGEX,
         regex::REGEX_MACRO,
@@ -599,6 +629,8 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         returns::NEEDLESS_RETURN,
         serde_api::SERDE_API_MISUSE,
         strings::STRING_LIT_AS_BYTES,
+        suspicious_trait_impl::SUSPICIOUS_ARITHMETIC_IMPL,
+        suspicious_trait_impl::SUSPICIOUS_OP_ASSIGN_IMPL,
         swap::ALMOST_SWAPPED,
         swap::MANUAL_SWAP,
         temporary_assignment::TEMPORARY_ASSIGNMENT,
@@ -618,7 +650,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         types::CHAR_LIT_AS_U8,
         types::IMPLICIT_HASHER,
         types::LET_UNIT_VALUE,
-        types::LINKEDLIST,
         types::OPTION_OPTION,
         types::TYPE_COMPLEXITY,
         types::UNIT_ARG,
@@ -630,6 +661,218 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         unused_label::UNUSED_LABEL,
         vec::USELESS_VEC,
         zero_div_zero::ZERO_DIVIDED_BY_ZERO,
+    ]);
+
+    reg.register_lint_group("clippy_style", vec![
+        assign_ops::ASSIGN_OP_PATTERN,
+        attrs::EMPTY_LINE_AFTER_OUTER_ATTR,
+        bit_mask::VERBOSE_BIT_MASK,
+        blacklisted_name::BLACKLISTED_NAME,
+        block_in_if_condition::BLOCK_IN_IF_CONDITION_EXPR,
+        block_in_if_condition::BLOCK_IN_IF_CONDITION_STMT,
+        collapsible_if::COLLAPSIBLE_IF,
+        const_static_lifetime::CONST_STATIC_LIFETIME,
+        enum_variants::ENUM_VARIANT_NAMES,
+        enum_variants::MODULE_INCEPTION,
+        eq_op::OP_REF,
+        eta_reduction::REDUNDANT_CLOSURE,
+        formatting::SUSPICIOUS_ASSIGNMENT_FORMATTING,
+        formatting::SUSPICIOUS_ELSE_FORMATTING,
+        if_let_redundant_pattern_matching::IF_LET_REDUNDANT_PATTERN_MATCHING,
+        len_zero::LEN_WITHOUT_IS_EMPTY,
+        len_zero::LEN_ZERO,
+        let_if_seq::USELESS_LET_IF_SEQ,
+        literal_representation::INCONSISTENT_DIGIT_GROUPING,
+        literal_representation::LARGE_DIGIT_GROUPS,
+        literal_representation::UNREADABLE_LITERAL,
+        loops::EMPTY_LOOP,
+        loops::EXPLICIT_INTO_ITER_LOOP,
+        loops::EXPLICIT_ITER_LOOP,
+        loops::FOR_KV_MAP,
+        loops::NEEDLESS_RANGE_LOOP,
+        loops::WHILE_LET_ON_ITERATOR,
+        map_clone::MAP_CLONE,
+        matches::MATCH_BOOL,
+        matches::MATCH_OVERLAPPING_ARM,
+        matches::MATCH_REF_PATS,
+        matches::MATCH_WILD_ERR_ARM,
+        matches::SINGLE_MATCH,
+        methods::CHARS_LAST_CMP,
+        methods::GET_UNWRAP,
+        methods::ITER_CLONED_COLLECT,
+        methods::ITER_SKIP_NEXT,
+        methods::NEW_RET_NO_SELF,
+        methods::OK_EXPECT,
+        methods::OPTION_MAP_OR_NONE,
+        methods::SHOULD_IMPLEMENT_TRAIT,
+        methods::STRING_EXTEND_CHARS,
+        methods::UNNECESSARY_FOLD,
+        methods::WRONG_SELF_CONVENTION,
+        misc::REDUNDANT_PATTERN,
+        misc::TOPLEVEL_REF_ARG,
+        misc::ZERO_PTR,
+        misc_early::BUILTIN_TYPE_SHADOW,
+        misc_early::DOUBLE_NEG,
+        misc_early::DUPLICATE_UNDERSCORE_ARGUMENT,
+        misc_early::MIXED_CASE_HEX_LITERALS,
+        misc_early::UNNEEDED_FIELD_PATTERN,
+        mut_reference::UNNECESSARY_MUT_PASSED,
+        needless_pass_by_value::NEEDLESS_PASS_BY_VALUE,
+        neg_multiply::NEG_MULTIPLY,
+        new_without_default::NEW_WITHOUT_DEFAULT,
+        new_without_default::NEW_WITHOUT_DEFAULT_DERIVE,
+        non_expressive_names::JUST_UNDERSCORES_AND_DIGITS,
+        non_expressive_names::MANY_SINGLE_CHAR_NAMES,
+        ok_if_let::IF_LET_SOME_RESULT,
+        panic::PANIC_PARAMS,
+        print::PRINT_WITH_NEWLINE,
+        print::PRINTLN_EMPTY_STRING,
+        ptr::CMP_NULL,
+        ptr::PTR_ARG,
+        question_mark::QUESTION_MARK,
+        ranges::RANGE_MINUS_ONE,
+        redundant_field_names::REDUNDANT_FIELD_NAMES,
+        regex::REGEX_MACRO,
+        regex::TRIVIAL_REGEX,
+        returns::LET_AND_RETURN,
+        returns::NEEDLESS_RETURN,
+        strings::STRING_LIT_AS_BYTES,
+        types::IMPLICIT_HASHER,
+        types::LET_UNIT_VALUE,
+        unsafe_removed_from_name::UNSAFE_REMOVED_FROM_NAME,
+    ]);
+
+    reg.register_lint_group("clippy_complexity", vec![
+        assign_ops::MISREFACTORED_ASSIGN_OP,
+        booleans::NONMINIMAL_BOOL,
+        cyclomatic_complexity::CYCLOMATIC_COMPLEXITY,
+        double_comparison::DOUBLE_COMPARISONS,
+        double_parens::DOUBLE_PARENS,
+        eval_order_dependence::DIVERGING_SUB_EXPRESSION,
+        eval_order_dependence::EVAL_ORDER_DEPENDENCE,
+        explicit_write::EXPLICIT_WRITE,
+        format::USELESS_FORMAT,
+        functions::TOO_MANY_ARGUMENTS,
+        identity_conversion::IDENTITY_CONVERSION,
+        identity_op::IDENTITY_OP,
+        int_plus_one::INT_PLUS_ONE,
+        lifetimes::NEEDLESS_LIFETIMES,
+        lifetimes::UNUSED_LIFETIMES,
+        loops::EXPLICIT_COUNTER_LOOP,
+        loops::MUT_RANGE_BOUND,
+        loops::WHILE_LET_LOOP,
+        matches::MATCH_AS_REF,
+        methods::CHARS_NEXT_CMP,
+        methods::CLONE_ON_COPY,
+        methods::FILTER_NEXT,
+        methods::SEARCH_IS_SOME,
+        methods::USELESS_ASREF,
+        misc::SHORT_CIRCUIT_STATEMENT,
+        misc_early::REDUNDANT_CLOSURE_CALL,
+        misc_early::ZERO_PREFIXED_LITERAL,
+        needless_bool::BOOL_COMPARISON,
+        needless_bool::NEEDLESS_BOOL,
+        needless_borrow::NEEDLESS_BORROW,
+        needless_borrowed_ref::NEEDLESS_BORROWED_REFERENCE,
+        needless_update::NEEDLESS_UPDATE,
+        no_effect::NO_EFFECT,
+        no_effect::UNNECESSARY_OPERATION,
+        overflow_check_conditional::OVERFLOW_CHECK_CONDITIONAL,
+        partialeq_ne_impl::PARTIALEQ_NE_IMPL,
+        precedence::PRECEDENCE,
+        ranges::RANGE_ZIP_WITH_LEN,
+        reference::DEREF_ADDROF,
+        swap::MANUAL_SWAP,
+        temporary_assignment::TEMPORARY_ASSIGNMENT,
+        transmute::CROSSPOINTER_TRANSMUTE,
+        transmute::MISALIGNED_TRANSMUTE,
+        transmute::TRANSMUTE_BYTES_TO_STR,
+        transmute::TRANSMUTE_INT_TO_BOOL,
+        transmute::TRANSMUTE_INT_TO_CHAR,
+        transmute::TRANSMUTE_INT_TO_FLOAT,
+        transmute::TRANSMUTE_PTR_TO_REF,
+        transmute::USELESS_TRANSMUTE,
+        types::BORROWED_BOX,
+        types::CAST_LOSSLESS,
+        types::CHAR_LIT_AS_U8,
+        types::OPTION_OPTION,
+        types::TYPE_COMPLEXITY,
+        types::UNIT_ARG,
+        types::UNNECESSARY_CAST,
+        unused_label::UNUSED_LABEL,
+        zero_div_zero::ZERO_DIVIDED_BY_ZERO,
+    ]);
+
+    reg.register_lint_group("clippy_correctness", vec![
+        approx_const::APPROX_CONSTANT,
+        array_indexing::OUT_OF_BOUNDS_INDEXING,
+        attrs::DEPRECATED_SEMVER,
+        attrs::USELESS_ATTRIBUTE,
+        bit_mask::BAD_BIT_MASK,
+        bit_mask::INEFFECTIVE_BIT_MASK,
+        booleans::LOGIC_BUG,
+        copies::IF_SAME_THEN_ELSE,
+        copies::IFS_SAME_COND,
+        derive::DERIVE_HASH_XOR_EQ,
+        drop_forget_ref::DROP_COPY,
+        drop_forget_ref::DROP_REF,
+        drop_forget_ref::FORGET_COPY,
+        drop_forget_ref::FORGET_REF,
+        enum_clike::ENUM_CLIKE_UNPORTABLE_VARIANT,
+        eq_op::EQ_OP,
+        erasing_op::ERASING_OP,
+        formatting::POSSIBLE_MISSING_COMMA,
+        functions::NOT_UNSAFE_PTR_ARG_DEREF,
+        infinite_iter::INFINITE_ITER,
+        inline_fn_without_body::INLINE_FN_WITHOUT_BODY,
+        invalid_ref::INVALID_REF,
+        loops::FOR_LOOP_OVER_OPTION,
+        loops::FOR_LOOP_OVER_RESULT,
+        loops::ITER_NEXT_LOOP,
+        loops::NEVER_LOOP,
+        loops::REVERSE_RANGE_LOOP,
+        loops::WHILE_IMMUTABLE_CONDITION,
+        methods::CLONE_DOUBLE_REF,
+        methods::TEMPORARY_CSTRING_AS_PTR,
+        minmax::MIN_MAX,
+        misc::CMP_NAN,
+        misc::FLOAT_CMP,
+        misc::MODULO_ONE,
+        open_options::NONSENSICAL_OPEN_OPTIONS,
+        ptr::MUT_FROM_REF,
+        ranges::ITERATOR_STEP_BY_ZERO,
+        regex::INVALID_REGEX,
+        serde_api::SERDE_API_MISUSE,
+        suspicious_trait_impl::SUSPICIOUS_ARITHMETIC_IMPL,
+        suspicious_trait_impl::SUSPICIOUS_OP_ASSIGN_IMPL,
+        swap::ALMOST_SWAPPED,
+        transmute::WRONG_TRANSMUTE,
+        types::ABSURD_EXTREME_COMPARISONS,
+        types::UNIT_CMP,
+        unicode::ZERO_WIDTH_SPACE,
+        unused_io_amount::UNUSED_IO_AMOUNT,
+    ]);
+
+    reg.register_lint_group("clippy_perf", vec![
+        bytecount::NAIVE_BYTECOUNT,
+        entry::MAP_ENTRY,
+        escape::BOXED_LOCAL,
+        large_enum_variant::LARGE_ENUM_VARIANT,
+        loops::MANUAL_MEMCPY,
+        loops::UNUSED_COLLECT,
+        methods::ITER_NTH,
+        methods::OR_FUN_CALL,
+        methods::SINGLE_CHAR_PATTERN,
+        misc::CMP_OWNED,
+        mutex_atomic::MUTEX_ATOMIC,
+        types::BOX_VEC,
+        vec::USELESS_VEC,
+    ]);
+
+    reg.register_lint_group("clippy_nursery", vec![
+        fallible_impl_from::FALLIBLE_IMPL_FROM,
+        mutex_atomic::MUTEX_INTEGER,
+        ranges::RANGE_PLUS_ONE,
     ]);
 }
 

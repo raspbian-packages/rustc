@@ -12,7 +12,7 @@
 
 [package]
 name = "jobserver"
-version = "0.1.9"
+version = "0.1.11"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "An implementation of the GNU make jobserver for Rust\n"
 homepage = "https://github.com/alexcrichton/jobserver-rs"
@@ -42,6 +42,8 @@ harness = false
 [[test]]
 name = "helper"
 path = "tests/helper.rs"
+[dependencies.log]
+version = "0.4"
 [dev-dependencies.futures]
 version = "0.1"
 
@@ -59,4 +61,4 @@ version = "0.1"
 [target."cfg(unix)".dependencies.libc]
 version = "0.2"
 [target."cfg(windows)".dependencies.rand]
-version = "0.3"
+version = "0.4"

@@ -21,9 +21,9 @@ use utils::{in_macro, span_lint};
 ///         if i > 4 { continue }
 ///     }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNUSED_LABEL,
-    Warn,
+    complexity,
     "unused labels"
 }
 
@@ -55,7 +55,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedLabel {
         }
 
         let mut v = UnusedLabelVisitor {
-            cx: cx,
+            cx,
             labels: HashMap::new(),
         };
         walk_fn(&mut v, kind, decl, body.id(), span, fn_id);

@@ -23,7 +23,7 @@ use rustc::middle::dependency_format::Linkage;
 use rustc::session::Session;
 use rustc::session::config::{self, CrateType, OptLevel, DebugInfoLevel};
 use rustc::ty::TyCtxt;
-use rustc_back::LinkerFlavor;
+use rustc_back::{LinkerFlavor, LldFlavor};
 use serialize::{json, Encoder};
 
 /// For all the linkers we support, and information they might
@@ -45,6 +45,7 @@ impl LinkerInfo {
                          cmd: Command,
                          sess: &'a Session) -> Box<Linker+'a> {
         match sess.linker_flavor() {
+            LinkerFlavor::Lld(LldFlavor::Link) |
             LinkerFlavor::Msvc => {
                 Box::new(MsvcLinker {
                     cmd,
@@ -68,6 +69,9 @@ impl LinkerInfo {
                     is_ld: false,
                 }) as Box<Linker>
             }
+
+            LinkerFlavor::Lld(LldFlavor::Ld) |
+            LinkerFlavor::Lld(LldFlavor::Ld64) |
             LinkerFlavor::Ld => {
                 Box::new(GccLinker {
                     cmd,
@@ -77,8 +81,11 @@ impl LinkerInfo {
                     is_ld: true,
                 }) as Box<Linker>
             }
-            LinkerFlavor::Binaryen => {
-                panic!("can't instantiate binaryen linker")
+
+            LinkerFlavor::Lld(LldFlavor::Wasm) => {
+                Box::new(WasmLd {
+                    cmd,
+                }) as Box<Linker>
             }
         }
     }
@@ -105,9 +112,12 @@ pub trait Linker {
     fn add_object(&mut self, path: &Path);
     fn gc_sections(&mut self, keep_metadata: bool);
     fn position_independent_executable(&mut self);
-    fn partial_relro(&mut self);
+    fn no_position_independent_executable(&mut self);
     fn full_relro(&mut self);
+    fn partial_relro(&mut self);
+    fn no_relro(&mut self);
     fn optimize(&mut self);
+    fn pgo_gen(&mut self);
     fn debuginfo(&mut self);
     fn no_default_libraries(&mut self);
     fn build_dylib(&mut self, out_filename: &Path);
@@ -115,6 +125,8 @@ pub trait Linker {
     fn args(&mut self, args: &[String]);
     fn export_symbols(&mut self, tmpdir: &Path, crate_type: CrateType);
     fn subsystem(&mut self, subsystem: &str);
+    fn group_start(&mut self);
+    fn group_end(&mut self);
     // Should have been finalize(self), but we don't support self-by-value on trait objects (yet?).
     fn finalize(&mut self) -> Command;
 }
@@ -179,8 +191,10 @@ impl<'a> Linker for GccLinker<'a> {
     fn output_filename(&mut self, path: &Path) { self.cmd.arg("-o").arg(path); }
     fn add_object(&mut self, path: &Path) { self.cmd.arg(path); }
     fn position_independent_executable(&mut self) { self.cmd.arg("-pie"); }
-    fn partial_relro(&mut self) { self.linker_arg("-z,relro"); }
+    fn no_position_independent_executable(&mut self) { self.cmd.arg("-no-pie"); }
     fn full_relro(&mut self) { self.linker_arg("-z,relro,-z,now"); }
+    fn partial_relro(&mut self) { self.linker_arg("-z,relro"); }
+    fn no_relro(&mut self) { self.linker_arg("-z,norelro"); }
     fn build_static_executable(&mut self) { self.cmd.arg("-static"); }
     fn args(&mut self, args: &[String]) { self.cmd.args(args); }
 
@@ -269,8 +283,37 @@ impl<'a> Linker for GccLinker<'a> {
         }
     }
 
+    fn pgo_gen(&mut self) {
+        if !self.sess.target.target.options.linker_is_gnu { return }
+
+        // If we're doing PGO generation stuff and on a GNU-like linker, use the
+        // "-u" flag to properly pull in the profiler runtime bits.
+        //
+        // This is because LLVM otherwise won't add the needed initialization
+        // for us on Linux (though the extra flag should be harmless if it
+        // does).
+        //
+        // See https://reviews.llvm.org/D14033 and https://reviews.llvm.org/D14030.
+        //
+        // Though it may be worth to try to revert those changes upstream, since
+        // the overhead of the initialization should be minor.
+        self.cmd.arg("-u");
+        self.cmd.arg("__llvm_profile_runtime");
+    }
+
     fn debuginfo(&mut self) {
-        // Don't do anything special here for GNU-style linkers.
+        match self.sess.opts.debuginfo {
+            DebugInfoLevel::NoDebugInfo => {
+                // If we are building without debuginfo enabled and we were called with
+                // `-Zstrip-debuginfo-if-disabled=yes`, tell the linker to strip any debuginfo
+                // found when linking to get rid of symbols from libstd.
+                match self.sess.opts.debugging_opts.strip_debuginfo_if_disabled {
+                    Some(true) => { self.linker_arg("-S"); },
+                    _ => {},
+                }
+            },
+            _ => {},
+        };
     }
 
     fn no_default_libraries(&mut self) {
@@ -379,6 +422,18 @@ impl<'a> Linker for GccLinker<'a> {
         ::std::mem::swap(&mut cmd, &mut self.cmd);
         cmd
     }
+
+    fn group_start(&mut self) {
+        if !self.sess.target.target.options.is_like_osx {
+            self.linker_arg("--start-group");
+        }
+    }
+
+    fn group_end(&mut self) {
+        if !self.sess.target.target.options.is_like_osx {
+            self.linker_arg("--end-group");
+        }
+    }
 }
 
 pub struct MsvcLinker<'a> {
@@ -439,11 +494,19 @@ impl<'a> Linker for MsvcLinker<'a> {
         // noop
     }
 
-    fn partial_relro(&mut self) {
+    fn no_position_independent_executable(&mut self) {
         // noop
     }
 
     fn full_relro(&mut self) {
+        // noop
+    }
+
+    fn partial_relro(&mut self) {
+        // noop
+    }
+
+    fn no_relro(&mut self) {
         // noop
     }
 
@@ -488,6 +551,10 @@ impl<'a> Linker for MsvcLinker<'a> {
     }
     fn optimize(&mut self) {
         // Needs more investigation of `/OPT` arguments
+    }
+
+    fn pgo_gen(&mut self) {
+        // Nothing needed here.
     }
 
     fn debuginfo(&mut self) {
@@ -595,6 +662,10 @@ impl<'a> Linker for MsvcLinker<'a> {
         ::std::mem::swap(&mut cmd, &mut self.cmd);
         cmd
     }
+
+    // MSVC doesn't need group indicators
+    fn group_start(&mut self) {}
+    fn group_end(&mut self) {}
 }
 
 pub struct EmLinker<'a> {
@@ -647,11 +718,19 @@ impl<'a> Linker for EmLinker<'a> {
         // noop
     }
 
-    fn partial_relro(&mut self) {
+    fn no_position_independent_executable(&mut self) {
         // noop
     }
 
     fn full_relro(&mut self) {
+        // noop
+    }
+
+    fn partial_relro(&mut self) {
+        // noop
+    }
+
+    fn no_relro(&mut self) {
         // noop
     }
 
@@ -683,6 +762,10 @@ impl<'a> Linker for EmLinker<'a> {
         });
         // Unusable until https://github.com/rust-lang/rust/issues/38454 is resolved
         self.cmd.args(&["--memory-init-file", "0"]);
+    }
+
+    fn pgo_gen(&mut self) {
+        // noop, but maybe we need something like the gnu linker?
     }
 
     fn debuginfo(&mut self) {
@@ -745,15 +828,19 @@ impl<'a> Linker for EmLinker<'a> {
         ::std::mem::swap(&mut cmd, &mut self.cmd);
         cmd
     }
+
+    // Appears not necessary on Emscripten
+    fn group_start(&mut self) {}
+    fn group_end(&mut self) {}
 }
 
 fn exported_symbols(tcx: TyCtxt, crate_type: CrateType) -> Vec<String> {
     let mut symbols = Vec::new();
 
     let export_threshold = symbol_export::crates_export_threshold(&[crate_type]);
-    for &(ref name, _, level) in tcx.exported_symbols(LOCAL_CRATE).iter() {
+    for &(symbol, level) in tcx.exported_symbols(LOCAL_CRATE).iter() {
         if level.is_below_threshold(export_threshold) {
-            symbols.push(name.clone());
+            symbols.push(symbol.symbol_name(tcx).to_string());
         }
     }
 
@@ -765,13 +852,131 @@ fn exported_symbols(tcx: TyCtxt, crate_type: CrateType) -> Vec<String> {
         // For each dependency that we are linking to statically ...
         if *dep_format == Linkage::Static {
             // ... we add its symbol list to our export list.
-            for &(ref name, _, level) in tcx.exported_symbols(cnum).iter() {
+            for &(symbol, level) in tcx.exported_symbols(cnum).iter() {
                 if level.is_below_threshold(export_threshold) {
-                    symbols.push(name.clone());
+                    symbols.push(symbol.symbol_name(tcx).to_string());
                 }
             }
         }
     }
 
     symbols
+}
+
+pub struct WasmLd {
+    cmd: Command,
+}
+
+impl Linker for WasmLd {
+    fn link_dylib(&mut self, lib: &str) {
+        self.cmd.arg("-l").arg(lib);
+    }
+
+    fn link_staticlib(&mut self, lib: &str) {
+        self.cmd.arg("-l").arg(lib);
+    }
+
+    fn link_rlib(&mut self, lib: &Path) {
+        self.cmd.arg(lib);
+    }
+
+    fn include_path(&mut self, path: &Path) {
+        self.cmd.arg("-L").arg(path);
+    }
+
+    fn framework_path(&mut self, _path: &Path) {
+        panic!("frameworks not supported")
+    }
+
+    fn output_filename(&mut self, path: &Path) {
+        self.cmd.arg("-o").arg(path);
+    }
+
+    fn add_object(&mut self, path: &Path) {
+        self.cmd.arg(path);
+    }
+
+    fn position_independent_executable(&mut self) {
+    }
+
+    fn full_relro(&mut self) {
+    }
+
+    fn partial_relro(&mut self) {
+    }
+
+    fn no_relro(&mut self) {
+    }
+
+    fn build_static_executable(&mut self) {
+    }
+
+    fn args(&mut self, args: &[String]) {
+        self.cmd.args(args);
+    }
+
+    fn link_rust_dylib(&mut self, lib: &str, _path: &Path) {
+        self.cmd.arg("-l").arg(lib);
+    }
+
+    fn link_framework(&mut self, _framework: &str) {
+        panic!("frameworks not supported")
+    }
+
+    fn link_whole_staticlib(&mut self, lib: &str, _search_path: &[PathBuf]) {
+        self.cmd.arg("-l").arg(lib);
+    }
+
+    fn link_whole_rlib(&mut self, lib: &Path) {
+        self.cmd.arg(lib);
+    }
+
+    fn gc_sections(&mut self, _keep_metadata: bool) {
+    }
+
+    fn optimize(&mut self) {
+    }
+
+    fn pgo_gen(&mut self) {
+    }
+
+    fn debuginfo(&mut self) {
+    }
+
+    fn no_default_libraries(&mut self) {
+    }
+
+    fn build_dylib(&mut self, _out_filename: &Path) {
+    }
+
+    fn export_symbols(&mut self, _tmpdir: &Path, _crate_type: CrateType) {
+    }
+
+    fn subsystem(&mut self, _subsystem: &str) {
+    }
+
+    fn no_position_independent_executable(&mut self) {
+    }
+
+    fn finalize(&mut self) -> Command {
+        self.cmd.arg("--threads");
+
+        // FIXME we probably shouldn't pass this but instead pass an explicit
+        // whitelist of symbols we'll allow to be undefined. Unfortunately
+        // though we can't handle symbols like `log10` that LLVM injects at a
+        // super late date without actually parsing object files. For now let's
+        // stick to this and hopefully fix it before stabilization happens.
+        self.cmd.arg("--allow-undefined");
+
+        // For now we just never have an entry symbol
+        self.cmd.arg("--no-entry");
+
+        let mut cmd = Command::new("");
+        ::std::mem::swap(&mut cmd, &mut self.cmd);
+        cmd
+    }
+
+    // Not needed for now with LLD
+    fn group_start(&mut self) {}
+    fn group_end(&mut self) {}
 }

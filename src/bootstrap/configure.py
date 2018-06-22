@@ -44,6 +44,7 @@ o("debug", "rust.debug", "debug mode; disables optimization unless `--enable-opt
 o("docs", "build.docs", "build standard library documentation")
 o("compiler-docs", "build.compiler-docs", "build compiler documentation")
 o("optimize-tests", "rust.optimize-tests", "build tests with optimizations")
+o("experimental-parallel-queries", "rust.experimental-parallel-queries", "build rustc with experimental parallelization")
 o("test-miri", "rust.test-miri", "run miri's test suite")
 o("debuginfo-tests", "rust.debuginfo-tests", "build tests with debugger metadata")
 o("quiet-tests", "rust.quiet-tests", "enable quieter output when running tests")
@@ -66,11 +67,11 @@ o("dist-src", "rust.dist-src", "when building tarballs enables building a source
 o("cargo-openssl-static", "build.openssl-static", "static openssl in cargo")
 o("profiler", "build.profiler", "build the profiler runtime")
 o("emscripten", None, "compile the emscripten backend as well as LLVM")
+o("full-tools", None, "enable all tools")
 
 # Optimization and debugging options. These may be overridden by the release
 # channel, etc.
 o("optimize", "rust.optimize", "build optimized rust code")
-o("thinlto", "rust.thinlto", "build Rust with ThinLTO enabled")
 o("optimize-llvm", "llvm.optimize", "build optimized LLVM")
 o("llvm-assertions", "llvm.assertions", "build LLVM with assertions")
 o("debug-assertions", "rust.debug-assertions", "build with debugging assertions")
@@ -326,6 +327,10 @@ for key in known_args:
         set('build.target', value.split(','))
     elif option.name == 'emscripten':
         set('rust.codegen-backends', ['llvm', 'emscripten'])
+    elif option.name == 'full-tools':
+        set('rust.codegen-backends', ['llvm', 'emscripten'])
+        set('rust.lld', True)
+        set('build.extended', True)
     elif option.name == 'option-checking':
         # this was handled above
         pass

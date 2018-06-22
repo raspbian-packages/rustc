@@ -1,4 +1,1 @@
-# test data, not used
-rustc source: source-is-missing src/binaryen/test/*.asm.js line length is * characters (>*)
-rustc source: insane-line-length-in-source-file src/binaryen/test/*.asm.js line length is * characters (>*)
-rustc source: source-contains-prebuilt-javascript-object src/binaryen/test/*.asm.js line length is * characters (>*)
+

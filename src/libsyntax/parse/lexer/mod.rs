@@ -14,13 +14,13 @@ use codemap::{CodeMap, FilePathMapping};
 use errors::{FatalError, DiagnosticBuilder};
 use parse::{token, ParseSess};
 use str::char_at;
-use symbol::Symbol;
+use symbol::{Symbol, keywords};
 use std_unicode::property::Pattern_White_Space;
 
 use std::borrow::Cow;
 use std::char;
 use std::mem::replace;
-use std::rc::Rc;
+use rustc_data_structures::sync::Lrc;
 
 pub mod comments;
 mod tokentrees;
@@ -34,7 +34,7 @@ pub struct TokenAndSpan {
 
 impl Default for TokenAndSpan {
     fn default() -> Self {
-        TokenAndSpan { tok: token::Underscore, sp: syntax_pos::DUMMY_SP }
+        TokenAndSpan { tok: token::Whitespace, sp: syntax_pos::DUMMY_SP }
     }
 }
 
@@ -48,7 +48,7 @@ pub struct StringReader<'a> {
     pub col: CharPos,
     /// The current character (which has been read from self.pos)
     pub ch: Option<char>,
-    pub filemap: Rc<syntax_pos::FileMap>,
+    pub filemap: Lrc<syntax_pos::FileMap>,
     /// If Some, stop reading the source at this position (inclusive).
     pub terminator: Option<BytePos>,
     /// Whether to record new-lines and multibyte chars in filemap.
@@ -61,7 +61,7 @@ pub struct StringReader<'a> {
     pub fatal_errs: Vec<DiagnosticBuilder<'a>>,
     // cache a direct reference to the source text, so that we don't have to
     // retrieve it via `self.filemap.src.as_ref().unwrap()` all the time.
-    source_text: Rc<String>,
+    source_text: Lrc<String>,
     /// Stack of open delimiters and their spans. Used for error message.
     token: token::Token,
     span: Span,
@@ -126,12 +126,24 @@ impl<'a> StringReader<'a> {
     pub fn try_next_token(&mut self) -> Result<TokenAndSpan, ()> {
         assert!(self.fatal_errs.is_empty());
         let ret_val = TokenAndSpan {
-            tok: replace(&mut self.peek_tok, token::Underscore),
+            tok: replace(&mut self.peek_tok, token::Whitespace),
             sp: self.peek_span,
         };
         self.advance_token()?;
         Ok(ret_val)
     }
+
+    fn fail_unterminated_raw_string(&self, pos: BytePos, hash_count: usize) {
+        let mut err = self.struct_span_fatal(pos, pos, "unterminated raw string");
+        err.span_label(self.mk_sp(pos, pos), "unterminated raw string");
+        if hash_count > 0 {
+            err.note(&format!("this raw string should be terminated with `\"{}`",
+                              "#".repeat(hash_count)));
+        }
+        err.emit();
+        FatalError.raise();
+    }
+
     fn fatal(&self, m: &str) -> FatalError {
         self.fatal_span(self.peek_span, m)
     }
@@ -152,13 +164,13 @@ impl<'a> StringReader<'a> {
 
 impl<'a> StringReader<'a> {
     /// For comments.rs, which hackily pokes into next_pos and ch
-    pub fn new_raw(sess: &'a ParseSess, filemap: Rc<syntax_pos::FileMap>) -> Self {
+    pub fn new_raw(sess: &'a ParseSess, filemap: Lrc<syntax_pos::FileMap>) -> Self {
         let mut sr = StringReader::new_raw_internal(sess, filemap);
         sr.bump();
         sr
     }
 
-    fn new_raw_internal(sess: &'a ParseSess, filemap: Rc<syntax_pos::FileMap>) -> Self {
+    fn new_raw_internal(sess: &'a ParseSess, filemap: Lrc<syntax_pos::FileMap>) -> Self {
         if filemap.src.is_none() {
             sess.span_diagnostic.bug(&format!("Cannot lex filemap without source: {}",
                                               filemap.name));
@@ -187,7 +199,7 @@ impl<'a> StringReader<'a> {
         }
     }
 
-    pub fn new(sess: &'a ParseSess, filemap: Rc<syntax_pos::FileMap>) -> Self {
+    pub fn new(sess: &'a ParseSess, filemap: Lrc<syntax_pos::FileMap>) -> Self {
         let mut sr = StringReader::new_raw(sess, filemap);
         if sr.advance_token().is_err() {
             sr.emit_fatal_errors();
@@ -202,7 +214,7 @@ impl<'a> StringReader<'a> {
 
         // Make the range zero-length if the span is invalid.
         if span.lo() > span.hi() || begin.fm.start_pos != end.fm.start_pos {
-            span = span.with_hi(span.lo());
+            span = span.shrink_to_lo();
         }
 
         let mut sr = StringReader::new_raw_internal(sess, begin.fm);
@@ -269,6 +281,15 @@ impl<'a> StringReader<'a> {
         Self::push_escaped_char_for_msg(&mut m, c);
         self.fatal_span_(from_pos, to_pos, &m[..])
     }
+
+    fn struct_span_fatal(&self,
+                         from_pos: BytePos,
+                         to_pos: BytePos,
+                         m: &str)
+                         -> DiagnosticBuilder<'a> {
+        self.sess.span_diagnostic.struct_span_fatal(self.mk_sp(from_pos, to_pos), m)
+    }
+
     fn struct_fatal_span_char(&self,
                               from_pos: BytePos,
                               to_pos: BytePos,
@@ -590,7 +611,7 @@ impl<'a> StringReader<'a> {
                 // I guess this is the only way to figure out if
                 // we're at the beginning of the file...
                 let cmap = CodeMap::new(FilePathMapping::empty());
-                cmap.files.borrow_mut().push(self.filemap.clone());
+                cmap.files.borrow_mut().file_maps.push(self.filemap.clone());
                 let loc = cmap.lookup_char_pos_adj(self.pos);
                 debug!("Skipping a shebang");
                 if loc.line == 1 && loc.col == CharPos(0) {
@@ -1094,32 +1115,53 @@ impl<'a> StringReader<'a> {
     /// token, and updates the interner
     fn next_token_inner(&mut self) -> Result<token::Token, ()> {
         let c = self.ch;
-        if ident_start(c) &&
-           match (c.unwrap(), self.nextch(), self.nextnextch()) {
-            // Note: r as in r" or r#" is part of a raw string literal,
-            // b as in b' is part of a byte literal.
-            // They are not identifiers, and are handled further down.
-            ('r', Some('"'), _) |
-            ('r', Some('#'), _) |
-            ('b', Some('"'), _) |
-            ('b', Some('\''), _) |
-            ('b', Some('r'), Some('"')) |
-            ('b', Some('r'), Some('#')) => false,
-            _ => true,
-        } {
-            let start = self.pos;
-            while ident_continue(self.ch) {
-                self.bump();
-            }
 
-            return Ok(self.with_str_from(start, |string| {
-                if string == "_" {
-                    token::Underscore
-                } else {
-                    // FIXME: perform NFKC normalization here. (Issue #2253)
-                    token::Ident(self.mk_ident(string))
+        if ident_start(c) {
+            let (is_ident_start, is_raw_ident) =
+                match (c.unwrap(), self.nextch(), self.nextnextch()) {
+                    // r# followed by an identifier starter is a raw identifier.
+                    // This is an exception to the r# case below.
+                    ('r', Some('#'), x) if ident_start(x) => (true, true),
+                    // r as in r" or r#" is part of a raw string literal.
+                    // b as in b' is part of a byte literal.
+                    // They are not identifiers, and are handled further down.
+                    ('r', Some('"'), _) |
+                    ('r', Some('#'), _) |
+                    ('b', Some('"'), _) |
+                    ('b', Some('\''), _) |
+                    ('b', Some('r'), Some('"')) |
+                    ('b', Some('r'), Some('#')) => (false, false),
+                    _ => (true, false),
+                };
+            if is_ident_start {
+                let raw_start = self.pos;
+                if is_raw_ident {
+                    // Consume the 'r#' characters.
+                    self.bump();
+                    self.bump();
                 }
-            }));
+
+                let start = self.pos;
+                while ident_continue(self.ch) {
+                    self.bump();
+                }
+
+                return Ok(self.with_str_from(start, |string| {
+                    // FIXME: perform NFKC normalization here. (Issue #2253)
+                    let ident = self.mk_ident(string);
+                    if is_raw_ident && (token::is_path_segment_keyword(ident) ||
+                                        ident.name == keywords::Underscore.name()) {
+                        self.fatal_span_(raw_start, self.pos,
+                            &format!("`r#{}` is not currently supported.", ident.name)
+                        ).raise();
+                    }
+                    if is_raw_ident {
+                        let span = self.mk_sp(raw_start, self.pos);
+                        self.sess.raw_identifier_spans.borrow_mut().push(span);
+                    }
+                    token::Ident(ident, is_raw_ident)
+                }));
+            }
         }
 
         if is_dec_digit(c) {
@@ -1404,8 +1446,7 @@ impl<'a> StringReader<'a> {
                 }
 
                 if self.is_eof() {
-                    let last_bpos = self.pos;
-                    self.fatal_span_(start_bpos, last_bpos, "unterminated raw string").raise();
+                    self.fail_unterminated_raw_string(start_bpos, hash_count);
                 } else if !self.ch_is('"') {
                     let last_bpos = self.pos;
                     let curr_char = self.ch.unwrap();
@@ -1421,8 +1462,7 @@ impl<'a> StringReader<'a> {
                 let mut valid = true;
                 'outer: loop {
                     if self.is_eof() {
-                        let last_bpos = self.pos;
-                        self.fatal_span_(start_bpos, last_bpos, "unterminated raw string").raise();
+                        self.fail_unterminated_raw_string(start_bpos, hash_count);
                     }
                     // if self.ch_is('"') {
                     // content_end_bpos = self.pos;
@@ -1636,8 +1676,7 @@ impl<'a> StringReader<'a> {
         }
 
         if self.is_eof() {
-            let pos = self.pos;
-            self.fatal_span_(start_bpos, pos, "unterminated raw string").raise();
+            self.fail_unterminated_raw_string(start_bpos, hash_count);
         } else if !self.ch_is('"') {
             let pos = self.pos;
             let ch = self.ch.unwrap();
@@ -1653,8 +1692,7 @@ impl<'a> StringReader<'a> {
         'outer: loop {
             match self.ch {
                 None => {
-                    let pos = self.pos;
-                    self.fatal_span_(start_bpos, pos, "unterminated raw string").raise()
+                    self.fail_unterminated_raw_string(start_bpos, hash_count);
                 }
                 Some('"') => {
                     content_end_bpos = self.pos;
@@ -1747,9 +1785,10 @@ mod tests {
     use std::collections::HashSet;
     use std::io;
     use std::path::PathBuf;
-    use std::rc::Rc;
-
-    fn mk_sess(cm: Rc<CodeMap>) -> ParseSess {
+    use diagnostics::plugin::ErrorMap;
+    use rustc_data_structures::sync::Lock;
+    use with_globals;
+    fn mk_sess(cm: Lrc<CodeMap>) -> ParseSess {
         let emitter = errors::emitter::EmitterWriter::new(Box::new(io::sink()),
                                                           Some(cm.clone()),
                                                           false,
@@ -1761,6 +1800,8 @@ mod tests {
             included_mod_stack: RefCell::new(Vec::new()),
             code_map: cm,
             missing_fragment_specifiers: RefCell::new(HashSet::new()),
+            raw_identifier_spans: RefCell::new(Vec::new()),
+            registered_diagnostics: Lock::new(ErrorMap::new()),
             non_modrs_mods: RefCell::new(vec![]),
         }
     }
@@ -1776,33 +1817,35 @@ mod tests {
 
     #[test]
     fn t1() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        let mut string_reader = setup(&cm,
-                                      &sh,
-                                      "/* my source file */ fn main() { println!(\"zebra\"); }\n"
-                                          .to_string());
-        let id = Ident::from_str("fn");
-        assert_eq!(string_reader.next_token().tok, token::Comment);
-        assert_eq!(string_reader.next_token().tok, token::Whitespace);
-        let tok1 = string_reader.next_token();
-        let tok2 = TokenAndSpan {
-            tok: token::Ident(id),
-            sp: Span::new(BytePos(21), BytePos(23), NO_EXPANSION),
-        };
-        assert_eq!(tok1, tok2);
-        assert_eq!(string_reader.next_token().tok, token::Whitespace);
-        // the 'main' id is already read:
-        assert_eq!(string_reader.pos.clone(), BytePos(28));
-        // read another token:
-        let tok3 = string_reader.next_token();
-        let tok4 = TokenAndSpan {
-            tok: token::Ident(Ident::from_str("main")),
-            sp: Span::new(BytePos(24), BytePos(28), NO_EXPANSION),
-        };
-        assert_eq!(tok3, tok4);
-        // the lparen is already read:
-        assert_eq!(string_reader.pos.clone(), BytePos(29))
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            let mut string_reader = setup(&cm,
+                                        &sh,
+                                        "/* my source file */ fn main() { println!(\"zebra\"); }\n"
+                                            .to_string());
+            let id = Ident::from_str("fn");
+            assert_eq!(string_reader.next_token().tok, token::Comment);
+            assert_eq!(string_reader.next_token().tok, token::Whitespace);
+            let tok1 = string_reader.next_token();
+            let tok2 = TokenAndSpan {
+                tok: token::Ident(id, false),
+                sp: Span::new(BytePos(21), BytePos(23), NO_EXPANSION),
+            };
+            assert_eq!(tok1, tok2);
+            assert_eq!(string_reader.next_token().tok, token::Whitespace);
+            // the 'main' id is already read:
+            assert_eq!(string_reader.pos.clone(), BytePos(28));
+            // read another token:
+            let tok3 = string_reader.next_token();
+            let tok4 = TokenAndSpan {
+                tok: mk_ident("main"),
+                sp: Span::new(BytePos(24), BytePos(28), NO_EXPANSION),
+            };
+            assert_eq!(tok3, tok4);
+            // the lparen is already read:
+            assert_eq!(string_reader.pos.clone(), BytePos(29))
+        })
     }
 
     // check that the given reader produces the desired stream
@@ -1815,118 +1858,138 @@ mod tests {
 
     // make the identifier by looking up the string in the interner
     fn mk_ident(id: &str) -> token::Token {
-        token::Ident(Ident::from_str(id))
+        token::Token::from_ast_ident(Ident::from_str(id))
     }
 
     #[test]
     fn doublecolonparsing() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        check_tokenization(setup(&cm, &sh, "a b".to_string()),
-                           vec![mk_ident("a"), token::Whitespace, mk_ident("b")]);
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            check_tokenization(setup(&cm, &sh, "a b".to_string()),
+                            vec![mk_ident("a"), token::Whitespace, mk_ident("b")]);
+        })
     }
 
     #[test]
     fn dcparsing_2() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        check_tokenization(setup(&cm, &sh, "a::b".to_string()),
-                           vec![mk_ident("a"), token::ModSep, mk_ident("b")]);
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            check_tokenization(setup(&cm, &sh, "a::b".to_string()),
+                            vec![mk_ident("a"), token::ModSep, mk_ident("b")]);
+        })
     }
 
     #[test]
     fn dcparsing_3() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        check_tokenization(setup(&cm, &sh, "a ::b".to_string()),
-                           vec![mk_ident("a"), token::Whitespace, token::ModSep, mk_ident("b")]);
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            check_tokenization(setup(&cm, &sh, "a ::b".to_string()),
+                            vec![mk_ident("a"), token::Whitespace, token::ModSep, mk_ident("b")]);
+        })
     }
 
     #[test]
     fn dcparsing_4() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        check_tokenization(setup(&cm, &sh, "a:: b".to_string()),
-                           vec![mk_ident("a"), token::ModSep, token::Whitespace, mk_ident("b")]);
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            check_tokenization(setup(&cm, &sh, "a:: b".to_string()),
+                            vec![mk_ident("a"), token::ModSep, token::Whitespace, mk_ident("b")]);
+        })
     }
 
     #[test]
     fn character_a() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        assert_eq!(setup(&cm, &sh, "'a'".to_string()).next_token().tok,
-                   token::Literal(token::Char(Symbol::intern("a")), None));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            assert_eq!(setup(&cm, &sh, "'a'".to_string()).next_token().tok,
+                    token::Literal(token::Char(Symbol::intern("a")), None));
+        })
     }
 
     #[test]
     fn character_space() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        assert_eq!(setup(&cm, &sh, "' '".to_string()).next_token().tok,
-                   token::Literal(token::Char(Symbol::intern(" ")), None));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            assert_eq!(setup(&cm, &sh, "' '".to_string()).next_token().tok,
+                    token::Literal(token::Char(Symbol::intern(" ")), None));
+        })
     }
 
     #[test]
     fn character_escaped() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        assert_eq!(setup(&cm, &sh, "'\\n'".to_string()).next_token().tok,
-                   token::Literal(token::Char(Symbol::intern("\\n")), None));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            assert_eq!(setup(&cm, &sh, "'\\n'".to_string()).next_token().tok,
+                    token::Literal(token::Char(Symbol::intern("\\n")), None));
+        })
     }
 
     #[test]
     fn lifetime_name() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        assert_eq!(setup(&cm, &sh, "'abc".to_string()).next_token().tok,
-                   token::Lifetime(Ident::from_str("'abc")));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            assert_eq!(setup(&cm, &sh, "'abc".to_string()).next_token().tok,
+                    token::Lifetime(Ident::from_str("'abc")));
+        })
     }
 
     #[test]
     fn raw_string() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        assert_eq!(setup(&cm, &sh, "r###\"\"#a\\b\x00c\"\"###".to_string())
-                       .next_token()
-                       .tok,
-                   token::Literal(token::StrRaw(Symbol::intern("\"#a\\b\x00c\""), 3), None));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            assert_eq!(setup(&cm, &sh, "r###\"\"#a\\b\x00c\"\"###".to_string())
+                        .next_token()
+                        .tok,
+                    token::Literal(token::StrRaw(Symbol::intern("\"#a\\b\x00c\""), 3), None));
+        })
     }
 
     #[test]
     fn literal_suffixes() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        macro_rules! test {
-            ($input: expr, $tok_type: ident, $tok_contents: expr) => {{
-                assert_eq!(setup(&cm, &sh, format!("{}suffix", $input)).next_token().tok,
-                           token::Literal(token::$tok_type(Symbol::intern($tok_contents)),
-                                          Some(Symbol::intern("suffix"))));
-                // with a whitespace separator:
-                assert_eq!(setup(&cm, &sh, format!("{} suffix", $input)).next_token().tok,
-                           token::Literal(token::$tok_type(Symbol::intern($tok_contents)),
-                                          None));
-            }}
-        }
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            macro_rules! test {
+                ($input: expr, $tok_type: ident, $tok_contents: expr) => {{
+                    assert_eq!(setup(&cm, &sh, format!("{}suffix", $input)).next_token().tok,
+                            token::Literal(token::$tok_type(Symbol::intern($tok_contents)),
+                                            Some(Symbol::intern("suffix"))));
+                    // with a whitespace separator:
+                    assert_eq!(setup(&cm, &sh, format!("{} suffix", $input)).next_token().tok,
+                            token::Literal(token::$tok_type(Symbol::intern($tok_contents)),
+                                            None));
+                }}
+            }
 
-        test!("'a'", Char, "a");
-        test!("b'a'", Byte, "a");
-        test!("\"a\"", Str_, "a");
-        test!("b\"a\"", ByteStr, "a");
-        test!("1234", Integer, "1234");
-        test!("0b101", Integer, "0b101");
-        test!("0xABC", Integer, "0xABC");
-        test!("1.0", Float, "1.0");
-        test!("1.0e10", Float, "1.0e10");
+            test!("'a'", Char, "a");
+            test!("b'a'", Byte, "a");
+            test!("\"a\"", Str_, "a");
+            test!("b\"a\"", ByteStr, "a");
+            test!("1234", Integer, "1234");
+            test!("0b101", Integer, "0b101");
+            test!("0xABC", Integer, "0xABC");
+            test!("1.0", Float, "1.0");
+            test!("1.0e10", Float, "1.0e10");
 
-        assert_eq!(setup(&cm, &sh, "2us".to_string()).next_token().tok,
-                   token::Literal(token::Integer(Symbol::intern("2")),
-                                  Some(Symbol::intern("us"))));
-        assert_eq!(setup(&cm, &sh, "r###\"raw\"###suffix".to_string()).next_token().tok,
-                   token::Literal(token::StrRaw(Symbol::intern("raw"), 3),
-                                  Some(Symbol::intern("suffix"))));
-        assert_eq!(setup(&cm, &sh, "br###\"raw\"###suffix".to_string()).next_token().tok,
-                   token::Literal(token::ByteStrRaw(Symbol::intern("raw"), 3),
-                                  Some(Symbol::intern("suffix"))));
+            assert_eq!(setup(&cm, &sh, "2us".to_string()).next_token().tok,
+                    token::Literal(token::Integer(Symbol::intern("2")),
+                                    Some(Symbol::intern("us"))));
+            assert_eq!(setup(&cm, &sh, "r###\"raw\"###suffix".to_string()).next_token().tok,
+                    token::Literal(token::StrRaw(Symbol::intern("raw"), 3),
+                                    Some(Symbol::intern("suffix"))));
+            assert_eq!(setup(&cm, &sh, "br###\"raw\"###suffix".to_string()).next_token().tok,
+                    token::Literal(token::ByteStrRaw(Symbol::intern("raw"), 3),
+                                    Some(Symbol::intern("suffix"))));
+        })
     }
 
     #[test]
@@ -1938,27 +2001,31 @@ mod tests {
 
     #[test]
     fn nested_block_comments() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        let mut lexer = setup(&cm, &sh, "/* /* */ */'a'".to_string());
-        match lexer.next_token().tok {
-            token::Comment => {}
-            _ => panic!("expected a comment!"),
-        }
-        assert_eq!(lexer.next_token().tok,
-                   token::Literal(token::Char(Symbol::intern("a")), None));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            let mut lexer = setup(&cm, &sh, "/* /* */ */'a'".to_string());
+            match lexer.next_token().tok {
+                token::Comment => {}
+                _ => panic!("expected a comment!"),
+            }
+            assert_eq!(lexer.next_token().tok,
+                    token::Literal(token::Char(Symbol::intern("a")), None));
+        })
     }
 
     #[test]
     fn crlf_comments() {
-        let cm = Rc::new(CodeMap::new(FilePathMapping::empty()));
-        let sh = mk_sess(cm.clone());
-        let mut lexer = setup(&cm, &sh, "// test\r\n/// test\r\n".to_string());
-        let comment = lexer.next_token();
-        assert_eq!(comment.tok, token::Comment);
-        assert_eq!((comment.sp.lo(), comment.sp.hi()), (BytePos(0), BytePos(7)));
-        assert_eq!(lexer.next_token().tok, token::Whitespace);
-        assert_eq!(lexer.next_token().tok,
-                   token::DocComment(Symbol::intern("/// test")));
+        with_globals(|| {
+            let cm = Lrc::new(CodeMap::new(FilePathMapping::empty()));
+            let sh = mk_sess(cm.clone());
+            let mut lexer = setup(&cm, &sh, "// test\r\n/// test\r\n".to_string());
+            let comment = lexer.next_token();
+            assert_eq!(comment.tok, token::Comment);
+            assert_eq!((comment.sp.lo(), comment.sp.hi()), (BytePos(0), BytePos(7)));
+            assert_eq!(lexer.next_token().tok, token::Whitespace);
+            assert_eq!(lexer.next_token().tok,
+                    token::DocComment(Symbol::intern("/// test")));
+        })
     }
 }

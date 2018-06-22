@@ -20,7 +20,7 @@ use super::*;
 
 impl<'tcx> RegionInferenceContext<'tcx> {
     /// Write out the region constraint graph.
-    pub(crate) fn dump_graphviz(&self, mut w: &mut Write) -> io::Result<()> {
+    pub(crate) fn dump_graphviz(&self, mut w: &mut dyn Write) -> io::Result<()> {
         dot::render(self, &mut w)
     }
 }
@@ -55,7 +55,7 @@ impl<'this, 'tcx> dot::GraphWalk<'this> for RegionInferenceContext<'tcx> {
         vids.into_cow()
     }
     fn edges(&'this self) -> dot::Edges<'this, Constraint> {
-        (&self.constraints[..]).into_cow()
+        (&self.constraints.raw[..]).into_cow()
     }
 
     // Render `a: b` as `a <- b`, indicating the flow

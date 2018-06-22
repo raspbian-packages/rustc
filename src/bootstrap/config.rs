@@ -45,6 +45,7 @@ pub struct Config {
     pub ninja: bool,
     pub verbose: usize,
     pub submodules: bool,
+    pub fast_submodules: bool,
     pub compiler_docs: bool,
     pub docs: bool,
     pub locked_deps: bool,
@@ -57,6 +58,7 @@ pub struct Config {
     pub profiler: bool,
     pub ignore_git: bool,
     pub exclude: Vec<PathBuf>,
+    pub rustc_error_format: Option<String>,
 
     pub run_host_only: bool,
 
@@ -80,10 +82,11 @@ pub struct Config {
     pub llvm_experimental_targets: String,
     pub llvm_link_jobs: Option<u32>,
 
+    pub lld_enabled: bool,
+
     // rust codegen options
     pub rust_optimize: bool,
     pub rust_codegen_units: Option<u32>,
-    pub rust_thinlto: bool,
     pub rust_debug_assertions: bool,
     pub rust_debuginfo: bool,
     pub rust_debuginfo_lines: bool,
@@ -95,6 +98,7 @@ pub struct Config {
     pub rust_debuginfo_tests: bool,
     pub rust_dist_src: bool,
     pub rust_codegen_backends: Vec<Interned<String>>,
+    pub rust_codegen_backends_dir: String,
 
     pub build: Interned<String>,
     pub hosts: Vec<Interned<String>>,
@@ -118,6 +122,7 @@ pub struct Config {
     pub quiet_tests: bool,
     pub test_miri: bool,
     pub save_toolstates: Option<PathBuf>,
+    pub print_step_timings: bool,
 
     // Fallback musl-root for all targets
     pub musl_root: Option<PathBuf>,
@@ -187,6 +192,7 @@ struct Build {
     compiler_docs: Option<bool>,
     docs: Option<bool>,
     submodules: Option<bool>,
+    fast_submodules: Option<bool>,
     gdb: Option<String>,
     locked_deps: Option<bool>,
     vendor: Option<bool>,
@@ -201,6 +207,7 @@ struct Build {
     openssl_static: Option<bool>,
     configure_args: Option<Vec<String>>,
     local_rebuild: Option<bool>,
+    print_step_timings: Option<bool>,
 }
 
 /// TOML representation of various global install decisions.
@@ -266,7 +273,6 @@ impl Default for StringOrBool {
 struct Rust {
     optimize: Option<bool>,
     codegen_units: Option<u32>,
-    thinlto: Option<bool>,
     debug_assertions: Option<bool>,
     debuginfo: Option<bool>,
     debuginfo_lines: Option<bool>,
@@ -289,7 +295,9 @@ struct Rust {
     test_miri: Option<bool>,
     save_toolstates: Option<String>,
     codegen_backends: Option<Vec<String>>,
+    codegen_backends_dir: Option<String>,
     wasm_syscall: Option<bool>,
+    lld: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -322,6 +330,7 @@ impl Config {
         config.rust_optimize = true;
         config.rust_optimize_tests = true;
         config.submodules = true;
+        config.fast_submodules = true;
         config.docs = true;
         config.rust_rpath = true;
         config.channel = "dev".to_string();
@@ -330,7 +339,9 @@ impl Config {
         config.rust_dist_src = true;
         config.test_miri = false;
         config.rust_codegen_backends = vec![INTERNER.intern_str("llvm")];
+        config.rust_codegen_backends_dir = "codegen-backends".to_owned();
 
+        config.rustc_error_format = flags.rustc_error_format;
         config.on_fail = flags.on_fail;
         config.stage = flags.stage;
         config.src = flags.src;
@@ -340,7 +351,7 @@ impl Config {
         config.keep_stage = flags.keep_stage;
 
         // If --target was specified but --host wasn't specified, don't run any host-only tests.
-        config.run_host_only = flags.host.is_empty() && !flags.target.is_empty();
+        config.run_host_only = !(flags.host.is_empty() && !flags.target.is_empty());
 
         let toml = file.map(|file| {
             let mut f = t!(File::open(&file));
@@ -396,6 +407,7 @@ impl Config {
         set(&mut config.compiler_docs, build.compiler_docs);
         set(&mut config.docs, build.docs);
         set(&mut config.submodules, build.submodules);
+        set(&mut config.fast_submodules, build.fast_submodules);
         set(&mut config.locked_deps, build.locked_deps);
         set(&mut config.vendor, build.vendor);
         set(&mut config.full_bootstrap, build.full_bootstrap);
@@ -407,6 +419,7 @@ impl Config {
         set(&mut config.openssl_static, build.openssl_static);
         set(&mut config.configure_args, build.configure_args);
         set(&mut config.local_rebuild, build.local_rebuild);
+        set(&mut config.print_step_timings, build.print_step_timings);
         config.verbose = cmp::max(config.verbose, flags.verbose);
 
         if let Some(ref install) = toml.install {
@@ -421,7 +434,6 @@ impl Config {
 
         // Store off these values as options because if they're not provided
         // we'll infer default values for them later
-        let mut thinlto = None;
         let mut llvm_assertions = None;
         let mut debuginfo_lines = None;
         let mut debuginfo_only_std = None;
@@ -465,7 +477,6 @@ impl Config {
             optimize = rust.optimize;
             ignore_git = rust.ignore_git;
             debug_jemalloc = rust.debug_jemalloc;
-            thinlto = rust.thinlto;
             set(&mut config.rust_optimize_tests, rust.optimize_tests);
             set(&mut config.rust_debuginfo_tests, rust.debuginfo_tests);
             set(&mut config.codegen_tests, rust.codegen_tests);
@@ -477,6 +488,7 @@ impl Config {
             set(&mut config.quiet_tests, rust.quiet_tests);
             set(&mut config.test_miri, rust.test_miri);
             set(&mut config.wasm_syscall, rust.wasm_syscall);
+            set(&mut config.lld_enabled, rust.lld);
             config.rustc_parallel_queries = rust.experimental_parallel_queries.unwrap_or(false);
             config.rustc_default_linker = rust.default_linker.clone();
             config.musl_root = rust.musl_root.clone().map(PathBuf::from);
@@ -487,6 +499,8 @@ impl Config {
                     .map(|s| INTERNER.intern_str(s))
                     .collect();
             }
+
+            set(&mut config.rust_codegen_backends_dir, rust.codegen_backends_dir.clone());
 
             match rust.codegen_units {
                 Some(0) => config.rust_codegen_units = Some(num_cpus::get() as u32),
@@ -550,7 +564,6 @@ impl Config {
             "stable" | "beta" | "nightly" => true,
             _ => false,
         };
-        config.rust_thinlto = thinlto.unwrap_or(true);
         config.rust_debuginfo_lines = debuginfo_lines.unwrap_or(default);
         config.rust_debuginfo_only_std = debuginfo_only_std.unwrap_or(default);
 

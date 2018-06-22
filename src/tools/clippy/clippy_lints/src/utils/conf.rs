@@ -178,7 +178,7 @@ define_Conf! {
     /// Lint: VERBOSE_BIT_MASK. The maximum allowed size of a bit mask before suggesting to use 'trailing_zeros'
     (verbose_bit_mask_threshold, "verbose_bit_mask_threshold", 1 => u64),
     /// Lint: DECIMAL_LITERAL_REPRESENTATION. The lower bound for linting decimal literals
-    (literal_representation_threshold, "literal_representation_threshold", 4096 => u64),
+    (literal_representation_threshold, "literal_representation_threshold", 16384 => u64),
 }
 
 /// Search for the configuration file.
@@ -186,7 +186,7 @@ pub fn lookup_conf_file() -> io::Result<Option<path::PathBuf>> {
     /// Possible filename to search for.
     const CONFIG_FILE_NAMES: [&str; 2] = [".clippy.toml", "clippy.toml"];
 
-    let mut current = try!(env::current_dir());
+    let mut current = path::PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
 
     loop {
         for config_file_name in &CONFIG_FILE_NAMES {

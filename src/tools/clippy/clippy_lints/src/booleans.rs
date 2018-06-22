@@ -20,9 +20,9 @@ use utils::{in_macro, snippet_opt, span_lint_and_then, SpanlessEq};
 /// if a && true  // should be: if a
 /// if !(a == b)  // should be: if a != b
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub NONMINIMAL_BOOL,
-    Allow,
+    complexity,
     "boolean expressions that can be written more concisely"
 }
 
@@ -38,9 +38,9 @@ declare_lint! {
 /// if a && b || a { ... }
 /// ```
 /// The `b` is unnecessary, the expression is equivalent to `if a`.
-declare_lint! {
+declare_clippy_lint! {
     pub LOGIC_BUG,
-    Warn,
+    correctness,
     "boolean expressions that contain terminals which can be eliminated"
 }
 
@@ -69,7 +69,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonminimalBool {
         _: Span,
         _: NodeId,
     ) {
-        NonminimalBoolVisitor { cx: cx }.visit_body(body)
+        NonminimalBoolVisitor { cx }.visit_body(body)
     }
 }
 
@@ -261,8 +261,8 @@ impl<'a, 'tcx, 'v> SuggestContext<'a, 'tcx, 'v> {
 // The boolean part of the return indicates whether some simplifications have been applied.
 fn suggest(cx: &LateContext, suggestion: &Bool, terminals: &[&Expr]) -> (String, bool) {
     let mut suggest_context = SuggestContext {
-        terminals: terminals,
-        cx: cx,
+        terminals,
+        cx,
         output: String::new(),
         simplified: false,
     };

@@ -266,13 +266,10 @@
 #![feature(float_from_str_radix)]
 #![feature(fn_traits)]
 #![feature(fnbox)]
-#![feature(fused)]
 #![feature(generic_param_attrs)]
-#![feature(hashmap_hasher)]
+#![feature(hashmap_internals)]
 #![feature(heap_api)]
-#![feature(i128)]
-#![feature(i128_type)]
-#![feature(inclusive_range)]
+#![cfg_attr(stage0, feature(i128_type, i128))]
 #![feature(int_error_internals)]
 #![feature(integer_atomics)]
 #![feature(into_cow)]
@@ -284,11 +281,14 @@
 #![feature(macro_vis_matcher)]
 #![feature(needs_panic_runtime)]
 #![feature(never_type)]
+#![feature(exhaustive_patterns)]
+#![feature(nonzero)]
 #![feature(num_bits_bytes)]
 #![feature(old_wrapping)]
 #![feature(on_unimplemented)]
 #![feature(oom)]
 #![feature(optin_builtin_traits)]
+#![feature(panic_internals)]
 #![feature(panic_unwind)]
 #![feature(peek)]
 #![feature(placement_in_syntax)]
@@ -298,7 +298,8 @@
 #![feature(rand)]
 #![feature(raw)]
 #![feature(rustc_attrs)]
-#![feature(sip_hash_13)]
+#![feature(stdsimd)]
+#![feature(shrink_to)]
 #![feature(slice_bytes)]
 #![feature(slice_concat_ext)]
 #![feature(slice_internals)]
@@ -308,11 +309,11 @@
 #![feature(str_char)]
 #![feature(str_internals)]
 #![feature(str_utf16)]
-#![feature(termination_trait)]
 #![feature(test, rustc_private)]
 #![feature(thread_local)]
 #![feature(toowned_clone_into)]
 #![feature(try_from)]
+#![feature(try_reserve)]
 #![feature(unboxed_closures)]
 #![feature(unicode)]
 #![feature(untagged_unions)]
@@ -323,7 +324,8 @@
 #![feature(doc_spotlight)]
 #![cfg_attr(test, feature(update_panic_count))]
 #![cfg_attr(windows, feature(used))]
-#![cfg_attr(stage0, feature(repr_align))]
+#![cfg_attr(stage0, feature(never_type))]
+#![cfg_attr(stage0, feature(termination_trait))]
 
 #![default_lib_allocator]
 
@@ -354,8 +356,9 @@ use prelude::v1::*;
 // We want to re-export a few macros from core but libcore has already been
 // imported by the compiler (via our #[no_std] attribute) In this case we just
 // add a new crate name so we can attach the re-exports to it.
-#[macro_reexport(assert, assert_eq, assert_ne, debug_assert, debug_assert_eq,
+#[macro_reexport(assert_eq, assert_ne, debug_assert, debug_assert_eq,
                  debug_assert_ne, unreachable, unimplemented, write, writeln, try)]
+#[cfg_attr(stage0, macro_reexport(assert))]
 extern crate core as __core;
 
 #[macro_use]
@@ -433,7 +436,7 @@ pub use core::i16;
 pub use core::i32;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::i64;
-#[unstable(feature = "i128", issue = "35118")]
+#[stable(feature = "i128", since = "1.26.0")]
 pub use core::i128;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use core::usize;
@@ -463,7 +466,7 @@ pub use alloc::string;
 pub use alloc::vec;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use std_unicode::char;
-#[unstable(feature = "i128", issue = "35118")]
+#[stable(feature = "i128", since = "1.26.0")]
 pub use core::u128;
 
 pub mod f32;
@@ -500,11 +503,35 @@ mod memchr;
 // The runtime entry point and a few unstable public functions used by the
 // compiler
 pub mod rt;
-// The trait to support returning arbitrary types in the main function
-mod termination;
 
-#[unstable(feature = "termination_trait", issue = "43301")]
-pub use self::termination::Termination;
+// Pull in the the `stdsimd` crate directly into libstd. This is the same as
+// libcore's arch/simd modules where the source of truth here is in a different
+// repository, but we pull things in here manually to get it into libstd.
+//
+// Note that the #[cfg] here is intended to do two things. First it allows us to
+// change the rustc implementation of intrinsics in stage0 by not compiling simd
+// intrinsics in stage0. Next it doesn't compile anything in test mode as
+// stdsimd has tons of its own tests which we don't want to run.
+#[path = "../stdsimd/stdsimd/mod.rs"]
+#[allow(missing_debug_implementations, missing_docs, dead_code)]
+#[unstable(feature = "stdsimd", issue = "48556")]
+#[cfg(all(not(stage0), not(test)))]
+mod stdsimd;
+
+// A "fake" module needed by the `stdsimd` module to compile, not actually
+// exported though.
+#[cfg(not(stage0))]
+mod coresimd {
+    pub use core::arch;
+    pub use core::simd;
+}
+
+#[unstable(feature = "stdsimd", issue = "48556")]
+#[cfg(all(not(stage0), not(test)))]
+pub use stdsimd::simd;
+#[unstable(feature = "stdsimd", issue = "48556")]
+#[cfg(all(not(stage0), not(test)))]
+pub use stdsimd::arch;
 
 // Include a number of private modules that exist solely to provide
 // the rustdoc documentation for primitive types. Using `include!`

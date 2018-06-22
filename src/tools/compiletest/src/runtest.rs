@@ -295,11 +295,14 @@ impl<'test> TestCx<'test> {
     }
 
     fn check_correct_failure_status(&self, proc_res: &ProcRes) {
-        // The value the rust runtime returns on failure
-        const RUST_ERR: i32 = 101;
-        if proc_res.status.code() != Some(RUST_ERR) {
+        let expected_status = Some(self.props.failure_status);
+        let received_status = proc_res.status.code();
+
+        if expected_status != received_status {
             self.fatal_proc_rec(
-                &format!("failure produced the wrong error: {}", proc_res.status),
+                &format!("Error: expected failure status ({:?}) but received status {:?}.",
+                         expected_status,
+                         received_status),
                 proc_res,
             );
         }
@@ -320,7 +323,6 @@ impl<'test> TestCx<'test> {
         );
 
         let proc_res = self.exec_compiled_test();
-
         if !proc_res.status.success() {
             self.fatal_proc_rec("test run failed!", &proc_res);
         }
@@ -499,7 +501,6 @@ impl<'test> TestCx<'test> {
                 expected,
                 actual
             );
-            panic!();
         }
     }
 
@@ -1324,6 +1325,8 @@ impl<'test> TestCx<'test> {
 
         rustdoc
             .arg("-L")
+            .arg(self.config.run_lib_path.to_str().unwrap())
+            .arg("-L")
             .arg(aux_dir)
             .arg("-o")
             .arg(out_dir)
@@ -1622,14 +1625,18 @@ impl<'test> TestCx<'test> {
                 if self.props.error_patterns.is_empty() {
                     rustc.args(&["--error-format", "json"]);
                 }
+                if !self.props.disable_ui_testing_normalization {
+                    rustc.arg("-Zui-testing");
+                }
             }
-            Ui => if !self.props
-                .compile_flags
-                .iter()
-                .any(|s| s.starts_with("--error-format"))
-            {
-                rustc.args(&["--error-format", "json"]);
-            },
+            Ui => {
+                if !self.props.compile_flags.iter().any(|s| s.starts_with("--error-format")) {
+                    rustc.args(&["--error-format", "json"]);
+                }
+                if !self.props.disable_ui_testing_normalization {
+                    rustc.arg("-Zui-testing");
+                }
+            }
             MirOpt => {
                 rustc.args(&[
                     "-Zdump-mir=all",
@@ -2353,11 +2360,6 @@ impl<'test> TestCx<'test> {
     }
 
     fn run_rmake_test(&self) {
-        // FIXME(#11094): we should fix these tests
-        if self.config.host != self.config.target {
-            return;
-        }
-
         let cwd = env::current_dir().unwrap();
         let src_root = self.config
             .src_base
@@ -2394,19 +2396,27 @@ impl<'test> TestCx<'test> {
             .env("S", src_root)
             .env("RUST_BUILD_STAGE", &self.config.stage_id)
             .env("RUSTC", cwd.join(&self.config.rustc_path))
-            .env(
-                "RUSTDOC",
-                cwd.join(&self.config
-                    .rustdoc_path
-                    .as_ref()
-                    .expect("--rustdoc-path passed")),
-            )
             .env("TMPDIR", &tmpdir)
             .env("LD_LIB_PATH_ENVVAR", dylib_env_var())
             .env("HOST_RPATH_DIR", cwd.join(&self.config.compile_lib_path))
             .env("TARGET_RPATH_DIR", cwd.join(&self.config.run_lib_path))
             .env("LLVM_COMPONENTS", &self.config.llvm_components)
-            .env("LLVM_CXXFLAGS", &self.config.llvm_cxxflags);
+            .env("LLVM_CXXFLAGS", &self.config.llvm_cxxflags)
+
+            // We for sure don't want these tests to run in parallel, so make
+            // sure they don't have access to these vars if we we run via `make`
+            // at the top level
+            .env_remove("MAKEFLAGS")
+            .env_remove("MFLAGS")
+            .env_remove("CARGO_MAKEFLAGS");
+
+        if let Some(ref rustdoc) = self.config.rustdoc_path {
+            cmd.env("RUSTDOC", cwd.join(rustdoc));
+        }
+
+        if let Some(ref node) = self.config.nodejs {
+            cmd.env("NODE", node);
+        }
 
         if let Some(ref linker) = self.config.linker {
             cmd.env("RUSTC_LINKER", linker);
@@ -2416,7 +2426,7 @@ impl<'test> TestCx<'test> {
         // compiler flags set in the test cases:
         cmd.env_remove("RUSTFLAGS");
 
-        if self.config.target.contains("msvc") {
+        if self.config.target.contains("msvc") && self.config.cc != "" {
             // We need to pass a path to `lib.exe`, so assume that `cc` is `cl.exe`
             // and that `lib.exe` lives next to it.
             let lib = Path::new(&self.config.cc).parent().unwrap().join("lib.exe");

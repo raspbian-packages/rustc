@@ -42,8 +42,8 @@ use std::io::Write;
 use termcolor::{Color, ColorChoice, ColorSpec, StandardStream, WriteColor};
 
 let mut stdout = StandardStream::stdout(ColorChoice::Always);
-try!(stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green))));
-try!(writeln!(&mut stdout, "green text!"));
+stdout.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+writeln!(&mut stdout, "green text!")?;
 # Ok(()) }
 ```
 
@@ -62,9 +62,9 @@ use termcolor::{BufferWriter, Color, ColorChoice, ColorSpec, WriteColor};
 
 let mut bufwtr = BufferWriter::stderr(ColorChoice::Always);
 let mut buffer = bufwtr.buffer();
-try!(buffer.set_color(ColorSpec::new().set_fg(Some(Color::Green))));
-try!(writeln!(&mut buffer, "green text!"));
-try!(bufwtr.print(&buffer));
+buffer.set_color(ColorSpec::new().set_fg(Some(Color::Green)))?;
+writeln!(&mut buffer, "green text!")?;
+bufwtr.print(&buffer)?;
 # Ok(()) }
 ```
 */
@@ -104,7 +104,7 @@ pub trait WriteColor: io::Write {
     fn reset(&mut self) -> io::Result<()>;
 }
 
-impl<'a, T: WriteColor> WriteColor for &'a mut T {
+impl<'a, T: ?Sized + WriteColor> WriteColor for &'a mut T {
     fn supports_color(&self) -> bool { (&**self).supports_color() }
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
         (&mut **self).set_color(spec)
@@ -239,7 +239,7 @@ impl io::Write for IoStandardStream {
     }
 }
 
-/// Same rigamorale for the locked variants of the standard streams.
+// Same rigmarole for the locked variants of the standard streams.
 
 enum IoStandardStreamLock<'a> {
     StdoutLock(io::StdoutLock<'a>),
@@ -295,7 +295,7 @@ enum WriterInnerLock<'a, W> {
     Ansi(Ansi<W>),
     /// What a gross hack. On Windows, we need to specify a lifetime for the
     /// console when in a locked state, but obviously don't need to do that
-    /// on Unix, which make the `'a` unused. To satisfy the compiler, we need
+    /// on Unix, which makes the `'a` unused. To satisfy the compiler, we need
     /// a PhantomData.
     #[allow(dead_code)]
     Unreachable(::std::marker::PhantomData<&'a ()>),
@@ -328,14 +328,17 @@ impl StandardStream {
     /// the `WriteColor` trait.
     #[cfg(windows)]
     fn create(sty: StandardStreamType, choice: ColorChoice) -> StandardStream {
-        let con = match sty {
+        let mut con = match sty {
             StandardStreamType::Stdout => wincolor::Console::stdout(),
             StandardStreamType::Stderr => wincolor::Console::stderr(),
         };
         let is_win_console = con.is_ok();
+        let is_console_virtual = con.as_mut().map(|con| {
+            con.set_virtual_terminal_processing(true).is_ok()
+        }).unwrap_or(false);
         let wtr =
             if choice.should_attempt_color() {
-                if choice.should_ansi() {
+                if choice.should_ansi() || is_console_virtual {
                     WriterInner::Ansi(Ansi(IoStandardStream::new(sty)))
                 } else if let Ok(console) = con {
                     WriterInner::Windows {
@@ -486,7 +489,7 @@ impl<W: io::Write> WriteColor for WriterInner<W> {
             WriterInner::Ansi(ref mut wtr) => wtr.set_color(spec),
             #[cfg(windows)]
             WriterInner::Windows { ref mut wtr, ref console } => {
-                try!(wtr.flush());
+                wtr.flush()?;
                 let mut console = console.lock().unwrap();
                 spec.write_console(&mut *console)
             }
@@ -499,8 +502,8 @@ impl<W: io::Write> WriteColor for WriterInner<W> {
             WriterInner::Ansi(ref mut wtr) => wtr.reset(),
             #[cfg(windows)]
             WriterInner::Windows { ref mut wtr, ref mut console } => {
-                try!(wtr.flush());
-                try!(console.lock().unwrap().reset());
+                wtr.flush()?;
+                console.lock().unwrap().reset()?;
                 Ok(())
             }
         }
@@ -547,7 +550,7 @@ impl<'a, W: io::Write> WriteColor for WriterInnerLock<'a, W> {
             WriterInnerLock::Ansi(ref mut wtr) => wtr.set_color(spec),
             #[cfg(windows)]
             WriterInnerLock::Windows { ref mut wtr, ref mut console } => {
-                try!(wtr.flush());
+                wtr.flush()?;
                 spec.write_console(console)
             }
         }
@@ -560,8 +563,8 @@ impl<'a, W: io::Write> WriteColor for WriterInnerLock<'a, W> {
             WriterInnerLock::Ansi(ref mut wtr) => wtr.reset(),
             #[cfg(windows)]
             WriterInnerLock::Windows { ref mut wtr, ref mut console } => {
-                try!(wtr.flush());
-                try!(console.reset());
+                wtr.flush()?;
+                console.reset()?;
                 Ok(())
             }
         }
@@ -612,10 +615,18 @@ impl BufferWriter {
     /// the buffers themselves.
     #[cfg(windows)]
     fn create(sty: StandardStreamType, choice: ColorChoice) -> BufferWriter {
-        let con = match sty {
+        let mut con = match sty {
             StandardStreamType::Stdout => wincolor::Console::stdout(),
             StandardStreamType::Stderr => wincolor::Console::stderr(),
-        }.ok().map(Mutex::new);
+        }.ok();
+        let is_console_virtual = con.as_mut().map(|con| {
+            con.set_virtual_terminal_processing(true).is_ok()
+        }).unwrap_or(false);
+        // If we can enable ANSI on Windows, then we don't need the console
+        // anymore.
+        if is_console_virtual {
+            con = None;
+        }
         let stream = LossyStandardStream::new(IoStandardStream::new(sty))
             .is_console(con.is_some());
         BufferWriter {
@@ -623,7 +634,7 @@ impl BufferWriter {
             printed: AtomicBool::new(false),
             separator: None,
             color_choice: choice,
-            console: con,
+            console: con.map(Mutex::new),
         }
     }
 
@@ -689,13 +700,13 @@ impl BufferWriter {
         let mut stream = self.stream.wrap(self.stream.get_ref().lock());
         if let Some(ref sep) = self.separator {
             if self.printed.load(Ordering::SeqCst) {
-                try!(stream.write_all(sep));
-                try!(stream.write_all(b"\n"));
+                stream.write_all(sep)?;
+                stream.write_all(b"\n")?;
             }
         }
         match buf.0 {
-            BufferInner::NoColor(ref b) => try!(stream.write_all(&b.0)),
-            BufferInner::Ansi(ref b) => try!(stream.write_all(&b.0)),
+            BufferInner::NoColor(ref b) => stream.write_all(&b.0)?,
+            BufferInner::Ansi(ref b) => stream.write_all(&b.0)?,
             #[cfg(windows)]
             BufferInner::Windows(ref b) => {
                 // We guarantee by construction that we have a console here.
@@ -703,7 +714,7 @@ impl BufferWriter {
                 let console_mutex = self.console.as_ref()
                     .expect("got Windows buffer but have no Console");
                 let mut console = console_mutex.lock().unwrap();
-                try!(b.print(&mut *console, &mut stream));
+                b.print(&mut *console, &mut stream)?;
             }
         }
         self.printed.store(true, Ordering::SeqCst);
@@ -959,21 +970,24 @@ impl<W: io::Write> WriteColor for Ansi<W> {
     fn supports_color(&self) -> bool { true }
 
     fn set_color(&mut self, spec: &ColorSpec) -> io::Result<()> {
-        try!(self.reset());
+        self.reset()?;
+        if spec.bold {
+            self.write_str("\x1B[1m")?;
+        }
+        if spec.underline {
+            self.write_str("\x1B[4m")?;
+        }
         if let Some(ref c) = spec.fg_color {
-            try!(self.write_color(true, c, spec.intense));
+            self.write_color(true, c, spec.intense)?;
         }
         if let Some(ref c) = spec.bg_color {
-            try!(self.write_color(false, c, spec.intense));
-        }
-        if spec.bold {
-            try!(self.write_str("\x1B[1m"));
+            self.write_color(false, c, spec.intense)?;
         }
         Ok(())
     }
 
     fn reset(&mut self) -> io::Result<()> {
-        self.write_str("\x1B[m")
+        self.write_str("\x1B[0m")
     }
 }
 
@@ -1006,6 +1020,60 @@ impl<W: io::Write> Ansi<W> {
                 }
             }
         }
+        macro_rules! write_var_ansi_code {
+            ($pre:expr, $($code:expr),+) => {{
+                // The loop generates at worst a literal of the form
+                // '255,255,255m' which is 12-bytes.
+                // The largest `pre` expression we currently use is 7 bytes.
+                // This gives us the maximum of 19-bytes for our work buffer.
+                let pre_len = $pre.len();
+                assert!(pre_len <= 7);
+                let mut fmt = [0u8; 19];
+                fmt[..pre_len].copy_from_slice($pre);
+                let mut i = pre_len - 1;
+                $(
+                    let c1: u8 = ($code / 100) % 10;
+                    let c2: u8 = ($code / 10) % 10;
+                    let c3: u8 = $code % 10;
+                    let mut printed = false;
+
+                    if c1 != 0 {
+                        printed = true;
+                        i += 1;
+                        fmt[i] = b'0' + c1;
+                    }
+                    if c2 != 0 || printed {
+                        i += 1;
+                        fmt[i] = b'0' + c2;
+                    }
+                    // If we received a zero value we must still print a value.
+                    i += 1;
+                    fmt[i] = b'0' + c3;
+                    i += 1;
+                    fmt[i] = b';';
+                )+
+
+                fmt[i] = b'm';
+                self.write_all(&fmt[0..i+1])
+            }}
+        }
+        macro_rules! write_custom {
+            ($ansi256:expr) => {
+                if fg {
+                    write_var_ansi_code!(b"\x1B[38;5;", $ansi256)
+                } else {
+                    write_var_ansi_code!(b"\x1B[48;5;", $ansi256)
+                }
+            };
+
+            ($r:expr, $g:expr, $b:expr) => {{
+                if fg {
+                    write_var_ansi_code!(b"\x1B[38;2;", $r, $g, $b)
+                } else {
+                    write_var_ansi_code!(b"\x1B[48;2;", $r, $g, $b)
+                }
+            }};
+        }
         if intense {
             match *c {
                 Color::Black => write_intense!("8"),
@@ -1016,6 +1084,8 @@ impl<W: io::Write> Ansi<W> {
                 Color::Magenta => write_intense!("13"),
                 Color::Yellow => write_intense!("11"),
                 Color::White => write_intense!("15"),
+                Color::Ansi256(c) => write_custom!(c),
+                Color::Rgb(r, g, b) => write_custom!(r, g, b),
                 Color::__Nonexhaustive => unreachable!(),
             }
         } else {
@@ -1028,6 +1098,8 @@ impl<W: io::Write> Ansi<W> {
                 Color::Magenta => write_normal!("5"),
                 Color::Yellow => write_normal!("3"),
                 Color::White => write_normal!("7"),
+                Color::Ansi256(c) => write_custom!(c),
+                Color::Rgb(r, g, b) => write_custom!(r, g, b),
                 Color::__Nonexhaustive => unreachable!(),
             }
         }
@@ -1090,15 +1162,15 @@ impl WindowsBuffer {
     ) -> io::Result<()> {
         let mut last = 0;
         for &(pos, ref spec) in &self.colors {
-            try!(stream.write_all(&self.buf[last..pos]));
-            try!(stream.flush());
+            stream.write_all(&self.buf[last..pos])?;
+            stream.flush()?;
             last = pos;
             match *spec {
-                None => try!(console.reset()),
-                Some(ref spec) => try!(spec.write_console(console)),
+                None => console.reset()?,
+                Some(ref spec) => spec.write_console(console)?,
             }
         }
-        try!(stream.write_all(&self.buf[last..]));
+        stream.write_all(&self.buf[last..])?;
         stream.flush()
     }
 
@@ -1143,6 +1215,7 @@ pub struct ColorSpec {
     bg_color: Option<Color>,
     bold: bool,
     intense: bool,
+    underline: bool,
 }
 
 impl ColorSpec {
@@ -1182,10 +1255,37 @@ impl ColorSpec {
         self
     }
 
+    /// Get whether this is underline or not.
+    ///
+    /// Note that the underline setting has no effect in a Windows console.
+    pub fn underline(&self) -> bool { self.underline }
+
+    /// Set whether the text is underlined or not.
+    ///
+    /// Note that the underline setting has no effect in a Windows console.
+    pub fn set_underline(&mut self, yes: bool) -> &mut ColorSpec {
+        self.underline = yes;
+        self
+    }
+
     /// Get whether this is intense or not.
+    ///
+    /// On Unix-like systems, this will output the ANSI escape sequence
+    /// that will print a high-intensity version of the color
+    /// specified.
+    ///
+    /// On Windows systems, this will output the ANSI escape sequence
+    /// that will print a brighter version of the color specified.
     pub fn intense(&self) -> bool { self.intense }
 
     /// Set whether the text is intense or not.
+    ///
+    /// On Unix-like systems, this will output the ANSI escape sequence
+    /// that will print a high-intensity version of the color
+    /// specified.
+    ///
+    /// On Windows systems, this will output the ANSI escape sequence
+    /// that will print a brighter version of the color specified.
     pub fn set_intense(&mut self, yes: bool) -> &mut ColorSpec {
         self.intense = yes;
         self
@@ -1193,7 +1293,8 @@ impl ColorSpec {
 
     /// Returns true if this color specification has no colors or styles.
     pub fn is_none(&self) -> bool {
-        self.fg_color.is_none() && self.bg_color.is_none() && !self.bold
+        self.fg_color.is_none() && self.bg_color.is_none()
+            && !self.bold && !self.underline
     }
 
     /// Clears this color specification so that it has no color/style settings.
@@ -1201,6 +1302,7 @@ impl ColorSpec {
         self.fg_color = None;
         self.bg_color = None;
         self.bold = false;
+        self.underline = false;
     }
 
     /// Writes this color spec to the given Windows console.
@@ -1212,19 +1314,41 @@ impl ColorSpec {
         use wincolor::Intense;
 
         let intense = if self.intense { Intense::Yes } else { Intense::No };
-        if let Some(color) = self.fg_color.as_ref().map(|c| c.to_windows()) {
-            try!(console.fg(intense, color));
+
+        let fg_color = self.fg_color.as_ref().and_then(|c| c.to_windows());
+        if let Some(color) = fg_color {
+            console.fg(intense, color)?;
         }
-        if let Some(color) = self.bg_color.as_ref().map(|c| c.to_windows()) {
-            try!(console.bg(intense, color));
+
+        let bg_color = self.bg_color.as_ref().and_then(|c| c.to_windows());
+        if let Some(color) = bg_color {
+            console.bg(intense, color)?;
         }
         Ok(())
     }
 }
 
-/// The set of available English colors for the terminal foreground/background.
+/// The set of available colors for the terminal foreground/background.
 ///
-/// Note that this set may expand over time.
+/// The `Ansi256` and `Rgb` colors will only output the correct codes when
+/// paired with the `Ansi` `WriteColor` implementation.
+///
+/// The `Ansi256` and `Rgb` color types are not supported when writing colors
+/// on Windows using the console. If they are used on Windows, then they are
+/// silently ignored and no colors will be emitted.
+///
+/// This set may expand over time.
+///
+/// This type has a `FromStr` impl that can parse colors from their human
+/// readable form. The format is as follows:
+///
+/// 1. Any of the explicitly listed colors in English. They are matched
+///    case insensitively.
+/// 2. A single 8-bit integer, in either decimal or hexadecimal format.
+/// 3. A triple of 8-bit integers separated by a comma, where each integer is
+///    in decimal or hexadecimal format.
+///
+/// Hexadecimal numbers are written with a `0x` prefix.
 #[allow(missing_docs)]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Color {
@@ -1236,46 +1360,145 @@ pub enum Color {
     Magenta,
     Yellow,
     White,
+    Ansi256(u8),
+    Rgb(u8, u8, u8),
     #[doc(hidden)]
     __Nonexhaustive,
 }
 
-#[cfg(windows)]
 impl Color {
     /// Translate this color to a wincolor::Color.
-    fn to_windows(&self) -> wincolor::Color {
+    #[cfg(windows)]
+    fn to_windows(&self) -> Option<wincolor::Color> {
         match *self {
-            Color::Black => wincolor::Color::Black,
-            Color::Blue => wincolor::Color::Blue,
-            Color::Green => wincolor::Color::Green,
-            Color::Red => wincolor::Color::Red,
-            Color::Cyan => wincolor::Color::Cyan,
-            Color::Magenta => wincolor::Color::Magenta,
-            Color::Yellow => wincolor::Color::Yellow,
-            Color::White => wincolor::Color::White,
+            Color::Black => Some(wincolor::Color::Black),
+            Color::Blue => Some(wincolor::Color::Blue),
+            Color::Green => Some(wincolor::Color::Green),
+            Color::Red => Some(wincolor::Color::Red),
+            Color::Cyan => Some(wincolor::Color::Cyan),
+            Color::Magenta => Some(wincolor::Color::Magenta),
+            Color::Yellow => Some(wincolor::Color::Yellow),
+            Color::White => Some(wincolor::Color::White),
+            Color::Ansi256(_) => None,
+            Color::Rgb(_, _, _) => None,
             Color::__Nonexhaustive => unreachable!(),
+        }
+    }
+
+    /// Parses a numeric color string, either ANSI or RGB.
+    fn from_str_numeric(s: &str) -> Result<Color, ParseColorError> {
+        // The "ansi256" format is a single number (decimal or hex)
+        // corresponding to one of 256 colors.
+        //
+        // The "rgb" format is a triple of numbers (decimal or hex) delimited
+        // by a comma corresponding to one of 256^3 colors.
+
+        fn parse_number(s: &str) -> Option<u8> {
+            use std::u8;
+
+            if s.starts_with("0x") {
+                u8::from_str_radix(&s[2..], 16).ok()
+            } else {
+                u8::from_str_radix(s, 10).ok()
+            }
+        }
+
+        let codes: Vec<&str> = s.split(',').collect();
+        if codes.len() == 1 {
+            if let Some(n) = parse_number(&codes[0]) {
+                Ok(Color::Ansi256(n))
+            } else {
+                if s.chars().all(|c| c.is_digit(16)) {
+                    Err(ParseColorError {
+                        kind: ParseColorErrorKind::InvalidAnsi256,
+                        given: s.to_string(),
+                    })
+                } else {
+                    Err(ParseColorError {
+                        kind: ParseColorErrorKind::InvalidName,
+                        given: s.to_string(),
+                    })
+                }
+            }
+        } else if codes.len() == 3 {
+            let mut v = vec![];
+            for code in codes {
+                let n = parse_number(code).ok_or_else(|| {
+                    ParseColorError {
+                        kind: ParseColorErrorKind::InvalidRgb,
+                        given: s.to_string(),
+                    }
+                })?;
+                v.push(n);
+            }
+            Ok(Color::Rgb(v[0], v[1], v[2]))
+        } else {
+            Err(if s.contains(",") {
+                ParseColorError {
+                    kind: ParseColorErrorKind::InvalidRgb,
+                    given: s.to_string(),
+                }
+            } else {
+                ParseColorError {
+                    kind: ParseColorErrorKind::InvalidName,
+                    given: s.to_string(),
+                }
+            })
         }
     }
 }
 
-/// An error from parsing an invalid color name.
+/// An error from parsing an invalid color specification.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ParseColorError(String);
+pub struct ParseColorError {
+    kind: ParseColorErrorKind,
+    given: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ParseColorErrorKind {
+    InvalidName,
+    InvalidAnsi256,
+    InvalidRgb,
+}
 
 impl ParseColorError {
     /// Return the string that couldn't be parsed as a valid color.
-    pub fn invalid(&self) -> &str { &self.0 }
+    pub fn invalid(&self) -> &str { &self.given }
 }
 
 impl error::Error for ParseColorError {
-    fn description(&self) -> &str { "unrecognized color name" }
+    fn description(&self) -> &str {
+        use self::ParseColorErrorKind::*;
+        match self.kind {
+            InvalidName => "unrecognized color name",
+            InvalidAnsi256 => "invalid ansi256 color number",
+            InvalidRgb => "invalid RGB color triple",
+        }
+    }
 }
 
 impl fmt::Display for ParseColorError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Unrecognized color name '{}'. Choose from: \
-                black, blue, green, red, cyan, magenta, yellow, white.",
-                self.0)
+        use self::ParseColorErrorKind::*;
+        match self.kind {
+            InvalidName => {
+                write!(f, "unrecognized color name '{}'. Choose from: \
+                        black, blue, green, red, cyan, magenta, yellow, \
+                        white",
+                        self.given)
+            }
+            InvalidAnsi256 => {
+                write!(f, "unrecognized ansi256 color number, \
+                           should be '[0-255]' (or a hex number), but is '{}'",
+                           self.given)
+            }
+            InvalidRgb => {
+                write!(f, "unrecognized RGB color triple, \
+                           should be '[0-255],[0-255],[0-255]' (or a hex \
+                           triple), but is '{}'", self.given)
+            }
+        }
     }
 }
 
@@ -1292,7 +1515,7 @@ impl FromStr for Color {
             "magenta" => Ok(Color::Magenta),
             "yellow" => Ok(Color::Yellow),
             "white" => Ok(Color::White),
-            _ => Err(ParseColorError(s.to_string())),
+            _ => Color::from_str_numeric(s),
         }
     }
 }
@@ -1368,7 +1591,7 @@ fn write_lossy_utf8<W: io::Write>(mut w: W, buf: &[u8]) -> io::Result<usize> {
     match ::std::str::from_utf8(buf) {
         Ok(s) => w.write(s.as_bytes()),
         Err(ref e) if e.valid_up_to() == 0 => {
-            try!(w.write(b"\xEF\xBF\xBD"));
+            w.write(b"\xEF\xBF\xBD")?;
             Ok(1)
         }
         Err(e) => w.write(&buf[..e.valid_up_to()]),
@@ -1377,12 +1600,98 @@ fn write_lossy_utf8<W: io::Write>(mut w: W, buf: &[u8]) -> io::Result<usize> {
 
 #[cfg(test)]
 mod tests {
-    use super::StandardStream;
+    use super::{
+        Ansi, Color, ParseColorError, ParseColorErrorKind, StandardStream,
+    };
 
     fn assert_is_send<T: Send>() {}
 
     #[test]
     fn standard_stream_is_send() {
         assert_is_send::<StandardStream>();
+    }
+
+    #[test]
+    fn test_simple_parse_ok() {
+        let color = "green".parse::<Color>();
+        assert_eq!(color, Ok(Color::Green));
+    }
+
+    #[test]
+    fn test_256_parse_ok() {
+        let color = "7".parse::<Color>();
+        assert_eq!(color, Ok(Color::Ansi256(7)));
+
+        let color = "32".parse::<Color>();
+        assert_eq!(color, Ok(Color::Ansi256(32)));
+
+        let color = "0xFF".parse::<Color>();
+        assert_eq!(color, Ok(Color::Ansi256(0xFF)));
+    }
+
+    #[test]
+    fn test_256_parse_err_out_of_range() {
+        let color = "256".parse::<Color>();
+        assert_eq!(color, Err(ParseColorError {
+            kind: ParseColorErrorKind::InvalidAnsi256,
+            given: "256".to_string(),
+        }));
+    }
+
+    #[test]
+    fn test_rgb_parse_ok() {
+        let color = "0,0,0".parse::<Color>();
+        assert_eq!(color, Ok(Color::Rgb(0, 0, 0)));
+
+        let color = "0,128,255".parse::<Color>();
+        assert_eq!(color, Ok(Color::Rgb(0, 128, 255)));
+
+        let color = "0x0,0x0,0x0".parse::<Color>();
+        assert_eq!(color, Ok(Color::Rgb(0, 0, 0)));
+
+        let color = "0x33,0x66,0xFF".parse::<Color>();
+        assert_eq!(color, Ok(Color::Rgb(0x33, 0x66, 0xFF)));
+    }
+
+    #[test]
+    fn test_rgb_parse_err_out_of_range() {
+        let color = "0,0,256".parse::<Color>();
+        assert_eq!(color, Err(ParseColorError {
+            kind: ParseColorErrorKind::InvalidRgb,
+            given: "0,0,256".to_string(),
+        }));
+    }
+
+    #[test]
+    fn test_rgb_parse_err_bad_format() {
+        let color = "0,0".parse::<Color>();
+        assert_eq!(color, Err(ParseColorError {
+            kind: ParseColorErrorKind::InvalidRgb,
+            given: "0,0".to_string(),
+        }));
+
+        let color = "not_a_color".parse::<Color>();
+        assert_eq!(color, Err(ParseColorError {
+            kind: ParseColorErrorKind::InvalidName,
+            given: "not_a_color".to_string(),
+        }));
+    }
+
+    #[test]
+    fn test_var_ansi_write_rgb() {
+        let mut buf = Ansi::new(vec![]);
+        let _ = buf.write_color(true, &Color::Rgb(254, 253, 255), false);
+        assert_eq!(buf.0, b"\x1B[38;2;254;253;255m");
+    }
+
+    #[test]
+    fn test_var_ansi_write_256() {
+        let mut buf = Ansi::new(vec![]);
+        let _ = buf.write_color(false, &Color::Ansi256(7), false);
+        assert_eq!(buf.0, b"\x1B[48;5;7m");
+
+        let mut buf = Ansi::new(vec![]);
+        let _ = buf.write_color(false, &Color::Ansi256(208), false);
+        assert_eq!(buf.0, b"\x1B[48;5;208m");
     }
 }

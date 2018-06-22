@@ -1,10 +1,7 @@
 use rustc::hir;
 use rustc::lint::*;
-use rustc::middle::const_val::ConstVal;
 use rustc::ty::{self, Ty};
 use rustc::hir::def::Def;
-use rustc::ty::subst::Substs;
-use rustc_const_eval::ConstContext;
 use std::borrow::Cow;
 use std::fmt;
 use std::iter;
@@ -16,7 +13,7 @@ use utils::{get_arg_name, get_trait_def_id, implements_trait, in_external_macro,
             span_lint, span_lint_and_sugg, span_lint_and_then, span_note_and_lint, walk_ptrs_ty, walk_ptrs_ty_depth};
 use utils::paths;
 use utils::sugg;
-use utils::const_to_u64;
+use consts::{constant, Constant};
 
 #[derive(Clone)]
 pub struct Pass;
@@ -34,9 +31,9 @@ pub struct Pass;
 /// ```rust
 /// x.unwrap()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OPTION_UNWRAP_USED,
-    Allow,
+    restriction,
     "using `Option.unwrap()`, which should at least get a better message using `expect()`"
 }
 
@@ -56,9 +53,9 @@ declare_lint! {
 /// ```rust
 /// x.unwrap()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub RESULT_UNWRAP_USED,
-    Allow,
+    restriction,
     "using `Result.unwrap()`, which might be better handled"
 }
 
@@ -82,9 +79,9 @@ declare_lint! {
 ///    fn add(&self, other: &X) -> X { .. }
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub SHOULD_IMPLEMENT_TRAIT,
-    Warn,
+    style,
     "defining a method that should be implementing a std trait"
 }
 
@@ -111,9 +108,9 @@ declare_lint! {
 ///     fn as_str(self) -> &str { .. }
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub WRONG_SELF_CONVENTION,
-    Warn,
+    style,
     "defining a method named with an established prefix (like \"into_\") that takes \
      `self` with the wrong convention"
 }
@@ -133,9 +130,9 @@ declare_lint! {
 ///     pub fn as_str(self) -> &str { .. }
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub WRONG_PUB_SELF_CONVENTION,
-    Allow,
+    restriction,
     "defining a public method named with an established prefix (like \"into_\") that takes \
      `self` with the wrong convention"
 }
@@ -145,15 +142,15 @@ declare_lint! {
 /// **Why is this bad?** Because you usually call `expect()` on the `Result`
 /// directly to get a better error message.
 ///
-/// **Known problems:** None.
+/// **Known problems:** The error type needs to implement `Debug`
 ///
 /// **Example:**
 /// ```rust
 /// x.ok().expect("why did I do this again?")
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OK_EXPECT,
-    Warn,
+    style,
     "using `ok().expect()`, which gives worse error messages than \
      calling `expect` directly on the Result"
 }
@@ -163,15 +160,15 @@ declare_lint! {
 /// **Why is this bad?** Readability, this can be written more concisely as
 /// `_.map_or(_, _)`.
 ///
-/// **Known problems:** None.
+/// **Known problems:** The order of the arguments is not in execution order
 ///
 /// **Example:**
 /// ```rust
 /// x.map(|a| a + 1).unwrap_or(0)
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OPTION_MAP_UNWRAP_OR,
-    Allow,
+    pedantic,
     "using `Option.map(f).unwrap_or(a)`, which is more succinctly expressed as \
      `map_or(a, f)`"
 }
@@ -181,15 +178,15 @@ declare_lint! {
 /// **Why is this bad?** Readability, this can be written more concisely as
 /// `_.map_or_else(_, _)`.
 ///
-/// **Known problems:** None.
+/// **Known problems:** The order of the arguments is not in execution order.
 ///
 /// **Example:**
 /// ```rust
 /// x.map(|a| a + 1).unwrap_or_else(some_function)
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OPTION_MAP_UNWRAP_OR_ELSE,
-    Allow,
+    pedantic,
     "using `Option.map(f).unwrap_or_else(g)`, which is more succinctly expressed as \
      `map_or_else(g, f)`"
 }
@@ -205,9 +202,9 @@ declare_lint! {
 /// ```rust
 /// x.map(|a| a + 1).unwrap_or_else(some_function)
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub RESULT_MAP_UNWRAP_OR_ELSE,
-    Allow,
+    pedantic,
     "using `Result.map(f).unwrap_or_else(g)`, which is more succinctly expressed as \
      `.ok().map_or_else(g, f)`"
 }
@@ -217,15 +214,15 @@ declare_lint! {
 /// **Why is this bad?** Readability, this can be written more concisely as
 /// `_.and_then(_)`.
 ///
-/// **Known problems:** None.
+/// **Known problems:** The order of the arguments is not in execution order.
 ///
 /// **Example:**
 /// ```rust
 /// opt.map_or(None, |a| a + 1)
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OPTION_MAP_OR_NONE,
-    Warn,
+    style,
     "using `Option.map_or(None, f)`, which is more succinctly expressed as \
      `and_then(f)`"
 }
@@ -241,9 +238,9 @@ declare_lint! {
 /// ```rust
 /// iter.filter(|x| x == 0).next()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub FILTER_NEXT,
-    Warn,
+    complexity,
     "using `filter(p).next()`, which is more succinctly expressed as `.find(p)`"
 }
 
@@ -260,9 +257,9 @@ declare_lint! {
 /// ```rust
 /// iter.filter(|x| x == 0).map(|x| x * 2)
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub FILTER_MAP,
-    Allow,
+    pedantic,
     "using combinations of `filter`, `map`, `filter_map` and `flat_map` which can \
      usually be written as a single method call"
 }
@@ -279,9 +276,9 @@ declare_lint! {
 /// ```rust
 /// iter.find(|x| x == 0).is_some()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub SEARCH_IS_SOME,
-    Warn,
+    complexity,
     "using an iterator search followed by `is_some()`, which is more succinctly \
      expressed as a call to `any()`"
 }
@@ -298,9 +295,9 @@ declare_lint! {
 /// ```rust
 /// name.chars().next() == Some('_')
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CHARS_NEXT_CMP,
-    Warn,
+    complexity,
     "using `.chars().next()` to check if a string starts with a char"
 }
 
@@ -326,9 +323,9 @@ declare_lint! {
 /// ```rust
 /// foo.unwrap_or_default()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub OR_FUN_CALL,
-    Warn,
+    perf,
     "using any `*or` method with a function call, which suggests `*or_else`"
 }
 
@@ -343,15 +340,15 @@ declare_lint! {
 /// ```rust
 /// 42u64.clone()
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CLONE_ON_COPY,
-    Warn,
+    complexity,
     "using `clone` on a `Copy` type"
 }
 
 /// **What it does:** Checks for usage of `.clone()` on a ref-counted pointer,
-/// (Rc, Arc, rc::Weak, or sync::Weak), and suggests calling Clone on
-/// the corresponding trait instead.
+/// (`Rc`, `Arc`, `rc::Weak`, or `sync::Weak`), and suggests calling Clone via unified
+/// function syntax instead (e.g. `Rc::clone(foo)`).
 ///
 /// **Why is this bad?**: Calling '.clone()' on an Rc, Arc, or Weak
 /// can obscure the fact that only the pointer is being cloned, not the underlying
@@ -361,8 +358,9 @@ declare_lint! {
 /// ```rust
 /// x.clone()
 /// ```
-declare_restriction_lint! {
+declare_clippy_lint! {
     pub CLONE_ON_REF_PTR,
+    restriction,
     "using 'clone' on a ref-counted pointer"
 }
 
@@ -382,9 +380,9 @@ declare_restriction_lint! {
 ///    println!("{:p} {:p}",*y, z); // prints out the same pointer
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CLONE_DOUBLE_REF,
-    Warn,
+    correctness,
     "using `clone` on `&&T`"
 }
 
@@ -402,9 +400,9 @@ declare_lint! {
 ///     }
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub NEW_RET_NO_SELF,
-    Warn,
+    style,
     "not returning `Self` in a `new` method"
 }
 
@@ -418,9 +416,9 @@ declare_lint! {
 ///
 /// **Example:**
 /// `_.split("x")` could be `_.split('x')
-declare_lint! {
+declare_clippy_lint! {
     pub SINGLE_CHAR_PATTERN,
-    Warn,
+    perf,
     "using a single-character str where a char could be used, e.g. \
      `_.split(\"x\")`"
 }
@@ -447,9 +445,9 @@ declare_lint! {
 ///     call_some_ffi_func(c_str.as_ptr());
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub TEMPORARY_CSTRING_AS_PTR,
-    Warn,
+    correctness,
     "getting the inner pointer of a temporary `CString`"
 }
 
@@ -473,9 +471,9 @@ declare_lint! {
 /// let bad_vec = some_vec.get(3);
 /// let bad_slice = &some_vec[..].get(3);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ITER_NTH,
-    Warn,
+    perf,
     "using `.iter().nth()` on a standard library type with O(1) element access"
 }
 
@@ -497,9 +495,9 @@ declare_lint! {
 /// let bad_vec = some_vec.iter().nth(3);
 /// let bad_slice = &some_vec[..].iter().nth(3);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ITER_SKIP_NEXT,
-    Warn,
+    style,
     "using `.skip(x).next()` on an iterator"
 }
 
@@ -523,9 +521,9 @@ declare_lint! {
 /// let last = some_vec[3];
 /// some_vec[0] = 1;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub GET_UNWRAP,
-    Warn,
+    style,
     "using `.get().unwrap()` or `.get_mut().unwrap()` when using `[]` would work instead"
 }
 
@@ -552,9 +550,9 @@ declare_lint! {
 /// s.push_str(abc);
 /// s.push_str(&def));
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub STRING_EXTEND_CHARS,
-    Warn,
+    style,
     "using `x.extend(s.chars())` where s is a `&str` or `String`"
 }
 
@@ -575,9 +573,9 @@ declare_lint! {
 /// let s = [1,2,3,4,5];
 /// let s2 : Vec<isize> = s.to_vec();
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ITER_CLONED_COLLECT,
-    Warn,
+    style,
     "using `.cloned().collect()` on slice to create a `Vec`"
 }
 
@@ -593,9 +591,9 @@ declare_lint! {
 /// ```rust
 /// name.chars().last() == Some('_') || name.chars().next_back() == Some('-')
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CHARS_LAST_CMP,
-    Warn,
+    style,
     "using `.chars().last()` or `.chars().next_back()` to check if a string ends with a char"
 }
 
@@ -616,9 +614,9 @@ declare_lint! {
 /// let x: &[i32] = &[1,2,3,4,5];
 /// do_stuff(x);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub USELESS_ASREF,
-    Warn,
+    complexity,
     "using `as_ref` where the types before and after the call are the same"
 }
 
@@ -639,9 +637,9 @@ declare_lint! {
 /// ```rust
 /// let _ = (0..3).any(|x| x > 2);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNNECESSARY_FOLD,
-    Warn,
+    style,
     "using `fold` when a more succinct alternative exists"
 }
 
@@ -691,7 +689,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
         }
 
         match expr.node {
-            hir::ExprMethodCall(ref method_call, _, ref args) => {
+            hir::ExprMethodCall(ref method_call, ref method_span, ref args) => {
                 // Chain calls
                 // GET_UNWRAP needs to be checked before general `UNWRAP` lints
                 if let Some(arglists) = method_chain_args(expr, &["get", "unwrap"]) {
@@ -744,7 +742,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                     lint_unnecessary_fold(cx, expr, arglists[0]);
                 }
 
-                lint_or_fun_call(cx, expr, &method_call.name.as_str(), args);
+                lint_or_fun_call(cx, expr, *method_span, &method_call.name.as_str(), args);
 
                 let self_ty = cx.tables.expr_ty_adjusted(&args[0]);
                 if args.len() == 1 && method_call.name == "clone" {
@@ -763,7 +761,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             },
             hir::ExprBinary(op, ref lhs, ref rhs) if op.node == hir::BiEq || op.node == hir::BiNe => {
                 let mut info = BinaryExprInfo {
-                    expr: expr,
+                    expr,
                     chain: lhs,
                     other: rhs,
                     eq: op.node == hir::BiEq,
@@ -845,7 +843,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
 }
 
 /// Checks for the `OR_FUN_CALL` lint.
-fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, name: &str, args: &[hir::Expr]) {
+fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, method_span: Span, name: &str, args: &[hir::Expr]) {
     /// Check for `unwrap_or(T::new())` or `unwrap_or(T::default())`.
     fn check_unwrap_or_default(
         cx: &LateContext,
@@ -894,6 +892,7 @@ fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, name: &str, args: &[hir:
     fn check_general_case(
         cx: &LateContext,
         name: &str,
+        method_span: Span,
         fun_span: Span,
         self_expr: &hir::Expr,
         arg: &hir::Expr,
@@ -939,14 +938,14 @@ fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, name: &str, args: &[hir:
             (false, false) => format!("|| {}", snippet(cx, arg.span, "..")).into(),
             (false, true) => snippet(cx, fun_span, ".."),
         };
-
+        let span_replace_word = method_span.with_hi(span.hi());
         span_lint_and_sugg(
             cx,
             OR_FUN_CALL,
-            span,
+            span_replace_word,
             &format!("use of `{}` followed by a function call", name),
             "try this",
-            format!("{}.{}_{}({})", snippet(cx, self_expr.span, "_"), name, suffix, sugg),
+            format!("{}_{}({})", name, suffix, sugg),
         );
     }
 
@@ -955,11 +954,11 @@ fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, name: &str, args: &[hir:
             hir::ExprCall(ref fun, ref or_args) => {
                 let or_has_args = !or_args.is_empty();
                 if !check_unwrap_or_default(cx, name, fun, &args[0], &args[1], or_has_args, expr.span) {
-                    check_general_case(cx, name, fun.span, &args[0], &args[1], or_has_args, expr.span);
+                    check_general_case(cx, name, method_span, fun.span, &args[0], &args[1], or_has_args, expr.span);
                 }
             },
             hir::ExprMethodCall(_, span, ref or_args) => {
-                check_general_case(cx, name, span, &args[0], &args[1], !or_args.is_empty(), expr.span)
+                check_general_case(cx, name, method_span, span, &args[0], &args[1], !or_args.is_empty(), expr.span)
             },
             _ => {},
         }
@@ -1036,7 +1035,7 @@ fn lint_clone_on_copy(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr, arg_t
 }
 
 fn lint_clone_on_ref_ptr(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr) {
-    let (obj_ty, _) = walk_ptrs_ty_depth(cx.tables.expr_ty(arg));
+    let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(arg));
 
     if let ty::TyAdt(_, subst) = obj_ty.sty {
         let caller_type = if match_type(cx, obj_ty, &paths::RC) {
@@ -1065,7 +1064,7 @@ fn lint_string_extend(cx: &LateContext, expr: &hir::Expr, args: &[hir::Expr]) {
     let arg = &args[1];
     if let Some(arglists) = method_chain_args(arg, &["chars"]) {
         let target = &arglists[0][0];
-        let (self_ty, _) = walk_ptrs_ty_depth(cx.tables.expr_ty(target));
+        let self_ty = walk_ptrs_ty(cx.tables.expr_ty(target));
         let ref_str = if self_ty.sty == ty::TyStr {
             ""
         } else if match_type(cx, self_ty, &paths::STRING) {
@@ -1091,7 +1090,7 @@ fn lint_string_extend(cx: &LateContext, expr: &hir::Expr, args: &[hir::Expr]) {
 }
 
 fn lint_extend(cx: &LateContext, expr: &hir::Expr, args: &[hir::Expr]) {
-    let (obj_ty, _) = walk_ptrs_ty_depth(cx.tables.expr_ty(&args[0]));
+    let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(&args[0]));
     if match_type(cx, obj_ty, &paths::STRING) {
         lint_string_extend(cx, expr, args);
     }
@@ -1301,7 +1300,7 @@ fn derefs_to_slice(cx: &LateContext, expr: &hir::Expr, ty: Ty) -> Option<sugg::S
             ty::TySlice(_) => true,
             ty::TyAdt(def, _) if def.is_box() => may_slice(cx, ty.boxed_ty()),
             ty::TyAdt(..) => match_type(cx, ty, &paths::VEC),
-            ty::TyArray(_, size) => const_to_u64(size) < 32,
+            ty::TyArray(_, size) => size.val.to_raw_bits().expect("array length") < 32,
             ty::TyRef(_, ty::TypeAndMut { ty: inner, .. }) => may_slice(cx, inner),
             _ => false,
         }
@@ -1329,7 +1328,7 @@ fn derefs_to_slice(cx: &LateContext, expr: &hir::Expr, ty: Ty) -> Option<sugg::S
 
 /// lint use of `unwrap()` for `Option`s and `Result`s
 fn lint_unwrap(cx: &LateContext, expr: &hir::Expr, unwrap_args: &[hir::Expr]) {
-    let (obj_ty, _) = walk_ptrs_ty_depth(cx.tables.expr_ty(&unwrap_args[0]));
+    let obj_ty = walk_ptrs_ty(cx.tables.expr_ty(&unwrap_args[0]));
 
     let mess = if match_type(cx, obj_ty, &paths::OPTION) {
         Some((OPTION_UNWRAP_USED, "an Option", "None"))
@@ -1753,16 +1752,13 @@ fn lint_chars_last_cmp_with_unwrap<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, info: &
 
 /// lint for length-1 `str`s for methods in `PATTERN_METHODS`
 fn lint_single_char_pattern<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx hir::Expr, arg: &'tcx hir::Expr) {
-    let parent_item = cx.tcx.hir.get_parent(arg.id);
-    let parent_def_id = cx.tcx.hir.local_def_id(parent_item);
-    let substs = Substs::identity_for_item(cx.tcx, parent_def_id);
-    if let Ok(&ty::Const {
-        val: ConstVal::Str(r),
-        ..
-    }) = ConstContext::new(cx.tcx, cx.param_env.and(substs), cx.tables).eval(arg)
-    {
+    if let Some((Constant::Str(r), _)) = constant(cx, arg) {
         if r.len() == 1 {
-            let hint = snippet(cx, expr.span, "..").replace(&format!("\"{}\"", r), &format!("'{}'", r));
+            let c = r.chars().next().unwrap();
+            let snip = snippet(cx, expr.span, "..");
+            let hint = snip.replace(
+                &format!("\"{}\"", c.escape_default()),
+                &format!("'{}'", c.escape_default()));
             span_lint_and_then(
                 cx,
                 SINGLE_CHAR_PATTERN,

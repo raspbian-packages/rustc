@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeSet;
 use std::env;
 use std::fmt::Debug;
@@ -18,6 +18,7 @@ use std::hash::Hash;
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::{Instant, Duration};
 
 use compile;
 use install;
@@ -40,6 +41,7 @@ pub struct Builder<'a> {
     pub kind: Kind,
     cache: Cache,
     stack: RefCell<Vec<Box<Any>>>,
+    time_spent_on_dependencies: Cell<Duration>,
 }
 
 impl<'a> Deref for Builder<'a> {
@@ -59,12 +61,6 @@ pub trait Step: 'static + Clone + Debug + PartialEq + Eq + Hash {
 
     /// Run this rule for all hosts without cross compiling.
     const ONLY_HOSTS: bool = false;
-
-    /// Run this rule for all targets, but only with the native host.
-    const ONLY_BUILD_TARGETS: bool = false;
-
-    /// Only run this step with the build triple as host and target.
-    const ONLY_BUILD: bool = false;
 
     /// Primary function to execute this rule. Can call `builder.ensure(...)`
     /// with other steps to run those.
@@ -101,8 +97,6 @@ pub struct RunConfig<'a> {
 struct StepDescription {
     default: bool,
     only_hosts: bool,
-    only_build_targets: bool,
-    only_build: bool,
     should_run: fn(ShouldRun) -> ShouldRun,
     make_run: fn(RunConfig),
     name: &'static str,
@@ -138,8 +132,6 @@ impl StepDescription {
         StepDescription {
             default: S::DEFAULT,
             only_hosts: S::ONLY_HOSTS,
-            only_build_targets: S::ONLY_BUILD_TARGETS,
-            only_build: S::ONLY_BUILD,
             should_run: S::should_run,
             make_run: S::make_run,
             name: unsafe { ::std::intrinsics::type_name::<S>() },
@@ -155,18 +147,12 @@ impl StepDescription {
                 self.name, builder.config.exclude);
         }
         let build = builder.build;
-        let hosts = if self.only_build_targets || self.only_build {
-            build.build_triple()
-        } else {
-            &build.hosts
-        };
+        let hosts = &build.hosts;
 
         // Determine the targets participating in this rule.
         let targets = if self.only_hosts {
-            if build.config.run_host_only {
-                &[]
-            } else if self.only_build {
-                build.build_triple()
+            if !build.config.run_host_only {
+                return; // don't run anything
             } else {
                 &build.hosts
             }
@@ -231,7 +217,7 @@ pub struct ShouldRun<'a> {
     paths: BTreeSet<PathSet>,
 
     // If this is a default rule, this is an additional constraint placed on
-    // it's run. Generally something like compiler docs being enabled.
+    // its run. Generally something like compiler docs being enabled.
     is_really_default: bool,
 }
 
@@ -316,7 +302,7 @@ impl<'a> Builder<'a> {
                 tool::UnstableBookGen, tool::Tidy, tool::Linkchecker, tool::CargoTest,
                 tool::Compiletest, tool::RemoteTestServer, tool::RemoteTestClient,
                 tool::RustInstaller, tool::Cargo, tool::Rls, tool::Rustdoc, tool::Clippy,
-                native::Llvm, tool::Rustfmt, tool::Miri),
+                native::Llvm, tool::Rustfmt, tool::Miri, native::Lld),
             Kind::Check => describe!(check::Std, check::Test, check::Rustc),
             Kind::Test => describe!(test::Tidy, test::Bootstrap, test::Ui, test::RunPass,
                 test::CompileFail, test::ParseFail, test::RunFail, test::RunPassValgrind,
@@ -324,17 +310,24 @@ impl<'a> Builder<'a> {
                 test::UiFullDeps, test::RunPassFullDeps, test::RunFailFullDeps,
                 test::CompileFailFullDeps, test::IncrementalFullDeps, test::Rustdoc, test::Pretty,
                 test::RunPassPretty, test::RunFailPretty, test::RunPassValgrindPretty,
-                test::RunPassFullDepsPretty, test::RunFailFullDepsPretty, test::RunMake,
-                test::Crate, test::CrateLibrustc, test::Rustdoc, test::Linkcheck, test::Cargotest,
-                test::Cargo, test::Rls, test::Docs, test::ErrorIndex, test::Distcheck,
-                test::Rustfmt, test::Miri, test::Clippy, test::RustdocJS, test::RustdocTheme),
+                test::RunPassFullDepsPretty, test::RunFailFullDepsPretty,
+                test::Crate, test::CrateLibrustc, test::CrateRustdoc, test::Linkcheck,
+                test::Cargotest, test::Cargo, test::Rls, test::ErrorIndex, test::Distcheck,
+                test::RunMakeFullDeps,
+                test::Nomicon, test::Reference, test::RustdocBook, test::RustByExample,
+                test::TheBook, test::UnstableBook,
+                test::Rustfmt, test::Miri, test::Clippy, test::RustdocJS, test::RustdocTheme,
+                // Run run-make last, since these won't pass without make on Windows
+                test::RunMake),
             Kind::Bench => describe!(test::Crate, test::CrateLibrustc),
             Kind::Doc => describe!(doc::UnstableBook, doc::UnstableBookGen, doc::TheBook,
-                doc::Standalone, doc::Std, doc::Test, doc::Rustc, doc::ErrorIndex, doc::Nomicon,
-                doc::Reference, doc::Rustdoc, doc::RustByExample, doc::CargoBook),
-            Kind::Dist => describe!(dist::Docs, dist::Mingw, dist::Rustc, dist::DebuggerScripts,
-                dist::Std, dist::Analysis, dist::Src, dist::PlainSourceTarball, dist::Cargo,
-                dist::Rls, dist::Rustfmt, dist::Extended, dist::HashSign),
+                doc::Standalone, doc::Std, doc::Test, doc::WhitelistedRustc, doc::Rustc,
+                doc::ErrorIndex, doc::Nomicon, doc::Reference, doc::Rustdoc, doc::RustByExample,
+                doc::CargoBook),
+            Kind::Dist => describe!(dist::Docs, dist::RustcDocs, dist::Mingw, dist::Rustc,
+                dist::DebuggerScripts, dist::Std, dist::Analysis, dist::Src,
+                dist::PlainSourceTarball, dist::Cargo, dist::Rls, dist::Rustfmt, dist::Extended,
+                dist::HashSign),
             Kind::Install => describe!(install::Docs, install::Std, install::Cargo, install::Rls,
                 install::Rustfmt, install::Analysis, install::Src, install::Rustc),
         }
@@ -357,6 +350,7 @@ impl<'a> Builder<'a> {
             kind,
             cache: Cache::new(),
             stack: RefCell::new(Vec::new()),
+            time_spent_on_dependencies: Cell::new(Duration::new(0, 0)),
         };
 
         let builder = &builder;
@@ -397,6 +391,7 @@ impl<'a> Builder<'a> {
             kind,
             cache: Cache::new(),
             stack: RefCell::new(Vec::new()),
+            time_spent_on_dependencies: Cell::new(Duration::new(0, 0)),
         };
 
         if kind == Kind::Dist {
@@ -462,7 +457,7 @@ impl<'a> Builder<'a> {
 
     pub fn sysroot_codegen_backends(&self, compiler: Compiler) -> PathBuf {
         self.sysroot_libdir(compiler, compiler.host)
-            .with_file_name("codegen-backends")
+            .with_file_name(self.build.config.rust_codegen_backends_dir.clone())
     }
 
     /// Returns the compiler's libdir where it stores the dynamic libraries that
@@ -547,7 +542,15 @@ impl<'a> Builder<'a> {
 
         // FIXME: Temporary fix for https://github.com/rust-lang/cargo/issues/3005
         // Force cargo to output binaries with disambiguating hashes in the name
-        cargo.env("__CARGO_DEFAULT_LIB_METADATA", &self.config.channel);
+        let metadata = if compiler.stage == 0 {
+            // Treat stage0 like special channel, whether it's a normal prior-
+            // release rustc or a local rebuild with the same version, so we
+            // never mix these libraries by accident.
+            "bootstrap"
+        } else {
+            &self.config.channel
+        };
+        cargo.env("__CARGO_DEFAULT_LIB_METADATA", &metadata);
 
         let stage;
         if compiler.stage == 0 && self.local_rebuild {
@@ -560,7 +563,9 @@ impl<'a> Builder<'a> {
         let mut extra_args = env::var(&format!("RUSTFLAGS_STAGE_{}", stage)).unwrap_or_default();
         if stage != 0 {
             let s = env::var("RUSTFLAGS_STAGE_NOT_0").unwrap_or_default();
-            extra_args.push_str(" ");
+            if !extra_args.is_empty() {
+                extra_args.push_str(" ");
+            }
             extra_args.push_str(&s);
         }
 
@@ -598,6 +603,9 @@ impl<'a> Builder<'a> {
         }
         if let Some(target_linker) = self.build.linker(target) {
             cargo.env("RUSTC_TARGET_LINKER", target_linker);
+        }
+        if let Some(ref error_format) = self.config.rustc_error_format {
+            cargo.env("RUSTC_ERROR_FORMAT", error_format);
         }
         if cmd != "build" && cmd != "check" {
             cargo.env("RUSTDOC_LIBDIR", self.rustc_libdir(self.compiler(2, self.build.build)));
@@ -673,6 +681,10 @@ impl<'a> Builder<'a> {
             cargo.env("RUSTC_ON_FAIL", on_fail);
         }
 
+        if self.config.print_step_timings {
+            cargo.env("RUSTC_PRINT_STEP_TIMINGS", "1");
+        }
+
         cargo.env("RUSTC_VERBOSE", format!("{}", self.verbosity));
 
         // Throughout the build Cargo can execute a number of build scripts
@@ -683,9 +695,25 @@ impl<'a> Builder<'a> {
         //
         // FIXME: the guard against msvc shouldn't need to be here
         if !target.contains("msvc") {
-            let cc = self.cc(target);
-            cargo.env(format!("CC_{}", target), cc)
-                 .env("CC", cc);
+            let ccache = self.config.ccache.as_ref();
+            let ccacheify = |s: &Path| {
+                let ccache = match ccache {
+                    Some(ref s) => s,
+                    None => return s.display().to_string(),
+                };
+                // FIXME: the cc-rs crate only recognizes the literal strings
+                // `ccache` and `sccache` when doing caching compilations, so we
+                // mirror that here. It should probably be fixed upstream to
+                // accept a new env var or otherwise work with custom ccache
+                // vars.
+                match &ccache[..] {
+                    "ccache" | "sccache" => format!("{} {}", ccache, s.display()),
+                    _ => s.display().to_string(),
+                }
+            };
+            let cc = ccacheify(&self.cc(target));
+            cargo.env(format!("CC_{}", target), &cc)
+                 .env("CC", &cc);
 
             let cflags = self.cflags(target).join(" ");
             cargo.env(format!("CFLAGS_{}", target), cflags.clone())
@@ -700,8 +728,9 @@ impl<'a> Builder<'a> {
             }
 
             if let Ok(cxx) = self.cxx(target) {
-                cargo.env(format!("CXX_{}", target), cxx)
-                     .env("CXX", cxx)
+                let cxx = ccacheify(&cxx);
+                cargo.env(format!("CXX_{}", target), &cxx)
+                     .env("CXX", &cxx)
                      .env(format!("CXXFLAGS_{}", target), cflags.clone())
                      .env("CXXFLAGS", cflags);
             }
@@ -753,9 +782,11 @@ impl<'a> Builder<'a> {
         // be resolved because MinGW has the import library. The downside is we
         // don't get newer functions from Windows, but we don't use any of them
         // anyway.
-        cargo.env("WINAPI_NO_BUNDLED_LIBRARIES", "1");
+        if mode != Mode::Tool {
+            cargo.env("WINAPI_NO_BUNDLED_LIBRARIES", "1");
+        }
 
-        if self.is_very_verbose() {
+        for _ in 1..self.verbosity {
             cargo.arg("-v");
         }
 
@@ -769,17 +800,6 @@ impl<'a> Builder<'a> {
             // FIXME: cargo bench does not accept `--release`
             if cmd != "bench" {
                 cargo.arg("--release");
-            }
-
-            if self.config.rust_codegen_units.is_none() &&
-               self.build.is_rust_llvm(compiler.host) &&
-               self.config.rust_thinlto {
-                cargo.env("RUSTC_THINLTO", "1");
-            } else if self.config.rust_codegen_units.is_none() {
-                // Generally, if ThinLTO has been disabled for some reason, we
-                // want to set the codegen units to 1. However, we shouldn't do
-                // this if the option was specifically set by the user.
-                cargo.env("RUSTC_CODEGEN_UNITS", "1");
             }
         }
 
@@ -818,7 +838,24 @@ impl<'a> Builder<'a> {
             self.build.verbose(&format!("{}> {:?}", "  ".repeat(stack.len()), step));
             stack.push(Box::new(step.clone()));
         }
-        let out = step.clone().run(self);
+
+        let (out, dur) = {
+            let start = Instant::now();
+            let zero = Duration::new(0, 0);
+            let parent = self.time_spent_on_dependencies.replace(zero);
+            let out = step.clone().run(self);
+            let dur = start.elapsed();
+            let deps = self.time_spent_on_dependencies.replace(parent + dur);
+            (out, dur - deps)
+        };
+
+        if self.build.config.print_step_timings && dur > Duration::from_millis(100) {
+            println!("[TIMING] {:?} -- {}.{:03}",
+                     step,
+                     dur.as_secs(),
+                     dur.subsec_nanos() / 1_000_000);
+        }
+
         {
             let mut stack = self.stack.borrow_mut();
             let cur_step = stack.pop().expect("step stack empty");

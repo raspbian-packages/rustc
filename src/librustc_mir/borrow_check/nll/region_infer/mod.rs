@@ -8,8 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::collections::HashMap;
-
 use super::universal_regions::UniversalRegions;
 use rustc::hir::def_id::DefId;
 use rustc::infer::InferCtxt;
@@ -23,10 +21,9 @@ use rustc::mir::{ClosureOutlivesRequirement, ClosureOutlivesSubject, ClosureRegi
                  Local, Location, Mir};
 use rustc::traits::ObligationCause;
 use rustc::ty::{self, RegionVid, Ty, TypeFoldable};
-use rustc::util::common::ErrorReported;
+use rustc::util::common::{self, ErrorReported};
 use rustc_data_structures::bitvec::BitVector;
-use rustc_data_structures::indexed_vec::IndexVec;
-use rustc_errors::DiagnosticBuilder;
+use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use std::fmt;
 use std::rc::Rc;
 use syntax::ast;
@@ -62,8 +59,15 @@ pub struct RegionInferenceContext<'tcx> {
     /// until `solve` is invoked.
     inferred_values: Option<RegionValues>,
 
+    /// For each variable, stores the index of the first constraint
+    /// where that variable appears on the RHS. This is the start of a
+    /// 'linked list' threaded by the `next` field in `Constraint`.
+    ///
+    /// This map is build when values are inferred.
+    dependency_map: Option<IndexVec<RegionVid, Option<ConstraintIndex>>>,
+
     /// The constraints we have accumulated and used during solving.
-    constraints: Vec<Constraint>,
+    constraints: IndexVec<ConstraintIndex, Constraint>,
 
     /// Type constraints that we check after solving.
     type_tests: Vec<TypeTest<'tcx>>,
@@ -125,6 +129,10 @@ pub(crate) enum Cause {
     },
 }
 
+pub(crate) struct RegionCausalInfo {
+    inferred_values: RegionValues,
+}
+
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Constraint {
     // NB. The ordering here is not significant for correctness, but
@@ -140,9 +148,21 @@ pub struct Constraint {
     /// At this location.
     point: Location,
 
+    /// Later on, we thread the constraints onto a linked list
+    /// grouped by their `sub` field. So if you had:
+    ///
+    /// Index | Constraint | Next Field
+    /// ----- | ---------- | ----------
+    /// 0     | `'a: 'b`   | Some(2)
+    /// 1     | `'b: 'c`   | None
+    /// 2     | `'c: 'b`   | None
+    next: Option<ConstraintIndex>,
+
     /// Where did this constraint arise?
     span: Span,
 }
+
+newtype_index!(ConstraintIndex { DEBUG_FORMAT = "ConstraintIndex({})" });
 
 /// A "type test" corresponds to an outlives constraint between a type
 /// and a lifetime, like `T: 'x` or `<T as Foo>::Bar: 'x`.  They are
@@ -251,18 +271,13 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             .map(|origin| RegionDefinition::new(origin))
             .collect();
 
-        let nll_dump_cause = ty::tls::with(|tcx| tcx.sess.nll_dump_cause());
-
         let mut result = Self {
             definitions,
             elements: elements.clone(),
-            liveness_constraints: RegionValues::new(
-                elements,
-                num_region_variables,
-                TrackCauses(nll_dump_cause),
-            ),
+            liveness_constraints: RegionValues::new(elements, num_region_variables),
             inferred_values: None,
-            constraints: Vec::new(),
+            dependency_map: None,
+            constraints: IndexVec::new(),
             type_tests: Vec::new(),
             universal_regions,
         };
@@ -349,17 +364,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         inferred_values.contains(r.to_region_vid(), p)
     }
 
-    /// Returns the *reason* that the region `r` contains the given point.
-    pub(crate) fn why_region_contains_point<R>(&self, r: R, p: Location) -> Option<Rc<Cause>>
-    where
-        R: ToRegionVid,
-    {
-        let inferred_values = self.inferred_values
-            .as_ref()
-            .expect("region values not yet inferred");
-        inferred_values.cause(r.to_region_vid(), p)
-    }
-
     /// Returns access to the value of `r` for debugging purposes.
     pub(super) fn region_value_str(&self, r: RegionVid) -> String {
         let inferred_values = self.inferred_values
@@ -401,6 +405,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             sup,
             sub,
             point,
+            next: None,
         });
     }
 
@@ -418,9 +423,24 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         mir: &Mir<'tcx>,
         mir_def_id: DefId,
     ) -> Option<ClosureRegionRequirements<'gcx>> {
+        common::time(
+            infcx.tcx.sess,
+            &format!("solve_nll_region_constraints({:?})", mir_def_id),
+            || self.solve_inner(infcx, mir, mir_def_id),
+        )
+    }
+
+    fn solve_inner<'gcx>(
+        &mut self,
+        infcx: &InferCtxt<'_, 'gcx, 'tcx>,
+        mir: &Mir<'tcx>,
+        mir_def_id: DefId,
+    ) -> Option<ClosureRegionRequirements<'gcx>> {
         assert!(self.inferred_values.is_none(), "values already inferred");
 
-        self.propagate_constraints(mir);
+        let dfs_storage = &mut self.new_dfs_storage();
+
+        self.propagate_constraints(mir, dfs_storage);
 
         // If this is a closure, we can propagate unsatisfied
         // `outlives_requirements` to our creator, so create a vector
@@ -433,9 +453,15 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             None
         };
 
-        self.check_type_tests(infcx, mir, mir_def_id, outlives_requirements.as_mut());
+        self.check_type_tests(
+            infcx,
+            mir,
+            dfs_storage,
+            mir_def_id,
+            outlives_requirements.as_mut(),
+        );
 
-        self.check_universal_regions(infcx, mir, mir_def_id, outlives_requirements.as_mut());
+        self.check_universal_regions(infcx, mir_def_id, outlives_requirements.as_mut());
 
         let outlives_requirements = outlives_requirements.unwrap_or(vec![]);
 
@@ -450,13 +476,33 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         }
     }
 
+    /// Re-execute the region inference, this time tracking causal information.
+    /// This is significantly slower, so it is done only when an error is being reported.
+    pub(super) fn compute_causal_info(&self, mir: &Mir<'tcx>) -> RegionCausalInfo {
+        let dfs_storage = &mut self.new_dfs_storage();
+        let inferred_values = self.compute_region_values(mir, dfs_storage, TrackCauses(true));
+        RegionCausalInfo { inferred_values }
+    }
+
     /// Propagate the region constraints: this will grow the values
     /// for each region variable until all the constraints are
     /// satisfied. Note that some values may grow **too** large to be
     /// feasible, but we check this later.
-    fn propagate_constraints(&mut self, mir: &Mir<'tcx>) {
-        debug!("propagate_constraints()");
-        debug!("propagate_constraints: constraints={:#?}", {
+    fn propagate_constraints(&mut self, mir: &Mir<'tcx>, dfs_storage: &mut dfs::DfsStorage) {
+        self.dependency_map = Some(self.build_dependency_map());
+        let inferred_values = self.compute_region_values(mir, dfs_storage, TrackCauses(false));
+        self.inferred_values = Some(inferred_values);
+    }
+
+    #[inline(never)] // ensure dfs is identifiable in profiles
+    fn compute_region_values(
+        &self,
+        mir: &Mir<'tcx>,
+        dfs_storage: &mut dfs::DfsStorage,
+        track_causes: TrackCauses,
+    ) -> RegionValues {
+        debug!("compute_region_values()");
+        debug!("compute_region_values: constraints={:#?}", {
             let mut constraints: Vec<_> = self.constraints.iter().collect();
             constraints.sort();
             constraints
@@ -464,19 +510,19 @@ impl<'tcx> RegionInferenceContext<'tcx> {
 
         // The initial values for each region are derived from the liveness
         // constraints we have accumulated.
-        let mut inferred_values = self.liveness_constraints.clone();
+        let mut inferred_values = self.liveness_constraints.duplicate(track_causes);
 
-        let dependency_map = self.build_dependency_map();
+        let dependency_map = self.dependency_map.as_ref().unwrap();
 
         // Constraints that may need to be repropagated (initially all):
-        let mut dirty_list: Vec<_> = (0..self.constraints.len()).collect();
+        let mut dirty_list: Vec<_> = self.constraints.indices().collect();
 
         // Set to 0 for each constraint that is on the dirty list:
         let mut clean_bit_vec = BitVector::new(dirty_list.len());
 
         debug!("propagate_constraints: --------------------");
         while let Some(constraint_idx) = dirty_list.pop() {
-            clean_bit_vec.insert(constraint_idx);
+            clean_bit_vec.insert(constraint_idx.index());
 
             let constraint = &self.constraints[constraint_idx];
             debug!("propagate_constraints: constraint={:?}", constraint);
@@ -485,6 +531,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             // outlives constraint.
             let Ok(made_changes) = self.dfs(
                 mir,
+                dfs_storage,
                 CopyFromSourceToTarget {
                     source_region: constraint.sub,
                     target_region: constraint.sup,
@@ -498,28 +545,34 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                 debug!("propagate_constraints:   sub={:?}", constraint.sub);
                 debug!("propagate_constraints:   sup={:?}", constraint.sup);
 
-                for &dep_idx in dependency_map.get(&constraint.sup).unwrap_or(&vec![]) {
-                    if clean_bit_vec.remove(dep_idx) {
+                let mut opt_dep_idx = dependency_map[constraint.sup];
+                while let Some(dep_idx) = opt_dep_idx {
+                    if clean_bit_vec.remove(dep_idx.index()) {
                         dirty_list.push(dep_idx);
                     }
+                    opt_dep_idx = self.constraints[dep_idx].next;
                 }
             }
 
             debug!("\n");
         }
 
-        self.inferred_values = Some(inferred_values);
+        inferred_values
     }
 
     /// Builds up a map from each region variable X to a vector with the
     /// indices of constraints that need to be re-evaluated when X changes.
     /// These are constraints like Y: X @ P -- so if X changed, we may
     /// need to grow Y.
-    fn build_dependency_map(&self) -> HashMap<RegionVid, Vec<usize>> {
-        let mut map = HashMap::new();
+    #[inline(never)] // ensure dfs is identifiable in profiles
+    fn build_dependency_map(&mut self) -> IndexVec<RegionVid, Option<ConstraintIndex>> {
+        let mut map = IndexVec::from_elem(None, &self.definitions);
 
-        for (idx, constraint) in self.constraints.iter().enumerate() {
-            map.entry(constraint.sub).or_insert(Vec::new()).push(idx);
+        for (idx, constraint) in self.constraints.iter_enumerated_mut().rev() {
+            let mut head = &mut map[constraint.sub];
+            debug_assert!(constraint.next.is_none());
+            constraint.next = *head;
+            *head = Some(idx);
         }
 
         map
@@ -533,6 +586,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         &self,
         infcx: &InferCtxt<'_, 'gcx, 'tcx>,
         mir: &Mir<'tcx>,
+        dfs_storage: &mut dfs::DfsStorage,
         mir_def_id: DefId,
         mut propagated_outlives_requirements: Option<&mut Vec<ClosureOutlivesRequirement<'gcx>>>,
     ) {
@@ -541,7 +595,13 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         for type_test in &self.type_tests {
             debug!("check_type_test: {:?}", type_test);
 
-            if self.eval_region_test(mir, type_test.point, type_test.lower_bound, &type_test.test) {
+            if self.eval_region_test(
+                mir,
+                dfs_storage,
+                type_test.point,
+                type_test.lower_bound,
+                &type_test.test,
+            ) {
                 continue;
             }
 
@@ -574,10 +634,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                 // an error that multiple bounds are required.
                 tcx.sess.span_err(
                     type_test.span,
-                    &format!(
-                        "`{}` does not live long enough",
-                        type_test.generic_kind,
-                    ),
+                    &format!("`{}` does not live long enough", type_test.generic_kind,),
                 );
             }
         }
@@ -589,13 +646,13 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// existentially bound, then we check its inferred value and try
     /// to find a good name from that. Returns `None` if we can't find
     /// one (e.g., this is just some random part of the CFG).
-    fn to_error_region(&self, r: RegionVid) -> Option<ty::Region<'tcx>> {
+    pub fn to_error_region(&self, r: RegionVid) -> Option<ty::Region<'tcx>> {
         if self.universal_regions.is_universal_region(r) {
             return self.definitions[r].external_name;
         } else {
             let inferred_values = self.inferred_values
-                                      .as_ref()
-                                      .expect("region values not yet inferred");
+                .as_ref()
+                .expect("region values not yet inferred");
             let upper_bound = self.universal_upper_bound(r);
             if inferred_values.contains(r, upper_bound) {
                 self.to_error_region(upper_bound)
@@ -801,33 +858,32 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn eval_region_test(
         &self,
         mir: &Mir<'tcx>,
+        dfs_storage: &mut dfs::DfsStorage,
         point: Location,
         lower_bound: RegionVid,
         test: &RegionTest,
     ) -> bool {
         debug!(
             "eval_region_test(point={:?}, lower_bound={:?}, test={:?})",
-            point,
-            lower_bound,
-            test
+            point, lower_bound, test
         );
 
         match test {
             RegionTest::IsOutlivedByAllRegionsIn(regions) => regions
                 .iter()
-                .all(|&r| self.eval_outlives(mir, r, lower_bound, point)),
+                .all(|&r| self.eval_outlives(mir, dfs_storage, r, lower_bound, point)),
 
             RegionTest::IsOutlivedByAnyRegionIn(regions) => regions
                 .iter()
-                .any(|&r| self.eval_outlives(mir, r, lower_bound, point)),
+                .any(|&r| self.eval_outlives(mir, dfs_storage, r, lower_bound, point)),
 
             RegionTest::Any(tests) => tests
                 .iter()
-                .any(|test| self.eval_region_test(mir, point, lower_bound, test)),
+                .any(|test| self.eval_region_test(mir, dfs_storage, point, lower_bound, test)),
 
             RegionTest::All(tests) => tests
                 .iter()
-                .all(|test| self.eval_region_test(mir, point, lower_bound, test)),
+                .all(|test| self.eval_region_test(mir, dfs_storage, point, lower_bound, test)),
         }
     }
 
@@ -835,15 +891,14 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn eval_outlives(
         &self,
         mir: &Mir<'tcx>,
+        dfs_storage: &mut dfs::DfsStorage,
         sup_region: RegionVid,
         sub_region: RegionVid,
         point: Location,
     ) -> bool {
         debug!(
             "eval_outlives({:?}: {:?} @ {:?})",
-            sup_region,
-            sub_region,
-            point
+            sup_region, sub_region, point
         );
 
         // Roughly speaking, do a DFS of all region elements reachable
@@ -852,6 +907,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         // yield an `Err` result.
         match self.dfs(
             mir,
+            dfs_storage,
             TestTargetOutlivesSource {
                 source_region: sub_region,
                 target_region: sup_region,
@@ -897,7 +953,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn check_universal_regions<'gcx>(
         &self,
         infcx: &InferCtxt<'_, 'gcx, 'tcx>,
-        mir: &Mir<'tcx>,
         mir_def_id: DefId,
         mut propagated_outlives_requirements: Option<&mut Vec<ClosureOutlivesRequirement<'gcx>>>,
     ) {
@@ -913,7 +968,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         for (fr, _) in universal_definitions {
             self.check_universal_region(
                 infcx,
-                mir,
                 mir_def_id,
                 fr,
                 &mut propagated_outlives_requirements,
@@ -932,7 +986,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn check_universal_region<'gcx>(
         &self,
         infcx: &InferCtxt<'_, 'gcx, 'tcx>,
-        mir: &Mir<'tcx>,
         mir_def_id: DefId,
         longer_fr: RegionVid,
         propagated_outlives_requirements: &mut Option<&mut Vec<ClosureOutlivesRequirement<'gcx>>>,
@@ -951,8 +1004,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
 
             debug!(
                 "check_universal_region: fr={:?} does not outlive shorter_fr={:?}",
-                longer_fr,
-                shorter_fr,
+                longer_fr, shorter_fr,
             );
 
             let blame_span = self.blame_span(longer_fr, shorter_fr);
@@ -964,7 +1016,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                     debug!("check_universal_region: fr_minus={:?}", fr_minus);
 
                     // Grow `shorter_fr` until we find a non-local
-                    // regon. (We always will.)  We'll call that
+                    // region. (We always will.)  We'll call that
                     // `shorter_fr+` -- it's ever so slightly larger than
                     // `fr`.
                     let shorter_fr_plus = self.universal_regions.non_local_upper_bound(shorter_fr);
@@ -990,7 +1042,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             // Note: in this case, we use the unapproximated regions
             // to report the error. This gives better error messages
             // in some cases.
-            self.report_error(infcx, mir, mir_def_id, longer_fr, shorter_fr, blame_span);
+            self.report_error(infcx, mir_def_id, longer_fr, shorter_fr, blame_span);
         }
     }
 
@@ -1005,7 +1057,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn report_error(
         &self,
         infcx: &InferCtxt<'_, '_, 'tcx>,
-        mir: &Mir<'tcx>,
         mir_def_id: DefId,
         fr: RegionVid,
         outlived_fr: RegionVid,
@@ -1038,12 +1089,6 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             blame_span,
             &format!("{} does not outlive {}", fr_string, outlived_fr_string,),
         );
-
-        // Find out why `fr` had to outlive `outlived_fr`...
-        let inferred_values = self.inferred_values.as_ref().unwrap();
-        if let Some(cause) = inferred_values.cause(fr, outlived_fr) {
-            cause.label_diagnostic(mir, &mut diag);
-        }
 
         diag.emit();
     }
@@ -1116,6 +1161,16 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     }
 }
 
+impl RegionCausalInfo {
+    /// Returns the *reason* that the region `r` contains the given point.
+    pub(super) fn why_region_contains_point<R>(&self, r: R, p: Location) -> Option<Rc<Cause>>
+    where
+        R: ToRegionVid,
+    {
+        self.inferred_values.cause(r.to_region_vid(), p)
+    }
+}
+
 impl<'tcx> RegionDefinition<'tcx> {
     fn new(origin: RegionVariableOrigin) -> Self {
         // Create a new region definition. Note that, for free
@@ -1134,10 +1189,7 @@ impl fmt::Debug for Constraint {
         write!(
             formatter,
             "({:?}: {:?} @ {:?}) due to {:?}",
-            self.sup,
-            self.sub,
-            self.point,
-            self.span
+            self.sup, self.sub, self.point, self.span
         )
     }
 }
@@ -1187,9 +1239,7 @@ impl<'gcx, 'tcx> ClosureRegionRequirementsExt<'gcx, 'tcx> for ClosureRegionRequi
 
         debug!(
             "apply_requirements(location={:?}, closure_def_id={:?}, closure_substs={:?})",
-            location,
-            closure_def_id,
-            closure_substs
+            location, closure_def_id, closure_substs
         );
 
         // Get Tu.
@@ -1217,9 +1267,7 @@ impl<'gcx, 'tcx> ClosureRegionRequirementsExt<'gcx, 'tcx> for ClosureRegionRequi
                         "apply_requirements: region={:?} \
                          outlived_region={:?} \
                          outlives_requirement={:?}",
-                        region,
-                        outlived_region,
-                        outlives_requirement,
+                        region, outlived_region, outlives_requirement,
                     );
                     infcx.sub_regions(origin, outlived_region, region);
                 }
@@ -1230,9 +1278,7 @@ impl<'gcx, 'tcx> ClosureRegionRequirementsExt<'gcx, 'tcx> for ClosureRegionRequi
                         "apply_requirements: ty={:?} \
                          outlived_region={:?} \
                          outlives_requirement={:?}",
-                        ty,
-                        outlived_region,
-                        outlives_requirement,
+                        ty, outlived_region, outlives_requirement,
                     );
                     infcx.register_region_obligation(
                         body_id,
@@ -1285,77 +1331,14 @@ impl CauseExt for Rc<Cause> {
 }
 
 impl Cause {
-    pub(crate) fn label_diagnostic(&self, mir: &Mir<'_>, diag: &mut DiagnosticBuilder<'_>) {
-        // The cause information is pretty messy. Only dump it as an
-        // internal debugging aid if -Znll-dump-cause is given.
-        let nll_dump_cause = ty::tls::with(|tcx| tcx.sess.nll_dump_cause());
-        if !nll_dump_cause {
-            return;
-        }
-
-        let mut string = String::new();
-        self.push_diagnostic_string(mir, &mut string);
-        diag.note(&string);
-    }
-
-    fn push_diagnostic_string(&self, mir: &Mir<'_>, string: &mut String) {
-        match self {
-            Cause::LiveVar(local, location) => {
-                string.push_str(&format!("because `{:?}` is live at {:?}", local, location));
-            }
-
-            Cause::DropVar(local, location) => {
-                string.push_str(&format!(
-                    "because `{:?}` is dropped at {:?}",
-                    local,
-                    location
-                ));
-            }
-
-            Cause::LiveOther(location) => {
-                string.push_str(&format!(
-                    "because of a general liveness constraint at {:?}",
-                    location
-                ));
-            }
-
-            Cause::UniversalRegion(region_vid) => {
-                string.push_str(&format!(
-                    "because `{:?}` is universally quantified",
-                    region_vid
-                ));
-            }
-
-            Cause::Outlives {
-                original_cause,
-                constraint_location,
-                constraint_span: _,
-            } => {
-                string.push_str(&format!(
-                    "because of an outlives relation created at `{:?}`\n",
-                    constraint_location
-                ));
-
-                original_cause.push_diagnostic_string(mir, string);
-            }
-        }
-    }
-
     pub(crate) fn root_cause(&self) -> &Cause {
         match self {
-            Cause::LiveVar(..) |
-            Cause::DropVar(..) |
-            Cause::LiveOther(..) |
-            Cause::UniversalRegion(..) => {
-                self
-            }
+            Cause::LiveVar(..)
+            | Cause::DropVar(..)
+            | Cause::LiveOther(..)
+            | Cause::UniversalRegion(..) => self,
 
-            Cause::Outlives {
-                original_cause,
-                ..
-            } => {
-                original_cause.root_cause()
-            }
+            Cause::Outlives { original_cause, .. } => original_cause.root_cause(),
         }
     }
 }

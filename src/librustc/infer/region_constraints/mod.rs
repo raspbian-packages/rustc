@@ -18,7 +18,7 @@ use super::unify_key;
 
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
-use rustc_data_structures::unify::{self, UnificationTable};
+use rustc_data_structures::unify as ut;
 use ty::{self, Ty, TyCtxt};
 use ty::{Region, RegionVid};
 use ty::ReStatic;
@@ -73,7 +73,7 @@ pub struct RegionConstraintCollector<'tcx> {
     /// is iterating to a fixed point, because otherwise we sometimes
     /// would wind up with a fresh stream of region variables that
     /// have been equated but appear distinct.
-    unification_table: UnificationTable<ty::RegionVid>,
+    unification_table: ut::UnificationTable<ut::InPlace<ty::RegionVid>>,
 }
 
 pub type VarOrigins = IndexVec<RegionVid, RegionVariableOrigin>;
@@ -82,7 +82,7 @@ pub type VarOrigins = IndexVec<RegionVid, RegionVariableOrigin>;
 /// Describes constraints between the region variables and other
 /// regions, as well as other conditions that must be verified, or
 /// assumptions that can be made.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct RegionConstraintData<'tcx> {
     /// Constraints of the form `A <= B`, where either `A` or `B` can
     /// be a region variable (or neither, as it happens).
@@ -142,7 +142,7 @@ pub enum Constraint<'tcx> {
 /// outlive `RS`. Therefore verify that `R <= RS[i]` for some
 /// `i`. Inference variables may be involved (but this verification
 /// step doesn't influence inference).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Verify<'tcx> {
     pub kind: GenericKind<'tcx>,
     pub origin: SubregionOrigin<'tcx>,
@@ -159,7 +159,7 @@ pub enum GenericKind<'tcx> {
 /// When we introduce a verification step, we wish to test that a
 /// particular region (let's call it `'min`) meets some bound.
 /// The bound is described the by the following grammar:
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum VerifyBound<'tcx> {
     /// B = exists {R} --> some 'r in {R} must outlive 'min
     ///
@@ -232,7 +232,7 @@ type CombineMap<'tcx> = FxHashMap<TwoRegions<'tcx>, RegionVid>;
 
 pub struct RegionSnapshot {
     length: usize,
-    region_snapshot: unify::Snapshot<ty::RegionVid>,
+    region_snapshot: ut::Snapshot<ut::InPlace<ty::RegionVid>>,
     skolemization_count: u32,
 }
 
@@ -280,12 +280,16 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
             skolemization_count: 0,
             bound_count: 0,
             undo_log: Vec::new(),
-            unification_table: UnificationTable::new(),
+            unification_table: ut::UnificationTable::new(),
         }
     }
 
     pub fn var_origins(&self) -> &VarOrigins {
         &self.var_origins
+    }
+
+    pub fn region_constraint_data(&self) -> &RegionConstraintData<'tcx> {
+        &self.data
     }
 
     /// Once all the constraints have been gathered, extract out the final data.
@@ -338,12 +342,16 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
         // un-unified" state. Note that when we unify `a` and `b`, we
         // also insert `a <= b` and a `b <= a` edges, so the
         // `RegionConstraintData` contains the relationship here.
-        *unification_table = UnificationTable::new();
+        *unification_table = ut::UnificationTable::new();
         for vid in var_origins.indices() {
             unification_table.new_key(unify_key::RegionVidKey { min_vid: vid });
         }
 
         mem::replace(data, RegionConstraintData::default())
+    }
+
+    pub fn data(&self) -> &RegionConstraintData<'tcx> {
+        &self.data
     }
 
     fn in_snapshot(&self) -> bool {
@@ -460,8 +468,10 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
     /// the APIs in `higher_ranked/mod.rs`, such as
     /// `skolemize_late_bound_regions` and `plug_leaks`, which will
     /// guide you on this path (ensure that the `SkolemizationMap` is
-    /// consumed and you are good).  There are also somewhat extensive
-    /// comments in `higher_ranked/README.md`.
+    /// consumed and you are good). For more info on how skolemization
+    /// for HRTBs works, see the [rustc guide].
+    ///
+    /// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/trait-hrtb.html
     ///
     /// The `snapshot` argument to this function is not really used;
     /// it's just there to make it explicit which snapshot bounds the
@@ -772,7 +782,7 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
         tcx: TyCtxt<'_, '_, 'tcx>,
         rid: RegionVid,
     ) -> ty::Region<'tcx> {
-        let vid = self.unification_table.find_value(rid).min_vid;
+        let vid = self.unification_table.probe_value(rid).min_vid;
         tcx.mk_region(ty::ReVar(vid))
     }
 
@@ -892,7 +902,7 @@ impl<'a, 'gcx, 'tcx> GenericKind<'tcx> {
 }
 
 impl<'a, 'gcx, 'tcx> VerifyBound<'tcx> {
-    fn for_each_region(&self, f: &mut FnMut(ty::Region<'tcx>)) {
+    fn for_each_region(&self, f: &mut dyn FnMut(ty::Region<'tcx>)) {
         match self {
             &VerifyBound::AnyRegion(ref rs) | &VerifyBound::AllRegions(ref rs) => for &r in rs {
                 f(r);

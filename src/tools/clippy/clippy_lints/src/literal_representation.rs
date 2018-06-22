@@ -4,7 +4,7 @@
 use rustc::lint::*;
 use syntax::ast::*;
 use syntax_pos;
-use utils::{in_external_macro, snippet_opt, span_help_and_lint};
+use utils::{in_external_macro, snippet_opt, span_lint_and_sugg};
 
 /// **What it does:** Warns if a long integral or floating-point constant does
 /// not contain underscores.
@@ -18,9 +18,9 @@ use utils::{in_external_macro, snippet_opt, span_help_and_lint};
 /// ```rust
 /// 61864918973511
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNREADABLE_LITERAL,
-    Warn,
+    style,
     "long integer literal without underscores"
 }
 
@@ -37,9 +37,9 @@ declare_lint! {
 /// ```rust
 /// 618_64_9189_73_511
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub INCONSISTENT_DIGIT_GROUPING,
-    Warn,
+    style,
     "integer literals with digits grouped inconsistently"
 }
 
@@ -56,9 +56,9 @@ declare_lint! {
 /// ```rust
 /// 6186491_8973511
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub LARGE_DIGIT_GROUPS,
-    Warn,
+    style,
     "grouping digits into groups that are too large"
 }
 
@@ -74,9 +74,9 @@ declare_lint! {
 /// `255` => `0xFF`
 /// `65_535` => `0xFFFF`
 /// `4_042_322_160` => `0xF0F0_F0F0`
-declare_lint! {
+declare_clippy_lint! {
     pub DECIMAL_LITERAL_REPRESENTATION,
-    Warn,
+    restriction,
     "using decimal representation when hexadecimal would be better"
 }
 
@@ -135,15 +135,15 @@ impl<'a> DigitInfo<'a> {
 
         let mut last_d = '\0';
         for (d_idx, d) in sans_prefix.char_indices() {
-            if !float && (d == 'i' || d == 'u') || float && d == 'f' {
+            if !float && (d == 'i' || d == 'u') || float && (d == 'f' || d == 'e' || d == 'E') {
                 let suffix_start = if last_d == '_' { d_idx - 1 } else { d_idx };
                 let (digits, suffix) = sans_prefix.split_at(suffix_start);
                 return Self {
-                    digits: digits,
-                    radix: radix,
-                    prefix: prefix,
+                    digits,
+                    radix,
+                    prefix,
                     suffix: Some(suffix),
-                    float: float,
+                    float,
                 };
             }
             last_d = d
@@ -152,10 +152,10 @@ impl<'a> DigitInfo<'a> {
         // No suffix found
         Self {
             digits: sans_prefix,
-            radix: radix,
-            prefix: prefix,
+            radix,
+            prefix,
             suffix: None,
-            float: float,
+            float,
         }
     }
 
@@ -223,33 +223,37 @@ enum WarningType {
 impl WarningType {
     pub fn display(&self, grouping_hint: &str, cx: &EarlyContext, span: &syntax_pos::Span) {
         match *self {
-            WarningType::UnreadableLiteral => span_help_and_lint(
+            WarningType::UnreadableLiteral => span_lint_and_sugg(
                 cx,
                 UNREADABLE_LITERAL,
                 *span,
                 "long literal lacking separators",
-                &format!("consider: {}", grouping_hint),
+                "consider",
+                grouping_hint.to_owned(),
             ),
-            WarningType::LargeDigitGroups => span_help_and_lint(
+            WarningType::LargeDigitGroups => span_lint_and_sugg(
                 cx,
                 LARGE_DIGIT_GROUPS,
                 *span,
                 "digit groups should be smaller",
-                &format!("consider: {}", grouping_hint),
+                "consider",
+                grouping_hint.to_owned(),
             ),
-            WarningType::InconsistentDigitGrouping => span_help_and_lint(
+            WarningType::InconsistentDigitGrouping => span_lint_and_sugg(
                 cx,
                 INCONSISTENT_DIGIT_GROUPING,
                 *span,
                 "digits grouped inconsistently by underscores",
-                &format!("consider: {}", grouping_hint),
+                "consider",
+                grouping_hint.to_owned(),
             ),
-            WarningType::DecimalRepresentation => span_help_and_lint(
+            WarningType::DecimalRepresentation => span_lint_and_sugg(
                 cx,
                 DECIMAL_LITERAL_REPRESENTATION,
                 *span,
                 "integer literal has a better hexadecimal representation",
-                &format!("consider: {}", grouping_hint),
+                "consider",
+                grouping_hint.to_owned(),
             ),
         };
     }
@@ -282,60 +286,64 @@ impl EarlyLintPass for LiteralDigitGrouping {
 
 impl LiteralDigitGrouping {
     fn check_lit(&self, cx: &EarlyContext, lit: &Lit) {
-        // Lint integral literals.
-        if_chain! {
-            if let LitKind::Int(..) = lit.node;
-            if let Some(src) = snippet_opt(cx, lit.span);
-            if let Some(firstch) = src.chars().next();
-            if char::to_digit(firstch, 10).is_some();
-            then {
-                let digit_info = DigitInfo::new(&src, false);
-                let _ = Self::do_lint(digit_info.digits).map_err(|warning_type| {
-                    warning_type.display(&digit_info.grouping_hint(), cx, &lit.span)
-                });
-            }
-        }
+        match lit.node {
+            LitKind::Int(..) => {
+                // Lint integral literals.
+                if_chain! {
+                    if let Some(src) = snippet_opt(cx, lit.span);
+                    if let Some(firstch) = src.chars().next();
+                    if char::to_digit(firstch, 10).is_some();
+                    then {
+                        let digit_info = DigitInfo::new(&src, false);
+                        let _ = Self::do_lint(digit_info.digits).map_err(|warning_type| {
+                            warning_type.display(&digit_info.grouping_hint(), cx, &lit.span)
+                        });
+                    }
+                }
+            },
+            LitKind::Float(..) | LitKind::FloatUnsuffixed(..) => {
+                // Lint floating-point literals.
+                if_chain! {
+                    if let Some(src) = snippet_opt(cx, lit.span);
+                    if let Some(firstch) = src.chars().next();
+                    if char::to_digit(firstch, 10).is_some();
+                    then {
+                        let digit_info = DigitInfo::new(&src, true);
+                        // Separate digits into integral and fractional parts.
+                        let parts: Vec<&str> = digit_info
+                            .digits
+                            .split_terminator('.')
+                            .collect();
 
-        // Lint floating-point literals.
-        if_chain! {
-            if let LitKind::Float(..) = lit.node;
-            if let Some(src) = snippet_opt(cx, lit.span);
-            if let Some(firstch) = src.chars().next();
-            if char::to_digit(firstch, 10).is_some();
-            then {
-                let digit_info = DigitInfo::new(&src, true);
-                // Separate digits into integral and fractional parts.
-                let parts: Vec<&str> = digit_info
-                    .digits
-                    .split_terminator('.')
-                    .collect();
-
-                // Lint integral and fractional parts separately, and then check consistency of digit
-                // groups if both pass.
-                let _ = Self::do_lint(parts[0])
-                    .map(|integral_group_size| {
-                        if parts.len() > 1 {
-                            // Lint the fractional part of literal just like integral part, but reversed.
-                            let fractional_part = &parts[1].chars().rev().collect::<String>();
-                            let _ = Self::do_lint(fractional_part)
-                                .map(|fractional_group_size| {
-                                    let consistent = Self::parts_consistent(integral_group_size,
-                                                                            fractional_group_size,
-                                                                            parts[0].len(),
-                                                                            parts[1].len());
-                                    if !consistent {
-                                        WarningType::InconsistentDigitGrouping.display(&digit_info.grouping_hint(),
-                                                                                       cx,
-                                                                                       &lit.span);
-                                    }
-                                })
-                                .map_err(|warning_type| warning_type.display(&digit_info.grouping_hint(),
-                                                                             cx,
-                                                                             &lit.span));
-                        }
-                    })
-                    .map_err(|warning_type| warning_type.display(&digit_info.grouping_hint(), cx, &lit.span));
-            }
+                        // Lint integral and fractional parts separately, and then check consistency of digit
+                        // groups if both pass.
+                        let _ = Self::do_lint(parts[0])
+                            .map(|integral_group_size| {
+                                if parts.len() > 1 {
+                                    // Lint the fractional part of literal just like integral part, but reversed.
+                                    let fractional_part = &parts[1].chars().rev().collect::<String>();
+                                    let _ = Self::do_lint(fractional_part)
+                                        .map(|fractional_group_size| {
+                                            let consistent = Self::parts_consistent(integral_group_size,
+                                                                                    fractional_group_size,
+                                                                                    parts[0].len(),
+                                                                                    parts[1].len());
+                                            if !consistent {
+                                                WarningType::InconsistentDigitGrouping.display(&digit_info.grouping_hint(),
+                                                cx,
+                                                &lit.span);
+                                            }
+                                        })
+                                    .map_err(|warning_type| warning_type.display(&digit_info.grouping_hint(),
+                                    cx,
+                                    &lit.span));
+                                }
+                            })
+                        .map_err(|warning_type| warning_type.display(&digit_info.grouping_hint(), cx, &lit.span));
+                    }
+                }
+            },
+            _ => (),
         }
     }
 
@@ -368,7 +376,7 @@ impl LiteralDigitGrouping {
 
         if underscore_positions.is_empty() {
             // Check if literal needs underscores.
-            if digits.len() > 4 {
+            if digits.len() > 5 {
                 Err(WarningType::UnreadableLiteral)
             } else {
                 Ok(0)
@@ -419,7 +427,7 @@ impl EarlyLintPass for LiteralRepresentation {
 impl LiteralRepresentation {
     pub fn new(threshold: u64) -> Self {
         Self {
-            threshold: threshold,
+            threshold,
         }
     }
     fn check_lit(&self, cx: &EarlyContext, lit: &Lit) {
@@ -437,7 +445,7 @@ impl LiteralRepresentation {
                         .filter(|&c| c != '_')
                         .collect::<String>()
                         .parse::<u128>().unwrap();
-                    if val < self.threshold as u128 {
+                    if val < u128::from(self.threshold) {
                         return
                     }
                     let hex = format!("{:#X}", val);

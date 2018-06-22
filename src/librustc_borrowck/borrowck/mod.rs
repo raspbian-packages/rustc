@@ -44,6 +44,7 @@ use rustc::util::nodemap::FxHashSet;
 use std::cell::RefCell;
 use std::fmt;
 use std::rc::Rc;
+use rustc_data_structures::sync::Lrc;
 use std::hash::{Hash, Hasher};
 use syntax::ast;
 use syntax_pos::{MultiSpan, Span};
@@ -86,7 +87,7 @@ pub struct AnalysisData<'a, 'tcx: 'a> {
 }
 
 fn borrowck<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, owner_def_id: DefId)
-    -> Rc<BorrowCheckResult>
+    -> Lrc<BorrowCheckResult>
 {
     debug!("borrowck(body_owner_def_id={:?})", owner_def_id);
 
@@ -99,7 +100,7 @@ fn borrowck<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, owner_def_id: DefId)
             // those things (notably the synthesized constructors from
             // tuple structs/variants) do not have an associated body
             // and do not need borrowchecking.
-            return Rc::new(BorrowCheckResult {
+            return Lrc::new(BorrowCheckResult {
                 used_mut_nodes: FxHashSet(),
             })
         }
@@ -145,7 +146,7 @@ fn borrowck<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, owner_def_id: DefId)
     }
     unused::check(&mut bccx, body);
 
-    Rc::new(BorrowCheckResult {
+    Lrc::new(BorrowCheckResult {
         used_mut_nodes: bccx.used_mut_nodes.into_inner(),
     })
 }
@@ -243,7 +244,7 @@ pub struct BorrowckCtxt<'a, 'tcx: 'a> {
     // Some in `borrowck_fn` and cleared later
     tables: &'a ty::TypeckTables<'tcx>,
 
-    region_scope_tree: Rc<region::ScopeTree>,
+    region_scope_tree: Lrc<region::ScopeTree>,
 
     owner_def_id: DefId,
 
@@ -252,30 +253,30 @@ pub struct BorrowckCtxt<'a, 'tcx: 'a> {
     used_mut_nodes: RefCell<FxHashSet<HirId>>,
 }
 
-impl<'b, 'tcx: 'b> BorrowckErrors for BorrowckCtxt<'b, 'tcx> {
-    fn struct_span_err_with_code<'a, S: Into<MultiSpan>>(&'a self,
-                                                         sp: S,
-                                                         msg: &str,
-                                                         code: DiagnosticId)
-                                                         -> DiagnosticBuilder<'a>
+impl<'a, 'b, 'tcx: 'b> BorrowckErrors<'a> for &'a BorrowckCtxt<'b, 'tcx> {
+    fn struct_span_err_with_code<S: Into<MultiSpan>>(self,
+                                                     sp: S,
+                                                     msg: &str,
+                                                     code: DiagnosticId)
+                                                     -> DiagnosticBuilder<'a>
     {
         self.tcx.sess.struct_span_err_with_code(sp, msg, code)
     }
 
-    fn struct_span_err<'a, S: Into<MultiSpan>>(&'a self,
-                                               sp: S,
-                                               msg: &str)
-                                               -> DiagnosticBuilder<'a>
+    fn struct_span_err<S: Into<MultiSpan>>(self,
+                                           sp: S,
+                                           msg: &str)
+                                           -> DiagnosticBuilder<'a>
     {
         self.tcx.sess.struct_span_err(sp, msg)
     }
 
-    fn cancel_if_wrong_origin<'a>(&'a self,
-                                mut diag: DiagnosticBuilder<'a>,
-                                o: Origin)
-                                -> DiagnosticBuilder<'a>
+    fn cancel_if_wrong_origin(self,
+                              mut diag: DiagnosticBuilder<'a>,
+                              o: Origin)
+                              -> DiagnosticBuilder<'a>
     {
-        if !o.should_emit_errors(self.tcx.sess.borrowck_mode()) {
+        if !o.should_emit_errors(self.tcx.borrowck_mode()) {
             self.tcx.sess.diagnostic().cancel(&mut diag);
         }
         diag
@@ -1111,7 +1112,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
 
     /// Given a type, if it is an immutable reference, return a suggestion to make it mutable
     fn suggest_mut_for_immutable(&self, pty: &hir::Ty, is_implicit_self: bool) -> Option<String> {
-        // Check wether the argument is an immutable reference
+        // Check whether the argument is an immutable reference
         debug!("suggest_mut_for_immutable({:?}, {:?})", pty, is_implicit_self);
         if let hir::TyRptr(lifetime, hir::MutTy {
             mutbl: hir::Mutability::MutImmutable,

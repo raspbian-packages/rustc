@@ -18,9 +18,9 @@ use utils::sugg::Sugg;
 /// ```rust
 /// for x in (5..5).step_by(0) { .. }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ITERATOR_STEP_BY_ZERO,
-    Warn,
+    correctness,
     "using `Iterator::step_by(0)`, which produces an infinite iterator"
 }
 
@@ -35,9 +35,9 @@ declare_lint! {
 /// ```rust
 /// x.iter().zip(0..x.len())
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub RANGE_ZIP_WITH_LEN,
-    Warn,
+    complexity,
     "zipping iterator with a range when `enumerate()` would do"
 }
 
@@ -53,9 +53,9 @@ declare_lint! {
 /// ```rust
 /// for x..(y+1) { .. }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub RANGE_PLUS_ONE,
-    Allow,
+    nursery,
     "`x..(y+1)` reads better as `x..=y`"
 }
 
@@ -71,9 +71,9 @@ declare_lint! {
 /// ```rust
 /// for x..=(y-1) { .. }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub RANGE_MINUS_ONE,
-    Warn,
+    style,
     "`x..=(y-1)` reads better as `x..y`"
 }
 
@@ -94,16 +94,13 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             // Range with step_by(0).
             if name == "step_by" && args.len() == 2 && has_step_by(cx, &args[0]) {
                 use consts::{constant, Constant};
-                use rustc_const_math::ConstInt::Usize;
-                if let Some((Constant::Int(Usize(us)), _)) = constant(cx, &args[1]) {
-                    if us.as_u64() == 0 {
-                        span_lint(
-                            cx,
-                            ITERATOR_STEP_BY_ZERO,
-                            expr.span,
-                            "Iterator::step_by(0) will panic at runtime",
-                        );
-                    }
+                if let Some((Constant::Int(0), _)) = constant(cx, &args[1]) {
+                    span_lint(
+                        cx,
+                        ITERATOR_STEP_BY_ZERO,
+                        expr.span,
+                        "Iterator::step_by(0) will panic at runtime",
+                    );
                 }
             } else if name == "zip" && args.len() == 2 {
                 let iter = &args[0].node;

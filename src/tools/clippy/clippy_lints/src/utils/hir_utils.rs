@@ -1,4 +1,4 @@
-use consts::constant;
+use consts::{constant_simple, constant_context};
 use rustc::lint::*;
 use rustc::hir::*;
 use std::hash::{Hash, Hasher};
@@ -24,7 +24,7 @@ pub struct SpanlessEq<'a, 'tcx: 'a> {
 impl<'a, 'tcx: 'a> SpanlessEq<'a, 'tcx> {
     pub fn new(cx: &'a LateContext<'a, 'tcx>) -> Self {
         Self {
-            cx: cx,
+            cx,
             ignore_fn: false,
         }
     }
@@ -64,7 +64,7 @@ impl<'a, 'tcx: 'a> SpanlessEq<'a, 'tcx> {
             return false;
         }
 
-        if let (Some(l), Some(r)) = (constant(self.cx, left), constant(self.cx, right)) {
+        if let (Some(l), Some(r)) = (constant_simple(self.cx, left), constant_simple(self.cx, right)) {
             if l == r {
                 return true;
             }
@@ -117,8 +117,12 @@ impl<'a, 'tcx: 'a> SpanlessEq<'a, 'tcx> {
                 !self.ignore_fn && l_path == r_path && self.eq_exprs(l_args, r_args)
             },
             (&ExprRepeat(ref le, ll_id), &ExprRepeat(ref re, rl_id)) => {
-                self.eq_expr(le, re)
-                    && self.eq_expr(&self.cx.tcx.hir.body(ll_id).value, &self.cx.tcx.hir.body(rl_id).value)
+                let mut celcx = constant_context(self.cx, self.cx.tcx.body_tables(ll_id));
+                let ll = celcx.expr(&self.cx.tcx.hir.body(ll_id).value);
+                let mut celcx = constant_context(self.cx, self.cx.tcx.body_tables(rl_id));
+                let rl = celcx.expr(&self.cx.tcx.hir.body(rl_id).value);
+
+                self.eq_expr(le, re) && ll == rl
             },
             (&ExprRet(ref l), &ExprRet(ref r)) => both(l, r, |l, r| self.eq_expr(l, r)),
             (&ExprPath(ref l), &ExprPath(ref r)) => self.eq_qpath(l, r),
@@ -291,7 +295,7 @@ pub struct SpanlessHash<'a, 'tcx: 'a> {
 impl<'a, 'tcx: 'a> SpanlessHash<'a, 'tcx> {
     pub fn new(cx: &'a LateContext<'a, 'tcx>) -> Self {
         Self {
-            cx: cx,
+            cx,
             s: DefaultHasher::new(),
         }
     }
@@ -313,7 +317,7 @@ impl<'a, 'tcx: 'a> SpanlessHash<'a, 'tcx> {
     }
 
     pub fn hash_expr(&mut self, e: &Expr) {
-        if let Some(e) = constant(self.cx, e) {
+        if let Some(e) = constant_simple(self.cx, e) {
             return e.hash(&mut self.s);
         }
 

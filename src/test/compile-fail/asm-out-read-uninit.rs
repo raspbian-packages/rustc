@@ -11,7 +11,11 @@
 // ignore-s390x
 // ignore-emscripten
 // ignore-powerpc
+// ignore-powerpc64
+// ignore-powerpc64le
 // ignore-sparc
+// ignore-mips
+// ignore-mips64
 
 // revisions: ast mir
 //[mir]compile-flags: -Z borrowck=mir

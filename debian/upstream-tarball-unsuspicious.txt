@@ -33,15 +33,11 @@ src/vendor/stable_deref_trait/src/lib.rs
 src/vendor/winapi-*/src/winnt.rs
 
 # Embedded libraries, justified in README.source
-src/binaryen/.travis.yml
-src/binaryen/docs/*.Markdown
-src/binaryen/src/*/*.h
-src/binaryen/src/*/*.cpp
-src/binaryen/media/example.png
-src/binaryen/README.md
+# None atm
 
 # False-positive, misc
 src/doc/book/second-edition/tools/docx-to-md.xsl
+src/stdsimd/.travis.yml
 src/tools/clippy/.github/deploy_key.enc
 src/vendor/num/ci/deploy.enc
 
@@ -61,8 +57,8 @@ src/vendor/termion/logo.svg
 src/vendor/html5ever/examples/capi/tokenize.c
 
 # Test data
-src/binaryen/test
-src/rt/hoedown/test/MarkdownTest_1.0.3/Tests/Markdown*.html
+src/stdsimd/crates/stdsimd-verify/x86-intel.xml
+src/stdsimd/stdsimd/arch/detect/test_data
 src/test/compile-fail/not-utf8.bin
 src/test/*/*.rs
 src/test/*/*/*.stderr
@@ -92,4 +88,5 @@ src/librustdoc/html/static/*.woff
 # C and JS files not part of an external library
 src/vendor/mdbook/src/theme/book.js
 src/vendor/miniz-sys/miniz.c
+src/vendor/walkdir/compare/nftw.c
 src/vendor/walkdir-*/compare/nftw.c

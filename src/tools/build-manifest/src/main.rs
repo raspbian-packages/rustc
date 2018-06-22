@@ -87,6 +87,7 @@ static TARGETS: &'static [&'static str] = &[
     "powerpc64-unknown-linux-gnu",
     "powerpc64le-unknown-linux-gnu",
     "s390x-unknown-linux-gnu",
+    "sparc-unknown-linux-gnu",
     "sparc64-unknown-linux-gnu",
     "sparcv9-sun-solaris",
     "wasm32-unknown-emscripten",
@@ -354,6 +355,28 @@ impl Builder {
                 pkg: "rust-src".to_string(),
                 target: "*".to_string(),
             });
+
+            // If the components/extensions don't actually exist for this
+            // particular host/target combination then nix it entirely from our
+            // lists.
+            {
+                let has_component = |c: &Component| {
+                    if c.target == "*" {
+                        return true
+                    }
+                    let pkg = match manifest.pkg.get(&c.pkg) {
+                        Some(p) => p,
+                        None => return false,
+                    };
+                    let target = match pkg.target.get(&c.target) {
+                        Some(t) => t,
+                        None => return false,
+                    };
+                    target.available
+                };
+                extensions.retain(&has_component);
+                components.retain(&has_component);
+            }
 
             pkg.target.insert(host.to_string(), Target {
                 available: true,

@@ -3,7 +3,7 @@
 Tokens are primitive productions in the grammar defined by regular
 (non-recursive) languages. "Simple" tokens are given in [string table
 production] form, and occur in the rest of the
-grammar as double-quoted strings. Other tokens have exact rules given.
+grammar in `monospace` font. Other tokens have exact rules given.
 
 [string table production]: notation.html#string-table-productions
 
@@ -143,8 +143,10 @@ literals. An escape starts with a `U+005C` (`\`) and continues with one of the
 following forms:
 
 * An _8-bit code point escape_ starts with `U+0078` (`x`) and is
-  followed by exactly two _hex digits_. It denotes the Unicode code point
-  equal to the provided hex value.
+  followed by exactly two _hex digits_ with value up to `0x7F`. It denotes the
+  ASCII character with value equal to the provided hex value. Higher values are
+  not permitted because it is ambiguous whether they mean Unicode code points or
+  byte values.
 * A _24-bit code point escape_ starts with `U+0075` (`u`) and is followed
   by up to six _hex digits_ surrounded by braces `U+007B` (`{`) and `U+007D`
   (`}`). It denotes the Unicode code point equal to the provided hex value.
@@ -154,7 +156,7 @@ following forms:
 * The _null escape_ is the character `U+0030` (`0`) and denotes the Unicode
   value `U+0000` (NUL).
 * The _backslash escape_ is the character `U+005C` (`\`) which must be
-  escaped in order to denote *itself*.
+  escaped in order to denote itself.
 
 #### Raw string literals
 
@@ -227,8 +229,7 @@ preceded by the characters `U+0062` (`b`) and `U+0022` (double-quote), and
 followed by the character `U+0022`. If the character `U+0022` is present within
 the literal, it must be _escaped_ by a preceding `U+005C` (`\`) character.
 Alternatively, a byte string literal can be a _raw byte string literal_, defined
-below. A byte string literal of length `n` is equivalent to a `&'static [u8; n]` borrowed fixed-sized array
-of unsigned 8-bit integers.
+below. The type of a byte string literal of length `n` is `&'static [u8; n]`.
 
 Some additional _escapes_ are available in either byte or non-raw byte string
 literals. An escape starts with a `U+005C` (`\`) and continues with one of the
@@ -295,10 +296,14 @@ literal_. The grammar for recognizing the two kinds of literals is mixed.
 > INTEGER_LITERAL :  
 > &nbsp;&nbsp; ( DEC_LITERAL | BIN_LITERAL | OCT_LITERAL | HEX_LITERAL )
 >              INTEGER_SUFFIX<sup>?</sup>
->   
+>  
 > DEC_LITERAL :  
 > &nbsp;&nbsp; DEC_DIGIT (DEC_DIGIT|`_`)<sup>\*</sup>  
 >  
+> TUPLE_INDEX :  
+> &nbsp;&nbsp; &nbsp;&nbsp; `0`
+> &nbsp;&nbsp; | NON_ZERO_DEC_DIGIT DEC_DIGIT<sup>\*</sup>  
+>
 > BIN_LITERAL :  
 > &nbsp;&nbsp; `0b` (BIN_DIGIT|`_`)<sup>\*</sup> BIN_DIGIT (BIN_DIGIT|`_`)<sup>\*</sup>  
 >  
@@ -314,19 +319,23 @@ literal_. The grammar for recognizing the two kinds of literals is mixed.
 >  
 > DEC_DIGIT : [`0`-`9`]  
 >  
+> NON_ZERO_DEC_DIGIT : [`1`-`9`]  
+>  
 > HEX_DIGIT : [`0`-`9` `a`-`f` `A`-`F`]  
 >  
 > INTEGER_SUFFIX :  
 > &nbsp;&nbsp; &nbsp;&nbsp; `u8` | `u16` | `u32` | `u64` | `usize`  
 > &nbsp;&nbsp; | `i8` | `i16` | `i32` | `i64` | `isize`
 
-<!-- FIXME: separate the DECIMAL_LITERAL with no prefix or suffix (used on tuple indexing and float_literal -->
 <!-- FIXME: u128 and i128 -->
 
 An _integer literal_ has one of four forms:
 
 * A _decimal literal_ starts with a *decimal digit* and continues with any
   mixture of *decimal digits* and _underscores_.
+* A _tuple index_ is either `0`, or starts with a *non-zero decimal digit* and
+  continues with zero or more decimal digits. Tuple indexes are used to refer
+  to the fields of [tuples], [tuple structs] and [tuple variants].
 * A _hex literal_ starts with the character sequence `U+0030` `U+0078`
   (`0x`) and continues as any mixture (with at least one digit) of hex digits
   and underscores.
@@ -411,7 +420,7 @@ a single integer literal.
 > **<sup>Lexer</sup>**  
 > FLOAT_LITERAL :  
 > &nbsp;&nbsp; &nbsp;&nbsp; DEC_LITERAL `.`
->   _(not immediately followed by `.`, `_` or an identifier_)  
+>   _(not immediately followed by `.`, `_` or an [identifier]_)  
 > &nbsp;&nbsp; | DEC_LITERAL FLOAT_EXPONENT  
 > &nbsp;&nbsp; | DEC_LITERAL `.` DEC_LITERAL FLOAT_EXPONENT<sup>?</sup>  
 > &nbsp;&nbsp; | DEC_LITERAL (`.` DEC_LITERAL)<sup>?</sup>
@@ -476,6 +485,22 @@ The representation semantics of floating-point numbers are described in
 
 The two values of the boolean type are written `true` and `false`.
 
+## Lifetimes and loop labels
+
+> **<sup>Lexer</sup>**  
+> LIFETIME_TOKEN
+> &nbsp;&nbsp; &nbsp;&nbsp; `'` [IDENTIFIER_OR_KEYWORD][identifier]  
+> &nbsp;&nbsp; | `'_`  
+>  
+> LIFETIME_OR_LABEL:  
+> &nbsp;&nbsp; &nbsp;&nbsp; `'` [IDENTIFIER][identifier]
+
+Lifetime parameters and [loop labels] use LIFETIME_OR_LABEL tokens. Any
+LIFETIME_TOKEN will be accepted by the lexer, and for example, can be used in
+macros.
+
+[loop labels]: expressions/loop-expr.html
+
 ## Symbols
 
 Symbols are a general class of printable [tokens] that play structural
@@ -490,3 +515,7 @@ They are catalogued in [the Symbols section][symbols] of the Grammar document.
 [tokens]: #tokens
 [symbols]: ../grammar.html#symbols
 [keywords]: keywords.html
+[identifier]: identifiers.html
+[tuples]: types.html#tuple-types
+[tuple structs]: items/structs.html
+[tuple variants]: items/enumerations.html

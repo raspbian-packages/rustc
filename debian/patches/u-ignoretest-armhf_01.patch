@@ -4,8 +4,8 @@ Author: Ximin Luo <infinity0@debian.org>
 Bug: https://github.com/rust-lang/rust/issues/40238
 ---
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
---- a/src/test/run-make/atomic-lock-free/Makefile
-+++ b/src/test/run-make/atomic-lock-free/Makefile
+--- a/src/test/run-make-fulldeps/atomic-lock-free/Makefile
++++ b/src/test/run-make-fulldeps/atomic-lock-free/Makefile
 @@ -5,6 +5,7 @@
  
  all:

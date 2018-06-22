@@ -4,19 +4,19 @@ use rustc::hir::*;
 use rustc::hir::intravisit::{walk_body, walk_expr, walk_ty, FnKind, NestedVisitorMap, Visitor};
 use rustc::lint::*;
 use rustc::ty::{self, Ty, TyCtxt, TypeckTables};
-use rustc::ty::subst::Substs;
+use rustc::ty::layout::LayoutOf;
 use rustc_typeck::hir_ty_to_ty;
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::borrow::Cow;
 use syntax::ast::{FloatTy, IntTy, UintTy};
-use syntax::attr::IntType;
 use syntax::codemap::Span;
 use syntax::errors::DiagnosticBuilder;
 use utils::{comparisons, higher, in_constant, in_external_macro, in_macro, last_path_segment, match_def_path, match_path,
             multispan_sugg, opt_def_id, same_tys, snippet, snippet_opt, span_help_and_lint, span_lint,
-            span_lint_and_sugg, span_lint_and_then, type_size};
+            span_lint_and_sugg, span_lint_and_then, clip, unsext, sext, int_bits};
 use utils::paths;
+use consts::{constant, Constant};
 
 /// Handles all the linting of funky types
 #[allow(missing_copy_implementations)]
@@ -44,9 +44,9 @@ pub struct TypePass;
 ///     values: Vec<Foo>,
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub BOX_VEC,
-    Warn,
+    perf,
     "usage of `Box<Vec<T>>`, vector elements are already on the heap"
 }
 
@@ -64,9 +64,9 @@ declare_lint! {
 /// fn x() -> Option<Option<u32>> {
 ///     None
 /// }
-declare_lint! {
+declare_clippy_lint! {
     pub OPTION_OPTION,
-    Warn,
+    complexity,
     "usage of `Option<Option<T>>`"
 }
 
@@ -99,9 +99,9 @@ declare_lint! {
 /// ```rust
 /// let x = LinkedList::new();
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub LINKEDLIST,
-    Warn,
+    pedantic,
     "usage of LinkedList, usually a vector is faster, or a more specialized data \
      structure like a VecDeque"
 }
@@ -123,9 +123,9 @@ declare_lint! {
 /// ```rust
 /// fn foo(bar: &T) { ... }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub BORROWED_BOX,
-    Warn,
+    complexity,
     "a borrow of a boxed type"
 }
 
@@ -353,9 +353,9 @@ pub struct LetPass;
 /// ```rust
 /// let x = { 1; };
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub LET_UNIT_VALUE,
-    Warn,
+    style,
     "creating a let binding to a value of unit type, which usually can't be used afterwards"
 }
 
@@ -409,9 +409,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for LetPass {
 /// ```rust
 /// { foo(); bar(); baz(); }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNIT_CMP,
-    Warn,
+    correctness,
     "comparing unit values"
 }
 
@@ -464,9 +464,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnitCmp {
 ///   baz(a);
 /// })
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNIT_ARG,
-    Warn,
+    complexity,
     "passing unit to a function"
 }
 
@@ -531,7 +531,7 @@ fn is_questionmark_desugar_marked_call(expr: &Expr) -> bool {
 
 fn is_unit(ty: Ty) -> bool {
     match ty.sty {
-        ty::TyTuple(slice, _) if slice.is_empty() => true,
+        ty::TyTuple(slice) if slice.is_empty() => true,
         _ => false,
     }
 }
@@ -563,9 +563,9 @@ pub struct CastPass;
 /// ```rust
 /// let x = u64::MAX; x as f64
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CAST_PRECISION_LOSS,
-    Allow,
+    pedantic,
     "casts that cause loss of precision, e.g. `x as f32` where `x: u64`"
 }
 
@@ -584,9 +584,9 @@ declare_lint! {
 /// let y: i8 = -1;
 /// y as u128  // will return 18446744073709551615
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CAST_SIGN_LOSS,
-    Allow,
+    pedantic,
     "casts from signed types to unsigned types, e.g. `x as u32` where `x: i32`"
 }
 
@@ -604,9 +604,9 @@ declare_lint! {
 /// ```rust
 /// fn as_u8(x: u64) -> u8 { x as u8 }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CAST_POSSIBLE_TRUNCATION,
-    Allow,
+    pedantic,
     "casts that may cause truncation of the value, e.g. `x as u8` where `x: u32`, \
      or `x as i32` where `x: f32`"
 }
@@ -628,9 +628,9 @@ declare_lint! {
 /// ```rust
 /// u32::MAX as i32  // will yield a value of `-1`
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CAST_POSSIBLE_WRAP,
-    Allow,
+    pedantic,
     "casts that may cause wrapping around the value, e.g. `x as i32` where `x: u32` \
      and `x > i32::MAX`"
 }
@@ -657,9 +657,9 @@ declare_lint! {
 /// ```rust
 /// fn as_u64(x: u8) -> u64 { u64::from(x) }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CAST_LOSSLESS,
-    Warn,
+    complexity,
     "casts using `as` that are known to be lossless, e.g. `x as u64` where `x: u8`"
 }
 
@@ -673,9 +673,9 @@ declare_lint! {
 /// ```rust
 /// let _ = 2i32 as i32
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub UNNECESSARY_CAST,
-    Warn,
+    complexity,
     "cast to the same type, e.g. `x as i32` where `x: i32`"
 }
 
@@ -971,9 +971,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for CastPass {
 /// ```rust
 /// struct Foo { inner: Rc<Vec<Vec<Box<(u32, u32, u32, u32)>>>> }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub TYPE_COMPLEXITY,
-    Warn,
+    complexity,
     "usage of very complex types that might be better factored into `type` definitions"
 }
 
@@ -985,7 +985,7 @@ pub struct TypeComplexityPass {
 impl TypeComplexityPass {
     pub fn new(threshold: u64) -> Self {
         Self {
-            threshold: threshold,
+            threshold,
         }
     }
 }
@@ -1143,9 +1143,9 @@ impl<'tcx> Visitor<'tcx> for TypeComplexityVisitor {
 /// ```rust
 /// b'x'
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub CHAR_LIT_AS_U8,
-    Warn,
+    complexity,
     "casting a character literal to u8"
 }
 
@@ -1198,9 +1198,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for CharLitAsU8 {
 /// vec.len() <= 0
 /// 100 > std::i32::MAX
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ABSURD_EXTREME_COMPARISONS,
-    Warn,
+    correctness,
     "a comparison with a maximum or minimum value that is always true or false"
 }
 
@@ -1241,7 +1241,7 @@ fn is_cast_between_fixed_and_target<'a, 'tcx>(
         return is_isize_or_usize(precast_ty) != is_isize_or_usize(cast_ty)
     }
 
-    return false;
+    false
 }
 
 fn detect_absurd_comparison<'a, 'tcx>(
@@ -1297,64 +1297,26 @@ fn detect_absurd_comparison<'a, 'tcx>(
 }
 
 fn detect_extreme_expr<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) -> Option<ExtremeExpr<'tcx>> {
-    use rustc::middle::const_val::ConstVal::*;
-    use rustc_const_math::*;
-    use rustc_const_eval::*;
     use types::ExtremeType::*;
 
     let ty = cx.tables.expr_ty(expr);
 
-    match ty.sty {
-        ty::TyBool | ty::TyInt(_) | ty::TyUint(_) => (),
-        _ => return None,
-    };
+    let cv = constant(cx, expr)?.0;
 
-    let parent_item = cx.tcx.hir.get_parent(expr.id);
-    let parent_def_id = cx.tcx.hir.local_def_id(parent_item);
-    let substs = Substs::identity_for_item(cx.tcx, parent_def_id);
-    let cv = match ConstContext::new(cx.tcx, cx.param_env.and(substs), cx.tables).eval(expr) {
-        Ok(val) => val,
-        Err(_) => return None,
-    };
+    let which = match (&ty.sty, cv) {
+        (&ty::TyBool, Constant::Bool(false)) |
+        (&ty::TyUint(_), Constant::Int(0)) => Minimum,
+        (&ty::TyInt(ity), Constant::Int(i)) if i == unsext(cx.tcx, i128::min_value() >> (128 - int_bits(cx.tcx, ity)), ity) => Minimum,
 
-    let which = match (&ty.sty, cv.val) {
-        (&ty::TyBool, Bool(false)) |
-        (&ty::TyInt(IntTy::Isize), Integral(Isize(Is32(::std::i32::MIN)))) |
-        (&ty::TyInt(IntTy::Isize), Integral(Isize(Is64(::std::i64::MIN)))) |
-        (&ty::TyInt(IntTy::I8), Integral(I8(::std::i8::MIN))) |
-        (&ty::TyInt(IntTy::I16), Integral(I16(::std::i16::MIN))) |
-        (&ty::TyInt(IntTy::I32), Integral(I32(::std::i32::MIN))) |
-        (&ty::TyInt(IntTy::I64), Integral(I64(::std::i64::MIN))) |
-        (&ty::TyInt(IntTy::I128), Integral(I128(::std::i128::MIN))) |
-        (&ty::TyUint(UintTy::Usize), Integral(Usize(Us32(::std::u32::MIN)))) |
-        (&ty::TyUint(UintTy::Usize), Integral(Usize(Us64(::std::u64::MIN)))) |
-        (&ty::TyUint(UintTy::U8), Integral(U8(::std::u8::MIN))) |
-        (&ty::TyUint(UintTy::U16), Integral(U16(::std::u16::MIN))) |
-        (&ty::TyUint(UintTy::U32), Integral(U32(::std::u32::MIN))) |
-        (&ty::TyUint(UintTy::U64), Integral(U64(::std::u64::MIN))) |
-        (&ty::TyUint(UintTy::U128), Integral(U128(::std::u128::MIN))) => Minimum,
-
-        (&ty::TyBool, Bool(true)) |
-        (&ty::TyInt(IntTy::Isize), Integral(Isize(Is32(::std::i32::MAX)))) |
-        (&ty::TyInt(IntTy::Isize), Integral(Isize(Is64(::std::i64::MAX)))) |
-        (&ty::TyInt(IntTy::I8), Integral(I8(::std::i8::MAX))) |
-        (&ty::TyInt(IntTy::I16), Integral(I16(::std::i16::MAX))) |
-        (&ty::TyInt(IntTy::I32), Integral(I32(::std::i32::MAX))) |
-        (&ty::TyInt(IntTy::I64), Integral(I64(::std::i64::MAX))) |
-        (&ty::TyInt(IntTy::I128), Integral(I128(::std::i128::MAX))) |
-        (&ty::TyUint(UintTy::Usize), Integral(Usize(Us32(::std::u32::MAX)))) |
-        (&ty::TyUint(UintTy::Usize), Integral(Usize(Us64(::std::u64::MAX)))) |
-        (&ty::TyUint(UintTy::U8), Integral(U8(::std::u8::MAX))) |
-        (&ty::TyUint(UintTy::U16), Integral(U16(::std::u16::MAX))) |
-        (&ty::TyUint(UintTy::U32), Integral(U32(::std::u32::MAX))) |
-        (&ty::TyUint(UintTy::U64), Integral(U64(::std::u64::MAX))) |
-        (&ty::TyUint(UintTy::U128), Integral(U128(::std::u128::MAX))) => Maximum,
+        (&ty::TyBool, Constant::Bool(true)) => Maximum,
+        (&ty::TyInt(ity), Constant::Int(i)) if i == unsext(cx.tcx, i128::max_value() >> (128 - int_bits(cx.tcx, ity)), ity) => Maximum,
+        (&ty::TyUint(uty), Constant::Int(i)) if clip(cx.tcx, u128::max_value(), uty) == i => Maximum,
 
         _ => return None,
     };
     Some(ExtremeExpr {
-        which: which,
-        expr: expr,
+        which,
+        expr,
     })
 }
 
@@ -1412,9 +1374,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for AbsurdExtremeComparisons {
 /// ```rust
 /// let x : u8 = ...; (x as u32) > 300
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub INVALID_UPCAST_COMPARISONS,
-    Allow,
+    pedantic,
     "a comparison involving an upcast which is always true or false"
 }
 
@@ -1478,7 +1440,7 @@ fn numeric_cast_precast_bounds<'a>(cx: &LateContext, expr: &'a Expr) -> Option<(
         let pre_cast_ty = cx.tables.expr_ty(cast_exp);
         let cast_ty = cx.tables.expr_ty(expr);
         // if it's a cast from i32 to u32 wrapping will invalidate all these checks
-        if type_size(cx, pre_cast_ty) == type_size(cx, cast_ty) {
+        if cx.layout_of(pre_cast_ty).ok().map(|l| l.size) == cx.layout_of(cast_ty).ok().map(|l| l.size) {
             return None;
         }
         match pre_cast_ty.sty {
@@ -1523,24 +1485,16 @@ fn numeric_cast_precast_bounds<'a>(cx: &LateContext, expr: &'a Expr) -> Option<(
     }
 }
 
-#[allow(cast_possible_wrap)]
 fn node_as_const_fullint<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) -> Option<FullInt> {
-    use rustc::middle::const_val::ConstVal::*;
-    use rustc_const_eval::ConstContext;
-
-    let parent_item = cx.tcx.hir.get_parent(expr.id);
-    let parent_def_id = cx.tcx.hir.local_def_id(parent_item);
-    let substs = Substs::identity_for_item(cx.tcx, parent_def_id);
-    match ConstContext::new(cx.tcx, cx.param_env.and(substs), cx.tables).eval(expr) {
-        Ok(val) => if let Integral(const_int) = val.val {
-            match const_int.int_type() {
-                IntType::SignedInt(_) => Some(FullInt::S(const_int.to_u128_unchecked() as i128)),
-                IntType::UnsignedInt(_) => Some(FullInt::U(const_int.to_u128_unchecked())),
-            }
-        } else {
-            None
-        },
-        Err(_) => None,
+    let val = constant(cx, expr)?.0;
+    if let Constant::Int(const_int) = val {
+        match cx.tables.expr_ty(expr).sty {
+            ty::TyInt(ity) => Some(FullInt::S(sext(cx.tcx, const_int, ity))),
+            ty::TyUint(_) => Some(FullInt::U(const_int)),
+            _ => None,
+        }
+    } else {
+        None
     }
 }
 
@@ -1645,9 +1599,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidUpcastComparisons {
 ///
 /// pub foo(map: &mut HashMap<i32, i32>) { .. }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub IMPLICIT_HASHER,
-    Warn,
+    style,
     "missing generalization over different hashers"
 }
 

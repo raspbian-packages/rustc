@@ -12,7 +12,7 @@
 
 [package]
 name = "wincolor"
-version = "0.1.4"
+version = "0.1.6"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 description = "A simple Windows specific API for controlling text color in a Windows console.\n"
 homepage = "https://github.com/BurntSushi/ripgrep/tree/master/wincolor"
@@ -26,7 +26,5 @@ repository = "https://github.com/BurntSushi/ripgrep/tree/master/wincolor"
 name = "wincolor"
 bench = false
 [dependencies.winapi]
-version = "0.2.8"
-
-[dependencies.kernel32-sys]
-version = "0.2.2"
+version = "0.3"
+features = ["consoleapi", "minwindef", "processenv", "winbase", "wincon"]

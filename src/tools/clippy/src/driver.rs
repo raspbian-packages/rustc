@@ -29,7 +29,7 @@ impl ClippyCompilerCalls {
     fn new(run_lints: bool) -> Self {
         Self {
             default: RustcDefaultCalls,
-            run_lints: run_lints,
+            run_lints,
         }
     }
 }
@@ -186,14 +186,15 @@ pub fn main() {
     let clippy_enabled = env::var("CLIPPY_TESTS")
         .ok()
         .map_or(false, |val| val == "true")
-        || orig_args.iter().any(|s| s == "--emit=metadata");
+        || orig_args.iter().any(|s| s == "--emit=dep-info,metadata");
 
     if clippy_enabled {
         args.extend_from_slice(&["--cfg".to_owned(), r#"feature="cargo-clippy""#.to_owned()]);
+        if let Ok(extra_args) = env::var("CLIPPY_ARGS") {
+            args.extend(extra_args.split("__CLIPPY_HACKERY__").filter(|s| !s.is_empty()).map(str::to_owned));
+        }
     }
 
     let mut ccc = ClippyCompilerCalls::new(clippy_enabled);
-    rustc_driver::run(move || {
-        rustc_driver::run_compiler(&args, &mut ccc, None, None)
-    });
+    rustc_driver::run(move || rustc_driver::run_compiler(&args, &mut ccc, None, None));
 }

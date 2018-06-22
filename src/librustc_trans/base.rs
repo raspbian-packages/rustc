@@ -30,7 +30,6 @@ use super::ModuleKind;
 
 use abi;
 use back::link;
-use back::symbol_export;
 use back::write::{self, OngoingCrateTranslation, create_target_machine};
 use llvm::{ContextRef, ModuleRef, ValueRef, Vector, get_param};
 use llvm;
@@ -45,6 +44,7 @@ use rustc::ty::maps::Providers;
 use rustc::dep_graph::{DepNode, DepConstructor};
 use rustc::ty::subst::Kind;
 use rustc::middle::cstore::{self, LinkMeta, LinkagePreference};
+use rustc::middle::exported_symbols;
 use rustc::util::common::{time, print_time_passes_entry};
 use rustc::session::config::{self, NoDebugInfo};
 use rustc::session::Session;
@@ -70,16 +70,18 @@ use time_graph;
 use trans_item::{MonoItem, BaseMonoItemExt, MonoItemExt, DefPathBasedNames};
 use type_::Type;
 use type_of::LayoutLlvmExt;
-use rustc::util::nodemap::{NodeSet, FxHashMap, FxHashSet, DefIdSet};
+use rustc::util::nodemap::{FxHashMap, FxHashSet, DefIdSet};
 use CrateInfo;
+use rustc_data_structures::sync::Lrc;
+use rustc_back::target::TargetTriple;
 
 use std::any::Any;
+use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::str;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
 use std::{i32, usize};
-use std::iter;
 use std::sync::mpsc;
 use syntax_pos::Span;
 use syntax_pos::symbol::InternedString;
@@ -89,8 +91,7 @@ use syntax::ast;
 
 use mir::operand::OperandValue;
 
-pub use rustc_trans_utils::{find_exported_symbols, check_for_rustc_errors_attr};
-pub use rustc_mir::monomorphize::item::linkage_by_name;
+pub use rustc_trans_utils::check_for_rustc_errors_attr;
 
 pub struct StatRecorder<'a, 'tcx: 'a> {
     cx: &'a CodegenCx<'a, 'tcx>,
@@ -196,7 +197,7 @@ pub fn unsized_info<'cx, 'tcx>(cx: &CodegenCx<'cx, 'tcx>,
     let (source, target) = cx.tcx.struct_lockstep_tails(source, target);
     match (&source.sty, &target.sty) {
         (&ty::TyArray(_, len), &ty::TySlice(_)) => {
-            C_usize(cx, len.val.to_const_int().unwrap().to_u64().unwrap())
+            C_usize(cx, len.val.unwrap_u64())
         }
         (&ty::TyDynamic(..), &ty::TyDynamic(..)) => {
             // For now, upcasts are limited to changes in marker
@@ -335,14 +336,6 @@ pub fn cast_shift_expr_rhs(
     cast_shift_rhs(op, lhs, rhs, |a, b| cx.trunc(a, b), |a, b| cx.zext(a, b))
 }
 
-pub fn cast_shift_const_rhs(op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
-    cast_shift_rhs(op,
-                   lhs,
-                   rhs,
-                   |a, b| unsafe { llvm::LLVMConstTrunc(a, b.to_ref()) },
-                   |a, b| unsafe { llvm::LLVMConstZExt(a, b.to_ref()) })
-}
-
 fn cast_shift_rhs<F, G>(op: hir::BinOp_,
                         lhs: ValueRef,
                         rhs: ValueRef,
@@ -471,7 +464,7 @@ pub fn trans_instance<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>, instance: Instance<'tc
 
     let fn_ty = instance.ty(cx.tcx);
     let sig = common::ty_fn_sig(cx, fn_ty);
-    let sig = cx.tcx.erase_late_bound_regions_and_normalize(&sig);
+    let sig = cx.tcx.normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), &sig);
 
     let lldecl = match cx.instances.borrow().get(&instance) {
         Some(&val) => val,
@@ -559,7 +552,9 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
         // late-bound regions, since late-bound
         // regions must appear in the argument
         // listing.
-        let main_ret_ty = main_ret_ty.no_late_bound_regions().unwrap();
+        let main_ret_ty = cx.tcx.erase_regions(
+            &main_ret_ty.no_late_bound_regions().unwrap(),
+        );
 
         if declare::get_defined_value(cx, "main").is_some() {
             // FIXME: We should be smart and show a better diagnostic here.
@@ -586,8 +581,11 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
 
         let (start_fn, args) = if use_start_lang_item {
             let start_def_id = cx.tcx.require_lang_item(StartFnLangItem);
-            let start_fn = callee::resolve_and_get_fn(cx, start_def_id, cx.tcx.mk_substs(
-                iter::once(Kind::from(main_ret_ty))));
+            let start_fn = callee::resolve_and_get_fn(
+                cx,
+                start_def_id,
+                cx.tcx.intern_substs(&[Kind::from(main_ret_ty)]),
+            );
             (start_fn, vec![bx.pointercast(rust_main, Type::i8p(cx).ptr_to()),
                             arg_argc, arg_argv])
         } else {
@@ -606,8 +604,7 @@ fn contains_null(s: &str) -> bool {
 
 fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
                             llmod_id: &str,
-                            link_meta: &LinkMeta,
-                            exported_symbols: &NodeSet)
+                            link_meta: &LinkMeta)
                             -> (ContextRef, ModuleRef, EncodedMetadata) {
     use std::io::Write;
     use flate2::Compression;
@@ -643,7 +640,7 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
                 EncodedMetadata::new());
     }
 
-    let metadata = tcx.encode_metadata(link_meta, exported_symbols);
+    let metadata = tcx.encode_metadata(link_meta);
     if kind == MetadataKind::Uncompressed {
         return (metadata_llcx, metadata_llmod, metadata);
     }
@@ -655,7 +652,7 @@ fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
 
     let llmeta = C_bytes_in_context(metadata_llcx, &compressed);
     let llconst = C_struct_in_context(metadata_llcx, &[llmeta], false);
-    let name = symbol_export::metadata_symbol_name(tcx);
+    let name = exported_symbols::metadata_symbol_name(tcx);
     let buf = CString::new(name).unwrap();
     let llglobal = unsafe {
         llvm::LLVMAddGlobal(metadata_llmod, val_ty(llconst).to_ref(), buf.as_ptr())
@@ -716,15 +713,21 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
     }
 
+    if (tcx.sess.opts.debugging_opts.pgo_gen.is_some() ||
+        !tcx.sess.opts.debugging_opts.pgo_use.is_empty()) &&
+        unsafe { !llvm::LLVMRustPGOAvailable() }
+    {
+        tcx.sess.fatal("this compiler's LLVM does not support PGO");
+    }
+
     let crate_hash = tcx.crate_hash(LOCAL_CRATE);
     let link_meta = link::build_link_meta(crate_hash);
-    let exported_symbol_node_ids = find_exported_symbols(tcx);
 
     // Translate the metadata.
     let llmod_id = "metadata";
     let (metadata_llcx, metadata_llmod, metadata) =
-        time(tcx.sess.time_passes(), "write metadata", || {
-            write_metadata(tcx, llmod_id, &link_meta, &exported_symbol_node_ids)
+        time(tcx.sess, "write metadata", || {
+            write_metadata(tcx, llmod_id, &link_meta)
         });
 
     let metadata_module = ModuleTranslation {
@@ -801,7 +804,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 llcx,
                 tm: create_target_machine(tcx.sess),
             };
-            time(tcx.sess.time_passes(), "write allocator module", || {
+            time(tcx.sess, "write allocator module", || {
                 allocator::trans(tcx, &modules, kind)
             });
 
@@ -935,11 +938,11 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 fn assert_and_save_dep_graph<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    time(tcx.sess.time_passes(),
+    time(tcx.sess,
          "assert dep graph",
          || rustc_incremental::assert_dep_graph(tcx));
 
-    time(tcx.sess.time_passes(),
+    time(tcx.sess,
          "serialize dep graph",
          || rustc_incremental::save_dep_graph(tcx));
 }
@@ -950,7 +953,6 @@ fn collect_and_partition_translation_items<'a, 'tcx>(
 ) -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>)
 {
     assert_eq!(cnum, LOCAL_CRATE);
-    let time_passes = tcx.sess.time_passes();
 
     let collection_mode = match tcx.sess.opts.debugging_opts.print_trans_items {
         Some(ref s) => {
@@ -979,9 +981,11 @@ fn collect_and_partition_translation_items<'a, 'tcx>(
     };
 
     let (items, inlining_map) =
-        time(time_passes, "translation item collection", || {
+        time(tcx.sess, "translation item collection", || {
             collector::collect_crate_mono_items(tcx, collection_mode)
     });
+
+    tcx.sess.abort_if_errors();
 
     ::rustc_mir::monomorphize::assert_symbols_are_distinct(tcx, items.iter());
 
@@ -991,7 +995,7 @@ fn collect_and_partition_translation_items<'a, 'tcx>(
         PartitioningStrategy::FixedUnitCount(tcx.sess.codegen_units())
     };
 
-    let codegen_units = time(time_passes, "codegen unit partitioning", || {
+    let codegen_units = time(tcx.sess, "codegen unit partitioning", || {
         partitioning::partition(tcx,
                                 items.iter().cloned(),
                                 strategy,
@@ -1004,6 +1008,7 @@ fn collect_and_partition_translation_items<'a, 'tcx>(
     let translation_items: DefIdSet = items.iter().filter_map(|trans_item| {
         match *trans_item {
             MonoItem::Fn(ref instance) => Some(instance.def_id()),
+            MonoItem::Static(def_id) => Some(def_id),
             _ => None,
         }
     }).collect();
@@ -1079,7 +1084,28 @@ impl CrateInfo {
             used_crates_dynamic: cstore::used_crates(tcx, LinkagePreference::RequireDynamic),
             used_crates_static: cstore::used_crates(tcx, LinkagePreference::RequireStatic),
             used_crate_source: FxHashMap(),
+            wasm_custom_sections: BTreeMap::new(),
+            wasm_imports: FxHashMap(),
+            lang_item_to_crate: FxHashMap(),
+            missing_lang_items: FxHashMap(),
         };
+        let lang_items = tcx.lang_items();
+
+        let load_wasm_items = tcx.sess.crate_types.borrow()
+            .iter()
+            .any(|c| *c != config::CrateTypeRlib) &&
+            tcx.sess.opts.target_triple == TargetTriple::from_triple("wasm32-unknown-unknown");
+
+        if load_wasm_items {
+            info!("attempting to load all wasm sections");
+            for &id in tcx.wasm_custom_sections(LOCAL_CRATE).iter() {
+                let (name, contents) = fetch_wasm_section(tcx, id);
+                info.wasm_custom_sections.entry(name)
+                    .or_insert(Vec::new())
+                    .extend(contents);
+            }
+            info.load_wasm_imports(tcx, LOCAL_CRATE);
+        }
 
         for &cnum in tcx.crates().iter() {
             info.native_libraries.insert(cnum, tcx.native_libraries(cnum));
@@ -1100,14 +1126,37 @@ impl CrateInfo {
             if tcx.is_no_builtins(cnum) {
                 info.is_no_builtins.insert(cnum);
             }
+            if load_wasm_items {
+                for &id in tcx.wasm_custom_sections(cnum).iter() {
+                    let (name, contents) = fetch_wasm_section(tcx, id);
+                    info.wasm_custom_sections.entry(name)
+                        .or_insert(Vec::new())
+                        .extend(contents);
+                }
+                info.load_wasm_imports(tcx, cnum);
+            }
+            let missing = tcx.missing_lang_items(cnum);
+            for &item in missing.iter() {
+                if let Ok(id) = lang_items.require(item) {
+                    info.lang_item_to_crate.insert(item, id.krate);
+                }
+            }
+            info.missing_lang_items.insert(cnum, missing);
         }
-
 
         return info
     }
+
+    fn load_wasm_imports(&mut self, tcx: TyCtxt, cnum: CrateNum) {
+        for (&id, module) in tcx.wasm_import_module_map(cnum).iter() {
+            let instance = Instance::mono(tcx, id);
+            let import_name = tcx.symbol_name(instance);
+            self.wasm_imports.insert(import_name.to_string(), module.clone());
+        }
+    }
 }
 
-fn is_translated_function(tcx: TyCtxt, id: DefId) -> bool {
+fn is_translated_item(tcx: TyCtxt, id: DefId) -> bool {
     let (all_trans_items, _) =
         tcx.collect_and_partition_translation_items(LOCAL_CRATE);
     all_trans_items.contains(&id)
@@ -1222,7 +1271,7 @@ pub fn provide(providers: &mut Providers) {
     providers.collect_and_partition_translation_items =
         collect_and_partition_translation_items;
 
-    providers.is_translated_function = is_translated_function;
+    providers.is_translated_item = is_translated_item;
 
     providers.codegen_unit = |tcx, name| {
         let (_, all) = tcx.collect_and_partition_translation_items(LOCAL_CRATE);
@@ -1232,6 +1281,39 @@ pub fn provide(providers: &mut Providers) {
             .expect(&format!("failed to find cgu with name {:?}", name))
     };
     providers.compile_codegen_unit = compile_codegen_unit;
+
+    provide_extern(providers);
+}
+
+pub fn provide_extern(providers: &mut Providers) {
+    providers.dllimport_foreign_items = |tcx, krate| {
+        let module_map = tcx.foreign_modules(krate);
+        let module_map = module_map.iter()
+            .map(|lib| (lib.def_id, lib))
+            .collect::<FxHashMap<_, _>>();
+
+        let dllimports = tcx.native_libraries(krate)
+            .iter()
+            .filter(|lib| {
+                if lib.kind != cstore::NativeLibraryKind::NativeUnknown {
+                    return false
+                }
+                let cfg = match lib.cfg {
+                    Some(ref cfg) => cfg,
+                    None => return true,
+                };
+                attr::cfg_matches(cfg, &tcx.sess.parse_sess, None)
+            })
+            .filter_map(|lib| lib.foreign_module)
+            .map(|id| &module_map[&id])
+            .flat_map(|module| module.foreign_items.iter().cloned())
+            .collect();
+        Lrc::new(dllimports)
+    };
+
+    providers.is_dllimport_foreign_item = |tcx, def_id| {
+        tcx.dllimport_foreign_items(def_id.krate).contains(&def_id)
+    };
 }
 
 pub fn linkage_to_llvm(linkage: Linkage) -> llvm::Linkage {
@@ -1278,4 +1360,45 @@ mod temp_stable_hash_impls {
             // do nothing
         }
     }
+}
+
+fn fetch_wasm_section(tcx: TyCtxt, id: DefId) -> (String, Vec<u8>) {
+    use rustc::mir::interpret::{GlobalId, Value, PrimVal};
+    use rustc::middle::const_val::ConstVal;
+
+    info!("loading wasm section {:?}", id);
+
+    let section = tcx.get_attrs(id)
+        .iter()
+        .find(|a| a.check_name("wasm_custom_section"))
+        .expect("missing #[wasm_custom_section] attribute")
+        .value_str()
+        .expect("malformed #[wasm_custom_section] attribute");
+
+    let instance = ty::Instance::mono(tcx, id);
+    let cid = GlobalId {
+        instance,
+        promoted: None
+    };
+    let param_env = ty::ParamEnv::reveal_all();
+    let val = tcx.const_eval(param_env.and(cid)).unwrap();
+
+    let val = match val.val {
+        ConstVal::Value(val) => val,
+        ConstVal::Unevaluated(..) => bug!("should be evaluated"),
+    };
+    let val = match val {
+        Value::ByRef(ptr, _align) => ptr.into_inner_primval(),
+        ref v => bug!("should be ByRef, was {:?}", v),
+    };
+    let mem = match val {
+        PrimVal::Ptr(mem) => mem,
+        ref v => bug!("should be Ptr, was {:?}", v),
+    };
+    assert_eq!(mem.offset, 0);
+    let alloc = tcx
+        .interpret_interner
+        .get_alloc(mem.alloc_id)
+        .expect("miri allocation never successfully created");
+    (section.to_string(), alloc.bytes.clone())
 }

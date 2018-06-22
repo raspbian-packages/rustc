@@ -16,9 +16,9 @@ use utils::{in_macro, span_lint};
 /// ```rust
 /// 0 / x; 0 * x; x & 0
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub ERASING_OP,
-    Warn,
+    correctness,
     "using erasing operations, e.g. `x * 0` or `y & 0`"
 }
 
@@ -51,7 +51,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ErasingOp {
 
 fn check(cx: &LateContext, e: &Expr, span: Span) {
     if let Some(Constant::Int(v)) = constant_simple(cx, e) {
-        if v.to_u128_unchecked() == 0 {
+        if v == 0 {
             span_lint(
                 cx,
                 ERASING_OP,

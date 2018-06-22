@@ -17,8 +17,9 @@ use rustc_data_structures::stable_hasher::{HashStable, StableHasher,
 use traits;
 use ty::{self, TyCtxt, TypeFoldable};
 use ty::fast_reject::{self, SimplifiedType};
-use std::rc::Rc;
+use rustc_data_structures::sync::Lrc;
 use syntax::ast::Name;
+use util::captures::Captures;
 use util::nodemap::{DefIdMap, FxHashMap};
 
 /// A per-trait graph of impls in specialization order. At the moment, this
@@ -36,6 +37,7 @@ use util::nodemap::{DefIdMap, FxHashMap};
 ///   parents of a given specializing impl, which is needed for extracting
 ///   default items amongst other things. In the simple "chain" rule, every impl
 ///   has at most one parent.
+#[derive(RustcEncodable, RustcDecodable)]
 pub struct Graph {
     // all impls have a parent; the "root" impls have as their parent the def_id
     // of the trait
@@ -47,6 +49,7 @@ pub struct Graph {
 
 /// Children of a given impl, grouped into blanket/non-blanket varieties as is
 /// done in `TraitDef`.
+#[derive(RustcEncodable, RustcDecodable)]
 struct Children {
     // Impls of a trait (or specializations of a given impl). To allow for
     // quicker lookup, the impls are indexed by a simplified version of their
@@ -190,13 +193,13 @@ impl<'a, 'gcx, 'tcx> Children {
         Ok(Inserted::BecameNewSibling(last_lint))
     }
 
-    fn iter_mut(&'a mut self) -> Box<Iterator<Item = &'a mut DefId> + 'a> {
+    fn iter_mut(&'a mut self) -> Box<dyn Iterator<Item = &'a mut DefId> + 'a> {
         let nonblanket = self.nonblanket_impls.iter_mut().flat_map(|(_, v)| v.iter_mut());
         Box::new(self.blanket_impls.iter_mut().chain(nonblanket))
     }
 
     fn filtered_mut(&'a mut self, sty: SimplifiedType)
-                    -> Box<Iterator<Item = &'a mut DefId> + 'a> {
+                    -> Box<dyn Iterator<Item = &'a mut DefId> + 'a> {
         let nonblanket = self.nonblanket_impls.entry(sty).or_insert(vec![]).iter_mut();
         Box::new(self.blanket_impls.iter_mut().chain(nonblanket))
     }
@@ -311,9 +314,10 @@ impl<'a, 'gcx, 'tcx> Node {
     }
 
     /// Iterate over the items defined directly by the given (impl or trait) node.
-    #[inline] // FIXME(#35870) Avoid closures being unexported due to impl Trait.
-    pub fn items(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>)
-                 -> impl Iterator<Item = ty::AssociatedItem> + 'a {
+    pub fn items(
+        &self,
+        tcx: TyCtxt<'a, 'gcx, 'tcx>,
+    ) -> impl Iterator<Item = ty::AssociatedItem> + 'a {
         tcx.associated_items(self.def_id())
     }
 
@@ -327,7 +331,7 @@ impl<'a, 'gcx, 'tcx> Node {
 
 pub struct Ancestors {
     trait_def_id: DefId,
-    specialization_graph: Rc<Graph>,
+    specialization_graph: Lrc<Graph>,
     current_source: Option<Node>,
 }
 
@@ -365,9 +369,13 @@ impl<'a, 'gcx, 'tcx> Ancestors {
     /// Search the items from the given ancestors, returning each definition
     /// with the given name and the given kind.
     #[inline] // FIXME(#35870) Avoid closures being unexported due to impl Trait.
-    pub fn defs(self, tcx: TyCtxt<'a, 'gcx, 'tcx>, trait_item_name: Name,
-                trait_item_kind: ty::AssociatedKind, trait_def_id: DefId)
-                -> impl Iterator<Item = NodeItem<ty::AssociatedItem>> + 'a {
+    pub fn defs(
+        self,
+        tcx: TyCtxt<'a, 'gcx, 'tcx>,
+        trait_item_name: Name,
+        trait_item_kind: ty::AssociatedKind,
+        trait_def_id: DefId,
+    ) -> impl Iterator<Item = NodeItem<ty::AssociatedItem>> + Captures<'gcx> + Captures<'tcx> + 'a {
         self.flat_map(move |node| {
             node.items(tcx).filter(move |impl_item| {
                 impl_item.kind == trait_item_kind &&
@@ -391,9 +399,9 @@ pub fn ancestors(tcx: TyCtxt,
     }
 }
 
-impl<'gcx> HashStable<StableHashingContext<'gcx>> for Children {
+impl<'a> HashStable<StableHashingContext<'a>> for Children {
     fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'gcx>,
+                                          hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
         let Children {
             ref nonblanket_impls,

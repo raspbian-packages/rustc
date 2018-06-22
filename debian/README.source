@@ -20,10 +20,6 @@ progressing in splitting them out.
 
 Here below the remaining ones, with the technical reasons.
 
- * binaryen from https://github.com/alexcrichton/binaryen.git
-   -> temporary until LLVM lld is available
-   - see issue upstream: TODO waiting for alexcrichton to create one
-
  * compiler-rt from https://github.com/rust-lang/compiler-rt
    -> system-wide compiler-rt fails during linkage
 
@@ -189,7 +185,8 @@ Comparing Debian rustc vs upstream rustc
 This package does things the Debian way, which differs significantly from
 upstream practices. If you find a bug, you might want to check if it is present
 in the upstream package. Run "debian/rules debian/config.toml" to generate our
-config.toml that you can then use in an unpacked upstream directory.
+config.toml that you can then use in an upstream directory **unpacked from the
+release tarball*. (It is more complex to get this working with their git repo.)
 
 This will configure it in a "halfway" style between upstream and Debian.
 Specifically, it will not build LLVM nor download stuff from crates.io, yet

@@ -17,6 +17,7 @@ types:
 * The [machine types] (integer and floating-point).
 * The [machine-dependent integer types].
 * The [textual types] `char` and `str`.
+* The [never type] `!`
 
 There are also some primitive constructs for generic types built in to the
 language:
@@ -31,6 +32,7 @@ language:
 [machine types]: #machine-types
 [machine-dependent integer types]: #machine-dependent-integer-types
 [textual types]: #textual-types
+[never-type]: #never-type
 [Tuples]: #tuple-types
 [Arrays]: #array-and-slice-types
 [Slices]: #array-and-slice-types
@@ -83,6 +85,12 @@ A value of type `str` is a Unicode string, represented as an array of 8-bit
 unsigned bytes holding a sequence of UTF-8 code points. Since `str` is a
 [dynamically sized type], it is not a _first-class_ type, but can only be
 instantiated through a pointer type, such as `&str`.
+
+## Never type
+
+The never type `!` is a type with no values, representing the result of
+computations that never complete. Expressions of type `!` can be coerced into
+any other type.
 
 ## Tuple types
 
@@ -365,30 +373,101 @@ x = bo(5,7);
 ## Closure types
 
 A [closure expression] produces a closure value with a unique, anonymous type
-that cannot be written out.
+that cannot be written out. A closure type is approximately equivalent to a
+struct which contains the captured variables. For instance, the following
+closure:
 
-Depending on the requirements of the closure, its type implements one or
-more of the closure traits:
+```rust
+fn f<F : FnOnce() -> String> (g: F) {
+    println!("{}", g());
+}
 
-* `FnOnce`
-  : The closure can be called once. A closure called as `FnOnce` can move out
-    of its captured values.
+let mut s = String::from("foo");
+let t = String::from("bar");
 
-* `FnMut`
-  : The closure can be called multiple times as mutable. A closure called as
-    `FnMut` can mutate values from its environment. `FnMut` inherits from
-    `FnOnce` (i.e. anything implementing `FnMut` also implements `FnOnce`).
+f(|| {
+    s += &*t;
+    s
+});
+// Prints "foobar".
+```
 
-* `Fn` : The closure can be called multiple times through a shared reference. A
-    closure called as `Fn` can neither move out from nor mutate captured
-    variables, but read-only access to such values is allowed. Using `move` to
-    capture variables by value is allowed so long as they aren't mutated or
-    moved in the body of the closure. `Fn` inherits from `FnMut`, which itself
-    inherits from `FnOnce`.
+generates a closure type roughly like the following:
 
-Closures that don't use anything from their environment, called *non-capturing
-closures*, can be coerced to function pointers (`fn`) with the matching
-signature. To adopt the example from the section above:
+```rust,ignore
+struct Closure<'a> {
+    s : String,
+    t : &'a String,
+}
+
+impl<'a> (FnOnce() -> String) for Closure<'a> {
+    fn call_once(self) -> String {
+        self.s += &*self.t;
+        self.s
+    }
+}
+```
+
+so that the call to `f` works as if it were:
+
+```rust,ignore
+f(Closure{s: s, t: &t});
+```
+
+The compiler prefers to capture a closed-over variable by immutable borrow,
+followed by mutable borrow, by copy, and finally by move. It will pick the first
+choice of these that allows the closure to compile. If the `move` keyword is
+used, then all captures are by move or copy, regardless of whether a borrow
+would work. The `move` keyword is usually used to allow the closure to outlive
+the captured values, such as if the closure is being returned or used to spawn a
+new thread.
+
+Composite types such as structs, tuples, and enums are always captured entirely,
+not by individual fields. It may be necessary to borrow into a local variable in
+order to capture a single field:
+
+```rust
+# use std::collections::HashSet;
+# 
+struct SetVec {
+    set: HashSet<u32>,
+    vec: Vec<u32>
+}
+
+impl SetVec {
+    fn populate(&mut self) {
+        let vec = &mut self.vec;
+        self.set.iter().for_each(|&n| {
+            vec.push(n);
+        })
+    }
+}
+```
+
+If, instead, the closure were to use `self.vec` directly, then it would attempt
+to capture `self` by mutable reference. But since `self.set` is already
+borrowed to iterate over, the code would not compile.
+
+### Call traits and coercions
+
+Closure types all implement `[FnOnce]`, indicating that they can be called once
+by consuming ownership of the closure. Additionally, some closures implement
+more specific call traits:
+
+* A closure which does not move out of any captured variables implements
+  `[FnMut]`, indicating that it can be called by mutable reference.
+
+* A closure which does not mutate or move out of any captured variables
+  implements `[Fn]`, indicating that it can be called by shared reference.
+
+> Note: `move` closures may still implement `[Fn]` or `[FnMut]`, even though
+> they capture variables by move. This is because the traits implemented by a
+> closure type are determined by what the closure does with captured values, not
+> how it captures them.
+
+*Non-capturing closures* are closures that don't capture anything from their
+environment. They can be coerced to function pointers (`fn`) with the matching
+signature.
 
 ```rust
 let add = |x, y| x + y;
@@ -400,7 +479,39 @@ let bo: Binop = add;
 x = bo(5,7);
 ```
 
+### Other traits
+
+All closure types implement `[Sized]`. Additionally, closure types implement the
+following traits if allowed to do so by the types of the captures it stores:
+
+* `[Clone]`
+* `[Copy]`
+* `[Sync]`
+* `[Send]`
+
+The rules for `[Send]` and `[Sync]` match those for normal struct types, while
+`[Clone]` and `[Copy]` behave as if [derived][derive]. For `[Clone]`, the order
+of cloning of the captured variables is left unspecified.
+
+Because captures are often by reference, the following general rules arise:
+
+* A closure is `[Sync]` if all variables captured by mutable reference, copy, or
+  move are `[Sync]`.
+* A closure is `[Send]` if all variables captured by shared reference are
+  `[Sync]`, and all values captured by mutable reference, copy, or move are
+  `[Send]`.
+* A closure is `[Clone]` or `[Copy]` if it does not capture any values by
+  mutable reference, and if all values it captures by copy or move are `[Clone]`
+  or `[Copy]`, respectively.
+
 ## Trait objects
+
+> **<sup>Syntax</sup>**  
+> _TraitObjectType_ :  
+> &nbsp;&nbsp; _LifetimeOrPath_ ( `+` _LifetimeOrPath_ )<sup>\*</sup> `+`<sup>?</sup>
+>
+> _LifetimeOrPath_ :
+> &nbsp;&nbsp; [_Path_] | [_LIFETIME_OR_LABEL_]
 
 A *trait object* is an opaque value of another type that implements a set of
 traits. The set of traits is made up of an [object safe] *base trait* plus any
@@ -409,11 +520,12 @@ number of [auto traits].
 Trait objects implement the base trait, its auto traits, and any super traits
 of the base trait.
 
-Trait objects are written as the path to the base trait followed by the list
-of auto traits followed optionally by a lifetime bound all separated by `+`. For
-example, given a trait `Trait`, the following are all trait objects: `Trait`,
-`Trait + Send`, `Trait + Send + Sync`, `Trait + 'static`,
-`Trait + Send + 'static`.
+Trait objects are written the same as trait bounds, but with the following
+restrictions. All traits except the first trait must be auto traits, there may
+not be more than one lifetime, and opt-out bounds (e.g. `?sized`) are not
+allowed. For example, given a trait `Trait`, the following are all trait
+objects: `Trait`, `Trait + Send`, `Trait + Send + Sync`, `Trait + 'static`,
+`Trait + Send + 'static`, `Trait +`, `'static + Trait`.
 
 Two trait object types alias each other if the base traits alias each other and
 if the sets of auto traits are the same and the lifetime bounds are the same.
@@ -471,66 +583,11 @@ type signature of `print`, and the cast expression in `main`.
 ### Trait Object Lifetime Bounds
 
 Since a trait object can contain references, the lifetimes of those references
-need to be expressed as part of the trait object. The assumed lifetime of
-references held by a trait object is called its *default object lifetime bound*.
-These were defined in [RFC 599] and amended in [RFC 1156].
+need to be expressed as part of the trait object. This lifetime is written as
+`Trait + 'a`. There are [defaults] that allow this lifetime to usually be
+infered with a sensible choice.
 
-For traits that themselves have no lifetime parameters:
-* If there is a unique bound from the containing type then that is the default.
-* If there is more than one bound from the containing type then an explicit
-  bound must be specified.
-* Otherwise the default bound is `'static`.
-
-```rust,ignore
-// For the following trait...
-trait Foo { }
-
-// These two are the same as Box<T> has no lifetime bound on T
-Box<Foo>
-Box<Foo + 'static>
-
-// ...and so are these:
-impl Foo {}
-impl Foo + 'static {}
-
-// ...so are these, because &'a T requires T: 'a
-&'a Foo
-&'a (Foo + 'a)
-
-// std::cell::Ref<'a, T> also requires T: 'a, so these are the same
-std::cell::Ref<'a, Foo>
-std::cell::Ref<'a, Foo + 'a>
-
-// This is an error:
-struct TwoBounds<'a, 'b, T: ?Sized + 'a + 'b>
-TwoBounds<'a, 'b, Foo> // Error: the lifetime bound for this object type cannot
-                       // be deduced from context
-
-```
-
-The `+ 'static` and `+ 'a` refer to the default bounds of those kinds of trait
-objects, and also to how you can directly override them. Note that the innermost
-object sets the bound, so `&'a Box<Foo>` is still `&'a Box<Foo + 'static>`.
-
-For traits that have a single lifetime _bound_ of their own then, instead of
-infering 'static as the default bound, the bound on the trait is used instead
-
-```rust,ignore
-// For the following trait...
-trait Bar<'a>: 'a { }
-
-// ...these two are the same:
-Box<Bar<'a>>
-Box<Bar<'a> + 'a>
-
-// ...and so are these:
-impl<'a> Foo<'a> {}
-impl<'a> Foo<'a> + 'a {}
-
-// This is still an error:
-struct TwoBounds<'a, 'b, T: ?Sized + 'a + 'b>
-TwoBounds<'a, 'b, Foo<'c>>
-```
+[defaults]: lifetime-elision.html#default-trait-object-lifetimes
 
 ## Type parameters
 
@@ -554,8 +611,8 @@ Here, `first` has type `A`, referring to `to_vec`'s `A` type parameter; and
 
 ## Self types
 
-The special type `Self` has a meaning within traits and impls: it refers to
-the implementing type. For example, in:
+The special type `Self` has a meaning within traits and implementations: it
+refers to the implementing type. For example, in:
 
 ```rust
 pub trait From<T> {
@@ -584,7 +641,7 @@ impl Printable for String {
 }
 ```
 
-The notation `&self` is a shorthand for `self: &Self`.
+> Note: The notation `&self` is a shorthand for `self: &Self`.
 
 [Fn]: ../std/ops/trait.Fn.html
 [FnMut]: ../std/ops/trait.FnMut.html
@@ -593,14 +650,15 @@ The notation `&self` is a shorthand for `self: &Self`.
 [Clone]: special-types-and-traits.html#clone
 [Send]: special-types-and-traits.html#send
 [Sync]: special-types-and-traits.html#sync
+[derive]: attributes.html#derive
 [`Vec<T>`]: ../std/vec/struct.Vec.html
 [dynamically sized type]: dynamically-sized-types.html
 [dynamically sized types]: dynamically-sized-types.html
-[RFC 599]: https://github.com/rust-lang/rfcs/blob/master/text/0599-default-object-bound.md
-[RFC 1156]: https://github.com/rust-lang/rfcs/blob/master/text/1156-adjust-default-object-bounds.md
 [struct expression]: expressions/struct-expr.html
 [closure expression]: expressions/closure-expr.html
 [auto traits]: special-types-and-traits.html#auto-traits
 [object safe]: items/traits.html#object-safety
 [issue 47010]: https://github.com/rust-lang/rust/issues/47010
 [issue 33140]: https://github.com/rust-lang/rust/issues/33140
+[_PATH_]: paths.html
+[_LIFETIME_OR_LABEL_]: tokens.html#lifetimes-and-loop-labels

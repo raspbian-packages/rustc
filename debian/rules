@@ -10,16 +10,21 @@ RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+)
 LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
 # Sed expression that matches the "rustc" we have in our Build-Depends field
 SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
+# Version of /usr/bin/rustc
+LOCAL_RUST_VERSION := $(shell rustc --version --verbose | sed -ne 's/^release: //p')
 
 include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
 # set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
-ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 's/^release: //p')" '>=' 1.19.0; echo $$?))
-RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
-export RUSTC_BOOTSTRAP = 1
+RUSTFLAGS_STAGE_NOT_0 = --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
+ifeq (0,$(shell dpkg --compare-versions "$(LOCAL_RUST_VERSION)" '>=' 1.26.0; echo $$?))
+RUSTFLAGS_STAGE_0 = $(RUSTFLAGS_STAGE_NOT_0)
+else
+RUSTFLAGS_STAGE_0 = -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
 endif
+export RUSTFLAGS_STAGE_0 RUSTFLAGS_STAGE_NOT_0
 ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
 export CARGO_INCREMENTAL = 0
 endif
@@ -72,7 +77,7 @@ RUSTBUILD_TEST_FLAGS =
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
 	newver=$(RUST_VERSION); \
-	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver; fi
+	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver $(CARGO_NEW); fi
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
@@ -133,8 +138,7 @@ ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 endif
 
 # Build products or non-source files in src/, that shouldn't go in rust-src
-SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
-	src/bootstrap/bootstrap.pyc \
+SRC_CLEAN = src/bootstrap/bootstrap.pyc \
 	src/etc/__pycache__/
 
 # Workaround for linux #865549
@@ -193,8 +197,6 @@ override_dh_auto_configure: debian/config.toml
 	# Other partially-excluded vendor crates in d/copyright
 	debian/prune-checksums src/vendor/winapi-*/.cargo-checksum.json
 	debian/prune-checksums src/vendor/shlex/.cargo-checksum.json
-	# We patched this for sparc64 support
-	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
 
@@ -205,7 +207,7 @@ override_dh_auto_clean:
 
 # upstream bundles this in the source, but in Debian we rebuild everything yo
 generate-sources:
-	$(MAKE) -C src/rt/hoedown src/html_blocks.c
+	true
 
 override_dh_auto_build-arch: generate-sources
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
@@ -221,14 +223,14 @@ ifeq (true,$(BUILD_DOCS))
 endif
 
 TEST_LOG = debian/rustc-tests.log
-FAILURES_ALLOWED = 5
+FAILURES_ALLOWED = 8
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 15
+  FAILURES_ALLOWED = 18
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
 endif
-FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
+FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
 # ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
@@ -239,13 +241,20 @@ override_dh_auto_test-arch:
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
-	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
+	{ $(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS); echo $$?; } | tee -a $(TEST_LOG)
 	test -f $(TEST_LOG)
-	echo "Summary of specific test failures:"; \
+	echo "==== Debian rustc test report ===="; \
+	echo "Specific test failures:"; \
 	$(FAILED_TESTS); \
 	num_failures=$$($(FAILED_TESTS) | wc -l); \
-	echo -n "$${num_failures} tests failed, $(FAILURES_ALLOWED) maximum allowed. "; \
-	if test "$${num_failures}" -le $(FAILURES_ALLOWED); then \
+	exit_code=$$(tail -n1 $(TEST_LOG)); \
+	echo "Summary: exit code $$exit_code, counted $$num_failures tests failed."; \
+	echo -n "$(FAILURES_ALLOWED) maximum allowed. "; \
+	if test "$$num_failures" -eq 0 -a "$$exit_code" -ne 0; then \
+	  echo "Aborting just in case, because we missed counting some test failures."; \
+	  echo "This is a bug in the Debian packaging, please file a report. "; \
+	  false; \
+	elif test "$$num_failures" -le $(FAILURES_ALLOWED); then \
 	  echo "Continuing..."; \
 	else \
 	  echo "Aborting the build."; \

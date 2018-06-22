@@ -1,6 +1,6 @@
 [package]
 name = "jobserver"
-version = "0.1.9"
+version = "0.1.11"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/alexcrichton/jobserver-rs"
@@ -10,11 +10,14 @@ description = """
 An implementation of the GNU make jobserver for Rust
 """
 
+[dependencies]
+log = "0.4"
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-rand = "0.3"
+rand = "0.4"
 
 [dev-dependencies]
 futures = "0.1"

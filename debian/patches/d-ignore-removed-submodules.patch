@@ -31,7 +31,7 @@ Forwarded: not-needed
  ]
  
  # Curiously, compiletest will segfault if compiled with opt-level=3 on 64-bit
-@@ -59,18 +40,3 @@
+@@ -59,19 +40,3 @@
  debug = false
  debug-assertions = false
  
@@ -50,12 +50,13 @@ Forwarded: not-needed
 -# RLS depends on `rustfmt` from crates.io, so we put this in a `[patch]` section
 -# for crates.io
 -rustfmt-nightly = { path = "tools/rustfmt" }
+-clippy_lints = { path = "tools/clippy/clippy_lints" }
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
 @@ -618,10 +618,6 @@
+                 os.path.join(self.rust_root, "src/bootstrap/Cargo.toml")]
+         for _ in range(1, self.verbose):
              args.append("--verbose")
-             if self.verbose > 1:
-                 args.append("--verbose")
 -        if self.use_locked_deps:
 -            args.append("--locked")
 -        if self.use_vendored_sources:

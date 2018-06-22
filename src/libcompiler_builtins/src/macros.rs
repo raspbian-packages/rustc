@@ -210,6 +210,7 @@ macro_rules! intrinsics {
         $($rest:tt)*
     ) => (
         #[cfg(target_arch = "arm")]
+        #[cfg_attr(not(feature = "mangled-names"), no_mangle)]
         pub extern $abi fn $name( $($argname: $ty),* ) -> $ret {
             $($body)*
         }
@@ -288,7 +289,7 @@ macro_rules! u128_lang_items {
             $($body:tt)*
         }
     )*) => ($(
-        #[cfg_attr(not(any(stage0, feature = "gen-tests")), lang = $lang)]
+        #[cfg_attr(not(any(stage0, feature = "no-lang-items")), lang = $lang)]
         pub fn $name( $($argname:  $ty),* ) -> $ret {
             $($body)*
         }

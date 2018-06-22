@@ -25,6 +25,8 @@ source "$ci_dir/shared.sh"
 
 if [ "$TRAVIS" == "true" ] && [ "$TRAVIS_BRANCH" != "auto" ]; then
     RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-quiet-tests"
+else
+    RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --set build.print-step-timings"
 fi
 
 RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-sccache"
@@ -46,7 +48,6 @@ export RUST_RELEASE_CHANNEL=stable
 if [ "$DEPLOY$DEPLOY_ALT" != "" ]; then
   RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --release-channel=$RUST_RELEASE_CHANNEL"
   RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --enable-llvm-static-stdcpp"
-  RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --disable-thinlto"
 
   if [ "$NO_LLVM_ASSERTIONS" = "1" ]; then
     RUST_CONFIGURE_ARGS="$RUST_CONFIGURE_ARGS --disable-llvm-assertions"
@@ -67,6 +68,19 @@ else
   fi
 fi
 
+# We've had problems in the past of shell scripts leaking fds into the sccache
+# server (#48192) which causes Cargo to erroneously think that a build script
+# hasn't finished yet. Try to solve that problem by starting a very long-lived
+# sccache server at the start of the build, but no need to worry if this fails.
+SCCACHE_IDLE_TIMEOUT=10800 sccache --start-server || true
+
+if [ "$PARALLEL_CHECK" != "" ]; then
+  $SRC/configure --enable-experimental-parallel-queries
+  python2.7 ../x.py check
+  rm -f config.toml
+  rm -rf build
+fi
+
 travis_fold start configure
 travis_time_start
 $SRC/configure $RUST_CONFIGURE_ARGS
@@ -85,11 +99,19 @@ make check-bootstrap
 travis_fold end check-bootstrap
 travis_time_finish
 
+# Display the CPU and memory information. This helps us know why the CI timing
+# is fluctuating.
+travis_fold start log-system-info
 if [ "$TRAVIS_OS_NAME" = "osx" ]; then
+    system_profiler SPHardwareDataType || true
+    sysctl hw || true
     ncpus=$(sysctl -n hw.ncpu)
 else
+    cat /proc/cpuinfo || true
+    cat /proc/meminfo || true
     ncpus=$(grep processor /proc/cpuinfo | wc -l)
 fi
+travis_fold end log-system-info
 
 if [ ! -z "$SCRIPT" ]; then
   sh -x -c "$SCRIPT"
@@ -98,7 +120,7 @@ else
     travis_fold start "make-$1"
     travis_time_start
     echo "make -j $ncpus $1"
-    make -j $ncpus "$1"
+    make -j $ncpus $1
     local retval=$?
     travis_fold end "make-$1"
     travis_time_finish

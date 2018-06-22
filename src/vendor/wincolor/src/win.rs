@@ -1,20 +1,22 @@
 use std::io;
 use std::mem;
 
-use kernel32;
-use winapi::{DWORD, WORD};
-use winapi::winbase::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
-use winapi::wincon::{
+use winapi::shared::minwindef::{DWORD, WORD};
+use winapi::um::consoleapi;
+use winapi::um::processenv;
+use winapi::um::winbase::{STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+use winapi::um::wincon::{
+    self,
     FOREGROUND_BLUE as FG_BLUE,
     FOREGROUND_GREEN as FG_GREEN,
     FOREGROUND_RED as FG_RED,
     FOREGROUND_INTENSITY as FG_INTENSITY,
 };
 
-const FG_CYAN: DWORD = FG_BLUE | FG_GREEN;
-const FG_MAGENTA: DWORD = FG_BLUE | FG_RED;
-const FG_YELLOW: DWORD = FG_GREEN | FG_RED;
-const FG_WHITE: DWORD = FG_BLUE | FG_GREEN | FG_RED;
+const FG_CYAN: WORD = FG_BLUE | FG_GREEN;
+const FG_MAGENTA: WORD = FG_BLUE | FG_RED;
+const FG_YELLOW: WORD = FG_GREEN | FG_RED;
+const FG_WHITE: WORD = FG_BLUE | FG_GREEN | FG_RED;
 
 /// A Windows console.
 ///
@@ -40,8 +42,8 @@ impl Console {
     fn create_for_stream(handle_id: DWORD) -> io::Result<Console> {
         let mut info = unsafe { mem::zeroed() };
         let res = unsafe {
-            let handle = kernel32::GetStdHandle(handle_id);
-            kernel32::GetConsoleScreenBufferInfo(handle, &mut info)
+            let handle = processenv::GetStdHandle(handle_id);
+            wincon::GetConsoleScreenBufferInfo(handle, &mut info)
         };
         if res == 0 {
             return Err(io::Error::last_os_error());
@@ -72,8 +74,8 @@ impl Console {
     fn set(&mut self) -> io::Result<()> {
         let attr = self.cur_attr.to_word();
         let res = unsafe {
-            let handle = kernel32::GetStdHandle(self.handle_id);
-            kernel32::SetConsoleTextAttribute(handle, attr)
+            let handle = processenv::GetStdHandle(self.handle_id);
+            wincon::SetConsoleTextAttribute(handle, attr)
         };
         if res == 0 {
             return Err(io::Error::last_os_error());
@@ -114,6 +116,41 @@ impl Console {
         self.cur_attr = self.start_attr;
         self.set()
     }
+
+    /// Toggle virtual terminal processing.
+    ///
+    /// This method attempts to toggle virtual terminal processing for this
+    /// console. If there was a problem toggling it, then an error returned.
+    /// On success, the caller may assume that toggling it was successful.
+    ///
+    /// When virtual terminal processing is enabled, characters emitted to the
+    /// console are parsed for VT100 and similar control character sequences
+    /// that control color and other similar operations.
+    pub fn set_virtual_terminal_processing(
+        &mut self,
+        yes: bool,
+    ) -> io::Result<()> {
+        let vt = wincon::ENABLE_VIRTUAL_TERMINAL_PROCESSING;
+
+        let mut old_mode = 0;
+        let handle = unsafe { processenv::GetStdHandle(self.handle_id) };
+        if unsafe { consoleapi::GetConsoleMode(handle, &mut old_mode) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let new_mode =
+            if yes {
+                old_mode | vt
+            } else {
+                old_mode & !vt
+            };
+        if old_mode == new_mode {
+            return Ok(());
+        }
+        if unsafe { consoleapi::SetConsoleMode(handle, new_mode) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 /// A representation of text attributes for the Windows console.
@@ -132,16 +169,15 @@ impl TextAttributes {
         w |= self.fg_intense.to_fg();
         w |= self.bg_color.to_bg();
         w |= self.bg_intense.to_bg();
-        w as WORD
+        w
     }
 
     fn from_word(word: WORD) -> TextAttributes {
-        let attr = word as DWORD;
         TextAttributes {
-            fg_color: Color::from_fg(attr),
-            fg_intense: Intense::from_fg(attr),
-            bg_color: Color::from_bg(attr),
-            bg_intense: Intense::from_bg(attr),
+            fg_color: Color::from_fg(word),
+            fg_intense: Intense::from_fg(word),
+            bg_color: Color::from_bg(word),
+            bg_intense: Intense::from_bg(word),
         }
     }
 }
@@ -155,22 +191,22 @@ pub enum Intense {
 }
 
 impl Intense {
-    fn to_bg(&self) -> DWORD {
+    fn to_bg(&self) -> WORD {
         self.to_fg() << 4
     }
 
-    fn from_bg(word: DWORD) -> Intense {
+    fn from_bg(word: WORD) -> Intense {
         Intense::from_fg(word >> 4)
     }
 
-    fn to_fg(&self) -> DWORD {
+    fn to_fg(&self) -> WORD {
         match *self {
             Intense::No => 0,
             Intense::Yes => FG_INTENSITY,
         }
     }
 
-    fn from_fg(word: DWORD) -> Intense {
+    fn from_fg(word: WORD) -> Intense {
         if word & FG_INTENSITY > 0 {
             Intense::Yes
         } else {
@@ -194,15 +230,15 @@ pub enum Color {
 }
 
 impl Color {
-    fn to_bg(&self) -> DWORD {
+    fn to_bg(&self) -> WORD {
         self.to_fg() << 4
     }
 
-    fn from_bg(word: DWORD) -> Color {
+    fn from_bg(word: WORD) -> Color {
         Color::from_fg(word >> 4)
     }
 
-    fn to_fg(&self) -> DWORD {
+    fn to_fg(&self) -> WORD {
         match *self {
             Color::Black => 0,
             Color::Blue => FG_BLUE,
@@ -215,7 +251,7 @@ impl Color {
         }
     }
 
-    fn from_fg(word: DWORD) -> Color {
+    fn from_fg(word: WORD) -> Color {
         match word & 0b111 {
             FG_BLUE => Color::Blue,
             FG_GREEN => Color::Green,

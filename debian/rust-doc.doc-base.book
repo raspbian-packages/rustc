@@ -10,3 +10,4 @@ Abstract:
 Format: HTML
 Index: /usr/share/doc/rust-doc/html/book/index.html
 Files: /usr/share/doc/rust-doc/html/book/*.html
+       /usr/share/doc/rust-doc/html/book/*/*.html

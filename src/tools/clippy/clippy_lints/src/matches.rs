@@ -1,19 +1,15 @@
 use rustc::hir::*;
 use rustc::lint::*;
-use rustc::middle::const_val::ConstVal;
 use rustc::ty::{self, Ty};
-use rustc::ty::subst::Substs;
-use rustc_const_eval::ConstContext;
-use rustc_const_math::ConstInt;
 use std::cmp::Ordering;
 use std::collections::Bound;
 use syntax::ast::LitKind;
-use syntax::ast::NodeId;
 use syntax::codemap::Span;
 use utils::paths;
 use utils::{expr_block, in_external_macro, is_allowed, is_expn_of, match_qpath, match_type, multispan_sugg,
             remove_blocks, snippet, span_lint_and_sugg, span_lint_and_then, span_note_and_lint, walk_ptrs_ty};
 use utils::sugg::Sugg;
+use consts::{constant, Constant};
 
 /// **What it does:** Checks for matches with a single arm where an `if let`
 /// will usually suffice.
@@ -29,9 +25,9 @@ use utils::sugg::Sugg;
 ///     _ => ()
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub SINGLE_MATCH,
-    Warn,
+    style,
     "a match statement with a single nontrivial arm (i.e. where the other arm \
      is `_ => {}`) instead of `if let`"
 }
@@ -50,9 +46,9 @@ declare_lint! {
 ///     _ => bar(other_ref),
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub SINGLE_MATCH_ELSE,
-    Allow,
+    pedantic,
     "a match statement with a two arms where the second arm's pattern is a wildcard \
      instead of `if let`"
 }
@@ -74,9 +70,9 @@ declare_lint! {
 ///     _ => frob(&x),
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MATCH_REF_PATS,
-    Warn,
+    style,
     "a match or `if let` with all arms prefixed with `&` instead of deref-ing the match expression"
 }
 
@@ -95,9 +91,9 @@ declare_lint! {
 ///     false => bar(),
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MATCH_BOOL,
-    Warn,
+    style,
     "a match on a boolean expression instead of an `if..else` block"
 }
 
@@ -117,9 +113,9 @@ declare_lint! {
 ///     _ => (),
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MATCH_OVERLAPPING_ARM,
-    Warn,
+    style,
     "a match with overlapping arms"
 }
 
@@ -139,9 +135,9 @@ declare_lint! {
 ///     Err(_) => panic!("err"),
 /// }
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MATCH_WILD_ERR_ARM,
-    Warn,
+    style,
     "a match with `Err(_)` arm and take drastic actions"
 }
 
@@ -160,9 +156,9 @@ declare_lint! {
 ///   Some(ref v) => Some(v),
 /// };
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MATCH_AS_REF,
-    Warn,
+    complexity,
     "a match on an Option value instead of using `as_ref()` or `as_mut`"
 }
 
@@ -343,7 +339,7 @@ fn check_match_bool(cx: &LateContext, ex: &Expr, arms: &[Arm], expr: &Expr) {
 
 fn check_overlapping_arms<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ex: &'tcx Expr, arms: &'tcx [Arm]) {
     if arms.len() >= 2 && cx.tables.expr_ty(ex).is_integral() {
-        let ranges = all_ranges(cx, arms, ex.id);
+        let ranges = all_ranges(cx, arms);
         let type_ranges = type_ranges(&ranges);
         if !type_ranges.is_empty() {
             if let Some((start, end)) = overlapping(&type_ranges) {
@@ -460,12 +456,7 @@ fn check_match_as_ref(cx: &LateContext, ex: &Expr, arms: &[Arm], expr: &Expr) {
 fn all_ranges<'a, 'tcx>(
     cx: &LateContext<'a, 'tcx>,
     arms: &'tcx [Arm],
-    id: NodeId,
-) -> Vec<SpannedRange<&'tcx ty::Const<'tcx>>> {
-    let parent_item = cx.tcx.hir.get_parent(id);
-    let parent_def_id = cx.tcx.hir.local_def_id(parent_item);
-    let substs = Substs::identity_for_item(cx.tcx, parent_def_id);
-    let constcx = ConstContext::new(cx.tcx, cx.param_env.and(substs), cx.tables);
+) -> Vec<SpannedRange<Constant>> {
     arms.iter()
         .flat_map(|arm| {
             if let Arm {
@@ -478,25 +469,19 @@ fn all_ranges<'a, 'tcx>(
             } else {
                 [].iter()
             }.filter_map(|pat| {
-                if_chain! {
-                    if let PatKind::Range(ref lhs, ref rhs, ref range_end) = pat.node;
-                    if let Ok(lhs) = constcx.eval(lhs);
-                    if let Ok(rhs) = constcx.eval(rhs);
-                    then {
-                        let rhs = match *range_end {
-                            RangeEnd::Included => Bound::Included(rhs),
-                            RangeEnd::Excluded => Bound::Excluded(rhs),
-                        };
-                        return Some(SpannedRange { span: pat.span, node: (lhs, rhs) });
-                    }
+                if let PatKind::Range(ref lhs, ref rhs, ref range_end) = pat.node {
+                    let lhs = constant(cx, lhs)?.0;
+                    let rhs = constant(cx, rhs)?.0;
+                    let rhs = match *range_end {
+                        RangeEnd::Included => Bound::Included(rhs),
+                        RangeEnd::Excluded => Bound::Excluded(rhs),
+                    };
+                    return Some(SpannedRange { span: pat.span, node: (lhs, rhs) });
                 }
 
-                if_chain! {
-                    if let PatKind::Lit(ref value) = pat.node;
-                    if let Ok(value) = constcx.eval(value);
-                    then {
-                        return Some(SpannedRange { span: pat.span, node: (value, Bound::Included(value)) });
-                    }
+                if let PatKind::Lit(ref value) = pat.node {
+                    let value = constant(cx, value)?.0;
+                    return Some(SpannedRange { span: pat.span, node: (value.clone(), Bound::Included(value)) });
                 }
 
                 None
@@ -511,46 +496,31 @@ pub struct SpannedRange<T> {
     pub node: (T, Bound<T>),
 }
 
-type TypedRanges = Vec<SpannedRange<ConstInt>>;
+type TypedRanges = Vec<SpannedRange<u128>>;
 
 /// Get all `Int` ranges or all `Uint` ranges. Mixed types are an error anyway
 /// and other types than
 /// `Uint` and `Int` probably don't make sense.
-fn type_ranges(ranges: &[SpannedRange<&ty::Const>]) -> TypedRanges {
+fn type_ranges(ranges: &[SpannedRange<Constant>]) -> TypedRanges {
     ranges
         .iter()
         .filter_map(|range| match range.node {
             (
-                &ty::Const {
-                    val: ConstVal::Integral(start),
-                    ..
-                },
-                Bound::Included(&ty::Const {
-                    val: ConstVal::Integral(end),
-                    ..
-                }),
+                Constant::Int(start),
+                Bound::Included(Constant::Int(end)),
             ) => Some(SpannedRange {
                 span: range.span,
                 node: (start, Bound::Included(end)),
             }),
             (
-                &ty::Const {
-                    val: ConstVal::Integral(start),
-                    ..
-                },
-                Bound::Excluded(&ty::Const {
-                    val: ConstVal::Integral(end),
-                    ..
-                }),
+                Constant::Int(start),
+                Bound::Excluded(Constant::Int(end)),
             ) => Some(SpannedRange {
                 span: range.span,
                 node: (start, Bound::Excluded(end)),
             }),
             (
-                &ty::Const {
-                    val: ConstVal::Integral(start),
-                    ..
-                },
+                Constant::Int(start),
                 Bound::Unbounded,
             ) => Some(SpannedRange {
                 span: range.span,

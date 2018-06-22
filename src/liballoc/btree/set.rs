@@ -16,12 +16,11 @@ use core::cmp::{min, max};
 use core::fmt::Debug;
 use core::fmt;
 use core::iter::{Peekable, FromIterator, FusedIterator};
-use core::ops::{BitOr, BitAnd, BitXor, Sub};
+use core::ops::{BitOr, BitAnd, BitXor, Sub, RangeBounds};
 
 use borrow::Borrow;
 use btree_map::{BTreeMap, Keys};
 use super::Recover;
-use range::RangeArgument;
 
 // FIXME(conventions): implement bounded iterators
 
@@ -240,7 +239,7 @@ impl<T: Ord> BTreeSet<T> {
     ///
     /// ```
     /// use std::collections::BTreeSet;
-    /// use std::collections::Bound::Included;
+    /// use std::ops::Bound::Included;
     ///
     /// let mut set = BTreeSet::new();
     /// set.insert(3);
@@ -253,7 +252,7 @@ impl<T: Ord> BTreeSet<T> {
     /// ```
     #[stable(feature = "btree_range", since = "1.17.0")]
     pub fn range<K: ?Sized, R>(&self, range: R) -> Range<T>
-        where K: Ord, T: Borrow<K>, R: RangeArgument<K>
+        where K: Ord, T: Borrow<K>, R: RangeBounds<K>
     {
         Range { iter: self.map.range(range) }
     }
@@ -946,7 +945,7 @@ impl<'a, T> ExactSizeIterator for Iter<'a, T> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T> FusedIterator for Iter<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -971,7 +970,7 @@ impl<T> ExactSizeIterator for IntoIter<T> {
     fn len(&self) -> usize { self.iter.len() }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<T> FusedIterator for IntoIter<T> {}
 
 #[stable(feature = "btree_range", since = "1.17.0")]
@@ -997,7 +996,7 @@ impl<'a, T> DoubleEndedIterator for Range<'a, T> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T> FusedIterator for Range<'a, T> {}
 
 /// Compare `x` and `y`, but return `short` if x is None and `long` if y is None
@@ -1044,7 +1043,7 @@ impl<'a, T: Ord> Iterator for Difference<'a, T> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T: Ord> FusedIterator for Difference<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1078,7 +1077,7 @@ impl<'a, T: Ord> Iterator for SymmetricDifference<'a, T> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T: Ord> FusedIterator for SymmetricDifference<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1116,7 +1115,7 @@ impl<'a, T: Ord> Iterator for Intersection<'a, T> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T: Ord> FusedIterator for Intersection<'a, T> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -1150,5 +1149,5 @@ impl<'a, T: Ord> Iterator for Union<'a, T> {
     }
 }
 
-#[unstable(feature = "fused", issue = "35602")]
+#[stable(feature = "fused", since = "1.26.0")]
 impl<'a, T: Ord> FusedIterator for Union<'a, T> {}

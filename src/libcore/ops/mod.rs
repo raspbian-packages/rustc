@@ -191,8 +191,8 @@ pub use self::index::{Index, IndexMut};
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::range::{Range, RangeFrom, RangeFull, RangeTo};
 
-#[unstable(feature = "inclusive_range", reason = "recently added, follows RFC", issue = "28237")]
-pub use self::range::{RangeInclusive, RangeToInclusive};
+#[stable(feature = "inclusive_range", since = "1.26.0")]
+pub use self::range::{RangeInclusive, RangeToInclusive, RangeBounds, Bound};
 
 #[unstable(feature = "try_trait", issue = "42327")]
 pub use self::try::Try;

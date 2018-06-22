@@ -18,9 +18,9 @@ use utils::{in_macro, span_lint, span_lint_and_then};
 /// let checked_exp = something;
 /// let checked_expr = something_else;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub SIMILAR_NAMES,
-    Allow,
+    pedantic,
     "similarly named items and bindings"
 }
 
@@ -36,9 +36,9 @@ declare_lint! {
 /// ```rust
 /// let (a, b, c, d, e, f, g) = (...);
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub MANY_SINGLE_CHAR_NAMES,
-    Warn,
+    style,
     "too many single character bindings"
 }
 
@@ -56,9 +56,9 @@ declare_lint! {
 /// let ___1 = 1;
 /// let __1___2 = 11;
 /// ```
-declare_lint! {
+declare_clippy_lint! {
     pub JUST_UNDERSCORES_AND_DIGITS,
-    Warn,
+    style,
     "unclear name"
 }
 
@@ -267,7 +267,7 @@ impl<'a, 'tcx, 'b> SimilarNamesNameVisitor<'a, 'tcx, 'b> {
         self.0.names.push(ExistingName {
             whitelist: get_whitelist(&interned_name).unwrap_or(&[]),
             interned: interned_name,
-            span: span,
+            span,
             len: count,
         });
     }
@@ -329,8 +329,8 @@ fn do_check(lint: &mut NonExpressiveNames, cx: &EarlyContext, attrs: &[Attribute
     if !attr::contains_name(attrs, "test") {
         let mut visitor = SimilarNamesLocalVisitor {
             names: Vec::new(),
-            cx: cx,
-            lint: lint,
+            cx,
+            lint,
             single_char_names: Vec::new(),
         };
         // initialize with function arguments

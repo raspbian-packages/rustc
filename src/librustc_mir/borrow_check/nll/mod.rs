@@ -260,10 +260,10 @@ fn dump_annotation<'a, 'gcx, 'tcx>(
 
 fn for_each_region_constraint(
     closure_region_requirements: &ClosureRegionRequirements,
-    with_msg: &mut FnMut(&str) -> io::Result<()>,
+    with_msg: &mut dyn FnMut(&str) -> io::Result<()>,
 ) -> io::Result<()> {
     for req in &closure_region_requirements.outlives_requirements {
-        let subject: &Debug = match &req.subject {
+        let subject: &dyn Debug = match &req.subject {
             ClosureOutlivesSubject::Region(subject) => subject,
             ClosureOutlivesSubject::Ty(ty) => ty,
         };
@@ -278,7 +278,7 @@ fn for_each_region_constraint(
 
 /// Right now, we piggy back on the `ReVar` to store our NLL inference
 /// regions. These are indexed with `RegionVid`. This method will
-/// assert that the region is a `ReVar` and extract its interal index.
+/// assert that the region is a `ReVar` and extract its internal index.
 /// This is reasonable because in our MIR we replace all universal regions
 /// with inference variables.
 pub trait ToRegionVid {

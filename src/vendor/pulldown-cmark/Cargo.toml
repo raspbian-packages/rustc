@@ -12,7 +12,7 @@
 
 [package]
 name = "pulldown-cmark"
-version = "0.1.0"
+version = "0.1.2"
 authors = ["Raph Levien <raph@google.com>"]
 build = "build.rs"
 description = "A pull parser for CommonMark"
@@ -24,12 +24,12 @@ repository = "https://github.com/google/pulldown-cmark"
 name = "pulldown-cmark"
 doc = false
 required-features = ["getopts"]
+[dependencies.bitflags]
+version = "0.9"
+
 [dependencies.getopts]
 version = "0.2"
 optional = true
-
-[dependencies.bitflags]
-version = "0.9"
 
 [features]
 default = ["getopts"]

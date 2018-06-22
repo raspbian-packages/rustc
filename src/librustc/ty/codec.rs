@@ -17,7 +17,7 @@
 // persisting to incr. comp. caches.
 
 use hir::def_id::{DefId, CrateNum};
-use middle::const_val::ByteArray;
+use infer::canonical::{CanonicalVarInfo, CanonicalVarInfos};
 use rustc_data_structures::fx::FxHashMap;
 use rustc_serialize::{Decodable, Decoder, Encoder, Encodable, opaque};
 use std::hash::Hash;
@@ -241,14 +241,16 @@ pub fn decode_existential_predicate_slice<'a, 'tcx, D>(decoder: &mut D)
 }
 
 #[inline]
-pub fn decode_byte_array<'a, 'tcx, D>(decoder: &mut D)
-                                      -> Result<ByteArray<'tcx>, D::Error>
+pub fn decode_canonical_var_infos<'a, 'tcx, D>(decoder: &mut D)
+    -> Result<CanonicalVarInfos<'tcx>, D::Error>
     where D: TyDecoder<'a, 'tcx>,
           'tcx: 'a,
 {
-    Ok(ByteArray {
-        data: decoder.tcx().alloc_byte_array(&Vec::decode(decoder)?)
-    })
+    let len = decoder.read_usize()?;
+    let interned: Result<Vec<CanonicalVarInfo>, _> = (0..len).map(|_| Decodable::decode(decoder))
+                                                             .collect();
+    Ok(decoder.tcx()
+              .intern_canonical_var_infos(interned?.as_slice()))
 }
 
 #[inline]
@@ -274,11 +276,11 @@ macro_rules! implement_ty_decoder {
     ($DecoderName:ident <$($typaram:tt),*>) => {
         mod __ty_decoder_impl {
             use super::$DecoderName;
+            use $crate::infer::canonical::CanonicalVarInfos;
             use $crate::ty;
             use $crate::ty::codec::*;
             use $crate::ty::subst::Substs;
             use $crate::hir::def_id::{CrateNum};
-            use $crate::middle::const_val::ByteArray;
             use rustc_serialize::{Decoder, SpecializedDecoder};
             use std::borrow::Cow;
 
@@ -377,10 +379,11 @@ macro_rules! implement_ty_decoder {
                 }
             }
 
-            impl<$($typaram),*> SpecializedDecoder<ByteArray<'tcx>>
-            for $DecoderName<$($typaram),*> {
-                fn specialized_decode(&mut self) -> Result<ByteArray<'tcx>, Self::Error> {
-                    decode_byte_array(self)
+            impl<$($typaram),*> SpecializedDecoder<CanonicalVarInfos<'tcx>>
+                for $DecoderName<$($typaram),*> {
+                fn specialized_decode(&mut self)
+                    -> Result<CanonicalVarInfos<'tcx>, Self::Error> {
+                    decode_canonical_var_infos(self)
                 }
             }
 

@@ -404,7 +404,7 @@ pub fn walk_local<'v, V: Visitor<'v>>(visitor: &mut V, local: &'v Local) {
     // Intentionally visiting the expr first - the initialization expr
     // dominates the local's definition.
     walk_list!(visitor, visit_expr, &local.init);
-
+    walk_list!(visitor, visit_attribute, local.attrs.iter());
     visitor.visit_id(local.id);
     visitor.visit_pat(&local.pat);
     walk_list!(visitor, visit_ty, &local.ty);
@@ -420,7 +420,10 @@ pub fn walk_lifetime<'v, V: Visitor<'v>>(visitor: &mut V, lifetime: &'v Lifetime
         LifetimeName::Name(name) => {
             visitor.visit_name(lifetime.span, name);
         }
-        LifetimeName::Static | LifetimeName::Implicit | LifetimeName::Underscore => {}
+        LifetimeName::Fresh(_) |
+        LifetimeName::Static |
+        LifetimeName::Implicit |
+        LifetimeName::Underscore => {}
     }
 }
 
@@ -444,10 +447,10 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
     visitor.visit_vis(&item.vis);
     visitor.visit_name(item.span, item.name);
     match item.node {
-        ItemExternCrate(opt_name) => {
+        ItemExternCrate(orig_name) => {
             visitor.visit_id(item.id);
-            if let Some(name) = opt_name {
-                visitor.visit_name(item.span, name);
+            if let Some(orig_name) = orig_name {
+                visitor.visit_name(item.span, orig_name);
             }
         }
         ItemUse(ref path, _) => {
@@ -727,6 +730,7 @@ pub fn walk_generic_param<'v, V: Visitor<'v>>(visitor: &mut V, param: &'v Generi
             visitor.visit_name(ty_param.span, ty_param.name);
             walk_list!(visitor, visit_ty_param_bound, &ty_param.bounds);
             walk_list!(visitor, visit_ty, &ty_param.default);
+            walk_list!(visitor, visit_attribute, ty_param.attrs.iter());
         }
     }
 }

@@ -8,8 +8,7 @@ use rustc::hir::map::Node;
 use rustc::lint::{LateContext, Level, Lint, LintContext};
 use rustc::session::Session;
 use rustc::traits;
-use rustc::ty::{self, Ty, TyCtxt};
-use rustc::ty::layout::Align;
+use rustc::ty::{self, Ty, TyCtxt, layout};
 use rustc_errors;
 use std::borrow::Cow;
 use std::env;
@@ -61,6 +60,16 @@ pub fn in_macro(span: Span) -> bool {
             // don't treat range expressions desugared to structs as "in_macro"
             ExpnFormat::CompilerDesugaring(kind) => kind != CompilerDesugaringKind::DotFill,
             _ => true,
+        }
+    })
+}
+
+/// Returns true if `expn_info` was expanded by range expressions.
+pub fn is_range_expression(span: Span) -> bool {
+    span.ctxt().outer().expn_info().map_or(false, |info| {
+        match info.callee.format {
+            ExpnFormat::CompilerDesugaring(CompilerDesugaringKind::DotFill) => true,
+            _ => false,
         }
     })
 }
@@ -267,14 +276,6 @@ pub fn path_to_def(cx: &LateContext, path: &[&str]) -> Option<def::Def> {
     }
 }
 
-pub fn const_to_u64(c: &ty::Const) -> u64 {
-    c.val
-        .to_const_int()
-        .expect("eddyb says this works")
-        .to_u64()
-        .expect("see previous expect")
-}
-
 /// Convenience function to get the `DefId` of a trait by path.
 pub fn get_trait_def_id(cx: &LateContext, path: &[&str]) -> Option<DefId> {
     let def = match path_to_def(cx, path) {
@@ -389,7 +390,7 @@ impl<'tcx> Visitor<'tcx> for ContainsName {
 /// check if an `Expr` contains a certain name
 pub fn contains_name(name: Name, expr: &Expr) -> bool {
     let mut cn = ContainsName {
-        name: name,
+        name,
         result: false,
     };
     cn.visit_expr(expr);
@@ -425,6 +426,14 @@ pub fn snippet_opt<'a, T: LintContext<'a>>(cx: &T, span: Span) -> Option<String>
 pub fn snippet_block<'a, 'b, T: LintContext<'b>>(cx: &T, span: Span, default: &'a str) -> Cow<'a, str> {
     let snip = snippet(cx, span, default);
     trim_multiline(snip, true)
+}
+
+/// Returns a new Span that covers the full last line of the given Span
+pub fn last_line_of_span<'a, T: LintContext<'a>>(cx: &T, span: Span) -> Span {
+    let file_map_and_line = cx.sess().codemap().lookup_line(span.lo()).unwrap();
+    let line_no = file_map_and_line.line;
+    let line_start = &file_map_and_line.fm.lines.clone().into_inner()[line_no];
+    Span::new(*line_start, span.hi(), span.ctxt())
 }
 
 /// Like `snippet_block`, but add braces if the expr is not an `ExprBlock`.
@@ -1040,12 +1049,6 @@ pub fn is_try(expr: &Expr) -> Option<&Expr> {
     None
 }
 
-pub fn type_size<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Option<u64> {
-    cx.tcx.layout_of(cx.param_env.and(ty))
-        .ok()
-        .map(|layout| layout.size.bytes())
-}
-
 /// Returns true if the lint is allowed in the current context
 ///
 /// Useful for skipping long running code when it's unnecessary
@@ -1061,9 +1064,25 @@ pub fn get_arg_name(pat: &Pat) -> Option<ast::Name> {
     }
 }
 
-/// Returns alignment for a type, or None if alignment is undefined
-pub fn alignment<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty<'tcx>) -> Option<Align> {
-    cx.tcx.layout_of(cx.param_env.and(ty))
-        .ok()
-        .map(|layout| layout.align)
+pub fn int_bits(tcx: TyCtxt, ity: ast::IntTy) -> u64 {
+    layout::Integer::from_attr(tcx, attr::IntType::SignedInt(ity)).size().bits()
+}
+
+/// Turn a constant int byte representation into an i128
+pub fn sext(tcx: TyCtxt, u: u128, ity: ast::IntTy) -> i128 {
+    let amt = 128 - int_bits(tcx, ity);
+    ((u as i128) << amt) >> amt
+}
+
+/// clip unused bytes
+pub fn unsext(tcx: TyCtxt, u: i128, ity: ast::IntTy) -> u128 {
+    let amt = 128 - int_bits(tcx, ity);
+    ((u as u128) << amt) >> amt
+}
+
+/// clip unused bytes
+pub fn clip(tcx: TyCtxt, u: u128, ity: ast::UintTy) -> u128 {
+    let bits = layout::Integer::from_attr(tcx, attr::IntType::UnsignedInt(ity)).size().bits();
+    let amt = 128 - bits;
+    (u << amt) >> amt
 }

@@ -11,6 +11,8 @@
 // ignore-s390x
 // ignore-emscripten
 // ignore-powerpc
+// ignore-powerpc64
+// ignore-powerpc64le
 // ignore-sparc
 
 // revisions: ast mir
@@ -21,7 +23,9 @@
 #[cfg(any(target_arch = "x86",
             target_arch = "x86_64",
             target_arch = "arm",
-            target_arch = "aarch64"))]
+            target_arch = "aarch64",
+            target_arch = "mips",
+            target_arch = "mips64"))]
 mod test_cases {
     fn is_move() {
         let y: &mut isize;

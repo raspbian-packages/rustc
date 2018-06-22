@@ -29,7 +29,7 @@ use tokenstream::*;
 use util::small_vector::SmallVector;
 use util::move_map::MoveMap;
 
-use std::rc::Rc;
+use rustc_data_structures::sync::Lrc;
 
 pub trait Folder : Sized {
     // Any additions to this trait should happen in form
@@ -323,7 +323,8 @@ pub fn noop_fold_use_tree<T: Folder>(use_tree: UseTree, fld: &mut T) -> UseTree 
         span: fld.new_span(use_tree.span),
         prefix: fld.fold_path(use_tree.prefix),
         kind: match use_tree.kind {
-            UseTreeKind::Simple(ident) => UseTreeKind::Simple(fld.fold_ident(ident)),
+            UseTreeKind::Simple(rename) =>
+                UseTreeKind::Simple(rename.map(|ident| fld.fold_ident(ident))),
             UseTreeKind::Glob => UseTreeKind::Glob,
             UseTreeKind::Nested(items) => UseTreeKind::Nested(items.move_map(|(tree, id)| {
                 (fld.fold_use_tree(tree), fld.new_id(id))
@@ -577,10 +578,10 @@ pub fn noop_fold_tts<T: Folder>(tts: TokenStream, fld: &mut T) -> TokenStream {
 // apply ident folder if it's an ident, apply other folds to interpolated nodes
 pub fn noop_fold_token<T: Folder>(t: token::Token, fld: &mut T) -> token::Token {
     match t {
-        token::Ident(id) => token::Ident(fld.fold_ident(id)),
+        token::Ident(id, is_raw) => token::Ident(fld.fold_ident(id), is_raw),
         token::Lifetime(id) => token::Lifetime(fld.fold_ident(id)),
         token::Interpolated(nt) => {
-            let nt = match Rc::try_unwrap(nt) {
+            let nt = match Lrc::try_unwrap(nt) {
                 Ok(nt) => nt,
                 Err(nt) => (*nt).clone(),
             };
@@ -629,7 +630,8 @@ pub fn noop_fold_interpolated<T: Folder>(nt: token::Nonterminal, fld: &mut T)
         token::NtPat(pat) => token::NtPat(fld.fold_pat(pat)),
         token::NtExpr(expr) => token::NtExpr(fld.fold_expr(expr)),
         token::NtTy(ty) => token::NtTy(fld.fold_ty(ty)),
-        token::NtIdent(id) => token::NtIdent(Spanned::<Ident>{node: fld.fold_ident(id.node), ..id}),
+        token::NtIdent(id, is_raw) =>
+            token::NtIdent(Spanned::<Ident>{node: fld.fold_ident(id.node), ..id}, is_raw),
         token::NtMeta(meta) => token::NtMeta(fld.fold_meta_item(meta)),
         token::NtPath(path) => token::NtPath(fld.fold_path(path)),
         token::NtTT(tt) => token::NtTT(fld.fold_tt(tt)),
@@ -886,7 +888,7 @@ pub fn noop_fold_block<T: Folder>(b: P<Block>, folder: &mut T) -> P<Block> {
 
 pub fn noop_fold_item_kind<T: Folder>(i: ItemKind, folder: &mut T) -> ItemKind {
     match i {
-        ItemKind::ExternCrate(string) => ItemKind::ExternCrate(string),
+        ItemKind::ExternCrate(orig_name) => ItemKind::ExternCrate(orig_name),
         ItemKind::Use(use_tree) => {
             ItemKind::Use(use_tree.map(|tree| folder.fold_use_tree(tree)))
         }
@@ -1018,7 +1020,7 @@ pub fn noop_fold_crate<T: Folder>(Crate {module, attrs, span}: Crate,
         ident: keywords::Invalid.ident(),
         attrs,
         id: ast::DUMMY_NODE_ID,
-        vis: ast::Visibility::Public,
+        vis: respan(span.shrink_to_lo(), ast::VisibilityKind::Public),
         span,
         node: ast::ItemKind::Mod(module),
         tokens: None,
@@ -1148,6 +1150,7 @@ pub fn noop_fold_pat<T: Folder>(p: P<Pat>, folder: &mut T) -> P<Pat> {
                        slice.map(|x| folder.fold_pat(x)),
                        after.move_map(|x| folder.fold_pat(x)))
             }
+            PatKind::Paren(inner) => PatKind::Paren(folder.fold_pat(inner)),
             PatKind::Mac(mac) => PatKind::Mac(folder.fold_mac(mac))
         },
         span: folder.new_span(span)
@@ -1210,8 +1213,8 @@ pub fn noop_fold_expr<T: Folder>(Expr {id, node, span, attrs}: Expr, folder: &mu
                        folder.fold_block(tr),
                        fl.map(|x| folder.fold_expr(x)))
             }
-            ExprKind::IfLet(pat, expr, tr, fl) => {
-                ExprKind::IfLet(folder.fold_pat(pat),
+            ExprKind::IfLet(pats, expr, tr, fl) => {
+                ExprKind::IfLet(pats.move_map(|pat| folder.fold_pat(pat)),
                           folder.fold_expr(expr),
                           folder.fold_block(tr),
                           fl.map(|x| folder.fold_expr(x)))
@@ -1221,8 +1224,8 @@ pub fn noop_fold_expr<T: Folder>(Expr {id, node, span, attrs}: Expr, folder: &mu
                           folder.fold_block(body),
                           opt_label.map(|label| folder.fold_label(label)))
             }
-            ExprKind::WhileLet(pat, expr, body, opt_label) => {
-                ExprKind::WhileLet(folder.fold_pat(pat),
+            ExprKind::WhileLet(pats, expr, body, opt_label) => {
+                ExprKind::WhileLet(pats.move_map(|pat| folder.fold_pat(pat)),
                              folder.fold_expr(expr),
                              folder.fold_block(body),
                              opt_label.map(|label| folder.fold_label(label)))
@@ -1367,11 +1370,13 @@ pub fn noop_fold_stmt_kind<T: Folder>(node: StmtKind, folder: &mut T) -> SmallVe
 }
 
 pub fn noop_fold_vis<T: Folder>(vis: Visibility, folder: &mut T) -> Visibility {
-    match vis {
-        Visibility::Restricted { path, id } => Visibility::Restricted {
-            path: path.map(|path| folder.fold_path(path)),
-            id: folder.new_id(id)
-        },
+    match vis.node {
+        VisibilityKind::Restricted { path, id } => {
+            respan(vis.span, VisibilityKind::Restricted {
+                path: path.map(|path| folder.fold_path(path)),
+                id: folder.new_id(id),
+            })
+        }
         _ => vis,
     }
 }
@@ -1383,6 +1388,7 @@ mod tests {
     use util::parser_testing::{string_to_crate, matches_codepattern};
     use print::pprust;
     use fold;
+    use with_globals;
     use super::*;
 
     // this version doesn't care about getting comments or docstrings in.
@@ -1420,28 +1426,32 @@ mod tests {
 
     // make sure idents get transformed everywhere
     #[test] fn ident_transformation () {
-        let mut zz_fold = ToZzIdentFolder;
-        let ast = string_to_crate(
-            "#[a] mod b {fn c (d : e, f : g) {h!(i,j,k);l;m}}".to_string());
-        let folded_crate = zz_fold.fold_crate(ast);
-        assert_pred!(
-            matches_codepattern,
-            "matches_codepattern",
-            pprust::to_string(|s| fake_print_crate(s, &folded_crate)),
-            "#[zz]mod zz{fn zz(zz:zz,zz:zz){zz!(zz,zz,zz);zz;zz}}".to_string());
+        with_globals(|| {
+            let mut zz_fold = ToZzIdentFolder;
+            let ast = string_to_crate(
+                "#[a] mod b {fn c (d : e, f : g) {h!(i,j,k);l;m}}".to_string());
+            let folded_crate = zz_fold.fold_crate(ast);
+            assert_pred!(
+                matches_codepattern,
+                "matches_codepattern",
+                pprust::to_string(|s| fake_print_crate(s, &folded_crate)),
+                "#[zz]mod zz{fn zz(zz:zz,zz:zz){zz!(zz,zz,zz);zz;zz}}".to_string());
+        })
     }
 
     // even inside macro defs....
     #[test] fn ident_transformation_in_defs () {
-        let mut zz_fold = ToZzIdentFolder;
-        let ast = string_to_crate(
-            "macro_rules! a {(b $c:expr $(d $e:token)f+ => \
-             (g $(d $d $e)+))} ".to_string());
-        let folded_crate = zz_fold.fold_crate(ast);
-        assert_pred!(
-            matches_codepattern,
-            "matches_codepattern",
-            pprust::to_string(|s| fake_print_crate(s, &folded_crate)),
-            "macro_rules! zz((zz$zz:zz$(zz $zz:zz)zz+=>(zz$(zz$zz$zz)+)));".to_string());
+        with_globals(|| {
+            let mut zz_fold = ToZzIdentFolder;
+            let ast = string_to_crate(
+                "macro_rules! a {(b $c:expr $(d $e:token)f+ => \
+                (g $(d $d $e)+))} ".to_string());
+            let folded_crate = zz_fold.fold_crate(ast);
+            assert_pred!(
+                matches_codepattern,
+                "matches_codepattern",
+                pprust::to_string(|s| fake_print_crate(s, &folded_crate)),
+                "macro_rules! zz((zz$zz:zz$(zz $zz:zz)zz+=>(zz$(zz$zz$zz)+)));".to_string());
+        })
     }
 }

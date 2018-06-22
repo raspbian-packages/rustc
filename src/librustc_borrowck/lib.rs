@@ -16,13 +16,14 @@
 #![allow(non_camel_case_types)]
 
 #![feature(from_ref)]
-#![feature(match_default_bindings)]
+#![cfg_attr(stage0, feature(match_default_bindings))]
 #![feature(quote)]
 
 #[macro_use] extern crate log;
 extern crate syntax;
 extern crate syntax_pos;
 extern crate rustc_errors as errors;
+extern crate rustc_data_structures;
 
 // for "clarity", rename the graphviz crate to dot; graphviz within `borrowck`
 // refers to the borrowck-specific graphviz adapter traits.

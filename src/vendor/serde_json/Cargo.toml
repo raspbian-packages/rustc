@@ -12,7 +12,7 @@
 
 [package]
 name = "serde_json"
-version = "1.0.9"
+version = "1.0.13"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "A JSON serialization file format"
@@ -26,14 +26,15 @@ repository = "https://github.com/serde-rs/json"
 version = "0.4"
 
 [dependencies.itoa]
-version = "0.3"
+version = "0.4"
 
 [dependencies.linked-hash-map]
 version = "0.5"
 optional = true
 
 [dependencies.num-traits]
-version = "0.1.32"
+version = "0.2"
+default-features = false
 
 [dependencies.serde]
 version = "1.0"
@@ -47,6 +48,7 @@ version = "0.10"
 version = "1.0"
 
 [features]
+arbitrary_precision = []
 default = []
 preserve_order = ["linked-hash-map"]
 [badges.appveyor]

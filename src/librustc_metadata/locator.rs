@@ -219,7 +219,7 @@
 //! no means all of the necessary details. Take a look at the rest of
 //! metadata::locator or metadata::creader for all the juicy details!
 
-use cstore::MetadataBlob;
+use cstore::{MetadataRef, MetadataBlob};
 use creader::Library;
 use schema::{METADATA_HEADER, rustc_version};
 
@@ -233,7 +233,7 @@ use rustc::util::nodemap::FxHashMap;
 use errors::DiagnosticBuilder;
 use syntax::symbol::Symbol;
 use syntax_pos::Span;
-use rustc_back::target::Target;
+use rustc_back::target::{Target, TargetTriple};
 
 use std::cmp;
 use std::fmt;
@@ -243,8 +243,8 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 use flate2::read::DeflateDecoder;
-use rustc_data_structures::owning_ref::{ErasedBoxRef, OwningRef};
 
+use rustc_data_structures::owning_ref::OwningRef;
 pub struct CrateMismatch {
     path: PathBuf,
     got: String,
@@ -258,7 +258,7 @@ pub struct Context<'a> {
     pub hash: Option<&'a Svh>,
     // points to either self.sess.target.target or self.sess.host, must match triple
     pub target: &'a Target,
-    pub triple: &'a str,
+    pub triple: &'a TargetTriple,
     pub filesearch: FileSearch<'a>,
     pub root: &'a Option<CratePaths>,
     pub rejected_via_hash: Vec<CrateMismatch>,
@@ -394,7 +394,7 @@ impl<'a> Context<'a> {
                                            add);
 
             if (self.ident == "std" || self.ident == "core")
-                && self.triple != config::host_triple() {
+                && self.triple != &TargetTriple::from_triple(config::host_triple()) {
                 err.note(&format!("the `{}` target may not be installed", self.triple));
             }
             err.span_label(self.span, "can't find crate");
@@ -698,13 +698,13 @@ impl<'a> Context<'a> {
             }
         }
 
-        if root.triple != self.triple {
+        if &root.triple != self.triple {
             info!("Rejecting via crate triple: expected {} got {}",
                   self.triple,
                   root.triple);
             self.rejected_via_triple.push(CrateMismatch {
                 path: libpath.to_path_buf(),
-                got: root.triple,
+                got: format!("{}", root.triple),
             });
             return None;
         }
@@ -842,7 +842,7 @@ fn get_metadata_section_imp(target: &Target,
     if !filename.exists() {
         return Err(format!("no such file: '{}'", filename.display()));
     }
-    let raw_bytes: ErasedBoxRef<[u8]> = match flavor {
+    let raw_bytes: MetadataRef = match flavor {
         CrateFlavor::Rlib => loader.get_rlib_metadata(target, filename)?,
         CrateFlavor::Dylib => {
             let buf = loader.get_dylib_metadata(target, filename)?;
@@ -862,7 +862,7 @@ fn get_metadata_section_imp(target: &Target,
             match DeflateDecoder::new(compressed_bytes).read_to_end(&mut inflated) {
                 Ok(_) => {
                     let buf = unsafe { OwningRef::new_assert_stable_address(inflated) };
-                    buf.map_owner_box().erase_owner()
+                    rustc_erase_owner!(buf.map_owner_box())
                 }
                 Err(_) => {
                     return Err(format!("failed to decompress metadata: {}", filename.display()));
@@ -872,7 +872,7 @@ fn get_metadata_section_imp(target: &Target,
         CrateFlavor::Rmeta => {
             let buf = fs::read(filename).map_err(|_|
                 format!("failed to read rmeta metadata: '{}'", filename.display()))?;
-            OwningRef::new(buf).map_owner_box().erase_owner()
+            rustc_erase_owner!(OwningRef::new(buf).map_owner_box())
         }
     };
     let blob = MetadataBlob(raw_bytes);

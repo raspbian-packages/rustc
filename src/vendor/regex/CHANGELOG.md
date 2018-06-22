@@ -1,3 +1,81 @@
+0.2.9 (2018-03-12)
+==================
+This release introduces a new nightly only feature, `unstable`, which enables
+SIMD optimizations for certain types of regexes. No additional compile time
+options are necessary, and the regex crate will automatically choose the
+best CPU features at run time. As a result, the `simd` (nightly only) crate
+dependency has been dropped.
+
+New features:
+
+* [FEATURE #456](https://github.com/rust-lang/regex/pull/456):
+  The regex crate now includes AVX2 optimizations in addition to the extant
+  SSSE3 optimization.
+
+Bug gixes:
+
+* [BUG #455](https://github.com/rust-lang/regex/pull/455):
+  Fix a bug where `(?x)[ / - ]` failed to parse.
+
+
+0.2.8 (2018-03-12)
+==================
+Bug gixes:
+
+* [BUG #454](https://github.com/rust-lang/regex/pull/454):
+  Fix a bug in the nest limit checker being too aggressive.
+
+
+0.2.7 (2018-03-07)
+==================
+This release includes a ground-up rewrite of the regex-syntax crate, which has
+been in development for over a year.
+
+New features:
+
+* Error messages for invalid regexes have been greatly improved. You get these
+  automatically; you don't need to do anything. In addition to better
+  formatting, error messages will now explicitly call out the use of look
+  around. When regex 1.0 is released, this will happen for backreferences as
+  well.
+* Full support for intersection, difference and symmetric difference of
+  character classes. These can be used via the `&&`, `--` and `~~` binary
+  operators within classes.
+* A Unicode Level 1 conformat implementation of `\p{..}` character classes.
+  Things like `\p{scx:Hira}`, `\p{age:3.2}` or `\p{Changes_When_Casefolded}`
+  now work. All property name and value aliases are supported, and properties
+  are selected via loose matching. e.g., `\p{Greek}` is the same as
+  `\p{G r E e K}`.
+* A new `UNICODE.md` document has been added to this repository that
+  exhaustively documents support for UTS#18.
+* Empty sub-expressions are now permitted in most places. That is, `()+` is
+  now a valid regex.
+* Almost everything in regex-syntax now uses constant stack space, even when
+  performing anaylsis that requires structural induction. This reduces the risk
+  of a user provided regular expression causing a stack overflow.
+* [FEATURE #174](https://github.com/rust-lang/regex/issues/174):
+  The `Ast` type in `regex-syntax` now contains span information.
+* [FEATURE #424](https://github.com/rust-lang/regex/issues/424):
+  Support `\u`, `\u{...}`, `\U` and `\U{...}` syntax for specifying code points
+  in a regular expression.
+* [FEATURE #449](https://github.com/rust-lang/regex/pull/449):
+  Add a `Replace::by_ref` adapter for use of a replacer without consuming it.
+
+Bug fixes:
+
+* [BUG #446](https://github.com/rust-lang/regex/issues/446):
+  We re-enable the Boyer-Moore literal matcher.
+
+
+0.2.6 (2018-02-08)
+==================
+Bug fixes:
+
+* [BUG #446](https://github.com/rust-lang/regex/issues/446):
+  Fixes a bug in the new Boyer-Moore searcher that results in a match failure.
+  We fix this bug by temporarily disabling Boyer-Moore.
+
+
 0.2.5 (2017-12-30)
 ==================
 Bug fixes:
