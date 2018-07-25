@@ -1,0 +1,106 @@
+# False-positive, very small so suspicious-source thinks "octet-stream"
+src/test/run-pass/raw-str.rs
+
+# False-positive, "verylongtext" but OK
+CONTRIBUTING.md
+src/doc/book/first-edition/src/the-stack-and-the-heap.md
+src/doc/book/*/tools/docx-to-md.xsl
+src/doc/rustc/src/lints/groups.md
+src/doc/rust-by-example/CODE_OF_CONDUCT.md
+src/etc/third-party/README.txt
+src/libcompiler_builtins/compiler-rt/lib/tsan/go/build.bat
+src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
+src/libbacktrace/configure
+src/libstd/sys/cloudabi/abi/cloudabi.rs
+src/libstd/os/raw/*.md
+src/rustc/*/Cargo.toml
+src/vendor/*/.travis.yml
+src/vendor/*/Cargo.toml
+src/vendor/*/CHANGELOG.md
+src/vendor/*/CONTRIBUTORS.md
+src/vendor/*/README.md
+src/vendor/*/README.tpl
+src/vendor/*/LICENSE
+src/vendor/*/*/LICENSE
+src/vendor/*/*/*/LICENSE
+src/vendor/ammonia/src/lib.rs
+src/vendor/ammonia/CODE_OF_CONDUCT.md
+src/vendor/clap/.github/CONTRIBUTING.md
+# author likes to omit line breaks in their comments
+src/vendor/handlebars/src/lib.rs
+src/vendor/maplit/README.rst
+src/vendor/lazy_static/src/lib.rs
+src/vendor/pulldown-cmark/tests/footnotes.rs
+src/vendor/pulldown-cmark/specs/footnotes.txt
+src/vendor/pulldown-cmark-*/tests/footnotes.rs
+src/vendor/pulldown-cmark-*/specs/footnotes.txt
+src/vendor/stable_deref_trait/src/lib.rs
+src/vendor/winapi-*/src/winnt.rs
+
+# Embedded libraries, justified in README.source
+# None atm
+
+# False-positive, misc
+src/stdsimd/.travis.yml
+src/tools/clippy/.github/deploy_key.enc
+src/vendor/num/ci/deploy.enc
+src/vendor/elasticlunr-rs/src/lang/*.rs
+
+# False-positive, hand-editable small image
+src/etc/installer/gfx/
+src/doc/nomicon/src/img/safeandunsafe.svg
+src/doc/book/second-edition/src/img/*.png
+src/doc/book/second-edition/src/img/*.svg
+src/doc/book/2018-edition/src/img/*.svg
+src/doc/book/2018-edition/src/img/*.png
+src/librustdoc/html/static/*.svg
+src/vendor/difference/assets/*.png
+src/vendor/mdbook/src/theme/favicon.png
+src/vendor/num/doc/favicon.ico
+src/vendor/num/doc/rust-logo-128x128-blk-v2.png
+src/vendor/pest/pest-logo.svg
+src/vendor/pretty_assertions/examples/*.png
+src/vendor/termion/logo.svg
+
+# Example code
+src/vendor/html5ever/examples/capi/tokenize.c
+
+# Test data
+src/stdsimd/crates/stdsimd-verify/x86-intel.xml
+src/stdsimd/stdsimd/arch/detect/test_data
+src/test/compile-fail/not-utf8.bin
+src/test/*/*.rs
+src/test/*/*/*.stderr
+src/test/*/*/*/*.stderr
+src/tools/*/tests/*/*.stderr
+src/vendor/cssparser/src/css-parsing-tests/*.json
+src/vendor/cssparser/src/big-data-url.css
+src/vendor/elasticlunr-rs/tests/data/tr.in.txt
+src/vendor/flate2/tests/*.gz
+src/vendor/idna/tests/IdnaTest.txt
+src/vendor/html5ever/data/bench/*.html
+src/vendor/html5ever/html5lib-tests/*/*.dat
+src/vendor/html5ever/html5lib-tests/*/*.test
+src/vendor/pretty_assertions/src/format_changeset.rs
+src/vendor/regex/src/testdata/basic.dat
+src/vendor/regex/tests/fowler.rs
+src/vendor/tar/tests/archives/*.tar
+src/vendor/toml/tests/*/*.toml
+src/vendor/toml/tests/*/*.json
+src/vendor/pest/benches/data.json
+src/vendor/yaml-rust/tests/specexamples.rs.inc
+
+# Compromise, ideally we'd autogenerate these
+# Should already by documented in debian/copyright
+src/librustdoc/html/static/normalize.css
+src/vendor/unicode-normalization/src/tables.rs
+
+# Compromise, ideally we'd package these in their own package
+src/librustdoc/html/static/*.woff
+
+# C and JS files not part of an external library
+src/vendor/mdbook/src/theme/book.js
+src/vendor/mdbook/src/theme/searcher/searcher.js
+src/vendor/miniz-sys/miniz.c
+src/vendor/walkdir/compare/nftw.c
+src/vendor/walkdir-*/compare/nftw.c

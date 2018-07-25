@@ -1,0 +1,20 @@
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Subject: rustc: Please include patch to disable kernel helpers on armel
+Bug-Debian: https://bugs.debian.org/cgi-bin/bugreport.cgi?bug=891902
+Forwarded: not-needed
+
+--- a/src/libcompiler_builtins/build.rs
++++ b/src/libcompiler_builtins/build.rs
+@@ -46,9 +46,9 @@
+     }
+ 
+     // Only emit the ARM Linux atomic emulation on pre-ARMv6 architectures.
+-    if llvm_target[0] == "armv4t" || llvm_target[0] == "armv5te" {
+-        println!("cargo:rustc-cfg=kernel_user_helpers")
+-    }
++    // if llvm_target[0] == "armv4t" || llvm_target[0] == "armv5te" {
++    //     println!("cargo:rustc-cfg=kernel_user_helpers")
++    // }
+ }
+ 
+ #[cfg(feature = "c")]
