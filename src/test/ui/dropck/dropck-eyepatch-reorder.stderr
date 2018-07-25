@@ -1,0 +1,47 @@
+error[E0597]: `c` does not live long enough
+  --> $DIR/dropck-eyepatch-reorder.rs:56:20
+   |
+LL |     dt = Dt("dt", &c);
+   |                    ^ borrowed value does not live long enough
+...
+LL | }
+   | - `c` dropped here while still borrowed
+   |
+   = note: values in a scope are dropped in the opposite order they are created
+
+error[E0597]: `c` does not live long enough
+  --> $DIR/dropck-eyepatch-reorder.rs:58:20
+   |
+LL |     dr = Dr("dr", &c);
+   |                    ^ borrowed value does not live long enough
+...
+LL | }
+   | - `c` dropped here while still borrowed
+   |
+   = note: values in a scope are dropped in the opposite order they are created
+
+error[E0597]: `c` does not live long enough
+  --> $DIR/dropck-eyepatch-reorder.rs:66:29
+   |
+LL |     pt = Pt("pt", &c_long, &c);
+   |                             ^ borrowed value does not live long enough
+...
+LL | }
+   | - `c` dropped here while still borrowed
+   |
+   = note: values in a scope are dropped in the opposite order they are created
+
+error[E0597]: `c` does not live long enough
+  --> $DIR/dropck-eyepatch-reorder.rs:68:29
+   |
+LL |     pr = Pr("pr", &c_long, &c);
+   |                             ^ borrowed value does not live long enough
+...
+LL | }
+   | - `c` dropped here while still borrowed
+   |
+   = note: values in a scope are dropped in the opposite order they are created
+
+error: aborting due to 4 previous errors
+
+For more information about this error, try `rustc --explain E0597`.
