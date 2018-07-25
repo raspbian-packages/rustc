@@ -1,0 +1,18 @@
+Description: Prefer dynamic linking (currently disabled, not applied)
+ As per Debian policy, we basically revert
+ https://github.com/rust-lang/rfcs/blob/master/text/0404-change-prefer-dynamic.md
+ TODO: this does not yet work: https://github.com/rust-lang/rust/issues/43289
+ Perhaps a better method would be to modify dh-cargo instead of rustc
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: not-needed
+--- a/src/librustc/session/config.rs
++++ b/src/librustc/session/config.rs
+@@ -846,7 +846,7 @@
+         "don't run LLVM's SLP vectorization pass"),
+     soft_float: bool = (false, parse_bool, [TRACKED],
+         "use soft float ABI (*eabihf targets only)"),
+-    prefer_dynamic: bool = (false, parse_bool, [TRACKED],
++    prefer_dynamic: bool = (true, parse_bool, [TRACKED],
+         "prefer dynamic linking to static linking"),
+     no_integrated_as: bool = (false, parse_bool, [TRACKED],
+         "use an external assembler rather than LLVM's integrated one"),
