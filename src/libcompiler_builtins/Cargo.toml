@@ -1,0 +1,37 @@
+[package]
+authors = ["Jorge Aparicio <japaricious@gmail.com>"]
+name = "compiler_builtins"
+version = "0.1.0"
+
+[lib]
+test = false
+
+[build-dependencies]
+cc = { optional = true, version = "1.0" }
+
+[features]
+default = ["compiler-builtins"]
+
+# Enable compilation of C code in compiler-rt, filling in some more optimized
+# implementations and also filling in unimplemented intrinsics
+c = ["cc"]
+
+# Flag this library as the unstable compiler-builtins lib
+compiler-builtins = []
+
+# Generate memory-related intrinsics like memcpy
+mem = []
+
+# Mangle all names so this can be linked in with other versions or other
+# compiler-rt implementations. Also used for testing
+mangled-names = []
+
+# Don't generate lang items for i128 intrisnics and such
+no-lang-items = []
+
+[[example]]
+name = "intrinsics"
+required-features = ["c", "compiler-builtins"]
+
+[workspace]
+members = ["testcrate"]
