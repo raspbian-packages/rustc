@@ -1,0 +1,40 @@
+# Patches for upstream
+
+# pending, or forwarded
+u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
+u-reproducible-build.patch
+u-fixtestignores-ppc64el.patch
+u-prefer-local-css.patch
+u-make-tests-work-without-rpath.patch
+u-tag-private-modules-with-doc-cfg.patch
+u-sparc64-cabi.patch
+u-rust-52760-test_loading_atoi.patch
+u-rust-52876-const-endianess.patch
+
+# https://github.com/rust-lang/compiler-rt/pull/35/
+u-compiler-rt.patch
+
+# Extra ignored tests. We now instead raise FAILURES_ALLOWED in d/rules but
+# these patches are kept in case they are useful for derivatives.
+#u-ignoretest-ppc64el_02.patch
+
+# not forwarded, or forwarded but unlikely to be merged
+u-reproducible-dl-stage0.patch
+
+gcc-4.8-aarch64-ice.diff
+
+# Debian-specific patches, not suitable for upstream
+d-disable-cargo-vendor.patch
+d-rust-gdb-paths
+d-rust-lldb-paths
+d-add-soname.patch
+d-dont-download-stage0.patch
+d-ignore-removed-submodules.patch
+d-armel-disable-kernel-helpers.patch
+d-read-beta-version-from-file.patch
+d-ignore-impl-generic-mismatch-diff.patch
+d-fix-mips64el-bootstrap.patch
+
+d-no-web-dependencies-in-doc.patch
+# Work around for some porterboxes, keep this commented
+#d-host-duplicates.patch
