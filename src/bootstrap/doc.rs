@@ -144,7 +144,7 @@ pub struct CargoBook {
 
 impl Step for CargoBook {
     type Output = ();
-    const DEFAULT: bool = true;
+    const DEFAULT: bool = false;
 
     fn should_run(run: ShouldRun) -> ShouldRun {
         let builder = run.builder;
