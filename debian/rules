@@ -232,7 +232,7 @@ override_dh_auto_test-arch:
 		test "$$(stat -c %s "$$x")" -lt 6000000; \
 	done
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
-ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
 	test -f $(TEST_LOG)
 	echo "Summary of specific test failures:"; \

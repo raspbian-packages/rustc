@@ -1,0 +1,19 @@
+From: Peter Michael Green <plugwash@raspbian.org>
+Date: Thu, 22 Mar 2018 23:44:06 +0000
+X-Dgit-Generated: 1.24.1+dfsg1-1+rpi1 a186e4e5762b6af08f55b0ea5ede6c03c8d6c8c4
+Subject: Remove -march=native from src/binaryen/CMakeLists.txt
+
+
+---
+
+--- rustc-1.24.1+dfsg1.orig/src/binaryen/CMakeLists.txt
++++ rustc-1.24.1+dfsg1/src/binaryen/CMakeLists.txt
+@@ -143,7 +143,7 @@ ELSE()
+       ADD_COMPILE_FLAG("-mfpmath=sse")
+     elseif(TARGET_ARCH STREQUAL "ARM")
+       # stub for ARM-specific instructions. GCC6 adds NEON with the below flags
+-      ADD_COMPILE_FLAG("-march=native")
++      #ADD_COMPILE_FLAG("-march=native")
+     endif ()
+   endif ()
+   ADD_COMPILE_FLAG("-Wall")

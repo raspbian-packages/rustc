@@ -41,3 +41,4 @@ d-armel-disable-kernel-helpers.patch
 
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
+remove--march=native-from-srcbinaryencma.patch

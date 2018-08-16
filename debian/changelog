@@ -1,3 +1,14 @@
+rustc (1.24.1+dfsg1-1~deb9u2+rpi1) stretch-staging; urgency=medium
+
+  [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
+  * Build for armv6.
+  [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
+  * Disable testsuite.
+  [changes introduced in 1.24.1+dfsg1-1+rpi1 by Peter Michael Green]
+  * Remove -march=native from src/binaryen/CMakeLists.txt
+
+ -- Peter Michael Green <plugwash@raspbian.org>  Thu, 16 Aug 2018 12:03:30 +0000
+
 rustc (1.24.1+dfsg1-1~deb9u2) stretch; urgency=medium
 
   * Add Build-Depends on rustc [!amd64] to prevent buildds from attempting

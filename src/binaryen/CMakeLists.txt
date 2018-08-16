@@ -143,7 +143,7 @@ ELSE()
       ADD_COMPILE_FLAG("-mfpmath=sse")
     elseif(TARGET_ARCH STREQUAL "ARM")
       # stub for ARM-specific instructions. GCC6 adds NEON with the below flags
-      ADD_COMPILE_FLAG("-march=native")
+      #ADD_COMPILE_FLAG("-march=native")
     endif ()
   endif ()
   ADD_COMPILE_FLAG("-Wall")
