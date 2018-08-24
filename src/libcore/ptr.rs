@@ -166,8 +166,6 @@ pub unsafe fn swap<T>(x: *mut T, y: *mut T) {
 /// Basic usage:
 ///
 /// ```
-/// #![feature(swap_nonoverlapping)]
-///
 /// use std::ptr;
 ///
 /// let mut x = [1, 2, 3, 4];
@@ -181,7 +179,7 @@ pub unsafe fn swap<T>(x: *mut T, y: *mut T) {
 /// assert_eq!(y, [1, 2, 9]);
 /// ```
 #[inline]
-#[unstable(feature = "swap_nonoverlapping", issue = "42818")]
+#[stable(feature = "swap_nonoverlapping", since = "1.27.0")]
 pub unsafe fn swap_nonoverlapping<T>(x: *mut T, y: *mut T, count: usize) {
     let x = x as *mut u8;
     let y = y as *mut u8;
@@ -677,6 +675,7 @@ impl<T: ?Sized> *const T {
     ///
     /// ```
     /// #![feature(offset_to)]
+    /// #![allow(deprecated)]
     ///
     /// fn main() {
     ///     let a = [0; 5];
@@ -689,14 +688,15 @@ impl<T: ?Sized> *const T {
     /// }
     /// ```
     #[unstable(feature = "offset_to", issue = "41079")]
+    #[rustc_deprecated(since = "1.27.0", reason = "Replaced by `wrapping_offset_from`, with the \
+        opposite argument order.  If you're writing unsafe code, consider `offset_from`.")]
     #[inline]
     pub fn offset_to(self, other: *const T) -> Option<isize> where T: Sized {
         let size = mem::size_of::<T>();
         if size == 0 {
             None
         } else {
-            let diff = (other as isize).wrapping_sub(self as isize);
-            Some(diff / size as isize)
+            Some(other.wrapping_offset_from(self))
         }
     }
 
@@ -1442,6 +1442,7 @@ impl<T: ?Sized> *mut T {
     ///
     /// ```
     /// #![feature(offset_to)]
+    /// #![allow(deprecated)]
     ///
     /// fn main() {
     ///     let mut a = [0; 5];
@@ -1454,14 +1455,15 @@ impl<T: ?Sized> *mut T {
     /// }
     /// ```
     #[unstable(feature = "offset_to", issue = "41079")]
+    #[rustc_deprecated(since = "1.27.0", reason = "Replaced by `wrapping_offset_from`, with the \
+        opposite argument order.  If you're writing unsafe code, consider `offset_from`.")]
     #[inline]
     pub fn offset_to(self, other: *const T) -> Option<isize> where T: Sized {
         let size = mem::size_of::<T>();
         if size == 0 {
             None
         } else {
-            let diff = (other as isize).wrapping_sub(self as isize);
-            Some(diff / size as isize)
+            Some(other.wrapping_offset_from(self))
         }
     }
 
@@ -2511,6 +2513,7 @@ impl<T: ?Sized> PartialOrd for *mut T {
            reason = "use NonNull instead and consider PhantomData<T> \
                      (if you also use #[may_dangle]), Send, and/or Sync")]
 #[allow(deprecated)]
+#[doc(hidden)]
 pub struct Unique<T: ?Sized> {
     pointer: NonZero<*const T>,
     // NOTE: this marker has no consequences for variance, but is necessary
@@ -2549,10 +2552,9 @@ impl<T: Sized> Unique<T> {
     /// This is useful for initializing types which lazily allocate, like
     /// `Vec::new` does.
     // FIXME: rename to dangling() to match NonNull?
-    pub fn empty() -> Self {
+    pub const fn empty() -> Self {
         unsafe {
-            let ptr = mem::align_of::<T>() as *mut T;
-            Unique::new_unchecked(ptr)
+            Unique::new_unchecked(mem::align_of::<T>() as *mut T)
         }
     }
 }
@@ -2740,10 +2742,18 @@ impl<T: ?Sized> NonNull<T> {
     }
 
     /// Cast to a pointer of another type
-    #[unstable(feature = "nonnull_cast", issue = "47653")]
+    #[stable(feature = "nonnull_cast", since = "1.27.0")]
     pub fn cast<U>(self) -> NonNull<U> {
         unsafe {
             NonNull::new_unchecked(self.as_ptr() as *mut U)
+        }
+    }
+
+    /// Cast to an `Opaque` pointer
+    #[unstable(feature = "allocator_api", issue = "32838")]
+    pub fn as_opaque(self) -> NonNull<::alloc::Opaque> {
+        unsafe {
+            NonNull::new_unchecked(self.as_ptr() as _)
         }
     }
 }

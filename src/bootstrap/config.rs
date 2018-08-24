@@ -15,7 +15,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -69,6 +69,10 @@ pub struct Config {
     pub jobs: Option<u32>,
     pub cmd: Subcommand,
     pub incremental: bool,
+    pub dry_run: bool,
+
+    pub deny_warnings: bool,
+    pub backtrace_on_ice: bool,
 
     // llvm codegen options
     pub llvm_enabled: bool,
@@ -91,6 +95,7 @@ pub struct Config {
     pub rust_debuginfo: bool,
     pub rust_debuginfo_lines: bool,
     pub rust_debuginfo_only_std: bool,
+    pub rust_debuginfo_tools: bool,
     pub rust_rpath: bool,
     pub rustc_parallel_queries: bool,
     pub rustc_default_linker: Option<String>,
@@ -143,6 +148,7 @@ pub struct Config {
     // These are either the stage0 downloaded binaries or the locally installed ones.
     pub initial_cargo: PathBuf,
     pub initial_rustc: PathBuf,
+    pub out: PathBuf,
 }
 
 /// Per-target configuration stored in the global configuration structure.
@@ -159,6 +165,7 @@ pub struct Target {
     pub crt_static: Option<bool>,
     pub musl_root: Option<PathBuf>,
     pub qemu_rootfs: Option<PathBuf>,
+    pub no_std: bool,
 }
 
 /// Structure of the `config.toml` file that configuration is read from.
@@ -277,6 +284,7 @@ struct Rust {
     debuginfo: Option<bool>,
     debuginfo_lines: Option<bool>,
     debuginfo_only_std: Option<bool>,
+    debuginfo_tools: Option<bool>,
     experimental_parallel_queries: Option<bool>,
     debug_jemalloc: Option<bool>,
     use_jemalloc: Option<bool>,
@@ -298,6 +306,8 @@ struct Rust {
     codegen_backends_dir: Option<String>,
     wasm_syscall: Option<bool>,
     lld: Option<bool>,
+    deny_warnings: Option<bool>,
+    backtrace_on_ice: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -317,11 +327,16 @@ struct TomlTarget {
 }
 
 impl Config {
-    pub fn parse(args: &[String]) -> Config {
-        let flags = Flags::parse(&args);
-        let file = flags.config.clone();
+    fn path_from_python(var_key: &str) -> PathBuf {
+        match env::var_os(var_key) {
+            // Do not trust paths from Python and normalize them slightly (#49785).
+            Some(var_val) => Path::new(&var_val).components().collect(),
+            _ => panic!("expected '{}' to be set", var_key),
+        }
+    }
+
+    pub fn default_opts() -> Config {
         let mut config = Config::default();
-        config.exclude = flags.exclude;
         config.llvm_enabled = true;
         config.llvm_optimize = true;
         config.llvm_version_check = true;
@@ -340,15 +355,42 @@ impl Config {
         config.test_miri = false;
         config.rust_codegen_backends = vec![INTERNER.intern_str("llvm")];
         config.rust_codegen_backends_dir = "codegen-backends".to_owned();
+        config.deny_warnings = true;
 
+        // set by bootstrap.py
+        config.build = INTERNER.intern_str(&env::var("BUILD").expect("'BUILD' to be set"));
+        config.src = Config::path_from_python("SRC");
+        config.out = Config::path_from_python("BUILD_DIR");
+
+        let stage0_root = config.out.join(&config.build).join("stage0/bin");
+        config.initial_rustc = stage0_root.join(exe("rustc", &config.build));
+        config.initial_cargo = stage0_root.join(exe("cargo", &config.build));
+
+        config
+    }
+
+    pub fn parse(args: &[String]) -> Config {
+        let flags = Flags::parse(&args);
+        let file = flags.config.clone();
+        let mut config = Config::default_opts();
+        config.exclude = flags.exclude;
         config.rustc_error_format = flags.rustc_error_format;
         config.on_fail = flags.on_fail;
         config.stage = flags.stage;
-        config.src = flags.src;
         config.jobs = flags.jobs;
         config.cmd = flags.cmd;
         config.incremental = flags.incremental;
+        config.dry_run = flags.dry_run;
         config.keep_stage = flags.keep_stage;
+        if let Some(value) = flags.warnings {
+            config.deny_warnings = value;
+        }
+
+        if config.dry_run {
+            let dir = config.out.join("tmp-dry-run");
+            t!(fs::create_dir_all(&dir));
+            config.out = dir;
+        }
 
         // If --target was specified but --host wasn't specified, don't run any host-only tests.
         config.run_host_only = !(flags.host.is_empty() && !flags.target.is_empty());
@@ -368,12 +410,7 @@ impl Config {
         }).unwrap_or_else(|| TomlConfig::default());
 
         let build = toml.build.clone().unwrap_or(Build::default());
-        set(&mut config.build, build.build.clone().map(|x| INTERNER.intern_string(x)));
-        set(&mut config.build, flags.build);
-        if config.build.is_empty() {
-            // set by bootstrap.py
-            config.build = INTERNER.intern_str(&env::var("BUILD").unwrap());
-        }
+        // set by bootstrap.py
         config.hosts.push(config.build.clone());
         for host in build.host.iter() {
             let host = INTERNER.intern_str(host);
@@ -437,6 +474,7 @@ impl Config {
         let mut llvm_assertions = None;
         let mut debuginfo_lines = None;
         let mut debuginfo_only_std = None;
+        let mut debuginfo_tools = None;
         let mut debug = None;
         let mut debug_jemalloc = None;
         let mut debuginfo = None;
@@ -474,6 +512,7 @@ impl Config {
             debuginfo = rust.debuginfo;
             debuginfo_lines = rust.debuginfo_lines;
             debuginfo_only_std = rust.debuginfo_only_std;
+            debuginfo_tools = rust.debuginfo_tools;
             optimize = rust.optimize;
             ignore_git = rust.ignore_git;
             debug_jemalloc = rust.debug_jemalloc;
@@ -493,6 +532,8 @@ impl Config {
             config.rustc_default_linker = rust.default_linker.clone();
             config.musl_root = rust.musl_root.clone().map(PathBuf::from);
             config.save_toolstates = rust.save_toolstates.clone().map(PathBuf::from);
+            set(&mut config.deny_warnings, rust.deny_warnings.or(flags.warnings));
+            set(&mut config.backtrace_on_ice, rust.backtrace_on_ice);
 
             if let Some(ref backends) = rust.codegen_backends {
                 config.rust_codegen_backends = backends.iter()
@@ -514,13 +555,13 @@ impl Config {
                 let mut target = Target::default();
 
                 if let Some(ref s) = cfg.llvm_config {
-                    target.llvm_config = Some(env::current_dir().unwrap().join(s));
+                    target.llvm_config = Some(config.src.join(s));
                 }
                 if let Some(ref s) = cfg.jemalloc {
-                    target.jemalloc = Some(env::current_dir().unwrap().join(s));
+                    target.jemalloc = Some(config.src.join(s));
                 }
                 if let Some(ref s) = cfg.android_ndk {
-                    target.ndk = Some(env::current_dir().unwrap().join(s));
+                    target.ndk = Some(config.src.join(s));
                 }
                 target.cc = cfg.cc.clone().map(PathBuf::from);
                 target.cxx = cfg.cxx.clone().map(PathBuf::from);
@@ -541,21 +582,11 @@ impl Config {
             set(&mut config.rust_dist_src, t.src_tarball);
         }
 
-        let cwd = t!(env::current_dir());
-        let out = cwd.join("build");
-
-        let stage0_root = out.join(&config.build).join("stage0/bin");
-        config.initial_rustc = match build.rustc {
-            Some(s) => PathBuf::from(s),
-            None => stage0_root.join(exe("rustc", &config.build)),
-        };
-        config.initial_cargo = match build.cargo {
-            Some(s) => PathBuf::from(s),
-            None => stage0_root.join(exe("cargo", &config.build)),
-        };
-
         // Now that we've reached the end of our configuration, infer the
         // default values for all options that we haven't otherwise stored yet.
+
+        set(&mut config.initial_rustc, build.rustc.map(PathBuf::from));
+        set(&mut config.initial_cargo, build.cargo.map(PathBuf::from));
 
         let default = false;
         config.llvm_assertions = llvm_assertions.unwrap_or(default);
@@ -566,6 +597,7 @@ impl Config {
         };
         config.rust_debuginfo_lines = debuginfo_lines.unwrap_or(default);
         config.rust_debuginfo_only_std = debuginfo_only_std.unwrap_or(default);
+        config.rust_debuginfo_tools = debuginfo_tools.unwrap_or(false);
 
         let default = debug == Some(true);
         config.debug_jemalloc = debug_jemalloc.unwrap_or(default);

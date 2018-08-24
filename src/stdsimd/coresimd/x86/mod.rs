@@ -1,31 +1,10 @@
 //! `x86` and `x86_64` intrinsics.
 
-use prelude::v1::*;
 use mem;
+use prelude::v1::*;
 
 #[macro_use]
 mod macros;
-
-macro_rules! types {
-    ($(
-        $(#[$doc:meta])*
-        pub struct $name:ident($($fields:tt)*);
-    )*) => ($(
-        $(#[$doc])*
-        #[derive(Copy, Debug)]
-        #[allow(non_camel_case_types)]
-        #[repr(simd)]
-        pub struct $name($($fields)*);
-
-        #[cfg_attr(feature = "cargo-clippy", allow(expl_impl_clone_on_copy))]
-        impl Clone for $name {
-            #[inline] // currently needed for correctness
-            fn clone(&self) -> $name {
-                *self
-            }
-        }
-    )*)
-}
 
 types! {
     /// 64-bit wide integer vector type, x86-specific
@@ -54,7 +33,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![feature(stdsimd, mmx_target_feature)]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -104,7 +83,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -126,6 +105,7 @@ types! {
     /// # if is_x86_feature_detected!("sse2") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m128i(i64, i64);
 
     /// 128-bit wide set of four `f32` types, x86-specific
@@ -147,7 +127,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -169,6 +149,7 @@ types! {
     /// # if is_x86_feature_detected!("sse") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m128(f32, f32, f32, f32);
 
     /// 128-bit wide set of two `f64` types, x86-specific
@@ -190,7 +171,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -212,6 +193,7 @@ types! {
     /// # if is_x86_feature_detected!("sse") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m128d(f64, f64);
 
     /// 256-bit wide integer vector type, x86-specific
@@ -237,7 +219,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -259,6 +241,7 @@ types! {
     /// # if is_x86_feature_detected!("avx") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m256i(i64, i64, i64, i64);
 
     /// 256-bit wide set of eight `f32` types, x86-specific
@@ -280,7 +263,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -302,6 +285,7 @@ types! {
     /// # if is_x86_feature_detected!("sse") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m256(f32, f32, f32, f32, f32, f32, f32, f32);
 
     /// 256-bit wide set of four `f64` types, x86-specific
@@ -323,7 +307,7 @@ types! {
     /// # Examples
     ///
     /// ```
-    /// # #![feature(cfg_target_feature, target_feature, stdsimd)]
+    /// # #![cfg_attr(not(dox), feature(stdsimd))]
     /// # #![cfg_attr(not(dox), no_std)]
     /// # #[cfg(not(dox))]
     /// # extern crate std as real_std;
@@ -345,6 +329,7 @@ types! {
     /// # if is_x86_feature_detected!("avx") { unsafe { foo() } }
     /// # }
     /// ```
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub struct __m256d(f64, f64, f64, f64);
 }
 
@@ -355,6 +340,7 @@ pub use self::test::*;
 
 #[doc(hidden)]
 #[allow(non_camel_case_types)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub(crate) trait m128iExt: Sized {
     fn as_m128i(self) -> __m128i;
 
@@ -408,6 +394,7 @@ impl m128iExt for __m128i {
 
 #[doc(hidden)]
 #[allow(non_camel_case_types)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub(crate) trait m256iExt: Sized {
     fn as_m256i(self) -> __m256i;
 
@@ -459,97 +446,126 @@ impl m256iExt for __m256i {
     }
 }
 
-use coresimd::simd::{b8x16, b8x32, b8x8, f32x4, f32x8, f64x2, f64x4, i16x16,
-                     i16x4, i16x8, i32x2, i32x4, i32x8, i64x2, i64x4, i8x16,
-                     i8x32, i8x8, u16x16, u16x4, u16x8, u32x2, u32x4, u32x8,
-                     u64x2, u64x4, u8x16, u8x32, u8x8};
+use coresimd::simd::{f32x2, f32x4, f32x8, f64x2, f64x4, i16x16, i16x4, i16x8,
+                     i32x2, i32x4, i32x8, i64x2, i64x4, i8x16, i8x32, i8x8,
+                     m16x16, m16x4, m16x8, m32x2, m32x4, m32x8, m64x2, m64x4,
+                     m8x16, m8x32, m8x8, u16x16, u16x4, u16x8, u32x2, u32x4,
+                     u32x8, u64x2, u64x4, u8x16, u8x32, u8x8};
 
-impl_from_bits_!(__m64: u32x2, i32x2, u16x4, i16x4, u8x8, i8x8, b8x8);
+impl_from_bits_!(
+    __m64: u32x2,
+    i32x2,
+    f32x2,
+    m32x2,
+    u16x4,
+    i16x4,
+    m16x4,
+    u8x8,
+    i8x8,
+    m8x8
+);
+
 impl_from_bits_!(
     __m128: u64x2,
     i64x2,
     f64x2,
+    m64x2,
     u32x4,
     i32x4,
     f32x4,
+    m32x4,
     u16x8,
     i16x8,
+    m16x8,
     u8x16,
     i8x16,
-    b8x16
+    m8x16
 );
 impl_from_bits_!(
     __m128i: u64x2,
     i64x2,
     f64x2,
+    m64x2,
     u32x4,
     i32x4,
     f32x4,
+    m32x4,
     u16x8,
     i16x8,
+    m16x8,
     u8x16,
     i8x16,
-    b8x16
+    m8x16
 );
 impl_from_bits_!(
     __m128d: u64x2,
     i64x2,
     f64x2,
+    m64x2,
     u32x4,
     i32x4,
     f32x4,
+    m32x4,
     u16x8,
     i16x8,
+    m16x8,
     u8x16,
     i8x16,
-    b8x16
+    m8x16
 );
 impl_from_bits_!(
     __m256: u64x4,
     i64x4,
     f64x4,
+    m64x4,
     u32x8,
     i32x8,
     f32x8,
+    m32x8,
     u16x16,
     i16x16,
+    m16x16,
     u8x32,
     i8x32,
-    b8x32
+    m8x32
 );
 impl_from_bits_!(
     __m256i: u64x4,
     i64x4,
     f64x4,
+    m64x4,
     u32x8,
     i32x8,
     f32x8,
+    m32x8,
     u16x16,
     i16x16,
+    m16x16,
     u8x32,
     i8x32,
-    b8x32
+    m8x32
 );
 impl_from_bits_!(
     __m256d: u64x4,
     i64x4,
     f64x4,
+    m64x4,
     u32x8,
     i32x8,
     f32x8,
+    m32x8,
     u16x16,
     i16x16,
+    m16x16,
     u8x32,
     i8x32,
-    b8x32
+    m8x32
 );
 
 mod eflags;
 pub use self::eflags::*;
 
-#[cfg(dont_compile_me)] // TODO: need to upstream `fxsr` target feature
 mod fxsr;
-#[cfg(dont_compile_me)] // TODO: need to upstream `fxsr` target feature
 pub use self::fxsr::*;
 
 mod bswap;
@@ -579,23 +595,25 @@ mod avx;
 pub use self::avx::*;
 mod avx2;
 pub use self::avx2::*;
+mod fma;
+pub use self::fma::*;
 
 mod abm;
 pub use self::abm::*;
-mod bmi;
-pub use self::bmi::*;
+mod bmi1;
+pub use self::bmi1::*;
 
 mod bmi2;
 pub use self::bmi2::*;
 
-#[cfg(not(feature = "intel_sde"))]
+#[cfg(not(stdsimd_intel_sde))]
 mod sse4a;
-#[cfg(not(feature = "intel_sde"))]
+#[cfg(not(stdsimd_intel_sde))]
 pub use self::sse4a::*;
 
-#[cfg(not(feature = "intel_sde"))]
+#[cfg(not(stdsimd_intel_sde))]
 mod tbm;
-#[cfg(not(feature = "intel_sde"))]
+#[cfg(not(stdsimd_intel_sde))]
 pub use self::tbm::*;
 
 mod mmx;
@@ -609,3 +627,6 @@ pub use self::aes::*;
 
 mod rdrand;
 pub use self::rdrand::*;
+
+mod sha;
+pub use self::sha::*;

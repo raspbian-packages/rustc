@@ -1,6 +1,7 @@
 <!DOCTYPE HTML>
-<html lang="{{ language }}">
+<html lang="{{ language }}" class="sidebar-visible no-js">
     <head>
+        <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
         <title>{{ title }}</title>
         <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
@@ -21,14 +22,14 @@
         <link rel="stylesheet" href="tomorrow-night.css">
         <link rel="stylesheet" href="ayu-highlight.css">
 
-        <!-- Custom theme -->
+        <!-- Custom theme stylesheets -->
         {{#each additional_css}}
         <link rel="stylesheet" href="{{this}}">
         {{/each}}
 
         {{#if mathjax_support}}
         <!-- MathJax -->
-        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+        <script async type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
         {{/if}}
 
     </head>
@@ -52,16 +53,21 @@
                             <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
                                 <i class="fa fa-paint-brush"></i>
                             </button>
-                            <ul id="theme-list" class="theme-popup" aria-label="submenu">
-                                <li><button class="theme" id="light">Light <span class="default">(default)</span></button></li>
-                                <li><button class="theme" id="rust">Rust</button></li>
-                                <li><button class="theme" id="coal">Coal</button></li>
-                                <li><button class="theme" id="navy">Navy</button></li>
-                                <li><button class="theme" id="ayu">Ayu</button></li>
+                            <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                                <li role="none"><button role="menuitem" class="theme" id="light">Light <span class="default">(default)</span></button></li>
+                                <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                                <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                                <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                                <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
                             </ul>
+                            {{#if search_enabled}}
+                            <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                                <i class="fa fa-search"></i>
+                            </button>
+                            {{/if}}
                         </div>
 
-                        <h1 class="menu-title">{{ book_title }}</h1>
+                        <h1 class="menu-title">{{ book_title }}</h1> 
 
                         <div class="right-buttons">
                             <a href="print.html" title="Print this book" aria-label="Print this book">
@@ -70,6 +76,19 @@
                         </div>
                     </div>
                 </div>
+
+                {{#if search_enabled}}
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                {{/if}}
 
                 <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
                 <script type="text/javascript">
@@ -120,7 +139,6 @@
 
         </div>
 
-
         {{#if livereload}}
         <!-- Livereload script (if served using the cli tool) -->
         <script type="text/javascript">
@@ -141,17 +159,21 @@
 
 
         {{#if is_print}}
-        <script>
+        <script type="text/javascript">
             document.addEventListener('DOMContentLoaded', function() {
                 window.print();
             })
         </script>
         {{/if}}
 
-        <script src="../highlight.js"></script>
-        <script src="book.js"></script>
+        {{#if search_enabled}}
+        <script src="searchindex.js" type="text/javascript" charset="utf-8"></script>
+        {{/if}}
 
-        <!-- Custom JS script -->
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
         {{#each additional_js}}
         <script type="text/javascript" src="{{this}}"></script>
         {{/each}}

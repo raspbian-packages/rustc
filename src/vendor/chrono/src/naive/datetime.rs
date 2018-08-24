@@ -4,8 +4,8 @@
 //! ISO 8601 date and time without timezone.
 
 use std::{str, fmt, hash};
-use std::ops::{Add, Sub, Deref, AddAssign, SubAssign};
-use num::traits::ToPrimitive;
+use std::ops::{Add, Sub, AddAssign, SubAssign};
+use num_traits::ToPrimitive;
 use oldtime::Duration as OldDuration;
 
 use {Weekday, Timelike, Datelike};
@@ -51,24 +51,6 @@ const MAX_SECS_BITS: usize = 44;
 pub struct NaiveDateTime {
     date: NaiveDate,
     time: NaiveTime,
-}
-
-/// A DateTime that can be deserialized from a seconds-based timestamp
-pub struct TsSeconds(NaiveDateTime);
-
-impl From<TsSeconds> for NaiveDateTime {
-    /// Pull the internal NaiveDateTime out
-    fn from(obj: TsSeconds) -> NaiveDateTime {
-        obj.0
-    }
-}
-
-impl Deref for TsSeconds {
-    type Target = NaiveDateTime;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
 }
 
 impl NaiveDateTime {
@@ -151,9 +133,9 @@ impl NaiveDateTime {
     /// ~~~~
     #[inline]
     pub fn from_timestamp_opt(secs: i64, nsecs: u32) -> Option<NaiveDateTime> {
-        let (days, secs) = div_mod_floor(secs, 86400);
-        let date = days.to_i32().and_then(|days| days.checked_add(719163))
-                                .and_then(|days_ce| NaiveDate::from_num_days_from_ce_opt(days_ce));
+        let (days, secs) = div_mod_floor(secs, 86_400);
+        let date = days.to_i32().and_then(|days| days.checked_add(719_163))
+                                .and_then(NaiveDate::from_num_days_from_ce_opt);
         let time = NaiveTime::from_num_seconds_from_midnight_opt(secs as u32, nsecs);
         match (date, time) {
             (Some(date), Some(time)) => Some(NaiveDateTime { date: date, time: time }),
@@ -276,9 +258,36 @@ impl NaiveDateTime {
     /// ~~~~
     #[inline]
     pub fn timestamp(&self) -> i64 {
-        let ndays = self.date.num_days_from_ce() as i64;
-        let nseconds = self.time.num_seconds_from_midnight() as i64;
-        (ndays - 719163) * 86400 + nseconds
+        let ndays = i64::from(self.date.num_days_from_ce());
+        let nseconds = i64::from(self.time.num_seconds_from_midnight());
+        (ndays - 719_163) * 86_400 + nseconds
+    }
+
+    /// Returns the number of non-leap *milliseconds* since midnight on January 1, 1970.
+    ///
+    /// Note that this does *not* account for the timezone!
+    /// The true "UNIX timestamp" would count seconds since the midnight *UTC* on the epoch.
+    ///
+    /// Note also that this does reduce the number of years that can be
+    /// represented from ~584 Billion to ~584 Million. (If this is a problem,
+    /// please file an issue to let me know what domain needs millisecond
+    /// precision over billions of years, I'm curious.)
+    ///
+    /// # Example
+    ///
+    /// ~~~~
+    /// use chrono::NaiveDate;
+    ///
+    /// let dt = NaiveDate::from_ymd(1970, 1, 1).and_hms_milli(0, 0, 1, 444);
+    /// assert_eq!(dt.timestamp_millis(), 1_444);
+    ///
+    /// let dt = NaiveDate::from_ymd(2001, 9, 9).and_hms_milli(1, 46, 40, 555);
+    /// assert_eq!(dt.timestamp_millis(), 1_000_000_000_555);
+    /// ~~~~
+    #[inline]
+    pub fn timestamp_millis(&self) -> i64 {
+        let as_ms = self.timestamp() * 1000;
+        as_ms + i64::from(self.timestamp_subsec_millis())
     }
 
     /// Returns the number of milliseconds since the last whole non-leap second.
@@ -372,7 +381,7 @@ impl NaiveDateTime {
     ///            Some(hms(3, 5, 6)));
     /// assert_eq!(hms(3, 5, 7).checked_add_signed(Duration::seconds(3600 + 60)),
     ///            Some(hms(4, 6, 7)));
-    /// assert_eq!(hms(3, 5, 7).checked_add_signed(Duration::seconds(86400)),
+    /// assert_eq!(hms(3, 5, 7).checked_add_signed(Duration::seconds(86_400)),
     ///            Some(from_ymd(2016, 7, 9).and_hms(3, 5, 7)));
     ///
     /// let hmsm = |h, m, s, milli| d.and_hms_milli(h, m, s, milli);
@@ -458,7 +467,7 @@ impl NaiveDateTime {
     ///            Some(hms(3, 5, 8)));
     /// assert_eq!(hms(3, 5, 7).checked_sub_signed(Duration::seconds(3600 + 60)),
     ///            Some(hms(2, 4, 7)));
-    /// assert_eq!(hms(3, 5, 7).checked_sub_signed(Duration::seconds(86400)),
+    /// assert_eq!(hms(3, 5, 7).checked_sub_signed(Duration::seconds(86_400)),
     ///            Some(from_ymd(2016, 7, 7).and_hms(3, 5, 7)));
     ///
     /// let hmsm = |h, m, s, milli| d.and_hms_milli(h, m, s, milli);
@@ -537,7 +546,7 @@ impl NaiveDateTime {
     /// // July 8 is 190th day in the year 2016
     /// let d0 = from_ymd(2016, 1, 1);
     /// assert_eq!(d.and_hms_milli(0, 7, 6, 500).signed_duration_since(d0.and_hms(0, 0, 0)),
-    ///            Duration::seconds(189 * 86400 + 7 * 60 + 6) + Duration::milliseconds(500));
+    ///            Duration::seconds(189 * 86_400 + 7 * 60 + 6) + Duration::milliseconds(500));
     /// # }
     /// ~~~~
     ///
@@ -1121,6 +1130,7 @@ impl Timelike for NaiveDateTime {
 ///
 /// Practically this also takes account of fractional seconds, so it is not recommended.
 /// (For the obvious reason this also distinguishes leap seconds from non-leap seconds.)
+#[cfg_attr(feature = "cargo-clippy", allow(derive_hash_xor_eq))]
 impl hash::Hash for NaiveDateTime {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.date.hash(state);
@@ -1153,7 +1163,7 @@ impl hash::Hash for NaiveDateTime {
 /// assert_eq!(hms(3, 5, 7) + Duration::seconds(1),         hms(3, 5, 8));
 /// assert_eq!(hms(3, 5, 7) + Duration::seconds(-1),        hms(3, 5, 6));
 /// assert_eq!(hms(3, 5, 7) + Duration::seconds(3600 + 60), hms(4, 6, 7));
-/// assert_eq!(hms(3, 5, 7) + Duration::seconds(86400),
+/// assert_eq!(hms(3, 5, 7) + Duration::seconds(86_400),
 ///            from_ymd(2016, 7, 9).and_hms(3, 5, 7));
 /// assert_eq!(hms(3, 5, 7) + Duration::days(365),
 ///            from_ymd(2017, 7, 8).and_hms(3, 5, 7));
@@ -1225,7 +1235,7 @@ impl AddAssign<OldDuration> for NaiveDateTime {
 /// assert_eq!(hms(3, 5, 7) - Duration::seconds(1),         hms(3, 5, 6));
 /// assert_eq!(hms(3, 5, 7) - Duration::seconds(-1),        hms(3, 5, 8));
 /// assert_eq!(hms(3, 5, 7) - Duration::seconds(3600 + 60), hms(2, 4, 7));
-/// assert_eq!(hms(3, 5, 7) - Duration::seconds(86400),
+/// assert_eq!(hms(3, 5, 7) - Duration::seconds(86_400),
 ///            from_ymd(2016, 7, 7).and_hms(3, 5, 7));
 /// assert_eq!(hms(3, 5, 7) - Duration::days(365),
 ///            from_ymd(2015, 7, 9).and_hms(3, 5, 7));
@@ -1459,7 +1469,7 @@ fn test_decodable_json<F, E>(from_str: F)
 
 #[cfg(all(test, feature = "rustc-serialize"))]
 fn test_decodable_json_timestamp<F, E>(from_str: F)
-    where F: Fn(&str) -> Result<TsSeconds, E>, E: ::std::fmt::Debug
+    where F: Fn(&str) -> Result<rustc_serialize::TsSeconds, E>, E: ::std::fmt::Debug
 {
     assert_eq!(
         *from_str("0").unwrap(),
@@ -1474,8 +1484,9 @@ fn test_decodable_json_timestamp<F, E>(from_str: F)
 }
 
 #[cfg(feature = "rustc-serialize")]
-mod rustc_serialize {
-    use super::{NaiveDateTime, TsSeconds};
+pub mod rustc_serialize {
+    use std::ops::Deref;
+    use super::NaiveDateTime;
     use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
     impl Encodable for NaiveDateTime {
@@ -1487,6 +1498,25 @@ mod rustc_serialize {
     impl Decodable for NaiveDateTime {
         fn decode<D: Decoder>(d: &mut D) -> Result<NaiveDateTime, D::Error> {
             d.read_str()?.parse().map_err(|_| d.error("invalid date time string"))
+        }
+    }
+
+    /// A `DateTime` that can be deserialized from a seconds-based timestamp
+    #[derive(Debug)]
+    pub struct TsSeconds(NaiveDateTime);
+
+    impl From<TsSeconds> for NaiveDateTime {
+        /// Pull the internal NaiveDateTime out
+        fn from(obj: TsSeconds) -> NaiveDateTime {
+            obj.0
+        }
+    }
+
+    impl Deref for TsSeconds {
+        type Target = NaiveDateTime;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
         }
     }
 
@@ -1518,17 +1548,17 @@ mod rustc_serialize {
 
 }
 
-/// Tools to help serializing/deserializing NaiveDateTimes
+/// Tools to help serializing/deserializing `NaiveDateTime`s
 #[cfg(feature = "serde")]
 pub mod serde {
     use std::fmt;
     use super::{NaiveDateTime};
     use serdelib::{ser, de};
 
-    /// Serialize a NaiveDateTime as a string
+    /// Serialize a `NaiveDateTime` as an RFC 3339 string
     ///
-    /// See the [`ts_seconds`](./serde/ts_seconds/index.html) module to serialize as
-    /// a timestamp.
+    /// See [the `serde` module](./serde/index.html) for alternate
+    /// serialization formats.
     impl ser::Serialize for NaiveDateTime {
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where S: ser::Serializer
@@ -1613,7 +1643,7 @@ pub mod serde {
 
         use NaiveDateTime;
 
-        /// Deserialize a DateTime from a seconds timestamp
+        /// Deserialize a `DateTime` from a seconds timestamp
         ///
         /// Intended for use with `serde`s `deserialize_with` attribute.
         ///
@@ -1777,9 +1807,9 @@ mod tests {
         check((2014,5,6, 7,8,9), Duration::seconds(3600 + 60 + 1), Some((2014,5,6, 8,9,10)));
         check((2014,5,6, 7,8,9), Duration::seconds(-(3600 + 60 + 1)), Some((2014,5,6, 6,7,8)));
         check((2014,5,6, 7,8,9), Duration::seconds(86399), Some((2014,5,7, 7,8,8)));
-        check((2014,5,6, 7,8,9), Duration::seconds(86400 * 10), Some((2014,5,16, 7,8,9)));
-        check((2014,5,6, 7,8,9), Duration::seconds(-86400 * 10), Some((2014,4,26, 7,8,9)));
-        check((2014,5,6, 7,8,9), Duration::seconds(86400 * 10), Some((2014,5,16, 7,8,9)));
+        check((2014,5,6, 7,8,9), Duration::seconds(86_400 * 10), Some((2014,5,16, 7,8,9)));
+        check((2014,5,6, 7,8,9), Duration::seconds(-86_400 * 10), Some((2014,4,26, 7,8,9)));
+        check((2014,5,6, 7,8,9), Duration::seconds(86_400 * 10), Some((2014,5,16, 7,8,9)));
 
         // overflow check
         // assumes that we have correct values for MAX/MIN_DAYS_FROM_YEAR_0 from `naive::date`.
@@ -1788,7 +1818,7 @@ mod tests {
         check((0,1,1, 0,0,0), max_days_from_year_0, Some((MAX_DATE.year(),12,31, 0,0,0)));
         check((0,1,1, 0,0,0), max_days_from_year_0 + Duration::seconds(86399),
               Some((MAX_DATE.year(),12,31, 23,59,59)));
-        check((0,1,1, 0,0,0), max_days_from_year_0 + Duration::seconds(86400), None);
+        check((0,1,1, 0,0,0), max_days_from_year_0 + Duration::seconds(86_400), None);
         check((0,1,1, 0,0,0), Duration::max_value(), None);
 
         let min_days_from_year_0 = MIN_DATE.signed_duration_since(NaiveDate::from_ymd(0,1,1));
@@ -1884,6 +1914,8 @@ mod tests {
     #[test]
     fn test_datetime_parse_from_str() {
         let ymdhms = |y,m,d,h,n,s| NaiveDate::from_ymd(y,m,d).and_hms(h,n,s);
+        let ymdhmsn =
+            |y,m,d,h,n,s,nano| NaiveDate::from_ymd(y, m, d).and_hms_nano(h, n, s, nano);
         assert_eq!(NaiveDateTime::parse_from_str("2014-5-7T12:34:56+09:30", "%Y-%m-%dT%H:%M:%S%z"),
                    Ok(ymdhms(2014, 5, 7, 12, 34, 56))); // ignore offset
         assert_eq!(NaiveDateTime::parse_from_str("2015-W06-1 000000", "%G-W%V-%u%H%M%S"),
@@ -1895,6 +1927,16 @@ mod tests {
                                               "%a, %d %b %Y %H:%M:%S GMT").is_err());
         assert!(NaiveDateTime::parse_from_str("2014-5-7 12:3456", "%Y-%m-%d %H:%M:%S").is_err());
         assert!(NaiveDateTime::parse_from_str("12:34:56", "%H:%M:%S").is_err()); // insufficient
+        assert_eq!(NaiveDateTime::parse_from_str("1441497364", "%s"),
+                   Ok(ymdhms(2015, 9, 5, 23, 56, 4)));
+        assert_eq!(NaiveDateTime::parse_from_str("1283929614.1234", "%s.%f"),
+                   Ok(ymdhmsn(2010, 9, 8, 7, 6, 54, 1234)));
+        assert_eq!(NaiveDateTime::parse_from_str("1441497364.649", "%s%.3f"),
+                   Ok(ymdhmsn(2015, 9, 5, 23, 56, 4, 649000000)));
+        assert_eq!(NaiveDateTime::parse_from_str("1497854303.087654", "%s%.6f"),
+                   Ok(ymdhmsn(2017, 6, 19, 6, 38, 23, 87654000)));
+        assert_eq!(NaiveDateTime::parse_from_str("1437742189.918273645", "%s%.9f"),
+                   Ok(ymdhmsn(2015, 7, 24, 12, 49, 49, 918273645)));
     }
 
     #[test]

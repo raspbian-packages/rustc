@@ -153,6 +153,7 @@ $ uscan --verbose # yes, again, to pick up the new Files-Excluded stuff
 $ debian/check-orig-suspicious.sh $ver
 # When you are satisfied with the above, proceed:
 
+$ git checkout debian/experimental
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
 $ dch -v $ver+dfsg1-1~exp1 -m "New upstream release."
 $ debian/rules update-version

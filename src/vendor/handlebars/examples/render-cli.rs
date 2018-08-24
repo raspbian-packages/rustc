@@ -1,6 +1,6 @@
 extern crate env_logger;
-extern crate serde_json;
 extern crate handlebars;
+extern crate serde_json;
 
 use std::io::{self, Write};
 use std::process;
@@ -10,7 +10,6 @@ use std::str::FromStr;
 use serde_json::value::Value as Json;
 
 use handlebars::Handlebars;
-
 
 fn usage() -> ! {
     writeln!(

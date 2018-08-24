@@ -23,6 +23,7 @@ use rustc::ty::subst::{Kind, UnpackedKind, Subst, Substs};
 use rustc::traits;
 use rustc::ty::{self, RegionKind, Ty, TyCtxt, ToPredicate, TypeFoldable};
 use rustc::ty::wf::object_region_bounds;
+use rustc_target::spec::abi;
 use std::slice;
 use require_c_abi_if_variadic;
 use util::common::ErrorReported;
@@ -30,7 +31,7 @@ use util::nodemap::FxHashSet;
 use errors::FatalError;
 
 use std::iter;
-use syntax::{abi, ast};
+use syntax::ast;
 use syntax::feature_gate::{GateIssue, emit_feature_err};
 use syntax_pos::Span;
 
@@ -100,7 +101,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
     {
         let tcx = self.tcx();
         let lifetime_name = |def_id| {
-            tcx.hir.name(tcx.hir.as_local_node_id(def_id).unwrap())
+            tcx.hir.name(tcx.hir.as_local_node_id(def_id).unwrap()).as_interned_str()
         };
 
         let hir_id = tcx.hir.node_to_hir_id(lifetime.id);
@@ -363,7 +364,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                                                  trait_def_id,
                                                  self_ty,
                                                  trait_ref.path.segments.last().unwrap());
-        let poly_trait_ref = ty::Binder(ty::TraitRef::new(trait_def_id, substs));
+        let poly_trait_ref = ty::Binder::bind(ty::TraitRef::new(trait_def_id, substs));
 
         poly_projections.extend(assoc_bindings.iter().filter_map(|binding| {
             // specify type to assert that error was already reported in Err case:
@@ -485,7 +486,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
             //     for<'a> <T as FnMut<(&'a u32,)>>::Output = &'a str // <-- 'a is ok
             let late_bound_in_trait_ref = tcx.collect_constrained_late_bound_regions(&trait_ref);
             let late_bound_in_ty =
-                tcx.collect_referenced_late_bound_regions(&ty::Binder(binding.ty));
+                tcx.collect_referenced_late_bound_regions(&ty::Binder::bind(binding.ty));
             debug!("late_bound_in_trait_ref = {:?}", late_bound_in_trait_ref);
             debug!("late_bound_in_ty = {:?}", late_bound_in_ty);
             for br in late_bound_in_ty.difference(&late_bound_in_trait_ref) {
@@ -639,7 +640,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
         }
 
         for projection_bound in &projection_bounds {
-            associated_types.remove(&projection_bound.0.projection_ty.item_def_id);
+            associated_types.remove(&projection_bound.projection_def_id());
         }
 
         for item_def_id in associated_types {
@@ -654,6 +655,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                         .emit();
         }
 
+        // skip_binder is okay, because the predicates are re-bound.
         let mut v =
             iter::once(ty::ExistentialPredicate::Trait(*existential_principal.skip_binder()))
             .chain(auto_traits.into_iter().map(ty::ExistentialPredicate::AutoTrait))
@@ -661,7 +663,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                    .map(|x| ty::ExistentialPredicate::Projection(*x.skip_binder())))
             .collect::<AccumulateVec<[_; 8]>>();
         v.sort_by(|a, b| a.cmp(tcx, b));
-        let existential_predicates = ty::Binder(tcx.mk_existential_predicates(v.into_iter()));
+        let existential_predicates = ty::Binder::bind(tcx.mk_existential_predicates(v.into_iter()));
 
 
         // Explicitly specified region bound. Use that.
@@ -825,7 +827,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                 };
 
                 let candidates =
-                    traits::supertraits(tcx, ty::Binder(trait_ref))
+                    traits::supertraits(tcx, ty::Binder::bind(trait_ref))
                     .filter(|r| self.trait_defines_associated_type_named(r.def_id(),
                                                                          assoc_name));
 
@@ -853,7 +855,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
             }
         };
 
-        let trait_did = bound.0.def_id;
+        let trait_did = bound.def_id();
         let (assoc_ident, def_scope) = tcx.adjust(assoc_name, trait_did, ref_id);
         let item = tcx.associated_items(trait_did).find(|i| {
             Namespace::from(i.kind) == Namespace::Type &&
@@ -979,7 +981,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
                 let item_def_id = tcx.hir.local_def_id(item_id);
                 let generics = tcx.generics_of(item_def_id);
                 let index = generics.type_param_to_index[&tcx.hir.local_def_id(node_id)];
-                tcx.mk_param(index, tcx.hir.name(node_id).as_str())
+                tcx.mk_param(index, tcx.hir.name(node_id).as_interned_str())
             }
             Def::SelfTy(_, Some(def_id)) => {
                 // Self in impl (we know the concrete type).
@@ -1184,7 +1186,7 @@ impl<'o, 'gcx: 'tcx, 'tcx> AstConv<'gcx, 'tcx>+'o {
 
         debug!("ty_of_fn: output_ty={:?}", output_ty);
 
-        let bare_fn_ty = ty::Binder(tcx.mk_fn_sig(
+        let bare_fn_ty = ty::Binder::bind(tcx.mk_fn_sig(
             input_tys.into_iter(),
             output_ty,
             decl.variadic,
@@ -1396,7 +1398,8 @@ impl<'a, 'gcx, 'tcx> Bounds<'tcx> {
             // account for the binder being introduced below; no need to shift `param_ty`
             // because, at present at least, it can only refer to early-bound regions
             let region_bound = tcx.mk_region(ty::fold::shift_region(*region_bound, 1));
-            vec.push(ty::Binder(ty::OutlivesPredicate(param_ty, region_bound)).to_predicate());
+            vec.push(
+                ty::Binder::dummy(ty::OutlivesPredicate(param_ty, region_bound)).to_predicate());
         }
 
         for bound_trait_ref in &self.trait_bounds {

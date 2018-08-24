@@ -2,25 +2,20 @@
 
 # pending, or forwarded
 u-0001-Ensure-libraries-built-in-stage0-have-unique-metadat.patch
+u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
 u-reproducible-build.patch
-u-ignoretest-armhf_01.patch
-u-ignoretest-armhf_02.patch
-u-ignoretest-armhf_03.patch
-u-ignoretest-armhf_05.patch
-u-ignoretest-armhf_06.patch
-u-ignoretest-arm64.patch
-u-ignoretest-arm64_02.patch
-u-ignoretest-ppc64el.patch
-u-ignoretest-ppc64el_02.patch
-u-ignoretest-ppc64el_03.patch
-u-tag-private-modules-with-doc-cfg.patch
+u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
-u-fix-rustdoc-theme-test-without-rpath.patch
-u-fix-fp-target-warning.patch
+u-tag-private-modules-with-doc-cfg.patch
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
+
+# Extra ignored tests. We now instead raise FAILURES_ALLOWED in d/rules but
+# these patches are kept in case they are useful for derivatives.
+#u-ignoretest-arm64_02.patch
+#u-ignoretest-ppc64el_02.patch
 
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch

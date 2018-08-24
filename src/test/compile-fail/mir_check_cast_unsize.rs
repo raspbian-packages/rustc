@@ -8,17 +8,16 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: -Z borrowck=mir -Z nll
+// compile-flags: -Z borrowck=mir
 
 #![allow(dead_code)]
-#![feature(dyn_trait)]
 
 use std::fmt::Debug;
 
 fn bar<'a>(x: &'a u32) -> &'static dyn Debug {
     //~^ ERROR free region `'a` does not outlive free region `'static`
     x
-    //~^ WARNING not reporting region error due to -Znll
+    //~^ WARNING not reporting region error due to nll
 }
 
 fn main() {}

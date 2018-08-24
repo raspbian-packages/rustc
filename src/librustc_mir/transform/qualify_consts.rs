@@ -29,7 +29,7 @@ use rustc::mir::*;
 use rustc::mir::traversal::ReversePostorder;
 use rustc::mir::visit::{PlaceContext, Visitor};
 use rustc::middle::lang_items;
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 use syntax::attr;
 use syntax::ast::LitKind;
 use syntax::feature_gate::UnstableFeatures;
@@ -556,8 +556,14 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
 
                         ProjectionElem::Field(..) |
                         ProjectionElem::Index(_) => {
-                            if this.mode != Mode::Fn &&
-                               this.qualif.intersects(Qualif::STATIC) {
+                            if this.mode == Mode::Fn {
+                                let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
+                                if let Some(def) = base_ty.ty_adt_def() {
+                                    if def.is_union() {
+                                        this.not_const();
+                                    }
+                                }
+                            } else if this.qualif.intersects(Qualif::STATIC) {
                                 span_err!(this.tcx.sess, this.span, E0494,
                                           "cannot refer to the interior of another \
                                            static, use a constant instead");
@@ -868,7 +874,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                     Abi::RustIntrinsic |
                     Abi::PlatformIntrinsic => {
                         assert!(!self.tcx.is_const_fn(def_id));
-                        match &self.tcx.item_name(def_id)[..] {
+                        match &self.tcx.item_name(def_id).as_str()[..] {
                             "size_of" | "min_align_of" | "type_id" => is_const_fn = Some(def_id),
 
                             name if name.starts_with("simd_shuffle") => {
@@ -931,10 +937,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                         feature: ref feature_name
                     }),
                 .. }) = self.tcx.lookup_stability(def_id) {
-
-                    // We are in a const or static initializer,
-                    if self.mode != Mode::Fn &&
-
+                    if
                         // feature-gate is not enabled,
                         !self.tcx.features()
                             .declared_lib_features
@@ -947,14 +950,19 @@ This does not pose a problem by itself because they can't be accessed directly."
                         // this doesn't come from a macro that has #[allow_internal_unstable]
                         !self.span.allows_unstable()
                     {
-                        let mut err = self.tcx.sess.struct_span_err(self.span,
-                            &format!("`{}` is not yet stable as a const fn",
-                                     self.tcx.item_path_str(def_id)));
-                        help!(&mut err,
-                              "in Nightly builds, add `#![feature({})]` \
-                               to the crate attributes to enable",
-                              feature_name);
-                        err.emit();
+                        self.qualif = Qualif::NOT_CONST;
+                        if self.mode != Mode::Fn {
+                            // inside a constant environment, not having the feature gate is
+                            // an error
+                            let mut err = self.tcx.sess.struct_span_err(self.span,
+                                &format!("`{}` is not yet stable as a const fn",
+                                        self.tcx.item_path_str(def_id)));
+                            help!(&mut err,
+                                "in Nightly builds, add `#![feature({})]` \
+                                to the crate attributes to enable",
+                                feature_name);
+                            err.emit();
+                        }
                     }
                 }
             } else {
@@ -964,7 +972,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                     let (msg, note) = if let UnstableFeatures::Disallow =
                             self.tcx.sess.opts.unstable_features {
                         (format!("calls in {}s are limited to \
-                                  struct and enum constructors",
+                                  tuple structs and tuple variants",
                                  self.mode),
                          Some("a limited form of compile-time function \
                                evaluation is available on a nightly \
@@ -972,7 +980,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                     } else {
                         (format!("calls in {}s are limited \
                                   to constant functions, \
-                                  struct and enum constructors",
+                                  tuple structs and tuple variants",
                                  self.mode),
                          None)
                     };

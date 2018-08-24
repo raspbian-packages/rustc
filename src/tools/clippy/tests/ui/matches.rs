@@ -6,11 +6,6 @@
 #![allow(unused, if_let_redundant_pattern_matching)]
 #![warn(single_match_else, match_same_arms)]
 
-use std::borrow::Cow;
-
-enum Foo { Bar, Baz(u8) }
-use Foo::*;
-
 enum ExprNode {
     ExprAddrOf,
     Butterflies,
@@ -27,109 +22,6 @@ fn unwrap_addr() -> Option<&'static ExprNode> {
         ExprNode::ExprAddrOf => Some(&NODE),
         _ => { let x = 5; None },
     }
-}
-
-fn single_match(){
-    let x = Some(1u8);
-
-    match x {
-        Some(y) => { println!("{:?}", y); }
-        _ => ()
-    };
-
-    let z = (1u8,1u8);
-    match z {
-        (2...3, 7...9) => dummy(),
-        _ => {}
-    };
-
-    // Not linted (pattern guards used)
-    match x {
-        Some(y) if y == 0 => println!("{:?}", y),
-        _ => ()
-    }
-
-    // Not linted (no block with statements in the single arm)
-    match z {
-        (2...3, 7...9) => println!("{:?}", z),
-        _ => println!("nope"),
-    }
-}
-
-fn single_match_know_enum() {
-    let x = Some(1u8);
-    let y : Result<_, i8> = Ok(1i8);
-
-    match x {
-        Some(y) => dummy(),
-        None => ()
-    };
-
-    match y {
-        Ok(y) => dummy(),
-        Err(..) => ()
-    };
-
-    let c = Cow::Borrowed("");
-
-    match c {
-        Cow::Borrowed(..) => dummy(),
-        Cow::Owned(..) => (),
-    };
-
-    let z = Foo::Bar;
-    // no warning
-    match z {
-        Bar => println!("42"),
-        Baz(_) => (),
-    }
-
-    match z {
-        Baz(_) => println!("42"),
-        Bar => (),
-    }
-}
-
-fn match_bool() {
-    let test: bool = true;
-
-    match test {
-        true => 0,
-        false => 42,
-    };
-
-    let option = 1;
-    match option == 1 {
-        true => 1,
-        false => 0,
-    };
-
-    match test {
-        true => (),
-        false => { println!("Noooo!"); }
-    };
-
-    match test {
-        false => { println!("Noooo!"); }
-        _ => (),
-    };
-
-    match test && test {
-        false => { println!("Noooo!"); }
-        _ => (),
-    };
-
-    match test {
-        false => { println!("Noooo!"); }
-        true => { println!("Yes!"); }
-    };
-
-    // Not linted
-    match option {
-        1 ... 10 => 1,
-        11 ... 20 => 2,
-        _ => 3,
-    };
 }
 
 fn ref_pats() {

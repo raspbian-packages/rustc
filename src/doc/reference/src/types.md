@@ -48,14 +48,14 @@ language:
 
 The machine types are the following:
 
-* The unsigned word types `u8`, `u16`, `u32` and `u64`, with values drawn from
-  the integer intervals [0, 2^8 - 1], [0, 2^16 - 1], [0, 2^32 - 1] and
-  [0, 2^64 - 1] respectively.
+* The unsigned word types `u8`, `u16`, `u32`, `u64`, and `u128` with values drawn from
+  the integer intervals [0, 2^8 - 1], [0, 2^16 - 1], [0, 2^32 - 1],
+  [0, 2^64 - 1], and [0, 2^128 - 1] respectively.
 
-* The signed two's complement word types `i8`, `i16`, `i32` and `i64`, with
-  values drawn from the integer intervals [-(2^(7)), 2^7 - 1],
-  [-(2^(15)), 2^15 - 1], [-(2^(31)), 2^31 - 1], [-(2^(63)), 2^63 - 1]
-  respectively.
+* The signed two's complement word types `i8`, `i16`, `i32`, `i64`, and `i128`, with
+  values drawn from the integer intervals [-(2^7), 2^7 - 1],
+  [-(2^15), 2^15 - 1], [-(2^31), 2^31 - 1], [-(2^63), 2^63 - 1], and
+  [-(2^127), 2^127 - 1] respectively.
 
 * The IEEE 754-2008 `binary32` and `binary64` floating-point types: `f32` and
   `f64`, respectively.
@@ -342,8 +342,8 @@ let foo_ptr_2 = if want_i32 {
 };
 ```
 
-All function items implement [Fn], [FnMut], [FnOnce], [Copy], [Clone], [Send], 
-and [Sync].
+All function items implement [`Fn`], [`FnMut`], [`FnOnce`], [`Copy`],
+[`Clone]`, [`Send`], and [`Sync`].
 
 ## Function pointer types
 
@@ -415,12 +415,16 @@ f(Closure{s: s, t: &t});
 ```
 
 The compiler prefers to capture a closed-over variable by immutable borrow,
-followed by mutable borrow, by copy, and finally by move. It will pick the first
-choice of these that allows the closure to compile. If the `move` keyword is
-used, then all captures are by move or copy, regardless of whether a borrow
-would work. The `move` keyword is usually used to allow the closure to outlive
-the captured values, such as if the closure is being returned or used to spawn a
-new thread.
+followed by unique immutable borrow (see below), by mutable borrow, and finally
+by move. It will pick the first choice of these that allows the closure to
+compile. The choice is made only with regards to the contents of the closure
+expression; the compiler does not take into account surrounding code, such as
+the lifetimes of involved variables.
+
+If the `move` keyword is used, then all captures are by move or, for `Copy`
+types, by copy, regardless of whether a borrow would work. The `move` keyword is
+usually used to allow the closure to outlive the captured values, such as if the
+closure is being returned or used to spawn a new thread.
 
 Composite types such as structs, tuples, and enums are always captured entirely,
 not by individual fields. It may be necessary to borrow into a local variable in
@@ -448,22 +452,50 @@ If, instead, the closure were to use `self.vec` directly, then it would attempt
 to capture `self` by mutable reference. But since `self.set` is already
 borrowed to iterate over, the code would not compile.
 
+### Unique immutable borrows in captures
+
+Captures can occur by a special kind of borrow called a _unique immutable
+borrow_, which cannot be used anywhere else in the language and cannot be
+written out explicitly. It occurs when modifying the referent of a mutable
+reference, as in the following example:
+
+```rust
+let mut b = false;
+let x = &mut b;
+{
+    let mut c = || { *x = true; };
+    // The following line is an error:
+    // let y = &x;
+    c();
+}
+let z = &x;
+```
+
+In this case, borrowing `x` mutably is not possible, because `x` is not `mut`.
+But at the same time, borrowing `x` immutably would make the assignment illegal,
+because a `& &mut` reference may not be unique, so it cannot safely be used to
+modify a value. So a unique immutable borrow is used: it borrows `x` immutably,
+but like a mutable borrow, it must be unique. In the above example, uncommenting
+the declaration of `y` will produce an error because it would violate the
+uniqueness of the closure's borrow of `x`; the declaration of z is valid because
+the closure's lifetime has expired at the end of the block, releasing the borrow.
+
 ### Call traits and coercions
 
-Closure types all implement `[FnOnce]`, indicating that they can be called once
+Closure types all implement [`FnOnce`], indicating that they can be called once
 by consuming ownership of the closure. Additionally, some closures implement
 more specific call traits:
 
 * A closure which does not move out of any captured variables implements
-  `[FnMut]`, indicating that it can be called by mutable reference.
+  [`FnMut`], indicating that it can be called by mutable reference.
 
 * A closure which does not mutate or move out of any captured variables
-  implements `[Fn]`, indicating that it can be called by shared reference.
+  implements [`Fn`], indicating that it can be called by shared reference.
 
-> Note: `move` closures may still implement `[Fn]` or `[FnMut]`, even though
+> Note: `move` closures may still implement [`Fn`] or [`FnMut`], even though
 > they capture variables by move. This is because the traits implemented by a
-> closure type are determined by what the closure does with captured values, not
-> how it captures them.
+> closure type are determined by what the closure does with captured values,
+> not how it captures them.
 
 *Non-capturing closures* are closures that don't capture anything from their
 environment. They can be coerced to function pointers (`fn`) with the matching
@@ -481,37 +513,36 @@ x = bo(5,7);
 
 ### Other traits
 
-All closure types implement `[Sized]`. Additionally, closure types implement the
+All closure types implement [`Sized`]. Additionally, closure types implement the
 following traits if allowed to do so by the types of the captures it stores:
 
-* `[Clone]`
-* `[Copy]`
-* `[Sync]`
-* `[Send]`
+* [`Clone`]
+* [`Copy`]
+* [`Sync`]
+* [`Send`]
 
-The rules for `[Send]` and `[Sync]` match those for normal struct types, while
-`[Clone]` and `[Copy]` behave as if [derived][derive]. For `[Clone]`, the order
+The rules for [`Send`] and [`Sync`] match those for normal struct types, while
+[`Clone`] and [`Copy`] behave as if [derived][derive]. For [`Clone`], the order
 of cloning of the captured variables is left unspecified.
 
 Because captures are often by reference, the following general rules arise:
 
-* A closure is `[Sync]` if all variables captured by mutable reference, copy, or
-  move are `[Sync]`.
-* A closure is `[Send]` if all variables captured by shared reference are
-  `[Sync]`, and all values captured by mutable reference, copy, or move are
-  `[Send]`.
-* A closure is `[Clone]` or `[Copy]` if it does not capture any values by
-  mutable reference, and if all values it captures by copy or move are `[Clone]`
-  or `[Copy]`, respectively.
+* A closure is [`Sync`] if all captured variables are [`Sync`].
+* A closure is [`Send`] if all variables captured by non-unique immutable
+  reference are [`Sync`], and all values captured by unique immutable or mutable
+  reference, copy, or move are [`Send`].
+* A closure is [`Clone`] or [`Copy`] if it does not capture any values by
+  unique immutable or mutable reference, and if all values it captures by copy
+  or move are [`Clone`] or [`Copy`], respectively.
 
 ## Trait objects
 
 > **<sup>Syntax</sup>**  
 > _TraitObjectType_ :  
-> &nbsp;&nbsp; _LifetimeOrPath_ ( `+` _LifetimeOrPath_ )<sup>\*</sup> `+`<sup>?</sup>
+> &nbsp;&nbsp; `dyn`<sup>?</sup> _LifetimeOrPath_ ( `+` _LifetimeOrPath_ )<sup>\*</sup> `+`<sup>?</sup>
 >
 > _LifetimeOrPath_ :
-> &nbsp;&nbsp; [_Path_] | [_LIFETIME_OR_LABEL_]
+> &nbsp;&nbsp; [_Path_] |  `(` [_Path_] `)` | [_LIFETIME_OR_LABEL_]
 
 A *trait object* is an opaque value of another type that implements a set of
 traits. The set of traits is made up of an [object safe] *base trait* plus any
@@ -520,31 +551,52 @@ number of [auto traits].
 Trait objects implement the base trait, its auto traits, and any super traits
 of the base trait.
 
-Trait objects are written the same as trait bounds, but with the following
-restrictions. All traits except the first trait must be auto traits, there may
-not be more than one lifetime, and opt-out bounds (e.g. `?sized`) are not
-allowed. For example, given a trait `Trait`, the following are all trait
-objects: `Trait`, `Trait + Send`, `Trait + Send + Sync`, `Trait + 'static`,
-`Trait + Send + 'static`, `Trait +`, `'static + Trait`.
+Trait objects are written as the optional keyword `dyn` followed by a set of
+trait bounds, but with the following restrictions on the trait bounds. All
+traits except the first trait must be auto traits, there may not be more than
+one lifetime, and opt-out bounds (e.g. `?sized`) are not allowed. Furthermore,
+paths to traits may be parenthesized.
+
+For example, given a trait `Trait`, the following are all trait objects: 
+
+* `Trait`
+* `dyn Trait`
+* `dyn Trait + Send`
+* `dyn Trait + Send + Sync`
+* `dyn Trait + 'static`
+* `dyn Trait + Send + 'static`
+* `dyn Trait +`
+* `dyn 'static + Trait`.
+* `dyn (Trait)`
+
+If the first bound of the trait object is a path that starts with `::`, then the
+`dyn` will be treated as a part of the path. The first path can be put in
+parenthesis to get around this. As such, if you want a trait object with the
+trait `::your_module::Trait`, you should write it as
+`dyn (::your_module::Trait)`.
+
+> Note: For clarity, it is recommended to always use the `dyn` keyword on your
+> trait objects unless your codebase supports compiling with Rust 1.26 or lower.
 
 Two trait object types alias each other if the base traits alias each other and
 if the sets of auto traits are the same and the lifetime bounds are the same.
-For example, `Trait + Send + UnwindSafe` is the same as
-`Trait + Unwindsafe + Send`.
+For example, `dyn Trait + Send + UnwindSafe` is the same as
+`dyn Trait + Unwindsafe + Send`.
 
 > Warning: With two trait object types, even when the complete set of traits is
 > the same, if the base traits differ, the type is different. For example,
-> `Send + Sync` is a different type from `Sync + Send`. See [issue 33140].
+> `dyn Send + Sync` is a different type from `dyn Sync + Send`. See
+> [issue 33140].
 
 > Warning: Including the same auto trait multiple times is allowed, and each
-> instance is considered a unique type. As such, `Trait + Send` is a distinct
-> type than `Trait + Send + Send`. See [issue 47010].
+> instance is considered a unique type. As such, `dyn Trait + Send` is a
+> distinct type to `dyn Trait + Send + Send`. See [issue 47010].
 
 Due to the opaqueness of which concrete type the value is of, trait objects are
 [dynamically sized types]. Like all
 <abbr title="dynamically sized types">DSTs</abbr>, trait objects are used
-behind some type of pointer; for example `&SomeTrait` or `Box<SomeTrait>`. Each
-instance of a pointer to a trait object includes:
+behind some type of pointer; for example `&dyn SomeTrait` or
+`Box<dyn SomeTrait>`. Each instance of a pointer to a trait object includes:
 
  - a pointer to an instance of a type `T` that implements `SomeTrait`
  - a _virtual method table_, often just called a _vtable_, which contains, for
@@ -568,12 +620,12 @@ impl Printable for i32 {
     fn stringify(&self) -> String { self.to_string() }
 }
 
-fn print(a: Box<Printable>) {
+fn print(a: Box<dyn Printable>) {
     println!("{}", a.stringify());
 }
 
 fn main() {
-    print(Box::new(10) as Box<Printable>);
+    print(Box::new(10) as Box<dyn Printable>);
 }
 ```
 
@@ -585,7 +637,7 @@ type signature of `print`, and the cast expression in `main`.
 Since a trait object can contain references, the lifetimes of those references
 need to be expressed as part of the trait object. This lifetime is written as
 `Trait + 'a`. There are [defaults] that allow this lifetime to usually be
-infered with a sensible choice.
+inferred with a sensible choice.
 
 [defaults]: lifetime-elision.html#default-trait-object-lifetimes
 
@@ -643,13 +695,14 @@ impl Printable for String {
 
 > Note: The notation `&self` is a shorthand for `self: &Self`.
 
-[Fn]: ../std/ops/trait.Fn.html
-[FnMut]: ../std/ops/trait.FnMut.html
-[FnOnce]: ../std/ops/trait.FnOnce.html
-[Copy]: special-types-and-traits.html#copy
-[Clone]: special-types-and-traits.html#clone
-[Send]: special-types-and-traits.html#send
-[Sync]: special-types-and-traits.html#sync
+[`Fn`]: ../std/ops/trait.Fn.html
+[`FnMut`]: ../std/ops/trait.FnMut.html
+[`FnOnce`]: ../std/ops/trait.FnOnce.html
+[`Copy`]: special-types-and-traits.html#copy
+[`Clone`]: special-types-and-traits.html#clone
+[`Send`]: special-types-and-traits.html#send
+[`Sync`]: special-types-and-traits.html#sync
+[`Sized`]: special-types-and-traits.html#sized
 [derive]: attributes.html#derive
 [`Vec<T>`]: ../std/vec/struct.Vec.html
 [dynamically sized type]: dynamically-sized-types.html

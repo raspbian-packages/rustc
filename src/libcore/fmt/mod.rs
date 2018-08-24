@@ -401,10 +401,9 @@ impl<'a> Arguments<'a> {
 /// safely be done, so no constructors are given and the fields are private
 /// to prevent modification.
 ///
-/// The [`format_args!`] macro will safely create an instance of this structure
-/// and pass it to a function or closure, passed as the first argument. The
-/// macro validates the format string at compile-time so usage of the [`write`]
-/// and [`format`] functions can be safely performed.
+/// The [`format_args!`] macro will safely create an instance of this structure.
+/// The macro validates the format string at compile-time so usage of the
+/// [`write`] and [`format`] functions can be safely performed.
 ///
 /// You can use the `Arguments<'a>` that [`format_args!`] returns in `Debug`
 /// and `Display` contexts as seen below. The example also shows that `Debug`
@@ -412,8 +411,8 @@ impl<'a> Arguments<'a> {
 /// in `format_args!`.
 ///
 /// ```rust
-/// let display = format!("{:?}", format_args!("{} foo {:?}", 1, 2));
-/// let debug = format!("{}", format_args!("{} foo {:?}", 1, 2));
+/// let debug = format!("{:?}", format_args!("{} foo {:?}", 1, 2));
+/// let display = format!("{}", format_args!("{} foo {:?}", 1, 2));
 /// assert_eq!("1 foo 2", display);
 /// assert_eq!(display, debug);
 /// ```
@@ -543,11 +542,12 @@ impl<'a> Display for Arguments<'a> {
 /// ```
 #[stable(feature = "rust1", since = "1.0.0")]
 #[rustc_on_unimplemented(
-    on(crate_local, label="`{Self}` cannot be formatted using `:?`; \
-                            add `#[derive(Debug)]` or manually implement `{Debug}`"),
+    on(crate_local, label="`{Self}` cannot be formatted using `{{:?}}`",
+                    note="add `#[derive(Debug)]` or manually implement `{Debug}`"),
     message="`{Self}` doesn't implement `{Debug}`",
-    label="`{Self}` cannot be formatted using `:?` because it doesn't implement `{Debug}`",
+    label="`{Self}` cannot be formatted using `{{:?}}` because it doesn't implement `{Debug}`",
 )]
+#[doc(alias = "{:?}")]
 #[lang = "debug_trait"]
 pub trait Debug {
     /// Formats the value using the given formatter.
@@ -610,9 +610,11 @@ pub trait Debug {
 /// ```
 #[rustc_on_unimplemented(
     message="`{Self}` doesn't implement `{Display}`",
-    label="`{Self}` cannot be formatted with the default formatter; \
-           try using `:?` instead if you are using a format string",
+    label="`{Self}` cannot be formatted with the default formatter",
+    note="in format strings you may be able to use `{{:?}}` \
+          (or {{:#?}} for pretty-print) instead",
 )]
+#[doc(alias = "{}")]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub trait Display {
     /// Formats the value using the given formatter.
@@ -1213,7 +1215,11 @@ impl<'a> Formatter<'a> {
             // truncation. However other flags like `fill`, `width` and `align`
             // must act as always.
             if let Some((i, _)) = s.char_indices().skip(max).next() {
-                &s[..i]
+                // LLVM here can't prove that `..i` won't panic `&s[..i]`, but
+                // we know that it can't panic. Use `get` + `unwrap_or` to avoid
+                // `unsafe` and otherwise don't emit any panic-related code
+                // here.
+                s.get(..i).unwrap_or(&s)
             } else {
                 &s
             }

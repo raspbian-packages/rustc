@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 
-use helpers::HelperDef;
+use helpers::{HelperDef, HelperResult};
 use registry::Registry;
-use context::{JsonTruthy, to_json};
-use render::{Renderable, RenderContext, Helper};
+use context::{to_json, JsonTruthy};
+use render::{Helper, RenderContext, Renderable};
 use error::RenderError;
 
 #[derive(Clone, Copy)]
 pub struct WithHelper;
 
 impl HelperDef for WithHelper {
-    fn call(&self, h: &Helper, r: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
-        let param = try!(h.param(0).ok_or_else(|| {
-            RenderError::new("Param not found for helper \"with\"")
-        }));
+    fn call(&self, h: &Helper, r: &Registry, rc: &mut RenderContext) -> HelperResult {
+        let param = try!(
+            h.param(0)
+                .ok_or_else(|| RenderError::new("Param not found for helper \"with\""))
+        );
 
         rc.promote_local_vars();
 
@@ -21,7 +22,11 @@ impl HelperDef for WithHelper {
             let mut local_rc = rc.derive();
 
             let not_empty = param.value().is_truthy();
-            let template = if not_empty { h.template() } else { h.inverse() };
+            let template = if not_empty {
+                h.template()
+            } else {
+                h.inverse()
+            };
 
             if let Some(path_root) = param.path_root() {
                 let local_path_root = format!("{}/{}", local_rc.get_path(), path_root);
@@ -147,7 +152,7 @@ mod test {
             handlebars
                 .register_template_string(
                     "t1",
-                    "{{#with notfound as |c|}}hello{{else}}world{{/with}}",
+                    "{{#with notfound as |c|}}hello{{else}}world{{/with}}"
                 )
                 .is_ok()
         );
@@ -200,7 +205,7 @@ mod test {
             handlebars
                 .register_template_string(
                     "t0",
-                    "{{#each this}}{{#with addr}}{{city}}{{/with}}{{/each}}",
+                    "{{#each this}}{{#with addr}}{{city}}{{/with}}{{/each}}"
                 )
                 .is_ok()
         );
@@ -208,7 +213,7 @@ mod test {
             handlebars
                 .register_template_string(
                     "t1",
-                    "{{#each this}}{{#with addr}}{{../age}}{{/with}}{{/each}}",
+                    "{{#each this}}{{#with addr}}{{../age}}{{/with}}{{/each}}"
                 )
                 .is_ok()
         );
@@ -216,7 +221,7 @@ mod test {
             handlebars
                 .register_template_string(
                     "t2",
-                    "{{#each this}}{{#with addr}}{{@../index}}{{/with}}{{/each}}",
+                    "{{#each this}}{{#with addr}}{{@../index}}{{/with}}{{/each}}"
                 )
                 .is_ok()
         );
@@ -238,12 +243,11 @@ mod test {
             handlebars
                 .register_template_string(
                     "t0",
-                    "{{#with a}}{{#with b}}{{../../d}}{{/with}}{{/with}}",
+                    "{{#with a}}{{#with b}}{{../../d}}{{/with}}{{/with}}"
                 )
                 .is_ok()
         );
-        let data =
-            btreemap! {
+        let data = btreemap! {
             "a".to_string() => to_json(&btreemap! {
                 "b".to_string() => vec![btreemap!{"c".to_string() => vec![1]}]
             }),
@@ -252,6 +256,5 @@ mod test {
 
         let r0 = handlebars.render("t0", &data);
         assert_eq!(r0.ok().unwrap(), "1".to_string());
-
     }
 }

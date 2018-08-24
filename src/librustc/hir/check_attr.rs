@@ -30,6 +30,8 @@ enum Target {
     ForeignMod,
     Expression,
     Statement,
+    Closure,
+    Static,
     Other,
 }
 
@@ -42,6 +44,7 @@ impl Target {
             hir::ItemEnum(..) => Target::Enum,
             hir::ItemConst(..) => Target::Const,
             hir::ItemForeignMod(..) => Target::ForeignMod,
+            hir::ItemStatic(..) => Target::Static,
             _ => Target::Other,
         }
     }
@@ -66,6 +69,8 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
         for attr in &item.attrs {
             if attr.check_name("inline") {
                 self.check_inline(attr, &item.span, target)
+            } else if attr.check_name("non_exhaustive") {
+                self.check_non_exhaustive(attr, item, target)
             } else if attr.check_name("wasm_import_module") {
                 has_wasm_import_module = true;
                 if attr.value_str().is_none() {
@@ -99,16 +104,42 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
         }
 
         self.check_repr(item, target);
+        self.check_used(item, target);
     }
 
-    /// Check if an `#[inline]` is applied to a function.
+    /// Check if an `#[inline]` is applied to a function or a closure.
     fn check_inline(&self, attr: &hir::Attribute, span: &Span, target: Target) {
-        if target != Target::Fn {
+        if target != Target::Fn && target != Target::Closure {
             struct_span_err!(self.tcx.sess,
                              attr.span,
                              E0518,
-                             "attribute should be applied to function")
-                .span_label(*span, "not a function")
+                             "attribute should be applied to function or closure")
+                .span_label(*span, "not a function or closure")
+                .emit();
+        }
+    }
+
+    /// Check if the `#[non_exhaustive]` attribute on an `item` is valid.
+    fn check_non_exhaustive(&self, attr: &hir::Attribute, item: &hir::Item, target: Target) {
+        match target {
+            Target::Struct | Target::Enum => { /* Valid */ },
+            _ => {
+                struct_span_err!(self.tcx.sess,
+                                 attr.span,
+                                 E0910,
+                                 "attribute can only be applied to a struct or enum")
+                    .span_label(item.span, "not a struct or enum")
+                    .emit();
+                return;
+            }
+        }
+
+        if attr.meta_item_list().is_some() || attr.value_str().is_some() {
+            struct_span_err!(self.tcx.sess,
+                             attr.span,
+                             E0911,
+                             "attribute should be empty")
+                .span_label(item.span, "not empty")
                 .emit();
         }
     }
@@ -122,10 +153,7 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
         // ```
         let hints: Vec<_> = item.attrs
             .iter()
-            .filter(|attr| match attr.name() {
-                Some(name) => name == "repr",
-                None => false,
-            })
+            .filter(|attr| attr.name() == "repr")
             .filter_map(|attr| attr.meta_item_list())
             .flat_map(|hints| hints)
             .collect();
@@ -259,9 +287,13 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
     }
 
     fn check_expr_attributes(&self, expr: &hir::Expr) {
+        let target = match expr.node {
+            hir::ExprClosure(..) => Target::Closure,
+            _ => Target::Expression,
+        };
         for attr in expr.attrs.iter() {
             if attr.check_name("inline") {
-                self.check_inline(attr, &expr.span, Target::Expression);
+                self.check_inline(attr, &expr.span, target);
             }
             if attr.check_name("repr") {
                 self.emit_repr_error(
@@ -270,6 +302,15 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
                     &format!("attribute should not be applied to an expression"),
                     &format!("not defining a struct, enum or union"),
                 );
+            }
+        }
+    }
+
+    fn check_used(&self, item: &hir::Item, target: Target) {
+        for attr in &item.attrs {
+            if attr.name() == "used" && target != Target::Static {
+                self.tcx.sess
+                    .span_err(attr.span, "attribute must be applied to a `static` variable");
             }
         }
     }

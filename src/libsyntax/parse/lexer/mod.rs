@@ -15,7 +15,7 @@ use errors::{FatalError, DiagnosticBuilder};
 use parse::{token, ParseSess};
 use str::char_at;
 use symbol::{Symbol, keywords};
-use std_unicode::property::Pattern_White_Space;
+use core::unicode::property::Pattern_White_Space;
 
 use std::borrow::Cow;
 use std::char;
@@ -76,7 +76,7 @@ impl<'a> StringReader<'a> {
     fn mk_ident(&self, string: &str) -> Ident {
         let mut ident = Ident::from_str(string);
         if let Some(span) = self.override_span {
-            ident.ctxt = span.ctxt();
+            ident.span = span;
         }
         ident
     }
@@ -133,12 +133,12 @@ impl<'a> StringReader<'a> {
         Ok(ret_val)
     }
 
-    fn fail_unterminated_raw_string(&self, pos: BytePos, hash_count: usize) {
+    fn fail_unterminated_raw_string(&self, pos: BytePos, hash_count: u16) {
         let mut err = self.struct_span_fatal(pos, pos, "unterminated raw string");
         err.span_label(self.mk_sp(pos, pos), "unterminated raw string");
         if hash_count > 0 {
             err.note(&format!("this raw string should be terminated with `\"{}`",
-                              "#".repeat(hash_count)));
+                              "#".repeat(hash_count as usize)));
         }
         err.emit();
         FatalError.raise();
@@ -1439,7 +1439,7 @@ impl<'a> StringReader<'a> {
             'r' => {
                 let start_bpos = self.pos;
                 self.bump();
-                let mut hash_count = 0;
+                let mut hash_count: u16 = 0;
                 while self.ch_is('#') {
                     self.bump();
                     hash_count += 1;
@@ -1781,7 +1781,6 @@ mod tests {
     use errors;
     use feature_gate::UnstableFeatures;
     use parse::token;
-    use std::cell::RefCell;
     use std::collections::HashSet;
     use std::io;
     use std::path::PathBuf;
@@ -1797,12 +1796,12 @@ mod tests {
             span_diagnostic: errors::Handler::with_emitter(true, false, Box::new(emitter)),
             unstable_features: UnstableFeatures::from_environment(),
             config: CrateConfig::new(),
-            included_mod_stack: RefCell::new(Vec::new()),
+            included_mod_stack: Lock::new(Vec::new()),
             code_map: cm,
-            missing_fragment_specifiers: RefCell::new(HashSet::new()),
-            raw_identifier_spans: RefCell::new(Vec::new()),
+            missing_fragment_specifiers: Lock::new(HashSet::new()),
+            raw_identifier_spans: Lock::new(Vec::new()),
             registered_diagnostics: Lock::new(ErrorMap::new()),
-            non_modrs_mods: RefCell::new(vec![]),
+            non_modrs_mods: Lock::new(vec![]),
         }
     }
 

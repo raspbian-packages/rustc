@@ -137,17 +137,30 @@ impl<'tcx> ProjectionTyCandidateSet<'tcx> {
     fn push_candidate(&mut self, candidate: ProjectionTyCandidate<'tcx>) -> bool {
         use self::ProjectionTyCandidateSet::*;
         use self::ProjectionTyCandidate::*;
+
+        // This wacky variable is just used to try and
+        // make code readable and avoid confusing paths.
+        // It is assigned a "value" of `()` only on those
+        // paths in which we wish to convert `*self` to
+        // ambiguous (and return false, because the candidate
+        // was not used). On other paths, it is not assigned,
+        // and hence if those paths *could* reach the code that
+        // comes after the match, this fn would not compile.
+        let convert_to_ambigious;
+
         match self {
             None => {
                 *self = Single(candidate);
-                true
+                return true;
             }
+
             Single(current) => {
                 // Duplicates can happen inside ParamEnv. In the case, we
                 // perform a lazy deduplication.
                 if current == &candidate {
                     return false;
                 }
+
                 // Prefer where-clauses. As in select, if there are multiple
                 // candidates, we prefer where-clause candidates over impls.  This
                 // may seem a bit surprising, since impls are the source of
@@ -156,17 +169,23 @@ impl<'tcx> ProjectionTyCandidateSet<'tcx> {
                 // clauses are the safer choice. See the comment on
                 // `select::SelectionCandidate` and #21974 for more details.
                 match (current, candidate) {
-                    (ParamEnv(..), ParamEnv(..)) => { *self = Ambiguous; }
-                    (ParamEnv(..), _) => {}
+                    (ParamEnv(..), ParamEnv(..)) => convert_to_ambigious = (),
+                    (ParamEnv(..), _) => return false,
                     (_, ParamEnv(..)) => { unreachable!(); }
-                    (_, _) => { *self = Ambiguous; }
+                    (_, _) => convert_to_ambigious = (),
                 }
-                false
             }
+
             Ambiguous | Error(..) => {
-                false
+                return false;
             }
         }
+
+        // We only ever get here when we moved from a single candidate
+        // to ambiguous.
+        let () = convert_to_ambigious;
+        *self = Ambiguous;
+        false
     }
 }
 
@@ -188,7 +207,7 @@ pub fn poly_project_and_unify_type<'cx, 'gcx, 'tcx>(
     let infcx = selcx.infcx();
     infcx.commit_if_ok(|snapshot| {
         let (skol_predicate, skol_map) =
-            infcx.skolemize_late_bound_regions(&obligation.predicate, snapshot);
+            infcx.skolemize_late_bound_regions(&obligation.predicate);
 
         let skol_obligation = obligation.with(skol_predicate);
         let r = match project_and_unify_type(selcx, &skol_obligation) {
@@ -351,7 +370,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
                     Reveal::UserFacing => ty,
 
                     Reveal::All => {
-                        let recursion_limit = self.tcx().sess.recursion_limit.get();
+                        let recursion_limit = *self.tcx().sess.recursion_limit.get();
                         if self.depth >= recursion_limit {
                             let obligation = Obligation::with_depth(
                                 self.cause.clone(),
@@ -409,7 +428,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
         if let ConstVal::Unevaluated(def_id, substs) = constant.val {
             let tcx = self.selcx.tcx().global_tcx();
             if let Some(param_env) = self.tcx().lift_to_global(&self.param_env) {
-                if substs.needs_infer() {
+                if substs.needs_infer() || substs.has_skol() {
                     let identity_substs = Substs::identity_for_item(tcx, def_id);
                     let instance = ty::Instance::resolve(tcx, param_env, def_id, identity_substs);
                     if let Some(instance) = instance {
@@ -484,7 +503,7 @@ pub fn normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
             let def_id = projection_ty.item_def_id;
             let ty_var = selcx.infcx().next_ty_var(
                 TypeVariableOrigin::NormalizeProjectionType(tcx.def_span(def_id)));
-            let projection = ty::Binder(ty::ProjectionPredicate {
+            let projection = ty::Binder::dummy(ty::ProjectionPredicate {
                 projection_ty,
                 ty: ty_var
             });
@@ -572,7 +591,7 @@ fn opt_normalize_projection_type<'a, 'b, 'gcx, 'tcx>(
                     found cache entry: in-progress");
 
             // But for now, let's classify this as an overflow:
-            let recursion_limit = selcx.tcx().sess.recursion_limit.get();
+            let recursion_limit = *selcx.tcx().sess.recursion_limit.get();
             let obligation = Obligation::with_depth(cause.clone(),
                                                     recursion_limit,
                                                     param_env,
@@ -854,7 +873,7 @@ fn project_type<'cx, 'gcx, 'tcx>(
     debug!("project(obligation={:?})",
            obligation);
 
-    let recursion_limit = selcx.tcx().sess.recursion_limit.get();
+    let recursion_limit = *selcx.tcx().sess.recursion_limit.get();
     if obligation.recursion_depth >= recursion_limit {
         debug!("project: overflow!");
         selcx.infcx().report_overflow_error(&obligation, true);
@@ -988,8 +1007,7 @@ fn assemble_candidates_from_predicates<'cx, 'gcx, 'tcx, I>(
                predicate);
         match predicate {
             ty::Predicate::Projection(data) => {
-                let same_def_id =
-                    data.0.projection_ty.item_def_id == obligation.predicate.item_def_id;
+                let same_def_id = data.projection_def_id() == obligation.predicate.item_def_id;
 
                 let is_match = same_def_id && infcx.probe(|_| {
                     let data_poly_trait_ref =
@@ -1247,7 +1265,7 @@ fn confirm_object_candidate<'cx, 'gcx, 'tcx>(
         // item with the correct name
         let env_predicates = env_predicates.filter_map(|p| match p {
             ty::Predicate::Projection(data) =>
-                if data.0.projection_ty.item_def_id == obligation.predicate.item_def_id {
+                if data.projection_def_id() == obligation.predicate.item_def_id {
                     Some(data)
                 } else {
                     None
@@ -1308,28 +1326,28 @@ fn confirm_generator_candidate<'cx, 'gcx, 'tcx>(
 
     let gen_def_id = tcx.lang_items().gen_trait().unwrap();
 
-    // Note: we unwrap the binder here but re-create it below (1)
-    let ty::Binder((trait_ref, yield_ty, return_ty)) =
+    let predicate =
         tcx.generator_trait_ref_and_outputs(gen_def_id,
                                             obligation.predicate.self_ty(),
-                                            gen_sig);
+                                            gen_sig)
+        .map_bound(|(trait_ref, yield_ty, return_ty)| {
+            let name = tcx.associated_item(obligation.predicate.item_def_id).name;
+            let ty = if name == Symbol::intern("Return") {
+                return_ty
+            } else if name == Symbol::intern("Yield") {
+                yield_ty
+            } else {
+                bug!()
+            };
 
-    let name = tcx.associated_item(obligation.predicate.item_def_id).name;
-    let ty = if name == Symbol::intern("Return") {
-        return_ty
-    } else if name == Symbol::intern("Yield") {
-        yield_ty
-    } else {
-        bug!()
-    };
-
-    let predicate = ty::Binder(ty::ProjectionPredicate { // (1) recreate binder here
-        projection_ty: ty::ProjectionTy {
-            substs: trait_ref.substs,
-            item_def_id: obligation.predicate.item_def_id,
-        },
-        ty: ty
-    });
+            ty::ProjectionPredicate {
+                projection_ty: ty::ProjectionTy {
+                    substs: trait_ref.substs,
+                    item_def_id: obligation.predicate.item_def_id,
+                },
+                ty: ty
+            }
+        });
 
     confirm_param_env_candidate(selcx, obligation, predicate)
         .with_addl_obligations(vtable.nested)
@@ -1406,21 +1424,21 @@ fn confirm_callable_candidate<'cx, 'gcx, 'tcx>(
     // the `Output` associated type is declared on `FnOnce`
     let fn_once_def_id = tcx.lang_items().fn_once_trait().unwrap();
 
-    // Note: we unwrap the binder here but re-create it below (1)
-    let ty::Binder((trait_ref, ret_type)) =
+    let predicate =
         tcx.closure_trait_ref_and_return_type(fn_once_def_id,
                                               obligation.predicate.self_ty(),
                                               fn_sig,
-                                              flag);
-
-    let predicate = ty::Binder(ty::ProjectionPredicate { // (1) recreate binder here
-        projection_ty: ty::ProjectionTy::from_ref_and_name(
-            tcx,
-            trait_ref,
-            Symbol::intern(FN_OUTPUT_NAME),
-        ),
-        ty: ret_type
-    });
+                                              flag)
+        .map_bound(|(trait_ref, ret_type)| {
+            ty::ProjectionPredicate {
+                projection_ty: ty::ProjectionTy::from_ref_and_name(
+                    tcx,
+                    trait_ref,
+                    Symbol::intern(FN_OUTPUT_NAME),
+                ),
+                ty: ret_type
+            }
+        });
 
     confirm_param_env_candidate(selcx, obligation, predicate)
 }

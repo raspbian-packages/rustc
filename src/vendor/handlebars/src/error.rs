@@ -13,27 +13,24 @@ pub struct RenderError {
     pub template_name: Option<String>,
     pub line_no: Option<usize>,
     pub column_no: Option<usize>,
-    cause: Option<Box<Error + Send>>,
+    cause: Option<Box<Error + Send + Sync>>,
 }
 
 impl fmt::Display for RenderError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match (self.line_no, self.column_no) {
-            (Some(line), Some(col)) => {
-                write!(
-                    f,
-                    "Error rendering \"{}\" line {}, col {}: {}",
-                    self.template_name.as_ref().unwrap_or(
-                        &"Unnamed template".to_owned(),
-                    ),
-                    line,
-                    col,
-                    self.desc
-                )
-            }
+            (Some(line), Some(col)) => write!(
+                f,
+                "Error rendering \"{}\" line {}, col {}: {}",
+                self.template_name
+                    .as_ref()
+                    .unwrap_or(&"Unnamed template".to_owned(),),
+                line,
+                col,
+                self.desc
+            ),
             _ => write!(f, "{}", self.desc),
         }
-
     }
 }
 
@@ -72,7 +69,7 @@ impl RenderError {
 
     pub fn with<E>(cause: E) -> RenderError
     where
-        E: Error + Send + 'static,
+        E: Error + Send + Sync + 'static,
     {
         let mut e = RenderError::new(cause.description());
         e.cause = Some(Box::new(cause));
@@ -116,7 +113,8 @@ pub struct TemplateError {
     pub reason: TemplateErrorReason,
     pub template_name: Option<String>,
     pub line_no: Option<usize>,
-    pub column_no: Option<usize>, // template segment
+    pub column_no: Option<usize>,
+    segment: Option<String>,
 }
 
 impl TemplateError {
@@ -126,12 +124,14 @@ impl TemplateError {
             template_name: None,
             line_no: None,
             column_no: None,
+            segment: None,
         }
     }
 
-    pub fn at(mut self, line_no: usize, column_no: usize) -> TemplateError {
+    pub fn at(mut self, template_str: &str, line_no: usize, column_no: usize) -> TemplateError {
         self.line_no = Some(line_no);
         self.column_no = Some(column_no);
+        self.segment = Some(template_segment(template_str, line_no, column_no));
         self
     }
 
@@ -147,21 +147,47 @@ impl Error for TemplateError {
     }
 }
 
+fn template_segment(template_str: &str, line: usize, col: usize) -> String {
+    let range = 3;
+    let line_start = if line >= range { line - range } else { 0 };
+    let line_end = line + range;
+
+    let mut buf = String::new();
+    for (line_count, line_content) in template_str.lines().enumerate() {
+        if line_count >= line_start && line_count <= line_end {
+            buf.push_str(&format!("{:4} | {}\n", line_count, line_content));
+            if line_count == line - 1 {
+                buf.push_str("     |");
+                for c in 0..line_content.len() {
+                    if c != col {
+                        buf.push_str("-");
+                    } else {
+                        buf.push_str("^");
+                    }
+                }
+                buf.push_str("\n");
+            }
+        }
+    }
+
+    buf
+}
+
 impl fmt::Display for TemplateError {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        match (self.line_no, self.column_no) {
-            (Some(line), Some(col)) => {
-                write!(
-                    f,
-                    "Template \"{}\" line {}, col {}: {}",
-                    self.template_name.as_ref().unwrap_or(
-                        &"Unnamed template".to_owned(),
-                    ),
-                    line,
-                    col,
-                    self.reason
-                )
-            }
+        match (self.line_no, self.column_no, &self.segment) {
+            (Some(line), Some(col), &Some(ref seg)) => write!(
+                f,
+                "Template error: {}\n    --> Template error in \"{}\":{}:{}\n     |\n{}     |\n     = reason: {}\n",
+                self.reason,
+                self.template_name
+                    .as_ref()
+                    .unwrap_or(&"Unnamed template".to_owned()),
+                line,
+                col,
+                seg,
+                self.reason
+            ),
             _ => write!(f, "{}", self.reason),
         }
     }
@@ -203,6 +229,16 @@ quick_error! {
             cause(err)
             description(err.description())
             display("Template \"{}\": {}", name, err)
+        }
+    }
+}
+
+impl TemplateRenderError {
+    pub fn as_render_error(&self) -> Option<&RenderError> {
+        if let &TemplateRenderError::RenderError(ref e) = self {
+            Some(&e)
+        } else {
+            None
         }
     }
 }

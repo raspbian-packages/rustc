@@ -1,15 +1,14 @@
 use std::sync::Arc;
 
 use serde::Serialize;
-use serde_json::value::{Value as Json, Map, to_value};
+use serde_json::value::{to_value, Map, Value as Json};
 
-use pest::prelude::*;
-use std::collections::{VecDeque, BTreeMap};
+use std::collections::{BTreeMap, VecDeque};
 
-use grammar::{Rdp, Rule};
+use pest::Parser;
+use pest::iterators::Pair;
+use grammar::{HandlebarsParser, Rule};
 use error::RenderError;
-
-static DEFAULT_VALUE: Json = Json::Null;
 
 pub type Object = BTreeMap<String, Json>;
 
@@ -25,38 +24,40 @@ fn parse_json_visitor_inner<'a>(
     path_stack: &mut VecDeque<&'a str>,
     path: &'a str,
 ) -> Result<(), RenderError> {
-    let path_in = StringInput::new(path);
-    let mut parser = Rdp::new(path_in);
+    let parsed_path = HandlebarsParser::parse(Rule::path, path)
+        .map(|p| p.flatten())
+        .map_err(|_| RenderError::new("Invalid JSON path"))?;
 
-    let mut seg_stack: VecDeque<&Token<Rule>> = VecDeque::new();
-    if parser.path() {
-        for seg in parser.queue().iter() {
-            match seg.rule {
-                Rule::path_up => {
-                    path_stack.pop_back();
-                    if let Some(p) = seg_stack.pop_back() {
-                        // also pop array index like [1]
-                        if p.rule == Rule::path_raw_id {
-                            seg_stack.pop_back();
-                        }
+    let mut seg_stack: VecDeque<Pair<Rule>> = VecDeque::new();
+    for seg in parsed_path {
+        if seg.as_str() == "@root" {
+            seg_stack.clear();
+            path_stack.clear();
+            continue;
+        }
+
+        match seg.as_rule() {
+            Rule::path_up => {
+                path_stack.pop_back();
+                if let Some(p) = seg_stack.pop_back() {
+                    // also pop array index like [1]
+                    if p.as_rule() == Rule::path_raw_id {
+                        seg_stack.pop_back();
                     }
                 }
-                Rule::path_id |
-                Rule::path_raw_id => {
-                    seg_stack.push_back(seg);
-                }
-                _ => {}
             }
+            Rule::path_id | Rule::path_raw_id => {
+                seg_stack.push_back(seg);
+            }
+            _ => {}
         }
-
-        for i in seg_stack.iter() {
-            let id = &path[i.start..i.end];
-            path_stack.push_back(id);
-        }
-        Ok(())
-    } else {
-        Err(RenderError::new("Invalid JSON path"))
     }
+
+    for i in seg_stack.into_iter() {
+        let span = i.into_span();
+        path_stack.push_back(&path[span.start()..span.end()]);
+    }
+    Ok(())
 }
 
 #[inline]
@@ -66,41 +67,36 @@ fn parse_json_visitor<'a>(
     path_context: &'a VecDeque<String>,
     relative_path: &'a str,
 ) -> Result<(), RenderError> {
-    let path_in = StringInput::new(relative_path);
-    let mut parser = Rdp::new(path_in);
+    let mut parser = HandlebarsParser::parse(Rule::path, relative_path)
+        .map(|p| p.flatten())
+        .map_err(|_| RenderError::new("Invalid JSON path."))?;
 
-    if parser.path() {
-        let mut path_context_depth: i64 = -1;
+    let mut path_context_depth: i64 = -1;
 
-        let mut iter = parser.queue().iter();
-        loop {
-            if let Some(sg) = iter.next() {
-                if sg.rule == Rule::path_up {
-                    path_context_depth += 1;
-                } else {
-                    break;
-                }
+    loop {
+        if let Some(sg) = parser.next() {
+            if sg.as_rule() == Rule::path_up {
+                path_context_depth += 1;
             } else {
                 break;
             }
+        } else {
+            break;
         }
+    }
 
-        if path_context_depth >= 0 {
-            if let Some(context_base_path) = path_context.get(path_context_depth as usize) {
-                parse_json_visitor_inner(path_stack, context_base_path)?;
-            } else {
-                parse_json_visitor_inner(path_stack, base_path)?;
-            }
+    if path_context_depth >= 0 {
+        if let Some(context_base_path) = path_context.get(path_context_depth as usize) {
+            parse_json_visitor_inner(path_stack, context_base_path)?;
         } else {
             parse_json_visitor_inner(path_stack, base_path)?;
         }
-
-        parse_json_visitor_inner(path_stack, relative_path)?;
-        Ok(())
     } else {
-        Err(RenderError::new("Invalid JSON path."))
+        parse_json_visitor_inner(path_stack, base_path)?;
     }
 
+    parse_json_visitor_inner(path_stack, relative_path)?;
+    Ok(())
 }
 
 pub fn merge_json(base: &Json, addition: &Object) -> Json {
@@ -119,14 +115,16 @@ pub fn merge_json(base: &Json, addition: &Object) -> Json {
 impl Context {
     /// Create a context with null data
     pub fn null() -> Context {
-        Context { data: Arc::new(Json::Null) }
+        Context {
+            data: Arc::new(Json::Null),
+        }
     }
 
     /// Create a context with given data
     pub fn wraps<T: Serialize>(e: &T) -> Result<Context, RenderError> {
-        to_value(e).map_err(RenderError::from).map(|d| {
-            Context { data: Arc::new(d) }
-        })
+        to_value(e)
+            .map_err(RenderError::from)
+            .map(|d| Context { data: Arc::new(d) })
     }
 
     /// Navigate the context with base path and relative path
@@ -139,24 +137,23 @@ impl Context {
         base_path: &str,
         path_context: &VecDeque<String>,
         relative_path: &str,
-    ) -> Result<&Json, RenderError> {
+    ) -> Result<Option<&Json>, RenderError> {
         let mut path_stack: VecDeque<&str> = VecDeque::new();
         parse_json_visitor(&mut path_stack, base_path, path_context, relative_path)?;
 
         let paths: Vec<&str> = path_stack.iter().map(|x| *x).collect();
-        let mut data: &Json = self.data.as_ref();
+        let mut data: Option<&Json> = Some(self.data.as_ref());
         for p in paths.iter() {
             if *p == "this" {
                 continue;
             }
-            data = match *data {
-                Json::Array(ref l) => {
-                    p.parse::<usize>()
-                        .and_then(|idx_u| Ok(l.get(idx_u).unwrap_or(&DEFAULT_VALUE)))
-                        .unwrap_or(&DEFAULT_VALUE)
-                }
-                Json::Object(ref m) => m.get(*p).unwrap_or(&DEFAULT_VALUE),
-                _ => &DEFAULT_VALUE,
+            data = match data {
+                Some(&Json::Array(ref l)) => p.parse::<usize>()
+                    .map_err(|e| RenderError::with(e))
+                    .map(|idx_u| l.get(idx_u))?,
+                Some(&Json::Object(ref m)) => m.get(*p),
+                Some(_) => None,
+                None => break,
             }
         }
         Ok(data)
@@ -228,9 +225,9 @@ impl JsonTruthy for Json {
 
 #[cfg(test)]
 mod test {
-    use context::{self, JsonRender, Context};
+    use context::{self, Context, JsonRender};
     use std::collections::VecDeque;
-    use serde_json::value::{Value as Json, Map};
+    use serde_json::value::{Map, Value as Json};
 
     #[test]
     fn test_json_render() {
@@ -261,6 +258,7 @@ mod test {
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "this")
                 .unwrap()
+                .unwrap()
                 .render(),
             v.to_string()
         );
@@ -284,11 +282,13 @@ mod test {
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "./name/../addr/country")
                 .unwrap()
+                .unwrap()
                 .render(),
             "China".to_string()
         );
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "addr.[country]")
+                .unwrap()
                 .unwrap()
                 .render(),
             "China".to_string()
@@ -299,12 +299,14 @@ mod test {
         assert_eq!(
             ctx2.navigate(".", &VecDeque::new(), "this")
                 .unwrap()
+                .unwrap()
                 .render(),
             "true".to_string()
         );
 
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "titles.[0]")
+                .unwrap()
                 .unwrap()
                 .render(),
             "programmer".to_string()
@@ -313,16 +315,17 @@ mod test {
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "titles.[0]/../../age")
                 .unwrap()
+                .unwrap()
                 .render(),
             "27".to_string()
         );
         assert_eq!(
             ctx.navigate(".", &VecDeque::new(), "this.titles.[0]/../../age")
                 .unwrap()
+                .unwrap()
                 .render(),
             "27".to_string()
         );
-
     }
 
     #[test]
@@ -339,11 +342,13 @@ mod test {
         assert_eq!(
             ctx1.navigate(".", &VecDeque::new(), "this")
                 .unwrap()
+                .unwrap()
                 .render(),
             "[object]".to_owned()
         );
         assert_eq!(
             ctx2.navigate(".", &VecDeque::new(), "age")
+                .unwrap()
                 .unwrap()
                 .render(),
             "4".to_owned()
@@ -354,47 +359,60 @@ mod test {
     fn test_merge_json() {
         let map = json!({ "age": 4 });
         let s = "hello".to_owned();
-        let hash =
-            btreemap!{
+        let hash = btreemap!{
             "tag".to_owned() => context::to_json(&"h1")
         };
 
         let ctx_a1 = Context::wraps(&context::merge_json(&map, &hash)).unwrap();
-        assert_eq!(ctx_a1
-                       .navigate(".", &VecDeque::new(), "age")
-                       .unwrap()
-                       .render(),
-                   "4".to_owned());
-        assert_eq!(ctx_a1
-                       .navigate(".", &VecDeque::new(), "tag")
-                       .unwrap()
-                       .render(),
-                   "h1".to_owned());
+        assert_eq!(
+            ctx_a1
+                .navigate(".", &VecDeque::new(), "age")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "4".to_owned()
+        );
+        assert_eq!(
+            ctx_a1
+                .navigate(".", &VecDeque::new(), "tag")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "h1".to_owned()
+        );
 
         let ctx_a2 = Context::wraps(&context::merge_json(&context::to_json(&s), &hash)).unwrap();
-        assert_eq!(ctx_a2
-                       .navigate(".", &VecDeque::new(), "this")
-                       .unwrap()
-                       .render(),
-                   "[object]".to_owned());
-        assert_eq!(ctx_a2
-                       .navigate(".", &VecDeque::new(), "tag")
-                       .unwrap()
-                       .render(),
-                   "h1".to_owned());
+        assert_eq!(
+            ctx_a2
+                .navigate(".", &VecDeque::new(), "this")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "[object]".to_owned()
+        );
+        assert_eq!(
+            ctx_a2
+                .navigate(".", &VecDeque::new(), "tag")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "h1".to_owned()
+        );
     }
 
     #[test]
     fn test_key_name_with_this() {
-        let m =
-            btreemap!{
+        let m = btreemap!{
             "this_name".to_string() => "the_value".to_string()
         };
         let ctx = Context::wraps(&m).unwrap();
-        assert_eq!(ctx.navigate(".", &VecDeque::new(), "this_name")
-                       .unwrap()
-                       .render(),
-                   "the_value".to_string());
+        assert_eq!(
+            ctx.navigate(".", &VecDeque::new(), "this_name")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "the_value".to_string()
+        );
     }
 
     use serde::{Serialize, Serializer};
@@ -415,5 +433,27 @@ mod test {
     fn test_serialize_error() {
         let d = UnserializableType {};
         assert!(Context::wraps(&d).is_err());
+    }
+
+    #[test]
+    fn test_root() {
+        let m = json!({
+            "a" : {
+                "b" : {
+                    "c" : {
+                        "d" : 1
+                    }
+                }
+            },
+            "b": 2
+        });
+        let ctx = Context::wraps(&m).unwrap();
+        assert_eq!(
+            ctx.navigate("a/b", &VecDeque::new(), "@root/b")
+                .unwrap()
+                .unwrap()
+                .render(),
+            "2".to_string()
+        );
     }
 }

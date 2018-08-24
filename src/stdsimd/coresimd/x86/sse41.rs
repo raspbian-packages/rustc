@@ -1,7 +1,7 @@
 //! Streaming SIMD Extensions 4.1 (SSE4.1)
 
-use coresimd::simd_llvm::*;
 use coresimd::simd::*;
+use coresimd::simd_llvm::*;
 use coresimd::x86::*;
 use mem;
 
@@ -10,34 +10,47 @@ use stdsimd_test::assert_instr;
 
 // SSE4 rounding constans
 /// round to nearest
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TO_NEAREST_INT: i32 = 0x00;
 /// round down
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TO_NEG_INF: i32 = 0x01;
 /// round up
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TO_POS_INF: i32 = 0x02;
 /// truncate
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TO_ZERO: i32 = 0x03;
 /// use MXCSR.RC; see `vendor::_MM_SET_ROUNDING_MODE`
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_CUR_DIRECTION: i32 = 0x04;
 /// do not suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_RAISE_EXC: i32 = 0x00;
 /// suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_NO_EXC: i32 = 0x08;
 /// round to nearest and do not suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_NINT: i32 = 0x00;
 /// round down and do not suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_FLOOR: i32 =
     (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_NEG_INF);
 /// round up and do not suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_CEIL: i32 =
     (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_POS_INF);
 /// truncate and do not suppress exceptions
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TRUNC: i32 = (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_ZERO);
 /// use MXCSR.RC and do not suppress exceptions; see
 /// `vendor::_MM_SET_ROUNDING_MODE`
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_RINT: i32 =
     (_MM_FROUND_RAISE_EXC | _MM_FROUND_CUR_DIRECTION);
 /// use MXCSR.RC and suppress exceptions; see `vendor::_MM_SET_ROUNDING_MODE`
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_NEARBYINT: i32 =
     (_MM_FROUND_NO_EXC | _MM_FROUND_CUR_DIRECTION);
 
@@ -46,13 +59,20 @@ pub const _MM_FROUND_NEARBYINT: i32 =
 /// The high bit of each corresponding mask byte determines the selection.
 /// If the high bit is set the element of `a` is selected. The element
 /// of `b` is selected otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blendv_epi8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pblendvb))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blendv_epi8(
     a: __m128i, b: __m128i, mask: __m128i
 ) -> __m128i {
-    mem::transmute(pblendvb(a.as_i8x16(), b.as_i8x16(), mask.as_i8x16()))
+    mem::transmute(pblendvb(
+        a.as_i8x16(),
+        b.as_i8x16(),
+        mask.as_i8x16(),
+    ))
 }
 
 /// Blend packed 16-bit integers from `a` and `b` using the mask `imm8`.
@@ -60,70 +80,94 @@ pub unsafe fn _mm_blendv_epi8(
 /// The mask bits determine the selection. A clear bit selects the
 /// corresponding element of `a`, and a set bit the corresponding
 /// element of `b`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blend_epi16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pblendw, imm8 = 0xF0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blend_epi16(a: __m128i, b: __m128i, imm8: i32) -> __m128i {
     let a = a.as_i16x8();
     let b = b.as_i16x8();
     macro_rules! call {
-        ($imm8:expr) => { pblendw(a, b, $imm8) }
+        ($imm8:expr) => {
+            pblendw(a, b, $imm8)
+        };
     }
     mem::transmute(constify_imm8!(imm8, call))
 }
 
 /// Blend packed double-precision (64-bit) floating-point elements from `a`
 /// and `b` using `mask`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blendv_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(blendvpd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blendv_pd(a: __m128d, b: __m128d, mask: __m128d) -> __m128d {
     blendvpd(a, b, mask)
 }
 
 /// Blend packed single-precision (32-bit) floating-point elements from `a`
 /// and `b` using `mask`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blendv_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(blendvps))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blendv_ps(a: __m128, b: __m128, mask: __m128) -> __m128 {
     blendvps(a, b, mask)
 }
 
 /// Blend packed double-precision (64-bit) floating-point elements from `a`
 /// and `b` using control mask `imm2`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blend_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(blendpd, imm2 = 0b10))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blend_pd(a: __m128d, b: __m128d, imm2: i32) -> __m128d {
     macro_rules! call {
-        ($imm2:expr) => { blendpd(a, b, $imm2) }
+        ($imm2:expr) => {
+            blendpd(a, b, $imm2)
+        };
     }
     constify_imm2!(imm2, call)
 }
 
 /// Blend packed single-precision (32-bit) floating-point elements from `a`
 /// and `b` using mask `imm4`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_blend_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(blendps, imm4 = 0b0101))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_blend_ps(a: __m128, b: __m128, imm4: i32) -> __m128 {
     macro_rules! call {
-        ($imm4:expr) => { blendps(a, b, $imm4) }
+        ($imm4:expr) => {
+            blendps(a, b, $imm4)
+        };
     }
     constify_imm4!(imm4, call)
 }
 
 /// Extract a single-precision (32-bit) floating-point element from `a`,
 /// selected with `imm8`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_extract_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 // TODO: Add test for Windows
 #[cfg_attr(test, assert_instr(extractps, imm8 = 0))]
 #[rustc_args_required_const(1)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_ps(a: __m128, imm8: i32) -> i32 {
     mem::transmute(simd_extract::<_, f32>(a, imm8 as u32 & 0b11))
 }
@@ -132,21 +176,27 @@ pub unsafe fn _mm_extract_ps(a: __m128, imm8: i32) -> i32 {
 /// integer containing the zero-extended integer data.
 ///
 /// See [LLVM commit D20468][https://reviews.llvm.org/D20468].
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_extract_epi8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pextrb, imm8 = 0))]
 #[rustc_args_required_const(1)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_epi8(a: __m128i, imm8: i32) -> i32 {
     let imm8 = (imm8 & 15) as u32;
     simd_extract::<_, u8>(a.as_u8x16(), imm8) as i32
 }
 
 /// Extract an 32-bit integer from `a` selected with `imm8`
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_extract_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 // TODO: Add test for Windows
 #[cfg_attr(test, assert_instr(extractps, imm8 = 1))]
 #[rustc_args_required_const(1)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_epi32(a: __m128i, imm8: i32) -> i32 {
     let imm8 = (imm8 & 3) as u32;
     simd_extract::<_, i32>(a.as_i32x4(), imm8)
@@ -174,130 +224,182 @@ pub unsafe fn _mm_extract_epi32(a: __m128i, imm8: i32) -> i32 {
 ///
 /// * Bits `[3:0]`: If any of these bits are set, the corresponding result
 /// element is cleared.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_insert_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(insertps, imm8 = 0b1010))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_insert_ps(a: __m128, b: __m128, imm8: i32) -> __m128 {
     macro_rules! call {
-        ($imm8:expr) => { insertps(a, b, $imm8) }
+        ($imm8:expr) => {
+            insertps(a, b, $imm8)
+        };
     }
     constify_imm8!(imm8, call)
 }
 
 /// Return a copy of `a` with the 8-bit integer from `i` inserted at a
 /// location specified by `imm8`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_insert_epi8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pinsrb, imm8 = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_insert_epi8(a: __m128i, i: i32, imm8: i32) -> __m128i {
-    mem::transmute(simd_insert(a.as_i8x16(), (imm8 & 0b1111) as u32, i as i8))
+    mem::transmute(simd_insert(
+        a.as_i8x16(),
+        (imm8 & 0b1111) as u32,
+        i as i8,
+    ))
 }
 
 /// Return a copy of `a` with the 32-bit integer from `i` inserted at a
 /// location specified by `imm8`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_insert_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pinsrd, imm8 = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_insert_epi32(a: __m128i, i: i32, imm8: i32) -> __m128i {
-    mem::transmute(simd_insert(a.as_i32x4(), (imm8 & 0b11) as u32, i))
+    mem::transmute(simd_insert(
+        a.as_i32x4(),
+        (imm8 & 0b11) as u32,
+        i,
+    ))
 }
 
 /// Compare packed 8-bit integers in `a` and `b` and return packed maximum
 /// values in dst.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_max_epi8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmaxsb))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_max_epi8(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pmaxsb(a.as_i8x16(), b.as_i8x16()))
 }
 
 /// Compare packed unsigned 16-bit integers in `a` and `b`, and return packed
 /// maximum.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_max_epu16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmaxuw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_max_epu16(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pmaxuw(a.as_u16x8(), b.as_u16x8()))
 }
 
 /// Compare packed 32-bit integers in `a` and `b`, and return packed maximum
 /// values.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_max_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmaxsd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_max_epi32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pmaxsd(a.as_i32x4(), b.as_i32x4()))
 }
 
 /// Compare packed unsigned 32-bit integers in `a` and `b`, and return packed
 /// maximum values.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_max_epu32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmaxud))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_max_epu32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pmaxud(a.as_u32x4(), b.as_u32x4()))
 }
 
 /// Compare packed 8-bit integers in `a` and `b` and return packed minimum
 /// values in dst.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_min_epi8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pminsb))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_min_epi8(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pminsb(a.as_i8x16(), b.as_i8x16()))
 }
 
 /// Compare packed unsigned 16-bit integers in `a` and `b`, and return packed
 /// minimum.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_min_epu16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pminuw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_min_epu16(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pminuw(a.as_u16x8(), b.as_u16x8()))
 }
 
 /// Compare packed 32-bit integers in `a` and `b`, and return packed minimum
 /// values.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_min_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pminsd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_min_epi32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pminsd(a.as_i32x4(), b.as_i32x4()))
 }
 
 /// Compare packed unsigned 32-bit integers in `a` and `b`, and return packed
 /// minimum values.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_min_epu32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pminud))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_min_epu32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pminud(a.as_u32x4(), b.as_u32x4()))
 }
 
 /// Convert packed 32-bit integers from `a` and `b` to packed 16-bit integers
 /// using unsigned saturation
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_packus_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(packusdw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_packus_epi32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(packusdw(a.as_i32x4(), b.as_i32x4()))
 }
 
 /// Compare packed 64-bit integers in `a` and `b` for equality
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cmpeq_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pcmpeqq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cmpeq_epi64(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(simd_eq::<_, i64x2>(a.as_i64x2(), b.as_i64x2()))
 }
 
 /// Sign extend packed 8-bit integers in `a` to packed 16-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi8_epi16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxbw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi8_epi16(a: __m128i) -> __m128i {
     let a = a.as_i8x16();
     let a = simd_shuffle8::<_, i8x8>(a, a, [0, 1, 2, 3, 4, 5, 6, 7]);
@@ -305,9 +407,12 @@ pub unsafe fn _mm_cvtepi8_epi16(a: __m128i) -> __m128i {
 }
 
 /// Sign extend packed 8-bit integers in `a` to packed 32-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi8_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxbd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi8_epi32(a: __m128i) -> __m128i {
     let a = a.as_i8x16();
     let a = simd_shuffle4::<_, i8x4>(a, a, [0, 1, 2, 3]);
@@ -316,9 +421,12 @@ pub unsafe fn _mm_cvtepi8_epi32(a: __m128i) -> __m128i {
 
 /// Sign extend packed 8-bit integers in the low 8 bytes of `a` to packed
 /// 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi8_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxbq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi8_epi64(a: __m128i) -> __m128i {
     let a = a.as_i8x16();
     let a = simd_shuffle2::<_, i8x2>(a, a, [0, 1]);
@@ -326,9 +434,12 @@ pub unsafe fn _mm_cvtepi8_epi64(a: __m128i) -> __m128i {
 }
 
 /// Sign extend packed 16-bit integers in `a` to packed 32-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi16_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxwd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi16_epi32(a: __m128i) -> __m128i {
     let a = a.as_i16x8();
     let a = simd_shuffle4::<_, i16x4>(a, a, [0, 1, 2, 3]);
@@ -336,9 +447,12 @@ pub unsafe fn _mm_cvtepi16_epi32(a: __m128i) -> __m128i {
 }
 
 /// Sign extend packed 16-bit integers in `a` to packed 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi16_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxwq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi16_epi64(a: __m128i) -> __m128i {
     let a = a.as_i16x8();
     let a = simd_shuffle2::<_, i16x2>(a, a, [0, 1]);
@@ -346,9 +460,12 @@ pub unsafe fn _mm_cvtepi16_epi64(a: __m128i) -> __m128i {
 }
 
 /// Sign extend packed 32-bit integers in `a` to packed 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepi32_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovsxdq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepi32_epi64(a: __m128i) -> __m128i {
     let a = a.as_i32x4();
     let a = simd_shuffle2::<_, i32x2>(a, a, [0, 1]);
@@ -356,9 +473,12 @@ pub unsafe fn _mm_cvtepi32_epi64(a: __m128i) -> __m128i {
 }
 
 /// Zero extend packed unsigned 8-bit integers in `a` to packed 16-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu8_epi16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxbw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu8_epi16(a: __m128i) -> __m128i {
     let a = a.as_u8x16();
     let a = simd_shuffle8::<_, u8x8>(a, a, [0, 1, 2, 3, 4, 5, 6, 7]);
@@ -366,9 +486,12 @@ pub unsafe fn _mm_cvtepu8_epi16(a: __m128i) -> __m128i {
 }
 
 /// Zero extend packed unsigned 8-bit integers in `a` to packed 32-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu8_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxbd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu8_epi32(a: __m128i) -> __m128i {
     let a = a.as_u8x16();
     let a = simd_shuffle4::<_, u8x4>(a, a, [0, 1, 2, 3]);
@@ -376,9 +499,12 @@ pub unsafe fn _mm_cvtepu8_epi32(a: __m128i) -> __m128i {
 }
 
 /// Zero extend packed unsigned 8-bit integers in `a` to packed 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu8_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxbq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu8_epi64(a: __m128i) -> __m128i {
     let a = a.as_u8x16();
     let a = simd_shuffle2::<_, u8x2>(a, a, [0, 1]);
@@ -387,9 +513,12 @@ pub unsafe fn _mm_cvtepu8_epi64(a: __m128i) -> __m128i {
 
 /// Zero extend packed unsigned 16-bit integers in `a`
 /// to packed 32-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu16_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxwd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu16_epi32(a: __m128i) -> __m128i {
     let a = a.as_u16x8();
     let a = simd_shuffle4::<_, u16x4>(a, a, [0, 1, 2, 3]);
@@ -398,9 +527,12 @@ pub unsafe fn _mm_cvtepu16_epi32(a: __m128i) -> __m128i {
 
 /// Zero extend packed unsigned 16-bit integers in `a`
 /// to packed 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu16_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxwq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu16_epi64(a: __m128i) -> __m128i {
     let a = a.as_u16x8();
     let a = simd_shuffle2::<_, u16x2>(a, a, [0, 1]);
@@ -409,9 +541,12 @@ pub unsafe fn _mm_cvtepu16_epi64(a: __m128i) -> __m128i {
 
 /// Zero extend packed unsigned 32-bit integers in `a`
 /// to packed 64-bit integers
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_cvtepu32_epi64)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmovzxdq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_cvtepu32_epi64(a: __m128i) -> __m128i {
     let a = a.as_u32x4();
     let a = simd_shuffle2::<_, u32x2>(a, a, [0, 1]);
@@ -425,13 +560,18 @@ pub unsafe fn _mm_cvtepu32_epi64(a: __m128i) -> __m128i {
 /// replaced by a value of `0.0`. If a broadcast mask bit is one, the result of
 /// the dot product will be stored in the return value component. Otherwise if
 /// the broadcast mask bit is zero then the return component will be zero.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_dp_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(dppd, imm8 = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_dp_pd(a: __m128d, b: __m128d, imm8: i32) -> __m128d {
     macro_rules! call {
-        ($imm8:expr) => { dppd(a, b, $imm8) }
+        ($imm8:expr) => {
+            dppd(a, b, $imm8)
+        };
     }
     constify_imm8!(imm8, call)
 }
@@ -443,13 +583,18 @@ pub unsafe fn _mm_dp_pd(a: __m128d, b: __m128d, imm8: i32) -> __m128d {
 /// replaced by a value of `0.0`. If a broadcast mask bit is one, the result of
 /// the dot product will be stored in the return value component. Otherwise if
 /// the broadcast mask bit is zero then the return component will be zero.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_dp_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(dpps, imm8 = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_dp_ps(a: __m128, b: __m128, imm8: i32) -> __m128 {
     macro_rules! call {
-        ($imm8:expr) => { dpps(a, b, $imm8) }
+        ($imm8:expr) => {
+            dpps(a, b, $imm8)
+        };
     }
     constify_imm8!(imm8, call)
 }
@@ -457,9 +602,12 @@ pub unsafe fn _mm_dp_ps(a: __m128, b: __m128, imm8: i32) -> __m128 {
 /// Round the packed double-precision (64-bit) floating-point elements in `a`
 /// down to an integer value, and store the results as packed double-precision
 /// floating-point elements.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_floor_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundpd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_floor_pd(a: __m128d) -> __m128d {
     roundpd(a, _MM_FROUND_FLOOR)
 }
@@ -467,9 +615,12 @@ pub unsafe fn _mm_floor_pd(a: __m128d) -> __m128d {
 /// Round the packed single-precision (32-bit) floating-point elements in `a`
 /// down to an integer value, and store the results as packed single-precision
 /// floating-point elements.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_floor_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundps))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_floor_ps(a: __m128) -> __m128 {
     roundps(a, _MM_FROUND_FLOOR)
 }
@@ -479,9 +630,12 @@ pub unsafe fn _mm_floor_ps(a: __m128) -> __m128 {
 /// floating-point element in the lower element of the intrinsic result,
 /// and copy the upper element from `a` to the upper element of the intrinsic
 /// result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_floor_sd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundsd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_floor_sd(a: __m128d, b: __m128d) -> __m128d {
     roundsd(a, b, _MM_FROUND_FLOOR)
 }
@@ -491,9 +645,12 @@ pub unsafe fn _mm_floor_sd(a: __m128d, b: __m128d) -> __m128d {
 /// floating-point element in the lower element of the intrinsic result,
 /// and copy the upper 3 packed elements from `a` to the upper elements
 /// of the intrinsic result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_floor_ss)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundss))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_floor_ss(a: __m128, b: __m128) -> __m128 {
     roundss(a, b, _MM_FROUND_FLOOR)
 }
@@ -501,9 +658,12 @@ pub unsafe fn _mm_floor_ss(a: __m128, b: __m128) -> __m128 {
 /// Round the packed double-precision (64-bit) floating-point elements in `a`
 /// up to an integer value, and store the results as packed double-precision
 /// floating-point elements.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_ceil_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundpd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_ceil_pd(a: __m128d) -> __m128d {
     roundpd(a, _MM_FROUND_CEIL)
 }
@@ -511,9 +671,12 @@ pub unsafe fn _mm_ceil_pd(a: __m128d) -> __m128d {
 /// Round the packed single-precision (32-bit) floating-point elements in `a`
 /// up to an integer value, and store the results as packed single-precision
 /// floating-point elements.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_ceil_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundps))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_ceil_ps(a: __m128) -> __m128 {
     roundps(a, _MM_FROUND_CEIL)
 }
@@ -523,9 +686,12 @@ pub unsafe fn _mm_ceil_ps(a: __m128) -> __m128 {
 /// floating-point element in the lower element of the intrisic result,
 /// and copy the upper element from `a` to the upper element
 /// of the intrinsic result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_ceil_sd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundsd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_ceil_sd(a: __m128d, b: __m128d) -> __m128d {
     roundsd(a, b, _MM_FROUND_CEIL)
 }
@@ -535,9 +701,12 @@ pub unsafe fn _mm_ceil_sd(a: __m128d, b: __m128d) -> __m128d {
 /// floating-point element in the lower element of the intrinsic result,
 /// and copy the upper 3 packed elements from `a` to the upper elements
 /// of the intrinsic result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_ceil_ss)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundss))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_ceil_ss(a: __m128, b: __m128) -> __m128 {
     roundss(a, b, _MM_FROUND_CEIL)
 }
@@ -578,13 +747,18 @@ pub unsafe fn _mm_ceil_ss(a: __m128, b: __m128) -> __m128 {
 /// _MM_FROUND_CUR_DIRECTION;
 /// # }
 /// ```
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_round_pd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundpd, rounding = 0))]
 #[rustc_args_required_const(1)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_round_pd(a: __m128d, rounding: i32) -> __m128d {
     macro_rules! call {
-        ($imm4:expr) => { roundpd(a, $imm4) }
+        ($imm4:expr) => {
+            roundpd(a, $imm4)
+        };
     }
     constify_imm4!(rounding, call)
 }
@@ -626,13 +800,18 @@ pub unsafe fn _mm_round_pd(a: __m128d, rounding: i32) -> __m128d {
 /// _MM_FROUND_CUR_DIRECTION;
 /// # }
 /// ```
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_round_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundps, rounding = 0))]
 #[rustc_args_required_const(1)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_round_ps(a: __m128, rounding: i32) -> __m128 {
     macro_rules! call {
-        ($imm4:expr) => { roundps(a, $imm4) }
+        ($imm4:expr) => {
+            roundps(a, $imm4)
+        };
     }
     constify_imm4!(rounding, call)
 }
@@ -675,13 +854,18 @@ pub unsafe fn _mm_round_ps(a: __m128, rounding: i32) -> __m128 {
 /// _MM_FROUND_CUR_DIRECTION;
 /// # }
 /// ```
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_round_sd)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundsd, rounding = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_round_sd(a: __m128d, b: __m128d, rounding: i32) -> __m128d {
     macro_rules! call {
-        ($imm4:expr) => { roundsd(a, b, $imm4) }
+        ($imm4:expr) => {
+            roundsd(a, b, $imm4)
+        };
     }
     constify_imm4!(rounding, call)
 }
@@ -724,13 +908,18 @@ pub unsafe fn _mm_round_sd(a: __m128d, b: __m128d, rounding: i32) -> __m128d {
 /// _MM_FROUND_CUR_DIRECTION;
 /// # }
 /// ```
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_round_ss)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(roundss, rounding = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_round_ss(a: __m128, b: __m128, rounding: i32) -> __m128 {
     macro_rules! call {
-        ($imm4:expr) => { roundss(a, b, $imm4) }
+        ($imm4:expr) => {
+            roundss(a, b, $imm4)
+        };
     }
     constify_imm4!(rounding, call)
 }
@@ -754,18 +943,24 @@ pub unsafe fn _mm_round_ss(a: __m128, b: __m128, rounding: i32) -> __m128 {
 /// * bits `[15:0]` - contain the minimum value found in parameter `a`,
 /// * bits `[18:16]` - contain the index of the minimum value
 /// * remaining bits are set to `0`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_minpos_epu16)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(phminposuw))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_minpos_epu16(a: __m128i) -> __m128i {
     mem::transmute(phminposuw(a.as_u16x8()))
 }
 
 /// Multiply the low 32-bit integers from each packed 64-bit
 /// element in `a` and `b`, and return the signed 64-bit result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_mul_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmuldq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mul_epi32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(pmuldq(a.as_i32x4(), b.as_i32x4()))
 }
@@ -776,9 +971,12 @@ pub unsafe fn _mm_mul_epi32(a: __m128i, b: __m128i) -> __m128i {
 /// __m128i::splat(2)` returns the obvious `__m128i::splat(4)`, due to wrapping
 /// arithmetic `pmulld __m128i::splat(i32::MAX), __m128i::splat(2)` would
 /// return a negative number.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_mullo_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pmulld))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> __m128i {
     mem::transmute(simd_mul(a.as_i32x4(), b.as_i32x4()))
 }
@@ -814,15 +1012,20 @@ pub unsafe fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> __m128i {
 ///
 /// * A `__m128i` vector containing the sums of the sets of
 ///   absolute differences between both operands.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_mpsadbw_epu8)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(mpsadbw, imm8 = 0))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mpsadbw_epu8(a: __m128i, b: __m128i, imm8: i32) -> __m128i {
     let a = a.as_u8x16();
     let b = b.as_u8x16();
     macro_rules! call {
-        ($imm8:expr) => { mpsadbw(a, b, $imm8) }
+        ($imm8:expr) => {
+            mpsadbw(a, b, $imm8)
+        };
     }
     mem::transmute(constify_imm3!(imm8, call))
 }
@@ -840,9 +1043,12 @@ pub unsafe fn _mm_mpsadbw_epu8(a: __m128i, b: __m128i, imm8: i32) -> __m128i {
 ///
 /// * `1` - if the specified bits are all zeros,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_testz_si128)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_testz_si128(a: __m128i, mask: __m128i) -> i32 {
     ptestz(a.as_i64x2(), mask.as_i64x2())
 }
@@ -860,9 +1066,12 @@ pub unsafe fn _mm_testz_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `1` - if the specified bits are all ones,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_testc_si128)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_testc_si128(a: __m128i, mask: __m128i) -> i32 {
     ptestc(a.as_i64x2(), mask.as_i64x2())
 }
@@ -880,9 +1089,12 @@ pub unsafe fn _mm_testc_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `1` - if the specified bits are neither all zeros nor all ones,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_testnzc_si128)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_testnzc_si128(a: __m128i, mask: __m128i) -> i32 {
     ptestnzc(a.as_i64x2(), mask.as_i64x2())
 }
@@ -900,9 +1112,12 @@ pub unsafe fn _mm_testnzc_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `1` - if the specified bits are all zeros,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_test_all_zeros)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_test_all_zeros(a: __m128i, mask: __m128i) -> i32 {
     _mm_testz_si128(a, mask)
 }
@@ -918,10 +1133,13 @@ pub unsafe fn _mm_test_all_zeros(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `1` - if the bits specified in the operand are all set to 1,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_test_all_ones)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pcmpeqd))]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_test_all_ones(a: __m128i) -> i32 {
     _mm_testc_si128(a, _mm_cmpeq_epi32(a, a))
 }
@@ -939,9 +1157,12 @@ pub unsafe fn _mm_test_all_ones(a: __m128i) -> i32 {
 ///
 /// * `1` - if the specified bits are neither all zeros nor all ones,
 /// * `0` - otherwise.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_test_mix_ones_zeros)
 #[inline]
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(ptest))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_test_mix_ones_zeros(a: __m128i, mask: __m128i) -> i32 {
     _mm_testnzc_si128(a, mask)
 }
@@ -1008,11 +1229,11 @@ extern "C" {
 
 #[cfg(test)]
 mod tests {
+    use coresimd::x86::*;
     use std::mem;
     use stdsimd_test::simd_test;
-    use coresimd::x86::*;
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blendv_epi8() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1035,7 +1256,7 @@ mod tests {
         assert_eq_m128i(_mm_blendv_epi8(a, b, mask), e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blendv_pd() {
         let a = _mm_set1_pd(0.0);
         let b = _mm_set1_pd(1.0);
@@ -1045,7 +1266,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blendv_ps() {
         let a = _mm_set1_ps(0.0);
         let b = _mm_set1_ps(1.0);
@@ -1055,7 +1276,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blend_pd() {
         let a = _mm_set1_pd(0.0);
         let b = _mm_set1_pd(1.0);
@@ -1064,7 +1285,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blend_ps() {
         let a = _mm_set1_ps(0.0);
         let b = _mm_set1_ps(1.0);
@@ -1073,7 +1294,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blend_epi16() {
         let a = _mm_set1_epi16(0);
         let b = _mm_set1_epi16(1);
@@ -1082,7 +1303,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_extract_ps() {
         let a = _mm_setr_ps(0.0, 1.0, 2.0, 3.0);
         let r: f32 = mem::transmute(_mm_extract_ps(a, 1));
@@ -1091,7 +1312,7 @@ mod tests {
         assert_eq!(r, 1.0);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_extract_epi8() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1104,7 +1325,7 @@ mod tests {
         assert_eq!(r2, 3);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_extract_epi32() {
         let a = _mm_setr_epi32(0, 1, 2, 3);
         let r = _mm_extract_epi32(a, 1);
@@ -1113,7 +1334,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_insert_ps() {
         let a = _mm_set1_ps(1.0);
         let b = _mm_setr_ps(1.0, 2.0, 3.0, 4.0);
@@ -1122,7 +1343,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_insert_epi8() {
         let a = _mm_set1_epi8(0);
         let e = _mm_setr_epi8(0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
@@ -1132,7 +1353,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_insert_epi32() {
         let a = _mm_set1_epi32(0);
         let e = _mm_setr_epi32(0, 32, 0, 0);
@@ -1142,7 +1363,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_max_epi8() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1163,7 +1384,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_max_epu16() {
         let a = _mm_setr_epi16(1, 4, 5, 8, 9, 12, 13, 16);
         let b = _mm_setr_epi16(2, 3, 6, 7, 10, 11, 14, 15);
@@ -1172,7 +1393,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_max_epi32() {
         let a = _mm_setr_epi32(1, 4, 5, 8);
         let b = _mm_setr_epi32(2, 3, 6, 7);
@@ -1181,7 +1402,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_max_epu32() {
         let a = _mm_setr_epi32(1, 4, 5, 8);
         let b = _mm_setr_epi32(2, 3, 6, 7);
@@ -1190,7 +1411,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi8_1() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1211,7 +1432,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi8_2() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1232,7 +1453,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epu16() {
         let a = _mm_setr_epi16(1, 4, 5, 8, 9, 12, 13, 16);
         let b = _mm_setr_epi16(2, 3, 6, 7, 10, 11, 14, 15);
@@ -1241,7 +1462,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi32_1() {
         let a = _mm_setr_epi32(1, 4, 5, 8);
         let b = _mm_setr_epi32(2, 3, 6, 7);
@@ -1250,7 +1471,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi32_2() {
         let a = _mm_setr_epi32(-1, 4, 5, -7);
         let b = _mm_setr_epi32(-2, 3, -6, 8);
@@ -1259,7 +1480,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epu32() {
         let a = _mm_setr_epi32(1, 4, 5, 8);
         let b = _mm_setr_epi32(2, 3, 6, 7);
@@ -1268,7 +1489,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_packus_epi32() {
         let a = _mm_setr_epi32(1, 2, 3, 4);
         let b = _mm_setr_epi32(-1, -2, -3, -4);
@@ -1277,7 +1498,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cmpeq_epi64() {
         let a = _mm_setr_epi64x(0, 1);
         let b = _mm_setr_epi64x(0, 0);
@@ -1286,7 +1507,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi8_epi16() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepi8_epi16(a);
@@ -1298,7 +1519,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi8_epi32() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepi8_epi32(a);
@@ -1310,7 +1531,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi8_epi64() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepi8_epi64(a);
@@ -1322,7 +1543,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi16_epi32() {
         let a = _mm_set1_epi16(10);
         let r = _mm_cvtepi16_epi32(a);
@@ -1334,7 +1555,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi16_epi64() {
         let a = _mm_set1_epi16(10);
         let r = _mm_cvtepi16_epi64(a);
@@ -1346,7 +1567,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepi32_epi64() {
         let a = _mm_set1_epi32(10);
         let r = _mm_cvtepi32_epi64(a);
@@ -1358,7 +1579,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu8_epi16() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepu8_epi16(a);
@@ -1366,7 +1587,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu8_epi32() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepu8_epi32(a);
@@ -1374,7 +1595,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu8_epi64() {
         let a = _mm_set1_epi8(10);
         let r = _mm_cvtepu8_epi64(a);
@@ -1382,7 +1603,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu16_epi32() {
         let a = _mm_set1_epi16(10);
         let r = _mm_cvtepu16_epi32(a);
@@ -1390,7 +1611,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu16_epi64() {
         let a = _mm_set1_epi16(10);
         let r = _mm_cvtepu16_epi64(a);
@@ -1398,7 +1619,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_cvtepu32_epi64() {
         let a = _mm_set1_epi32(10);
         let r = _mm_cvtepu32_epi64(a);
@@ -1406,7 +1627,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_dp_pd() {
         let a = _mm_setr_pd(2.0, 3.0);
         let b = _mm_setr_pd(1.0, 4.0);
@@ -1414,7 +1635,7 @@ mod tests {
         assert_eq_m128d(_mm_dp_pd(a, b, 0b00110001), e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_dp_ps() {
         let a = _mm_setr_ps(2.0, 3.0, 1.0, 10.0);
         let b = _mm_setr_ps(1.0, 4.0, 0.5, 10.0);
@@ -1422,7 +1643,7 @@ mod tests {
         assert_eq_m128(_mm_dp_ps(a, b, 0b01110101), e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_floor_pd() {
         let a = _mm_setr_pd(2.5, 4.5);
         let r = _mm_floor_pd(a);
@@ -1430,7 +1651,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_floor_ps() {
         let a = _mm_setr_ps(2.5, 4.5, 8.5, 16.5);
         let r = _mm_floor_ps(a);
@@ -1438,7 +1659,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_floor_sd() {
         let a = _mm_setr_pd(2.5, 4.5);
         let b = _mm_setr_pd(-1.5, -3.5);
@@ -1447,7 +1668,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_floor_ss() {
         let a = _mm_setr_ps(2.5, 4.5, 8.5, 16.5);
         let b = _mm_setr_ps(-1.5, -3.5, -7.5, -15.5);
@@ -1456,7 +1677,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_ceil_pd() {
         let a = _mm_setr_pd(1.5, 3.5);
         let r = _mm_ceil_pd(a);
@@ -1464,7 +1685,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_ceil_ps() {
         let a = _mm_setr_ps(1.5, 3.5, 7.5, 15.5);
         let r = _mm_ceil_ps(a);
@@ -1472,7 +1693,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_ceil_sd() {
         let a = _mm_setr_pd(1.5, 3.5);
         let b = _mm_setr_pd(-2.5, -4.5);
@@ -1481,7 +1702,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_ceil_ss() {
         let a = _mm_setr_ps(1.5, 3.5, 7.5, 15.5);
         let b = _mm_setr_ps(-2.5, -4.5, -8.5, -16.5);
@@ -1490,7 +1711,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_round_pd() {
         let a = _mm_setr_pd(1.25, 3.75);
         let r = _mm_round_pd(a, _MM_FROUND_TO_NEAREST_INT);
@@ -1498,7 +1719,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_round_ps() {
         let a = _mm_setr_ps(2.25, 4.75, -1.75, -4.25);
         let r = _mm_round_ps(a, _MM_FROUND_TO_ZERO);
@@ -1506,7 +1727,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_round_sd() {
         let a = _mm_setr_pd(1.5, 3.5);
         let b = _mm_setr_pd(-2.5, -4.5);
@@ -1518,7 +1739,7 @@ mod tests {
         assert_eq_m128d(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_round_ss() {
         let a = _mm_setr_ps(1.5, 3.5, 7.5, 15.5);
         let b = _mm_setr_ps(-1.75, -4.5, -8.5, -16.5);
@@ -1530,7 +1751,7 @@ mod tests {
         assert_eq_m128(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_minpos_epu16_1() {
         let a = _mm_setr_epi16(23, 18, 44, 97, 50, 13, 67, 66);
         let r = _mm_minpos_epu16(a);
@@ -1538,7 +1759,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_minpos_epu16_2() {
         let a = _mm_setr_epi16(0, 18, 44, 97, 50, 13, 67, 66);
         let r = _mm_minpos_epu16(a);
@@ -1546,7 +1767,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_mul_epi32() {
         {
             let a = _mm_setr_epi32(1, 1, 1, 1);
@@ -1574,7 +1795,7 @@ mod tests {
         }
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_mullo_epi32() {
         {
             let a = _mm_setr_epi32(1, 1, 1, 1);
@@ -1595,7 +1816,7 @@ mod tests {
         }
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_minpos_epu16() {
         let a = _mm_setr_epi16(8, 7, 6, 5, 4, 1, 2, 3);
         let r = _mm_minpos_epu16(a);
@@ -1603,7 +1824,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_mpsadbw_epu8() {
         #[cfg_attr(rustfmt, rustfmt_skip)]
         let a = _mm_setr_epi8(
@@ -1632,7 +1853,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_testz_si128() {
         let a = _mm_set1_epi8(1);
         let mask = _mm_set1_epi8(0);
@@ -1648,7 +1869,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_testc_si128() {
         let a = _mm_set1_epi8(-1);
         let mask = _mm_set1_epi8(0);
@@ -1664,7 +1885,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_testnzc_si128() {
         let a = _mm_set1_epi8(0);
         let mask = _mm_set1_epi8(1);
@@ -1684,7 +1905,7 @@ mod tests {
         assert_eq!(r, 0);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_test_all_zeros() {
         let a = _mm_set1_epi8(1);
         let mask = _mm_set1_epi8(0);
@@ -1700,7 +1921,7 @@ mod tests {
         assert_eq!(r, 1);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_test_all_ones() {
         let a = _mm_set1_epi8(-1);
         let r = _mm_test_all_ones(a);
@@ -1710,7 +1931,7 @@ mod tests {
         assert_eq!(r, 0);
     }
 
-    #[simd_test = "sse4.1"]
+    #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_test_mix_ones_zeros() {
         let a = _mm_set1_epi8(0);
         let mask = _mm_set1_epi8(1);

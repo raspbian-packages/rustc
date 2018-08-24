@@ -29,16 +29,17 @@ looks like:
 ```rust
 #![feature(global_allocator, allocator_api, heap_api)]
 
-use std::heap::{Alloc, System, Layout, AllocErr};
+use std::alloc::{GlobalAlloc, System, Layout, Opaque};
+use std::ptr::NonNull;
 
 struct MyAllocator;
 
-unsafe impl<'a> Alloc for &'a MyAllocator {
-    unsafe fn alloc(&mut self, layout: Layout) -> Result<*mut u8, AllocErr> {
+unsafe impl GlobalAlloc for MyAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut Opaque {
         System.alloc(layout)
     }
 
-    unsafe fn dealloc(&mut self, ptr: *mut u8, layout: Layout) {
+    unsafe fn dealloc(&self, ptr: *mut Opaque, layout: Layout) {
         System.dealloc(ptr, layout)
     }
 }
@@ -54,7 +55,7 @@ fn main() {
 ```
 
 And that's it! The `#[global_allocator]` attribute is applied to a `static`
-which implements the `Alloc` trait in the `std::heap` module. Note, though,
+which implements the `Alloc` trait in the `std::alloc` module. Note, though,
 that the implementation is defined for `&MyAllocator`, not just `MyAllocator`.
 You may wish, however, to also provide `Alloc for MyAllocator` for other use
 cases.

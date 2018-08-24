@@ -39,23 +39,17 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![cfg_attr(stage0, feature(conservative_impl_trait))]
 #![feature(const_fn)]
-#![cfg_attr(stage0, feature(copy_closures, clone_closures))]
 #![feature(core_intrinsics)]
 #![feature(drain_filter)]
-#![feature(dyn_trait)]
 #![feature(entry_or_default)]
+#![cfg_attr(stage0, feature(dyn_trait))]
 #![feature(from_ref)]
 #![feature(fs_read_write)]
-#![cfg_attr(stage0, feature(i128_type, i128))]
-#![cfg_attr(stage0, feature(inclusive_range_syntax))]
 #![cfg_attr(windows, feature(libc))]
-#![cfg_attr(stage0, feature(match_default_bindings))]
 #![feature(macro_lifetime_matcher)]
 #![feature(macro_vis_matcher)]
 #![feature(never_type)]
@@ -64,18 +58,17 @@
 #![feature(nonzero)]
 #![feature(proc_macro_internals)]
 #![feature(quote)]
+#![feature(optin_builtin_traits)]
 #![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_patterns)]
+#![feature(slice_sort_by_cached_key)]
 #![feature(specialization)]
 #![feature(unboxed_closures)]
-#![cfg_attr(stage0, feature(underscore_lifetimes))]
-#![cfg_attr(stage0, feature(universal_impl_trait))]
 #![feature(trace_macros)]
 #![feature(trusted_len)]
 #![feature(catch_expr)]
 #![feature(test)]
-#![feature(inclusive_range_fields)]
 
 #![recursion_limit="512"]
 
@@ -88,10 +81,9 @@ extern crate graphviz;
 #[macro_use] extern crate lazy_static;
 #[cfg(windows)]
 extern crate libc;
-extern crate rustc_back;
+extern crate rustc_target;
 #[macro_use] extern crate rustc_data_structures;
 extern crate serialize;
-extern crate rustc_const_math;
 extern crate rustc_errors as errors;
 #[macro_use] extern crate log;
 #[macro_use] extern crate syntax;

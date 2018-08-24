@@ -35,8 +35,8 @@
     - [Aliasing](types/alias.md)
 
 - [Conversion](conversion.md)
-    - [From and Into](conversion/from_into.md)
-    - [To and From String](conversion/string.md)
+    - [`From` and `Into`](conversion/from_into.md)
+    - [To and from `String`s](conversion/string.md)
 
 - [Expressions](expression.md)
 
@@ -125,8 +125,8 @@
         - [Structs](scope/lifetime/struct.md)
         - [Bounds](scope/lifetime/lifetime_bounds.md)
         - [Coercion](scope/lifetime/lifetime_coercion.md)
-        - [static](scope/lifetime/static_lifetime.md)
-        - [elision](scope/lifetime/elision.md)
+        - [Static](scope/lifetime/static_lifetime.md)
+        - [Elision](scope/lifetime/elision.md)
 
 - [Traits](trait.md)
     - [Derive](trait/derive.md)

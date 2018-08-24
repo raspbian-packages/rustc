@@ -17,7 +17,8 @@ use rustc::ty::subst::Substs;
 use rustc::traits;
 use rustc::ty::{self, Ty};
 use rustc::ty::subst::Subst;
-use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability, OverloadedDeref};
+use rustc::ty::adjustment::{Adjustment, Adjust, OverloadedDeref};
+use rustc::ty::adjustment::{AllowTwoPhase, AutoBorrow, AutoBorrowMutability};
 use rustc::ty::fold::TypeFoldable;
 use rustc::infer::{self, InferOk};
 use syntax_pos::Span;
@@ -128,7 +129,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // We won't add these if we encountered an illegal sized bound, so that we can use
         // a custom error in that case.
         if !illegal_sized_bound {
-            let method_ty = self.tcx.mk_fn_ptr(ty::Binder(method_sig));
+            let method_ty = self.tcx.mk_fn_ptr(ty::Binder::bind(method_sig));
             self.add_obligations(method_ty, all_substs, &method_predicates);
         }
 
@@ -174,7 +175,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
                 hir::MutMutable => AutoBorrowMutability::Mutable {
                     // Method call receivers are the primary use case
                     // for two-phase borrows.
-                    allow_two_phase_borrow: true,
+                    allow_two_phase_borrow: AllowTwoPhase::Yes,
                 }
             };
             adjustments.push(Adjustment {
@@ -314,8 +315,8 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         // variables.
         let method_generics = self.tcx.generics_of(pick.item.def_id);
         let mut fn_segment = Some((segment, method_generics));
-        self.fcx.check_impl_trait(self.span, fn_segment);
-        self.fcx.check_path_parameter_count(self.span, &mut fn_segment, true);
+        let supress_mismatch = self.fcx.check_impl_trait(self.span, fn_segment);
+        self.fcx.check_path_parameter_count(self.span, &mut fn_segment, true, supress_mismatch);
 
         // Create subst for early-bound lifetime parameters, combining
         // parameters from the type and those from the method.
@@ -438,7 +439,6 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
             let last = exprs[exprs.len() - 1];
             match last.node {
                 hir::ExprField(ref expr, _) |
-                hir::ExprTupField(ref expr, _) |
                 hir::ExprIndex(ref expr, _) |
                 hir::ExprUnary(hir::UnDeref, ref expr) => exprs.push(&expr),
                 _ => break,
@@ -550,7 +550,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
                             // For initial two-phase borrow
                             // deployment, conservatively omit
                             // overloaded operators.
-                            allow_two_phase_borrow: false,
+                            allow_two_phase_borrow: AllowTwoPhase::No,
                         }
                     };
                     adjustment.kind = Adjust::Borrow(AutoBorrow::Ref(region, mutbl));
@@ -593,7 +593,7 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
                 }
             })
             .any(|trait_pred| {
-                match trait_pred.0.self_ty().sty {
+                match trait_pred.skip_binder().self_ty().sty {
                     ty::TyDynamic(..) => true,
                     _ => false,
                 }

@@ -9,7 +9,7 @@ use std::ptr::{Unique, self};
 use std::mem;
 use std::ops::{Deref, DerefMut};
 use std::marker::PhantomData;
-use std::heap::{Alloc, Layout, Heap};
+use std::alloc::{GlobalAlloc, Layout, Global, oom};
 
 struct RawVec<T> {
     ptr: Unique<T>,
@@ -34,21 +34,20 @@ impl<T> RawVec<T> {
             assert!(elem_size != 0, "capacity overflow");
 
             let (new_cap, ptr) = if self.cap == 0 {
-                let ptr = Heap.alloc(Layout::array::<T>(1).unwrap());
+                let ptr = Global.alloc(Layout::array::<T>(1).unwrap());
                 (1, ptr)
             } else {
                 let new_cap = 2 * self.cap;
-                let ptr = Heap.realloc(self.ptr.as_ptr() as *mut _,
-                                       Layout::array::<T>(self.cap).unwrap(),
-                                       Layout::array::<T>(new_cap).unwrap());
+                let ptr = Global.realloc(self.ptr.as_ptr() as *mut _,
+                                         Layout::array::<T>(self.cap).unwrap(),
+                                         Layout::array::<T>(new_cap).unwrap().size());
                 (new_cap, ptr)
             };
 
             // If allocate or reallocate fail, oom
-            let ptr = match ptr {
-                Ok(ptr) => ptr,
-                Err(err) => Heap.oom(err),
-            };
+            if ptr.is_null() {
+                oom()
+            }
 
             self.ptr = Unique::new_unchecked(ptr as *mut _);
             self.cap = new_cap;
@@ -61,8 +60,8 @@ impl<T> Drop for RawVec<T> {
         let elem_size = mem::size_of::<T>();
         if self.cap != 0 && elem_size != 0 {
             unsafe {
-                Heap.dealloc(self.ptr.as_ptr() as *mut _,
-                             Layout::array::<T>(self.cap).unwrap());
+                Global.dealloc(self.ptr.as_ptr() as *mut _,
+                               Layout::array::<T>(self.cap).unwrap());
             }
         }
     }
@@ -298,13 +297,6 @@ impl<'a, T> Drop for Drain<'a, T> {
         // pre-drain the iter
         for _ in &mut self.iter {}
     }
-}
-
-/// Abort the process, we're out of memory!
-///
-/// In practice this is probably dead code on most OSes
-fn oom() {
-    ::std::process::exit(-9999);
 }
 
 # fn main() {}

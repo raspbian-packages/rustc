@@ -3,15 +3,15 @@ use std::slice;
 
 use ByteOrder;
 
-/// Extends `Read` with methods for reading numbers. (For `std::io`.)
+/// Extends [`Read`] with methods for reading numbers. (For `std::io`.)
 ///
 /// Most of the methods defined here have an unconstrained type parameter that
 /// must be explicitly instantiated. Typically, it is instantiated with either
-/// the `BigEndian` or `LittleEndian` types defined in this crate.
+/// the [`BigEndian`] or [`LittleEndian`] types defined in this crate.
 ///
 /// # Examples
 ///
-/// Read unsigned 16 bit big-endian integers from a `Read`:
+/// Read unsigned 16 bit big-endian integers from a [`Read`]:
 ///
 /// ```rust
 /// use std::io::Cursor;
@@ -21,6 +21,10 @@ use ByteOrder;
 /// assert_eq!(517, rdr.read_u16::<BigEndian>().unwrap());
 /// assert_eq!(768, rdr.read_u16::<BigEndian>().unwrap());
 /// ```
+///
+/// [`BigEndian`]: enum.BigEndian.html
+/// [`LittleEndian`]: enum.LittleEndian.html
+/// [`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
 pub trait ReadBytesExt: io::Read {
     /// Reads an unsigned 8 bit integer from the underlying reader.
     ///
@@ -623,7 +627,7 @@ pub trait ReadBytesExt: io::Read {
         dst: &mut [u128],
     ) -> Result<()> {
         {
-            let mut buf = unsafe { slice_to_u8_mut(dst) };
+            let buf = unsafe { slice_to_u8_mut(dst) };
             try!(self.read_exact(buf));
         }
         T::from_slice_u128(dst);
@@ -773,7 +777,7 @@ pub trait ReadBytesExt: io::Read {
         dst: &mut [i128],
     ) -> Result<()> {
         {
-            let mut buf = unsafe { slice_to_u8_mut(dst) };
+            let buf = unsafe { slice_to_u8_mut(dst) };
             try!(self.read_exact(buf));
         }
         T::from_slice_i128(dst);
@@ -860,6 +864,7 @@ pub trait ReadBytesExt: io::Read {
     /// assert_eq!([f32::consts::PI, 1.0], dst);
     /// ```
     #[inline]
+    #[deprecated(since="1.2.0", note="please use `read_f32_into` instead")]
     fn read_f32_into_unchecked<T: ByteOrder>(
         &mut self,
         dst: &mut [f32],
@@ -953,6 +958,7 @@ pub trait ReadBytesExt: io::Read {
     /// assert_eq!([f64::consts::PI, 1.0], dst);
     /// ```
     #[inline]
+    #[deprecated(since="1.2.0", note="please use `read_f64_into` instead")]
     fn read_f64_into_unchecked<T: ByteOrder>(
         &mut self,
         dst: &mut [f64],
@@ -965,15 +971,15 @@ pub trait ReadBytesExt: io::Read {
 /// for free.
 impl<R: io::Read + ?Sized> ReadBytesExt for R {}
 
-/// Extends `Write` with methods for writing numbers. (For `std::io`.)
+/// Extends [`Write`] with methods for writing numbers. (For `std::io`.)
 ///
 /// Most of the methods defined here have an unconstrained type parameter that
 /// must be explicitly instantiated. Typically, it is instantiated with either
-/// the `BigEndian` or `LittleEndian` types defined in this crate.
+/// the [`BigEndian`] or [`LittleEndian`] types defined in this crate.
 ///
 /// # Examples
 ///
-/// Write unsigned 16 bit big-endian integers to a `Write`:
+/// Write unsigned 16 bit big-endian integers to a [`Write`]:
 ///
 /// ```rust
 /// use byteorder::{BigEndian, WriteBytesExt};
@@ -983,6 +989,10 @@ impl<R: io::Read + ?Sized> ReadBytesExt for R {}
 /// wtr.write_u16::<BigEndian>(768).unwrap();
 /// assert_eq!(wtr, vec![2, 5, 3, 0]);
 /// ```
+///
+/// [`BigEndian`]: enum.BigEndian.html
+/// [`LittleEndian`]: enum.LittleEndian.html
+/// [`Write`]: https://doc.rust-lang.org/std/io/trait.Write.html
 pub trait WriteBytesExt: io::Write {
     /// Writes an unsigned 8 bit integer to the underlying writer.
     ///

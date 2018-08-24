@@ -11,11 +11,7 @@
 //! New recursive solver modeled on Chalk's recursive solver. Most of
 //! the guts are broken up into modules; see the comments in those modules.
 
-#![deny(warnings)]
-
 #![feature(crate_visibility_modifier)]
-#![cfg_attr(stage0, feature(match_default_bindings))]
-#![cfg_attr(stage0, feature(underscore_lifetimes))]
 
 #[macro_use]
 extern crate log;
@@ -26,6 +22,7 @@ extern crate syntax;
 extern crate syntax_pos;
 
 mod dropck_outlives;
+mod evaluate_obligation;
 mod normalize_projection_ty;
 mod normalize_erasing_regions;
 mod util;
@@ -41,6 +38,8 @@ pub fn provide(p: &mut Providers) {
         normalize_ty_after_erasing_regions:
             normalize_erasing_regions::normalize_ty_after_erasing_regions,
         program_clauses_for: lowering::program_clauses_for,
+        program_clauses_for_env: lowering::program_clauses_for_env,
+        evaluate_obligation: evaluate_obligation::evaluate_obligation,
         ..*p
     };
 }

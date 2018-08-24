@@ -22,17 +22,19 @@
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/",
        test(no_crate_inject, attr(deny(warnings))))]
-#![deny(warnings)]
 
 #![feature(alloc)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
-#![feature(generic_param_attrs)]
+#![cfg_attr(stage0, feature(generic_param_attrs))]
 #![cfg_attr(test, feature(test))]
 
 #![allow(deprecated)]
 
 extern crate alloc;
+extern crate rustc_data_structures;
+
+use rustc_data_structures::sync::MTLock;
 
 use std::cell::{Cell, RefCell};
 use std::cmp;
@@ -291,6 +293,8 @@ pub struct DroplessArena {
     chunks: RefCell<Vec<TypedArenaChunk<u8>>>,
 }
 
+unsafe impl Send for DroplessArena {}
+
 impl DroplessArena {
     pub fn new() -> DroplessArena {
         DroplessArena {
@@ -408,6 +412,72 @@ impl DroplessArena {
             arena_slice.copy_from_slice(slice);
             arena_slice
         }
+    }
+}
+
+pub struct SyncTypedArena<T> {
+    lock: MTLock<TypedArena<T>>,
+}
+
+impl<T> SyncTypedArena<T> {
+    #[inline(always)]
+    pub fn new() -> SyncTypedArena<T> {
+        SyncTypedArena {
+            lock: MTLock::new(TypedArena::new())
+        }
+    }
+
+    #[inline(always)]
+    pub fn alloc(&self, object: T) -> &mut T {
+        // Extend the lifetime of the result since it's limited to the lock guard
+        unsafe { &mut *(self.lock.lock().alloc(object) as *mut T) }
+    }
+
+    #[inline(always)]
+    pub fn alloc_slice(&self, slice: &[T]) -> &mut [T]
+    where
+        T: Copy,
+    {
+        // Extend the lifetime of the result since it's limited to the lock guard
+        unsafe { &mut *(self.lock.lock().alloc_slice(slice) as *mut [T]) }
+    }
+
+    #[inline(always)]
+    pub fn clear(&mut self) {
+        self.lock.get_mut().clear();
+    }
+}
+
+pub struct SyncDroplessArena {
+    lock: MTLock<DroplessArena>,
+}
+
+impl SyncDroplessArena {
+    #[inline(always)]
+    pub fn new() -> SyncDroplessArena {
+        SyncDroplessArena {
+            lock: MTLock::new(DroplessArena::new())
+        }
+    }
+
+    #[inline(always)]
+    pub fn in_arena<T: ?Sized>(&self, ptr: *const T) -> bool {
+        self.lock.lock().in_arena(ptr)
+    }
+
+    #[inline(always)]
+    pub fn alloc<T>(&self, object: T) -> &mut T {
+        // Extend the lifetime of the result since it's limited to the lock guard
+        unsafe { &mut *(self.lock.lock().alloc(object) as *mut T) }
+    }
+
+    #[inline(always)]
+    pub fn alloc_slice<T>(&self, slice: &[T]) -> &mut [T]
+    where
+        T: Copy,
+    {
+        // Extend the lifetime of the result since it's limited to the lock guard
+        unsafe { &mut *(self.lock.lock().alloc_slice(slice) as *mut [T]) }
     }
 }
 
@@ -585,9 +655,6 @@ mod tests {
 
     #[test]
     fn test_typed_arena_drop_small_count() {
-        if cfg!(target_arch = "powerpc64") {
-            return;
-        }
         DROP_COUNTER.with(|c| c.set(0));
         {
             let arena: TypedArena<SmallDroppable> = TypedArena::new();

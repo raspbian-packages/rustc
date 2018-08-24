@@ -264,14 +264,14 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
 
     let local_id = cx.tcx.hir.as_local_node_id(def_id);
     match *cx.sess().entry_fn.borrow() {
-        Some((id, _)) => {
+        Some((id, _, _)) => {
             if local_id == Some(id) {
                 flags = flags | DIFlags::FlagMainSubprogram;
             }
         }
         None => {}
     };
-    if sig.output().is_never() {
+    if cx.layout_of(sig.output()).abi == ty::layout::Abi::Uninhabited {
         flags = flags | DIFlags::FlagNoReturn;
     }
 
@@ -394,7 +394,7 @@ pub fn create_function_debug_context<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
             substs.types().zip(names).map(|(ty, name)| {
                 let actual_type = cx.tcx.normalize_erasing_regions(ParamEnv::reveal_all(), ty);
                 let actual_type_metadata = type_metadata(cx, actual_type, syntax_pos::DUMMY_SP);
-                let name = CString::new(name.as_bytes()).unwrap();
+                let name = CString::new(name.as_str().as_bytes()).unwrap();
                 unsafe {
                     llvm::LLVMRustDIBuilderCreateTemplateTypeParameter(
                         DIB(cx),

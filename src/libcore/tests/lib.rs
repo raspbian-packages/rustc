@@ -8,28 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![deny(warnings)]
-
 #![feature(ascii_ctype)]
 #![feature(box_syntax)]
+#![feature(cell_update)]
 #![feature(core_float)]
 #![feature(core_private_bignum)]
 #![feature(core_private_diy_float)]
 #![feature(dec2flt)]
 #![feature(decode_utf8)]
+#![feature(euclidean_division)]
 #![feature(exact_size_is_empty)]
 #![feature(fixed_size_array)]
+#![feature(float_internals)]
 #![feature(flt2dec)]
 #![feature(fmt_internals)]
 #![feature(hashmap_internals)]
 #![feature(iterator_step_by)]
-#![cfg_attr(stage0, feature(i128_type))]
-#![cfg_attr(stage0, feature(inclusive_range_syntax))]
-#![feature(iterator_try_fold)]
 #![feature(iterator_flatten)]
-#![cfg_attr(stage0, feature(conservative_impl_trait))]
-#![feature(iter_rfind)]
-#![feature(iter_rfold)]
 #![feature(iterator_repeat_with)]
 #![feature(nonzero)]
 #![feature(pattern)]
@@ -41,14 +36,16 @@
 #![feature(sort_internals)]
 #![feature(specialization)]
 #![feature(step_trait)]
+#![feature(str_internals)]
 #![feature(test)]
 #![feature(trusted_len)]
 #![feature(try_from)]
 #![feature(try_trait)]
 #![feature(exact_chunks)]
-#![feature(atomic_nand)]
+#![cfg_attr(stage0, feature(atomic_nand))]
 #![feature(reverse_bits)]
-#![feature(inclusive_range_fields)]
+#![feature(iterator_find_map)]
+#![feature(slice_internals)]
 
 extern crate core;
 extern crate test;
@@ -76,4 +73,6 @@ mod ptr;
 mod result;
 mod slice;
 mod str;
+mod str_lossy;
+mod time;
 mod tuple;

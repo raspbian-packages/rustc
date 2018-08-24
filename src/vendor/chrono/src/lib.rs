@@ -288,6 +288,32 @@
 //! assert!(Utc.datetime_from_str("Sat Nov 28 12:00:09 2014", "%a %b %e %T %Y").is_err());
 //! ```
 //!
+//! ### Conversion from and to EPOCH timestamps
+//!
+//! Use [`Utc.timestamp(seconds, nanoseconds)`](./offset/trait.TimeZone.html#method.timestamp) 
+//! to construct a [`DateTime<Utc>`](./struct.DateTime.html) from a UNIX timestamp 
+//! (seconds, nanoseconds that passed since January 1st 1970).
+//!
+//! Use [`DateTime.timestamp`](./struct.DateTime.html#method.timestamp) to get the timestamp (in seconds)
+//! from a [`DateTime`](./struct.DateTime.html). Additionally, you can use 
+//! [`DateTime.timestamp_subsec_nanos`](./struct.DateTime.html#method.timestamp_subsec_nanos)
+//! to get the number of additional number of nanoseconds.
+//!
+//! ```rust
+//! # use chrono::DateTime;
+//! # use chrono::Utc;
+//! // We need the trait in scope to use Utc::timestamp().
+//! use chrono::TimeZone;
+//!
+//! // Construct a datetime from epoch:
+//! let dt = Utc.timestamp(1_500_000_000, 0);
+//! assert_eq!(dt.to_rfc2822(), "Fri, 14 Jul 2017 02:40:00 +0000");
+//!
+//! // Get epoch value from a datetime:
+//! let dt = DateTime::parse_from_rfc2822("Fri, 14 Jul 2017 02:40:00 +0000").unwrap();
+//! assert_eq!(dt.timestamp(), 1_500_000_000);
+//! ```
+//!
 //! ### Individual date
 //!
 //! Chrono also provides an individual date type ([**`Date`**](./struct.Date.html)).
@@ -359,9 +385,20 @@
 
 #![cfg_attr(bench, feature(test))] // lib stability features as per RFC #507
 #![deny(missing_docs)]
+#![deny(missing_debug_implementations)]
+
+// The explicit 'static lifetimes are still needed for rustc 1.13-16
+// backward compatibility, and this appeases clippy. If minimum rustc
+// becomes 1.17, should be able to remove this, those 'static lifetimes,
+// and use `static` in a lot of places `const` is used now.
+//
+// Similarly, redundant_field_names lints on not using the
+// field-init-shorthand, which was stabilized in rust 1.17.
+#![cfg_attr(feature = "cargo-clippy", allow(const_static_lifetime, redundant_field_names))]
 
 extern crate time as oldtime;
-extern crate num;
+extern crate num_integer;
+extern crate num_traits;
 #[cfg(feature = "rustc-serialize")]
 extern crate rustc_serialize;
 #[cfg(feature = "serde")]
@@ -373,9 +410,10 @@ pub use oldtime::Duration;
 #[doc(no_inline)] pub use offset::{TimeZone, Offset, LocalResult, Utc, FixedOffset, Local};
 #[doc(no_inline)] pub use naive::{NaiveDate, IsoWeek, NaiveTime, NaiveDateTime};
 pub use date::{Date, MIN_DATE, MAX_DATE};
-pub use datetime::DateTime;
-#[cfg(feature = "rustc-serialize")] pub use datetime::TsSeconds;
+pub use datetime::{DateTime, SecondsFormat};
+#[cfg(feature = "rustc-serialize")] pub use datetime::rustc_serialize::TsSeconds;
 pub use format::{ParseError, ParseResult};
+pub use round::SubsecRound;
 
 /// A convenience module appropriate for glob imports (`use chrono::prelude::*;`).
 pub mod prelude {
@@ -384,7 +422,8 @@ pub mod prelude {
     #[doc(no_inline)] pub use {Utc, FixedOffset, Local};
     #[doc(no_inline)] pub use {NaiveDate, NaiveTime, NaiveDateTime};
     #[doc(no_inline)] pub use Date;
-    #[doc(no_inline)] pub use DateTime;
+    #[doc(no_inline)] pub use {DateTime, SecondsFormat};
+    #[doc(no_inline)] pub use SubsecRound;
 }
 
 // useful throughout the codebase
@@ -410,9 +449,19 @@ pub mod naive {
     pub use self::date::{NaiveDate, MIN_DATE, MAX_DATE};
     pub use self::isoweek::IsoWeek;
     pub use self::time::NaiveTime;
-    pub use self::datetime::{NaiveDateTime, TsSeconds};
+    pub use self::datetime::NaiveDateTime;
+    #[cfg(feature = "rustc-serialize")]
+    pub use self::datetime::rustc_serialize::TsSeconds;
 
-    /// Tools to help serializing/deserializing naive types.
+
+    /// Serialization/Deserialization of naive types in alternate formats
+    ///
+    /// The various modules in here are intended to be used with serde's [`with`
+    /// annotation][1] to serialize as something other than the default [RFC
+    /// 3339][2] format.
+    ///
+    /// [1]: https://serde.rs/attributes.html#field-attributes
+    /// [2]: https://tools.ietf.org/html/rfc3339
     #[cfg(feature = "serde")]
     pub mod serde {
         pub use super::datetime::serde::*;
@@ -421,11 +470,16 @@ pub mod naive {
 mod date;
 mod datetime;
 pub mod format;
+mod round;
 
-/// Ser/de helpers
+/// Serialization/Deserialization in alternate formats
 ///
 /// The various modules in here are intended to be used with serde's [`with`
-/// annotation](https://serde.rs/attributes.html#field-attributes).
+/// annotation][1] to serialize as something other than the default [RFC
+/// 3339][2] format.
+///
+/// [1]: https://serde.rs/attributes.html#field-attributes
+/// [2]: https://tools.ietf.org/html/rfc3339
 #[cfg(feature = "serde")]
 pub mod serde {
     pub use super::datetime::serde::*;
@@ -568,7 +622,7 @@ impl Weekday {
 /// Any weekday can be represented as an integer from 0 to 6, which equals to
 /// [`Weekday::num_days_from_monday`](#method.num_days_from_monday) in this implementation.
 /// Do not heavily depend on this though; use explicit methods whenever possible.
-impl num::traits::FromPrimitive for Weekday {
+impl num_traits::FromPrimitive for Weekday {
     #[inline]
     fn from_i64(n: i64) -> Option<Weekday> {
         match n {
@@ -816,7 +870,7 @@ pub trait Datelike: Sized {
         if year < 0 {
             let excess = 1 + (-year) / 400;
             year += excess * 400;
-            ndays -= excess * 146097;
+            ndays -= excess * 146_097;
         }
         let div_100 = year / 100;
         ndays += ((year * 1461) >> 2) - div_100 + (div_100 >> 2);
@@ -883,9 +937,11 @@ pub trait Timelike: Sized {
     }
 }
 
+#[cfg(test)] extern crate num_iter;
+
 #[test]
 fn test_readme_doomsday() {
-    use num::iter::range_inclusive;
+    use num_iter::range_inclusive;
 
     for y in range_inclusive(naive::MIN_DATE.year(), naive::MAX_DATE.year()) {
         // even months

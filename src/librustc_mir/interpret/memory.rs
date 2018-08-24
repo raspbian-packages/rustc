@@ -328,13 +328,23 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
             .ok_or(EvalErrorKind::ExecuteMemory.into())
     }
 
+    pub fn get_alloc_kind(&self, id: AllocId) -> Option<MemoryKind<M::MemoryKinds>> {
+        self.alloc_kind.get(&id).cloned()
+    }
+
     /// For debugging, print an allocation and all allocations it points to, recursively.
     pub fn dump_alloc(&self, id: AllocId) {
+        if !log_enabled!(::log::Level::Trace) {
+            return;
+        }
         self.dump_allocs(vec![id]);
     }
 
     /// For debugging, print a list of allocations and all allocations they point to, recursively.
     pub fn dump_allocs(&self, mut allocs: Vec<AllocId>) {
+        if !log_enabled!(::log::Level::Trace) {
+            return;
+        }
         use std::fmt::Write;
         allocs.sort();
         allocs.dedup();
@@ -687,7 +697,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
         self.read_primval(ptr, ptr_align, self.pointer_size())
     }
 
-    pub fn write_primval(&mut self, ptr: MemoryPointer, ptr_align: Align, val: PrimVal, size: u64, signed: bool) -> EvalResult<'tcx> {
+    pub fn write_primval(&mut self, ptr: Pointer, ptr_align: Align, val: PrimVal, size: u64, signed: bool) -> EvalResult<'tcx> {
         let endianness = self.endianness();
 
         let bytes = match val {
@@ -699,10 +709,13 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
             PrimVal::Bytes(bytes) => bytes,
 
             PrimVal::Undef => {
-                self.mark_definedness(PrimVal::Ptr(ptr).into(), size, false)?;
+                self.check_align(ptr.into(), ptr_align)?;
+                self.mark_definedness(ptr, size, false)?;
                 return Ok(());
             }
         };
+
+        let ptr = ptr.to_ptr()?;
 
         {
             let align = self.int_align(size);
@@ -730,7 +743,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> Memory<'a, 'mir, 'tcx, M> {
 
     pub fn write_ptr_sized_unsigned(&mut self, ptr: MemoryPointer, ptr_align: Align, val: PrimVal) -> EvalResult<'tcx> {
         let ptr_size = self.pointer_size();
-        self.write_primval(ptr, ptr_align, val, ptr_size, false)
+        self.write_primval(ptr.into(), ptr_align, val, ptr_size, false)
     }
 
     fn int_align(&self, size: u64) -> Align {

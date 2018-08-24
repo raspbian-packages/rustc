@@ -36,6 +36,7 @@ use llvm;
 use metadata;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::middle::lang_items::StartFnLangItem;
+use rustc::middle::weak_lang_items;
 use rustc::mir::mono::{Linkage, Visibility, Stats};
 use rustc::middle::cstore::{EncodedMetadata};
 use rustc::ty::{self, Ty, TyCtxt};
@@ -52,7 +53,7 @@ use rustc_incremental;
 use allocator;
 use mir::place::PlaceRef;
 use attributes;
-use builder::Builder;
+use builder::{Builder, MemFlags};
 use callee;
 use common::{C_bool, C_bytes_in_context, C_i32, C_usize};
 use rustc_mir::monomorphize::collector::{self, MonoItemCollectionMode};
@@ -73,7 +74,7 @@ use type_of::LayoutLlvmExt;
 use rustc::util::nodemap::{FxHashMap, FxHashSet, DefIdSet};
 use CrateInfo;
 use rustc_data_structures::sync::Lrc;
-use rustc_back::target::TargetTriple;
+use rustc_target::spec::TargetTriple;
 
 use std::any::Any;
 use std::collections::BTreeMap;
@@ -81,7 +82,8 @@ use std::ffi::CString;
 use std::str;
 use std::sync::Arc;
 use std::time::{Instant, Duration};
-use std::{i32, usize};
+use std::i32;
+use std::cmp;
 use std::sync::mpsc;
 use syntax_pos::Span;
 use syntax_pos::symbol::InternedString;
@@ -318,7 +320,7 @@ pub fn coerce_unsized_into<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
 
                 if src_f.layout.ty == dst_f.layout.ty {
                     memcpy_ty(bx, dst_f.llval, src_f.llval, src_f.layout,
-                        src_f.align.min(dst_f.align));
+                              src_f.align.min(dst_f.align), MemFlags::empty());
                 } else {
                     coerce_unsized_into(bx, src_f, dst_f);
                 }
@@ -406,7 +408,15 @@ pub fn call_memcpy(bx: &Builder,
                    dst: ValueRef,
                    src: ValueRef,
                    n_bytes: ValueRef,
-                   align: Align) {
+                   align: Align,
+                   flags: MemFlags) {
+    if flags.contains(MemFlags::NONTEMPORAL) {
+        // HACK(nox): This is inefficient but there is no nontemporal memcpy.
+        let val = bx.load(src, align);
+        let ptr = bx.pointercast(dst, val_ty(val).ptr_to());
+        bx.store_with_flags(val, ptr, align, flags);
+        return;
+    }
     let cx = bx.cx;
     let ptr_width = &cx.sess().target.target.target_pointer_width;
     let key = format!("llvm.memcpy.p0i8.p0i8.i{}", ptr_width);
@@ -415,7 +425,7 @@ pub fn call_memcpy(bx: &Builder,
     let dst_ptr = bx.pointercast(dst, Type::i8p(cx));
     let size = bx.intcast(n_bytes, cx.isize_ty, false);
     let align = C_i32(cx, align.abi() as i32);
-    let volatile = C_bool(cx, false);
+    let volatile = C_bool(cx, flags.contains(MemFlags::VOLATILE));
     bx.call(memcpy, &[dst_ptr, src_ptr, size, align, volatile], None);
 }
 
@@ -425,13 +435,14 @@ pub fn memcpy_ty<'a, 'tcx>(
     src: ValueRef,
     layout: TyLayout<'tcx>,
     align: Align,
+    flags: MemFlags,
 ) {
     let size = layout.size.bytes();
     if size == 0 {
         return;
     }
 
-    call_memcpy(bx, dst, src, C_usize(bx.cx, size), align);
+    call_memcpy(bx, dst, src, C_usize(bx.cx, size), align, flags);
 }
 
 pub fn call_memset<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
@@ -490,7 +501,7 @@ pub fn trans_instance<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>, instance: Instance<'tc
     // You can also find more info on why Windows is whitelisted here in:
     //      https://bugzilla.mozilla.org/show_bug.cgi?id=1302078
     if !cx.sess().no_landing_pads() ||
-       cx.sess().target.target.options.is_like_windows {
+       cx.sess().target.target.options.requires_uwtable {
         attributes::emit_uwtable(lldecl, true);
     }
 
@@ -516,7 +527,7 @@ pub fn set_link_section(cx: &CodegenCx,
 /// users main function.
 fn maybe_create_entry_wrapper(cx: &CodegenCx) {
     let (main_def_id, span) = match *cx.sess().entry_fn.borrow() {
-        Some((id, span)) => {
+        Some((id, span, _)) => {
             (cx.tcx.hir.local_def_id(id), span)
         }
         None => return,
@@ -532,11 +543,11 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
 
     let main_llfn = callee::get_fn(cx, instance);
 
-    let et = cx.sess().entry_type.get().unwrap();
+    let et = cx.sess().entry_fn.get().map(|e| e.2);
     match et {
-        config::EntryMain => create_entry_fn(cx, span, main_llfn, main_def_id, true),
-        config::EntryStart => create_entry_fn(cx, span, main_llfn, main_def_id, false),
-        config::EntryNone => {}    // Do nothing.
+        Some(config::EntryMain) => create_entry_fn(cx, span, main_llfn, main_def_id, true),
+        Some(config::EntryStart) => create_entry_fn(cx, span, main_llfn, main_def_id, false),
+        None => {}    // Do nothing.
     }
 
     fn create_entry_fn<'cx>(cx: &'cx CodegenCx,
@@ -736,7 +747,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         source: ModuleSource::Translated(ModuleLlvm {
             llcx: metadata_llcx,
             llmod: metadata_llmod,
-            tm: create_target_machine(tcx.sess),
+            tm: create_target_machine(tcx.sess, false),
         }),
         kind: ModuleKind::Metadata,
     };
@@ -794,7 +805,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         codegen_units.len());
 
     // Translate an allocator shim, if any
-    let allocator_module = if let Some(kind) = tcx.sess.allocator_kind.get() {
+    let allocator_module = if let Some(kind) = *tcx.sess.allocator_kind.get() {
         unsafe {
             let llmod_id = "allocator";
             let (llcx, llmod) =
@@ -802,7 +813,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let modules = ModuleLlvm {
                 llmod,
                 llcx,
-                tm: create_target_machine(tcx.sess),
+                tm: create_target_machine(tcx.sess, false),
             };
             time(tcx.sess, "write allocator module", || {
                 allocator::trans(tcx, &modules, kind)
@@ -829,7 +840,7 @@ pub fn trans_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // a bit more efficiently.
     let codegen_units = {
         let mut codegen_units = codegen_units;
-        codegen_units.sort_by_key(|cgu| usize::MAX - cgu.size_estimate());
+        codegen_units.sort_by_cached_key(|cgu| cmp::Reverse(cgu.size_estimate()));
         codegen_units
     };
 
@@ -1035,7 +1046,7 @@ fn collect_and_partition_translation_items<'a, 'tcx>(
                 cgus.dedup();
                 for &(ref cgu_name, (linkage, _)) in cgus.iter() {
                     output.push_str(" ");
-                    output.push_str(&cgu_name);
+                    output.push_str(&cgu_name.as_str());
 
                     let linkage_abbrev = match linkage {
                         Linkage::External => "External",
@@ -1141,6 +1152,13 @@ impl CrateInfo {
                     info.lang_item_to_crate.insert(item, id.krate);
                 }
             }
+
+            // No need to look for lang items that are whitelisted and don't
+            // actually need to exist.
+            let missing = missing.iter()
+                .cloned()
+                .filter(|&l| !weak_lang_items::whitelisted(tcx, l))
+                .collect();
             info.missing_lang_items.insert(cnum, missing);
         }
 
@@ -1252,7 +1270,7 @@ fn compile_codegen_unit<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let llvm_module = ModuleLlvm {
                 llcx: cx.llcx,
                 llmod: cx.llmod,
-                tm: create_target_machine(cx.sess()),
+                tm: create_target_machine(cx.sess(), false),
             };
 
             ModuleTranslation {

@@ -21,7 +21,7 @@ use hir::def_id::{CRATE_DEF_INDEX, DefId, LocalDefId, DefIndexAddressSpace};
 
 use middle::cstore::CrateStore;
 
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 use syntax::ast::{self, Name, NodeId, CRATE_NODE_ID};
 use syntax::codemap::Spanned;
 use syntax::ext::base::MacroKind;
@@ -30,10 +30,8 @@ use syntax_pos::Span;
 use hir::*;
 use hir::print::Nested;
 use hir::svh::Svh;
-use util::nodemap::{DefIdMap, FxHashMap};
+use util::nodemap::FxHashMap;
 
-use arena::TypedArena;
-use std::cell::RefCell;
 use std::io;
 use ty::TyCtxt;
 
@@ -218,7 +216,6 @@ impl<'hir> MapEntry<'hir> {
 pub struct Forest {
     krate: Crate,
     pub dep_graph: DepGraph,
-    inlined_bodies: TypedArena<Body>
 }
 
 impl Forest {
@@ -226,7 +223,6 @@ impl Forest {
         Forest {
             krate,
             dep_graph: dep_graph.clone(),
-            inlined_bodies: TypedArena::new()
         }
     }
 
@@ -262,9 +258,6 @@ pub struct Map<'hir> {
     map: Vec<MapEntry<'hir>>,
 
     definitions: &'hir Definitions,
-
-    /// Bodies inlined from other crates are cached here.
-    inlined_bodies: RefCell<DefIdMap<&'hir Body>>,
 
     /// The reverse mapping of `node_to_hir_id`.
     hir_to_node_id: FxHashMap<HirId, NodeId>,
@@ -922,16 +915,6 @@ impl<'hir> Map<'hir> {
         }
     }
 
-    pub fn get_inlined_body_untracked(&self, def_id: DefId) -> Option<&'hir Body> {
-        self.inlined_bodies.borrow().get(&def_id).cloned()
-    }
-
-    pub fn intern_inlined_body(&self, def_id: DefId, body: Body) -> &'hir Body {
-        let body = self.forest.inlined_bodies.alloc(body);
-        self.inlined_bodies.borrow_mut().insert(def_id, body);
-        body
-    }
-
     /// Returns the name associated with the given NodeId's AST.
     pub fn name(&self, id: NodeId) -> Name {
         match self.get(id) {
@@ -1189,7 +1172,6 @@ pub fn map_crate<'hir>(sess: &::session::Session,
         map,
         hir_to_node_id,
         definitions,
-        inlined_bodies: RefCell::new(DefIdMap()),
     };
 
     hir_id_validator::check_crate(&map);

@@ -261,7 +261,7 @@ macro_rules! constify_imm8 {
             254 => $expand!(254),
             _ => $expand!(255),
         }
-    }
+    };
 }
 
 macro_rules! constify_imm6 {
@@ -301,7 +301,7 @@ macro_rules! constify_imm6 {
             30 => $expand!(30),
             _ => $expand!(31),
         }
-    }
+    };
 }
 
 macro_rules! constify_imm4 {
@@ -325,7 +325,7 @@ macro_rules! constify_imm4 {
             14 => $expand!(14),
             _ => $expand!(15),
         }
-    }
+    };
 }
 
 macro_rules! constify_imm3 {
@@ -341,7 +341,7 @@ macro_rules! constify_imm3 {
             6 => $expand!(6),
             _ => $expand!(7),
         }
-    }
+    };
 }
 
 macro_rules! constify_imm2 {
@@ -353,7 +353,7 @@ macro_rules! constify_imm2 {
             2 => $expand!(2),
             _ => $expand!(3),
         }
-    }
+    };
 }
 
 #[cfg(test)]

@@ -13,11 +13,12 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
        html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![feature(proc_macro_internals)]
 #![feature(decl_macro)]
 #![feature(str_escape)]
+
+#![cfg_attr(not(stage0), feature(rustc_diagnostic_macros))]
 
 extern crate fmt_macros;
 #[macro_use]
@@ -26,6 +27,10 @@ extern crate syntax_pos;
 extern crate proc_macro;
 extern crate rustc_data_structures;
 extern crate rustc_errors as errors;
+extern crate rustc_target;
+
+#[cfg(not(stage0))]
+mod diagnostics;
 
 mod assert;
 mod asm;

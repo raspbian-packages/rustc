@@ -31,7 +31,7 @@
 pub use self::Level::*;
 pub use self::LintSource::*;
 
-use rustc_data_structures::sync::Lrc;
+use rustc_data_structures::sync::{self, Lrc};
 
 use errors::{DiagnosticBuilder, DiagnosticId};
 use hir::def_id::{CrateNum, LOCAL_CRATE};
@@ -236,7 +236,7 @@ pub trait LateLintPass<'a, 'tcx>: LintPass {
 }
 
 pub trait EarlyLintPass: LintPass {
-    fn check_ident(&mut self, _: &EarlyContext, _: Span, _: ast::Ident) { }
+    fn check_ident(&mut self, _: &EarlyContext, _: ast::Ident) { }
     fn check_crate(&mut self, _: &EarlyContext, _: &ast::Crate) { }
     fn check_crate_post(&mut self, _: &EarlyContext, _: &ast::Crate) { }
     fn check_mod(&mut self, _: &EarlyContext, _: &ast::Mod, _: Span, _: ast::NodeId) { }
@@ -287,8 +287,9 @@ pub trait EarlyLintPass: LintPass {
 }
 
 /// A lint pass boxed up as a trait object.
-pub type EarlyLintPassObject = Box<dyn EarlyLintPass + 'static>;
-pub type LateLintPassObject = Box<dyn for<'a, 'tcx> LateLintPass<'a, 'tcx> + 'static>;
+pub type EarlyLintPassObject = Box<dyn EarlyLintPass + sync::Send + sync::Sync + 'static>;
+pub type LateLintPassObject = Box<dyn for<'a, 'tcx> LateLintPass<'a, 'tcx> + sync::Send
+                                                                           + sync::Sync + 'static>;
 
 /// Identifies a lint known to the compiler.
 #[derive(Clone, Copy, Debug)]
@@ -504,9 +505,9 @@ pub fn struct_lint_level<'a>(sess: &'a Session,
             "this was previously accepted by the compiler but is being phased out; \
              it will become a hard error";
 
-        let explanation = if lint_id == LintId::of(::lint::builtin::UNSTABLE_NAME_COLLISION) {
+        let explanation = if lint_id == LintId::of(::lint::builtin::UNSTABLE_NAME_COLLISIONS) {
             "once this method is added to the standard library, \
-             there will be ambiguity here, which will cause a hard error!"
+             the ambiguity may cause an error or change in behavior!"
                 .to_owned()
         } else if let Some(edition) = future_incompatible.edition {
             format!("{} in the {} edition!", STANDARD_MESSAGE, edition)

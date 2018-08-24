@@ -24,8 +24,8 @@ extern "C" {
 
 /// Extracts the bit range specified by `y` from the lower 64 bits of `x`.
 ///
-/// The [13:8] bits of `y` specify the index of the bit-range to extract. The
-/// [5:0] bits of `y` specify the length of the bit-range to extract. All other
+/// The `[13:8]` bits of `y` specify the index of the bit-range to extract. The
+/// `[5:0]` bits of `y` specify the length of the bit-range to extract. All other
 /// bits are ignored.
 ///
 /// If the length is zero, it is interpreted as `64`. If the length and index
@@ -36,6 +36,7 @@ extern "C" {
 #[inline]
 #[target_feature(enable = "sse4a")]
 #[cfg_attr(test, assert_instr(extrq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_si64(x: __m128i, y: __m128i) -> __m128i {
     mem::transmute(extrq(x.as_i64x2(), y.as_i8x16()))
 }
@@ -52,6 +53,7 @@ pub unsafe fn _mm_extract_si64(x: __m128i, y: __m128i) -> __m128i {
 #[inline]
 #[target_feature(enable = "sse4a")]
 #[cfg_attr(test, assert_instr(insertq))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_insert_si64(x: __m128i, y: __m128i) -> __m128i {
     mem::transmute(insertq(x.as_i64x2(), y.as_i64x2()))
 }
@@ -60,6 +62,7 @@ pub unsafe fn _mm_insert_si64(x: __m128i, y: __m128i) -> __m128i {
 #[inline]
 #[target_feature(enable = "sse4a")]
 #[cfg_attr(test, assert_instr(movntsd))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_stream_sd(p: *mut f64, a: __m128d) {
     movntsd(p, a);
 }
@@ -68,16 +71,17 @@ pub unsafe fn _mm_stream_sd(p: *mut f64, a: __m128d) {
 #[inline]
 #[target_feature(enable = "sse4a")]
 #[cfg_attr(test, assert_instr(movntss))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_stream_ss(p: *mut f32, a: __m128) {
     movntss(p, a);
 }
 
 #[cfg(test)]
 mod tests {
-    use stdsimd_test::simd_test;
     use coresimd::x86::*;
+    use stdsimd_test::simd_test;
 
-    #[simd_test = "sse4a"]
+    #[simd_test(enable = "sse4a")]
     unsafe fn test_mm_extract_si64() {
         let b = 0b0110_0000_0000_i64;
         //        ^^^^ bit range extracted
@@ -90,7 +94,7 @@ mod tests {
         assert_eq_m128i(r, e);
     }
 
-    #[simd_test = "sse4a"]
+    #[simd_test(enable = "sse4a")]
     unsafe fn test_mm_insert_si64() {
         let i = 0b0110_i64;
         //        ^^^^ bit range inserted
@@ -112,7 +116,7 @@ mod tests {
         data: [f64; 2],
     }
 
-    #[simd_test = "sse4a"]
+    #[simd_test(enable = "sse4a")]
     unsafe fn test_mm_stream_sd() {
         let mut mem = MemoryF64 {
             data: [1.0_f64, 2.0],
@@ -134,7 +138,7 @@ mod tests {
         data: [f32; 4],
     }
 
-    #[simd_test = "sse4a"]
+    #[simd_test(enable = "sse4a")]
     unsafe fn test_mm_stream_ss() {
         let mut mem = MemoryF32 {
             data: [1.0_f32, 2.0, 3.0, 4.0],

@@ -19,10 +19,11 @@
 //! `{t}{l_w}x{l_n}`:
 //!
 //! * `t`: type - single letter corresponding to the following Rust literal
-//! types:   * `i`: signed integer
+//! types:
+//!   * `i`: signed integer
 //!   * `u`: unsigned integer
 //!   * `f`: floating point
-//!   * `b`: boolean
+//!   * `m`: vector mask
 //! * `l_w`: lane width in bits
 //! * `l_n`: number of lanes
 //!
@@ -32,51 +33,52 @@
 
 #[macro_use]
 mod api;
-mod codegen;
 
-mod v16;
-mod v32;
-mod v64;
 mod v128;
+mod v16;
 mod v256;
+mod v32;
 mod v512;
+mod v64;
 
-pub use self::v16::*;
-pub use self::v32::*;
-pub use self::v64::*;
 pub use self::v128::*;
+pub use self::v16::*;
 pub use self::v256::*;
+pub use self::v32::*;
 pub use self::v512::*;
-
-use marker;
+pub use self::v64::*;
 
 /// Safe lossless bitwise conversion from `T` to `Self`.
-pub trait FromBits<T>: marker::Sized {
+pub trait FromBits<T>: ::marker::Sized {
     /// Safe lossless bitwise from `T` to `Self`.
     fn from_bits(T) -> Self;
 }
 
 /// Safe lossless bitwise conversion from `Self` to `T`.
-pub trait IntoBits<T>: marker::Sized {
+pub trait IntoBits<T>: ::marker::Sized {
     /// Safe lossless bitwise transmute from `self` to `T`.
     fn into_bits(self) -> T;
 }
 
-// FromBits implies IntoBits
+// FromBits implies IntoBits.
 impl<T, U> IntoBits<U> for T
 where
     U: FromBits<T>,
 {
     #[inline]
     fn into_bits(self) -> U {
+        debug_assert!(::mem::size_of::<Self>() == ::mem::size_of::<U>());
         U::from_bits(self)
     }
 }
 
-// FromBits (and thus IntoBits) is reflexive
+// FromBits (and thus IntoBits) is reflexive.
 impl<T> FromBits<T> for T {
     #[inline]
     fn from_bits(t: Self) -> Self {
         t
     }
 }
+
+/// Work arounds code generation issues.
+mod codegen;

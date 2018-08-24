@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use borrow_check::{Context, MirBorrowckCtxt};
 use borrow_check::nll::region_infer::{Cause, RegionInferenceContext};
-use dataflow::BorrowData;
-use rustc::mir::{Local, Location, Mir};
+use borrow_check::{Context, MirBorrowckCtxt};
+use borrow_check::borrow_set::BorrowData;
 use rustc::mir::visit::{MirVisitable, PlaceContext, Visitor};
+use rustc::mir::{Local, Location, Mir};
 use rustc_data_structures::fx::FxHashSet;
 use rustc_errors::DiagnosticBuilder;
 use util::liveness::{self, DefUse, LivenessMode};
@@ -29,39 +29,38 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
         borrow: &BorrowData<'tcx>,
         err: &mut DiagnosticBuilder<'_>,
     ) {
-        if let Some(regioncx) = &self.nonlexical_regioncx {
-            let mir = self.mir;
+        let regioncx = &&self.nonlexical_regioncx;
+        let mir = self.mir;
 
-            if self.nonlexical_cause_info.is_none() {
-                self.nonlexical_cause_info = Some(regioncx.compute_causal_info(mir));
-            }
+        if self.nonlexical_cause_info.is_none() {
+            self.nonlexical_cause_info = Some(regioncx.compute_causal_info(mir));
+        }
 
-            let cause_info = self.nonlexical_cause_info.as_ref().unwrap();
-            if let Some(cause) = cause_info.why_region_contains_point(borrow.region, context.loc) {
-                match *cause.root_cause() {
-                    Cause::LiveVar(local, location) => {
-                        match find_regular_use(mir, regioncx, borrow, location, local) {
-                            Some(p) => {
-                                err.span_label(
-                                    mir.source_info(p).span,
-                                    format!("borrow later used here"),
-                                );
-                            }
+        let cause_info = self.nonlexical_cause_info.as_ref().unwrap();
+        if let Some(cause) = cause_info.why_region_contains_point(borrow.region, context.loc) {
+            match *cause.root_cause() {
+                Cause::LiveVar(local, location) => {
+                    match find_regular_use(mir, regioncx, borrow, location, local) {
+                        Some(p) => {
+                            err.span_label(
+                                mir.source_info(p).span,
+                                format!("borrow later used here"),
+                            );
+                        }
 
-                            None => {
-                                span_bug!(
-                                    mir.source_info(context.loc).span,
-                                    "Cause should end in a LiveVar"
-                                );
-                            }
+                        None => {
+                            span_bug!(
+                                mir.source_info(context.loc).span,
+                                "Cause should end in a LiveVar"
+                            );
                         }
                     }
+                }
 
-                    Cause::DropVar(local, location) => {
-                        match find_drop_use(mir, regioncx, borrow, location, local) {
-                            Some(p) => {
-                                let local_name = mir.local_decls[local].name.unwrap();
-
+                Cause::DropVar(local, location) => {
+                    match find_drop_use(mir, regioncx, borrow, location, local) {
+                        Some(p) => match &mir.local_decls[local].name {
+                            Some(local_name) => {
                                 err.span_label(
                                     mir.source_info(p).span,
                                     format!(
@@ -70,29 +69,41 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
                                     ),
                                 );
                             }
-
                             None => {
-                                span_bug!(
-                                    mir.source_info(context.loc).span,
-                                    "Cause should end in a DropVar"
+                                err.span_label(
+                                    mir.local_decls[local].source_info.span,
+                                    "borrow may end up in a temporary, created here",
+                                );
+
+                                err.span_label(
+                                    mir.source_info(p).span,
+                                    "temporary later dropped here, \
+                                     potentially using the reference",
                                 );
                             }
-                        }
-                    }
+                        },
 
-                    Cause::UniversalRegion(region_vid) => {
-                        if let Some(region) = regioncx.to_error_region(region_vid) {
-                            self.tcx.note_and_explain_free_region(
-                                err,
-                                "borrowed value must be valid for ",
-                                region,
-                                "...",
+                        None => {
+                            span_bug!(
+                                mir.source_info(context.loc).span,
+                                "Cause should end in a DropVar"
                             );
                         }
                     }
-
-                    _ => {}
                 }
+
+                Cause::UniversalRegion(region_vid) => {
+                    if let Some(region) = regioncx.to_error_region(region_vid) {
+                        self.tcx.note_and_explain_free_region(
+                            err,
+                            "borrowed value must be valid for ",
+                            region,
+                            "...",
+                        );
+                    }
+                }
+
+                _ => {}
             }
         }
     }
@@ -182,7 +193,6 @@ impl<'gcx, 'tcx> UseFinder<'gcx, 'tcx> {
                         block_data
                             .terminator()
                             .successors()
-                            .iter()
                             .map(|&basic_block| Location {
                                 statement_index: 0,
                                 block: basic_block,

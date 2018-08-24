@@ -15,16 +15,13 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
 #![allow(unused_attributes)]
-#![cfg_attr(stage0, feature(i128_type))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
-#![cfg_attr(stage0, feature(conservative_impl_trait))]
 
 extern crate ar;
 extern crate flate2;
@@ -33,7 +30,7 @@ extern crate log;
 
 #[macro_use]
 extern crate rustc;
-extern crate rustc_back;
+extern crate rustc_target;
 extern crate rustc_mir;
 extern crate rustc_incremental;
 extern crate syntax;
@@ -54,7 +51,7 @@ pub mod symbol_names_test;
 /// that actually test that compilation succeeds without
 /// reporting an error.
 pub fn check_for_rustc_errors_attr(tcx: TyCtxt) {
-    if let Some((id, span)) = *tcx.sess.entry_fn.borrow() {
+    if let Some((id, span, _)) = *tcx.sess.entry_fn.borrow() {
         let main_def_id = tcx.hir.local_def_id(id);
 
         if tcx.has_attr(main_def_id, "rustc_error") {

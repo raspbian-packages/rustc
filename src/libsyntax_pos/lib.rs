@@ -17,11 +17,9 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![feature(const_fn)]
 #![feature(custom_attribute)]
-#![cfg_attr(stage0, feature(i128_type))]
 #![feature(optin_builtin_traits)]
 #![allow(unused_attributes)]
 #![feature(specialization)]
@@ -50,7 +48,7 @@ extern crate serialize as rustc_serialize; // used by deriving
 extern crate unicode_width;
 
 pub mod hygiene;
-pub use hygiene::{SyntaxContext, ExpnInfo, ExpnFormat, NameAndSpan, CompilerDesugaringKind};
+pub use hygiene::{Mark, SyntaxContext, ExpnInfo, ExpnFormat, NameAndSpan, CompilerDesugaringKind};
 
 mod span_encoding;
 pub use span_encoding::{Span, DUMMY_SP};
@@ -293,6 +291,12 @@ impl Span {
         self.ctxt().outer().expn_info().map(|info| info.call_site.source_callsite()).unwrap_or(self)
     }
 
+    /// The `Span` for the tokens in the previous macro expansion from which `self` was generated,
+    /// if any
+    pub fn parent(self) -> Option<Span> {
+        self.ctxt().outer().expn_info().map(|i| i.call_site)
+    }
+
     /// Return the source callee.
     ///
     /// Returns None if the supplied span has no expansion trace,
@@ -421,6 +425,52 @@ impl Span {
             end.lo,
             if end.ctxt == SyntaxContext::empty() { end.ctxt } else { span.ctxt },
         )
+    }
+
+    #[inline]
+    pub fn apply_mark(self, mark: Mark) -> Span {
+        let span = self.data();
+        span.with_ctxt(span.ctxt.apply_mark(mark))
+    }
+
+    #[inline]
+    pub fn remove_mark(&mut self) -> Mark {
+        let mut span = self.data();
+        let mark = span.ctxt.remove_mark();
+        *self = Span::new(span.lo, span.hi, span.ctxt);
+        mark
+    }
+
+    #[inline]
+    pub fn adjust(&mut self, expansion: Mark) -> Option<Mark> {
+        let mut span = self.data();
+        let mark = span.ctxt.adjust(expansion);
+        *self = Span::new(span.lo, span.hi, span.ctxt);
+        mark
+    }
+
+    #[inline]
+    pub fn glob_adjust(&mut self, expansion: Mark, glob_ctxt: SyntaxContext)
+                       -> Option<Option<Mark>> {
+        let mut span = self.data();
+        let mark = span.ctxt.glob_adjust(expansion, glob_ctxt);
+        *self = Span::new(span.lo, span.hi, span.ctxt);
+        mark
+    }
+
+    #[inline]
+    pub fn reverse_glob_adjust(&mut self, expansion: Mark, glob_ctxt: SyntaxContext)
+                               -> Option<Option<Mark>> {
+        let mut span = self.data();
+        let mark = span.ctxt.reverse_glob_adjust(expansion, glob_ctxt);
+        *self = Span::new(span.lo, span.hi, span.ctxt);
+        mark
+    }
+
+    #[inline]
+    pub fn modern(self) -> Span {
+        let span = self.data();
+        span.with_ctxt(span.ctxt.modern())
     }
 }
 
@@ -1100,13 +1150,17 @@ pub struct CharPos(pub usize);
 // have been unsuccessful
 
 impl Pos for BytePos {
+    #[inline(always)]
     fn from_usize(n: usize) -> BytePos { BytePos(n as u32) }
+
+    #[inline(always)]
     fn to_usize(&self) -> usize { let BytePos(n) = *self; n as usize }
 }
 
 impl Add for BytePos {
     type Output = BytePos;
 
+    #[inline(always)]
     fn add(self, rhs: BytePos) -> BytePos {
         BytePos((self.to_usize() + rhs.to_usize()) as u32)
     }
@@ -1115,6 +1169,7 @@ impl Add for BytePos {
 impl Sub for BytePos {
     type Output = BytePos;
 
+    #[inline(always)]
     fn sub(self, rhs: BytePos) -> BytePos {
         BytePos((self.to_usize() - rhs.to_usize()) as u32)
     }
@@ -1133,13 +1188,17 @@ impl Decodable for BytePos {
 }
 
 impl Pos for CharPos {
+    #[inline(always)]
     fn from_usize(n: usize) -> CharPos { CharPos(n) }
+
+    #[inline(always)]
     fn to_usize(&self) -> usize { let CharPos(n) = *self; n }
 }
 
 impl Add for CharPos {
     type Output = CharPos;
 
+    #[inline(always)]
     fn add(self, rhs: CharPos) -> CharPos {
         CharPos(self.to_usize() + rhs.to_usize())
     }
@@ -1148,6 +1207,7 @@ impl Add for CharPos {
 impl Sub for CharPos {
     type Output = CharPos;
 
+    #[inline(always)]
     fn sub(self, rhs: CharPos) -> CharPos {
         CharPos(self.to_usize() - rhs.to_usize())
     }

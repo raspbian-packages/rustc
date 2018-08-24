@@ -10,7 +10,7 @@
     <tr>
         <td><strong>Windows</strong></td>
         <td>
-            <a href="https://ci.appveyor.com/project/azerupi/mdbook/"><img src="https://ci.appveyor.com/api/projects/status/o38racsnbcospyc8/branch/master?svg=true"></a>
+            <a href="https://ci.appveyor.com/project/rust-lang-libs/mdbook"><img src="https://ci.appveyor.com/api/projects/status/ysyke2rvo85sni55?svg=true"></a>
         </td>
     </tr>
     <tr>
@@ -40,7 +40,7 @@ There are multiple ways to install mdBook.
    path to the binary into your `PATH`.
 
 2. **From Crates.io**
-j
+
    This requires [Rust] and Cargo to be installed. Once you have installed
    Rust, type the following in the terminal:
 
@@ -140,6 +140,10 @@ explanation, check out the [User Guide].
     Does the same thing as `mdbook watch` but additionally serves the book at
     `http://localhost:3000` (port is changeable) and reloads the browser when a
     change occurs.
+
+- `mdbook clean`
+
+    Delete directory in which generated book is located.
 
 
 ### As a library

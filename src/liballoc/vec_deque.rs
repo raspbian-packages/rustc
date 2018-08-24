@@ -22,7 +22,7 @@ use core::fmt;
 use core::iter::{repeat, FromIterator, FusedIterator};
 use core::mem;
 use core::ops::Bound::{Excluded, Included, Unbounded};
-use core::ops::{Index, IndexMut, Place, Placer, InPlace, RangeBounds};
+use core::ops::{Index, IndexMut, RangeBounds};
 use core::ptr;
 use core::ptr::NonNull;
 use core::slice;
@@ -30,10 +30,9 @@ use core::slice;
 use core::hash::{Hash, Hasher};
 use core::cmp;
 
+use alloc::CollectionAllocErr;
 use raw_vec::RawVec;
-
-use super::allocator::CollectionAllocErr;
-use super::vec::Vec;
+use vec::Vec;
 
 const INITIAL_CAPACITY: usize = 7; // 2^3 - 1
 const MINIMUM_CAPACITY: usize = 1; // 2 - 1
@@ -1885,56 +1884,6 @@ impl<T> VecDeque<T> {
             debug_assert!(!self.is_full());
         }
     }
-
-    /// Returns a place for insertion at the back of the `VecDeque`.
-    ///
-    /// Using this method with placement syntax is equivalent to [`push_back`](#method.push_back),
-    /// but may be more efficient.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(collection_placement)]
-    /// #![feature(placement_in_syntax)]
-    ///
-    /// use std::collections::VecDeque;
-    ///
-    /// let mut buf = VecDeque::new();
-    /// buf.place_back() <- 3;
-    /// buf.place_back() <- 4;
-    /// assert_eq!(&buf, &[3, 4]);
-    /// ```
-    #[unstable(feature = "collection_placement",
-               reason = "placement protocol is subject to change",
-               issue = "30172")]
-    pub fn place_back(&mut self) -> PlaceBack<T> {
-        PlaceBack { vec_deque: self }
-    }
-
-    /// Returns a place for insertion at the front of the `VecDeque`.
-    ///
-    /// Using this method with placement syntax is equivalent to [`push_front`](#method.push_front),
-    /// but may be more efficient.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// #![feature(collection_placement)]
-    /// #![feature(placement_in_syntax)]
-    ///
-    /// use std::collections::VecDeque;
-    ///
-    /// let mut buf = VecDeque::new();
-    /// buf.place_front() <- 3;
-    /// buf.place_front() <- 4;
-    /// assert_eq!(&buf, &[4, 3]);
-    /// ```
-    #[unstable(feature = "collection_placement",
-               reason = "placement protocol is subject to change",
-               issue = "30172")]
-    pub fn place_front(&mut self) -> PlaceFront<T> {
-        PlaceFront { vec_deque: self }
-    }
 }
 
 impl<T: Clone> VecDeque<T> {
@@ -2301,7 +2250,7 @@ unsafe impl<'a, T: Send> Send for Drain<'a, T> {}
 #[stable(feature = "drain", since = "1.6.0")]
 impl<'a, T: 'a> Drop for Drain<'a, T> {
     fn drop(&mut self) {
-        for _ in self.by_ref() {}
+        self.for_each(drop);
 
         let source_deque = unsafe { self.deque.as_mut() };
 
@@ -2659,98 +2608,6 @@ impl<T> From<VecDeque<T>> for Vec<T> {
             mem::forget(other);
             out
         }
-    }
-}
-
-/// A place for insertion at the back of a `VecDeque`.
-///
-/// See [`VecDeque::place_back`](struct.VecDeque.html#method.place_back) for details.
-#[must_use = "places do nothing unless written to with `<-` syntax"]
-#[unstable(feature = "collection_placement",
-           reason = "struct name and placement protocol are subject to change",
-           issue = "30172")]
-#[derive(Debug)]
-pub struct PlaceBack<'a, T: 'a> {
-    vec_deque: &'a mut VecDeque<T>,
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, T> Placer<T> for PlaceBack<'a, T> {
-    type Place = PlaceBack<'a, T>;
-
-    fn make_place(self) -> Self {
-        self.vec_deque.grow_if_necessary();
-        self
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-unsafe impl<'a, T> Place<T> for PlaceBack<'a, T> {
-    fn pointer(&mut self) -> *mut T {
-        unsafe { self.vec_deque.ptr().offset(self.vec_deque.head as isize) }
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, T> InPlace<T> for PlaceBack<'a, T> {
-    type Owner = &'a mut T;
-
-    unsafe fn finalize(self) -> &'a mut T {
-        let head = self.vec_deque.head;
-        self.vec_deque.head = self.vec_deque.wrap_add(head, 1);
-        &mut *(self.vec_deque.ptr().offset(head as isize))
-    }
-}
-
-/// A place for insertion at the front of a `VecDeque`.
-///
-/// See [`VecDeque::place_front`](struct.VecDeque.html#method.place_front) for details.
-#[must_use = "places do nothing unless written to with `<-` syntax"]
-#[unstable(feature = "collection_placement",
-           reason = "struct name and placement protocol are subject to change",
-           issue = "30172")]
-#[derive(Debug)]
-pub struct PlaceFront<'a, T: 'a> {
-    vec_deque: &'a mut VecDeque<T>,
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, T> Placer<T> for PlaceFront<'a, T> {
-    type Place = PlaceFront<'a, T>;
-
-    fn make_place(self) -> Self {
-        self.vec_deque.grow_if_necessary();
-        self
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-unsafe impl<'a, T> Place<T> for PlaceFront<'a, T> {
-    fn pointer(&mut self) -> *mut T {
-        let tail = self.vec_deque.wrap_sub(self.vec_deque.tail, 1);
-        unsafe { self.vec_deque.ptr().offset(tail as isize) }
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, T> InPlace<T> for PlaceFront<'a, T> {
-    type Owner = &'a mut T;
-
-    unsafe fn finalize(self) -> &'a mut T {
-        self.vec_deque.tail = self.vec_deque.wrap_sub(self.vec_deque.tail, 1);
-        &mut *(self.vec_deque.ptr().offset(self.vec_deque.tail as isize))
     }
 }
 

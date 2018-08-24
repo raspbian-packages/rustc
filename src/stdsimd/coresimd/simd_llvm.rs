@@ -31,4 +31,24 @@ extern "platform-intrinsic" {
     pub fn simd_and<T>(x: T, y: T) -> T;
     pub fn simd_or<T>(x: T, y: T) -> T;
     pub fn simd_xor<T>(x: T, y: T) -> T;
+
+    pub fn simd_reduce_add_unordered<T, U>(x: T) -> U;
+    pub fn simd_reduce_mul_unordered<T, U>(x: T) -> U;
+    pub fn simd_reduce_add_ordered<T, U>(x: T, acc: U) -> U;
+    pub fn simd_reduce_mul_ordered<T, U>(x: T, acc: U) -> U;
+    pub fn simd_reduce_min<T, U>(x: T) -> U;
+    pub fn simd_reduce_max<T, U>(x: T) -> U;
+    pub fn simd_reduce_min_nanless<T, U>(x: T) -> U;
+    pub fn simd_reduce_max_nanless<T, U>(x: T) -> U;
+    pub fn simd_reduce_and<T, U>(x: T) -> U;
+    pub fn simd_reduce_or<T, U>(x: T) -> U;
+    pub fn simd_reduce_xor<T, U>(x: T) -> U;
+    pub fn simd_reduce_all<T>(x: T) -> bool;
+    pub fn simd_reduce_any<T>(x: T) -> bool;
+
+    pub fn simd_select<M, T>(m: M, a: T, b: T) -> T;
+
+    pub fn simd_fmin<T>(a: T, b: T) -> T;
+// FIXME: https://github.com/rust-lang-nursery/stdsimd/issues/416
+// pub fn simd_fmax<T>(a: T, b: T) -> T;
 }

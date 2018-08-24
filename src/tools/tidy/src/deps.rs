@@ -45,7 +45,8 @@ static EXCEPTIONS: &'static [&'static str] = &[
     "fuchsia-zircon",     // BSD-3-Clause, rustdoc, rustc, cargo (jobserver & tempdir)
     "cssparser-macros",   // MPL-2.0, rustdoc
     "selectors",          // MPL-2.0, rustdoc
-    "clippy_lints",       // MPL-2.0 rls
+    "clippy_lints",       // MPL-2.0, rls
+    "colored",            // MPL-2.0, rustfmt
 ];
 
 /// Which crates to check against the whitelist?
@@ -72,6 +73,7 @@ static WHITELIST: &'static [Crate] = &[
     Crate("flate2"),
     Crate("fuchsia-zircon"),
     Crate("fuchsia-zircon-sys"),
+    Crate("getopts"),
     Crate("humantime"),
     Crate("jobserver"),
     Crate("kernel32-sys"),

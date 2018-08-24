@@ -7,11 +7,9 @@ Subject: [PATCH] tag private modules with doc(cfg)
  coresimd/mod.rs | 7 +++++++
  1 file changed, 7 insertions(+)
 
-diff --git a/coresimd/mod.rs b/coresimd/mod.rs
-index 84acbf067..5007ac30d 100644
 --- a/src/stdsimd/coresimd/mod.rs
 +++ b/src/stdsimd/coresimd/mod.rs
-@@ -146,15 +146,19 @@ pub mod arch {
+@@ -121,18 +121,23 @@
  mod simd_llvm;
  
  #[cfg(any(target_arch = "x86", target_arch = "x86_64", dox))]
@@ -21,13 +19,17 @@ index 84acbf067..5007ac30d 100644
 +#[doc(cfg(target_arch = "x86_64"))]
  mod x86_64;
  
- #[cfg(any(target_arch = "arm", target_arch = "aarch64", dox))]
-+#[doc(cfg(any(target_arch = "arm", target_arch = "aarch64")))]
- mod arm;
  #[cfg(any(target_arch = "aarch64", dox))]
 +#[doc(cfg(target_arch = "aarch64"))]
  mod aarch64;
+ #[cfg(any(target_arch = "arm", target_arch = "aarch64", dox))]
++#[doc(cfg(any(target_arch = "arm", target_arch = "aarch64")))]
+ mod arm;
  #[cfg(target_arch = "wasm32")]
  mod wasm32;
+ 
+ #[cfg(any(target_arch = "mips", target_arch = "mips64", dox))]
++#[doc(cfg(any(target_arch = "mips", target_arch = "mips64")))]
+ mod mips;
  
  mod nvptx;

@@ -17,8 +17,7 @@ use rustc_data_structures::sync::{Lrc, ReadGuard};
 use rustc::hir::map::{DefKey, DefPath, DefPathData, DefPathHash,
                       DisambiguatedDefPathData};
 use rustc::hir;
-use rustc::middle::cstore::{LinkagePreference, ExternConstBody,
-                            ExternBodyNestedBodies};
+use rustc::middle::cstore::LinkagePreference;
 use rustc::middle::exported_symbols::{ExportedSymbol, SymbolExportLevel};
 use rustc::hir::def::{self, Def, CtorKind};
 use rustc::hir::def_id::{CrateNum, DefId, DefIndex,
@@ -33,7 +32,6 @@ use rustc::mir::Mir;
 use rustc::util::captures::Captures;
 use rustc::util::nodemap::FxHashMap;
 
-use std::collections::BTreeMap;
 use std::io;
 use std::mem;
 use std::u32;
@@ -42,7 +40,7 @@ use rustc_serialize::{Decodable, Decoder, SpecializedDecoder, opaque};
 use syntax::attr;
 use syntax::ast::{self, Ident};
 use syntax::codemap;
-use syntax::symbol::{InternedString, Symbol};
+use syntax::symbol::InternedString;
 use syntax::ext::base::MacroKind;
 use syntax_pos::{self, Span, BytePos, Pos, DUMMY_SP, NO_EXPANSION};
 
@@ -433,7 +431,7 @@ impl<'a, 'tcx> MetadataBlob {
 impl<'tcx> EntryKind<'tcx> {
     fn to_def(&self, did: DefId) -> Option<Def> {
         Some(match *self {
-            EntryKind::Const(_) => Def::Const(did),
+            EntryKind::Const(..) => Def::Const(did),
             EntryKind::AssociatedConst(..) => Def::AssociatedConst(did),
             EntryKind::ImmStatic |
             EntryKind::ForeignImmStatic => Def::Static(did, false),
@@ -539,12 +537,12 @@ impl<'a, 'tcx> CrateMetadata {
 
         ty::VariantDef {
             did: self.local_def_id(data.struct_ctor.unwrap_or(index)),
-            name: Symbol::intern(&self.item_name(index)),
+            name: self.item_name(index).as_symbol(),
             fields: item.children.decode(self).map(|index| {
                 let f = self.entry(index);
                 ty::FieldDef {
                     did: self.local_def_id(index),
-                    name: Symbol::intern(&self.item_name(index)),
+                    name: self.item_name(index).as_symbol(),
                     vis: f.visibility.decode(self)
                 }
             }).collect(),
@@ -732,7 +730,7 @@ impl<'a, 'tcx> CrateMetadata {
                             if let Some(def) = self.get_def(child_index) {
                                 callback(def::Export {
                                     def,
-                                    ident: Ident::from_str(&self.item_name(child_index)),
+                                    ident: Ident::from_interned_str(self.item_name(child_index)),
                                     vis: self.get_visibility(child_index),
                                     span: self.entry(child_index).span.decode((self, sess)),
                                     is_import: false,
@@ -750,7 +748,7 @@ impl<'a, 'tcx> CrateMetadata {
                 let span = child.span.decode((self, sess));
                 if let (Some(def), Some(name)) =
                     (self.get_def(child_index), def_key.disambiguated_data.data.get_opt_name()) {
-                    let ident = Ident::from_str(&name);
+                    let ident = Ident::from_interned_str(name);
                     let vis = self.get_visibility(child_index);
                     let is_import = false;
                     callback(def::Export { def, ident, vis, span, is_import });
@@ -794,54 +792,12 @@ impl<'a, 'tcx> CrateMetadata {
         }
     }
 
-    pub fn extern_const_body(&self,
-                             tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             id: DefIndex)
-                             -> ExternConstBody<'tcx> {
-        assert!(!self.is_proc_macro(id));
-        let ast = self.entry(id).ast.unwrap();
-        let def_id = self.local_def_id(id);
-        let ast = ast.decode((self, tcx));
-        let body = ast.body.decode((self, tcx));
-        ExternConstBody {
-            body: tcx.hir.intern_inlined_body(def_id, body),
-            fingerprint: ast.stable_bodies_hash,
-        }
-    }
-
-    pub fn item_body_tables(&self,
-                            id: DefIndex,
-                            tcx: TyCtxt<'a, 'tcx, 'tcx>)
-                            -> &'tcx ty::TypeckTables<'tcx> {
-        let ast = self.entry(id).ast.unwrap().decode(self);
-        tcx.alloc_tables(ast.tables.decode((self, tcx)))
-    }
-
-    pub fn item_body_nested_bodies(&self,
-                                   tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                   id: DefIndex)
-                                   -> ExternBodyNestedBodies {
-        if let Some(ref ast) = self.entry(id).ast {
-            let mut ast = ast.decode(self);
-            let nested_bodies: BTreeMap<_, _> = ast.nested_bodies
-                                                   .decode((self, tcx.sess))
-                                                   .map(|body| (body.id(), body))
-                                                   .collect();
-            ExternBodyNestedBodies {
-                nested_bodies: Lrc::new(nested_bodies),
-                fingerprint: ast.stable_bodies_hash,
-            }
-        } else {
-            ExternBodyNestedBodies {
-                nested_bodies: Lrc::new(BTreeMap::new()),
-                fingerprint: Fingerprint::ZERO,
-            }
-        }
-    }
-
     pub fn const_is_rvalue_promotable_to_static(&self, id: DefIndex) -> bool {
-        self.entry(id).ast.expect("const item missing `ast`")
-            .decode(self).rvalue_promotable_to_static
+        match self.entry(id).kind {
+            EntryKind::AssociatedConst(_, data, _) |
+            EntryKind::Const(data, _) => data.ast_promotable,
+            _ => bug!(),
+        }
     }
 
     pub fn is_item_mir_available(&self, id: DefIndex) -> bool {
@@ -861,10 +817,10 @@ impl<'a, 'tcx> CrateMetadata {
 
     pub fn mir_const_qualif(&self, id: DefIndex) -> u8 {
         match self.entry(id).kind {
-            EntryKind::Const(qualif) |
-            EntryKind::AssociatedConst(AssociatedContainer::ImplDefault, qualif) |
-            EntryKind::AssociatedConst(AssociatedContainer::ImplFinal, qualif) => {
-                qualif
+            EntryKind::Const(qualif, _) |
+            EntryKind::AssociatedConst(AssociatedContainer::ImplDefault, qualif, _) |
+            EntryKind::AssociatedConst(AssociatedContainer::ImplFinal, qualif, _) => {
+                qualif.mir
             }
             _ => bug!(),
         }
@@ -877,7 +833,7 @@ impl<'a, 'tcx> CrateMetadata {
         let name = def_key.disambiguated_data.data.get_opt_name().unwrap();
 
         let (kind, container, has_self) = match item.kind {
-            EntryKind::AssociatedConst(container, _) => {
+            EntryKind::AssociatedConst(container, _, _) => {
                 (ty::AssociatedKind::Const, container, false)
             }
             EntryKind::Method(data) => {
@@ -891,7 +847,7 @@ impl<'a, 'tcx> CrateMetadata {
         };
 
         ty::AssociatedItem {
-            name: Symbol::intern(&name),
+            name: name.as_symbol(),
             kind,
             vis: item.visibility.decode(self),
             defaultness: container.defaultness(),
@@ -958,7 +914,7 @@ impl<'a, 'tcx> CrateMetadata {
         self.entry(id)
             .children
             .decode(self)
-            .map(|index| Symbol::intern(&self.item_name(index)))
+            .map(|index| self.item_name(index).as_symbol())
             .collect()
     }
 
@@ -1021,7 +977,13 @@ impl<'a, 'tcx> CrateMetadata {
     }
 
     pub fn get_trait_of_item(&self, id: DefIndex) -> Option<DefId> {
-        self.def_key(id).parent.and_then(|parent_index| {
+        let def_key = self.def_key(id);
+        match def_key.disambiguated_data.data {
+            DefPathData::TypeNs(..) | DefPathData::ValueNs(..) => (),
+            // Not an associated item
+            _ => return None,
+        }
+        def_key.parent.and_then(|parent_index| {
             match self.entry(parent_index).kind {
                 EntryKind::Trait(_) => Some(self.local_def_id(parent_index)),
                 _ => None,
@@ -1067,11 +1029,21 @@ impl<'a, 'tcx> CrateMetadata {
         arg_names.decode(self).collect()
     }
 
-    pub fn exported_symbols(&self) -> Vec<(ExportedSymbol, SymbolExportLevel)> {
-        self.root
-            .exported_symbols
-            .decode(self)
-            .collect()
+    pub fn exported_symbols(&self,
+                            tcx: TyCtxt<'a, 'tcx, 'tcx>)
+                            -> Vec<(ExportedSymbol<'tcx>, SymbolExportLevel)> {
+        let lazy_seq: LazySeq<(ExportedSymbol<'tcx>, SymbolExportLevel)> =
+            LazySeq::with_position_and_length(self.root.exported_symbols.position,
+                                              self.root.exported_symbols.len);
+        lazy_seq.decode((self, tcx)).collect()
+    }
+
+    pub fn get_rendered_const(&self, id: DefIndex) -> String {
+        match self.entry(id).kind {
+            EntryKind::Const(_, data) |
+            EntryKind::AssociatedConst(_, _, data) => data.decode(self).0,
+            _ => bug!(),
+        }
     }
 
     pub fn wasm_custom_sections(&self) -> Vec<DefId> {
@@ -1140,7 +1112,7 @@ impl<'a, 'tcx> CrateMetadata {
             DefKey {
                 parent: Some(CRATE_DEF_INDEX),
                 disambiguated_data: DisambiguatedDefPathData {
-                    data: DefPathData::MacroDef(name.as_str()),
+                    data: DefPathData::MacroDef(name.as_interned_str()),
                     disambiguator: 0,
                 }
             }

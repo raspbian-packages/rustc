@@ -3,7 +3,7 @@
 use rustc::lint::*;
 use syntax::ast::*;
 use syntax::codemap::Span;
-use syntax::symbol::InternedString;
+use syntax::symbol::LocalInternedString;
 use utils::{span_help_and_lint, span_lint};
 use utils::{camel_case_from, camel_case_until, in_macro};
 
@@ -99,7 +99,7 @@ declare_clippy_lint! {
 }
 
 pub struct EnumVariantNames {
-    modules: Vec<(InternedString, String)>,
+    modules: Vec<(LocalInternedString, String)>,
     threshold: u64,
 }
 
@@ -118,8 +118,8 @@ impl LintPass for EnumVariantNames {
     }
 }
 
-fn var2str(var: &Variant) -> InternedString {
-    var.node.name.name.as_str()
+fn var2str(var: &Variant) -> LocalInternedString {
+    var.node.ident.name.as_str()
 }
 
 /// Returns the number of chars that match from the start

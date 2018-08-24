@@ -50,8 +50,8 @@ use std::vec::IntoIter;
 use std::mem;
 use syntax::ast::{self, DUMMY_NODE_ID, Name, Ident, NodeId};
 use syntax::attr;
-use syntax::ext::hygiene::{Mark, SyntaxContext};
-use syntax::symbol::{Symbol, InternedString};
+use syntax::ext::hygiene::Mark;
+use syntax::symbol::{Symbol, LocalInternedString, InternedString};
 use syntax_pos::{DUMMY_SP, Span};
 
 use rustc_data_structures::accumulate_vec::IntoIter as AccIntoIter;
@@ -69,7 +69,7 @@ pub use self::sty::{ExistentialTraitRef, PolyExistentialTraitRef};
 pub use self::sty::{ExistentialProjection, PolyExistentialProjection, Const};
 pub use self::sty::{BoundRegion, EarlyBoundRegion, FreeRegion, Region};
 pub use self::sty::RegionKind;
-pub use self::sty::{TyVid, IntVid, FloatVid, RegionVid, SkolemizedRegionVid};
+pub use self::sty::{TyVid, IntVid, FloatVid, RegionVid};
 pub use self::sty::BoundRegion::*;
 pub use self::sty::InferTy::*;
 pub use self::sty::RegionKind::*;
@@ -728,7 +728,7 @@ pub struct TypeParameterDef {
 
 #[derive(Copy, Clone, RustcEncodable, RustcDecodable)]
 pub struct RegionParameterDef {
-    pub name: Name,
+    pub name: InternedString,
     pub def_id: DefId,
     pub index: u32,
 
@@ -956,6 +956,22 @@ pub enum Predicate<'tcx> {
     ConstEvaluatable(DefId, &'tcx Substs<'tcx>),
 }
 
+/// The crate outlives map is computed during typeck and contains the
+/// outlives of every item in the local crate. You should not use it
+/// directly, because to do so will make your pass dependent on the
+/// HIR of every item in the local crate. Instead, use
+/// `tcx.inferred_outlives_of()` to get the outlives for a *particular*
+/// item.
+pub struct CratePredicatesMap<'tcx> {
+    /// For each struct with outlive bounds, maps to a vector of the
+    /// predicate of its outlive bounds. If an item has no outlives
+    /// bounds, it will have no entry.
+    pub predicates: FxHashMap<DefId, Lrc<Vec<ty::Predicate<'tcx>>>>,
+
+    /// An empty vector, useful for cloning.
+    pub empty_predicate: Lrc<Vec<ty::Predicate<'tcx>>>,
+}
+
 impl<'tcx> AsRef<Predicate<'tcx>> for Predicate<'tcx> {
     fn as_ref(&self) -> &Predicate<'tcx> {
         self
@@ -1032,18 +1048,18 @@ impl<'a, 'gcx, 'tcx> Predicate<'tcx> {
         // from the substitution and the value being substituted into, and
         // this trick achieves that).
 
-        let substs = &trait_ref.0.substs;
+        let substs = &trait_ref.skip_binder().substs;
         match *self {
-            Predicate::Trait(ty::Binder(ref data)) =>
-                Predicate::Trait(ty::Binder(data.subst(tcx, substs))),
-            Predicate::Subtype(ty::Binder(ref data)) =>
-                Predicate::Subtype(ty::Binder(data.subst(tcx, substs))),
-            Predicate::RegionOutlives(ty::Binder(ref data)) =>
-                Predicate::RegionOutlives(ty::Binder(data.subst(tcx, substs))),
-            Predicate::TypeOutlives(ty::Binder(ref data)) =>
-                Predicate::TypeOutlives(ty::Binder(data.subst(tcx, substs))),
-            Predicate::Projection(ty::Binder(ref data)) =>
-                Predicate::Projection(ty::Binder(data.subst(tcx, substs))),
+            Predicate::Trait(ref binder) =>
+                Predicate::Trait(binder.map_bound(|data| data.subst(tcx, substs))),
+            Predicate::Subtype(ref binder) =>
+                Predicate::Subtype(binder.map_bound(|data| data.subst(tcx, substs))),
+            Predicate::RegionOutlives(ref binder) =>
+                Predicate::RegionOutlives(binder.map_bound(|data| data.subst(tcx, substs))),
+            Predicate::TypeOutlives(ref binder) =>
+                Predicate::TypeOutlives(binder.map_bound(|data| data.subst(tcx, substs))),
+            Predicate::Projection(ref binder) =>
+                Predicate::Projection(binder.map_bound(|data| data.subst(tcx, substs))),
             Predicate::WellFormed(data) =>
                 Predicate::WellFormed(data.subst(tcx, substs)),
             Predicate::ObjectSafe(trait_def_id) =>
@@ -1079,7 +1095,7 @@ impl<'tcx> TraitPredicate<'tcx> {
 impl<'tcx> PolyTraitPredicate<'tcx> {
     pub fn def_id(&self) -> DefId {
         // ok to skip binder since trait def-id does not care about regions
-        self.0.def_id()
+        self.skip_binder().def_id()
     }
 }
 
@@ -1122,17 +1138,31 @@ pub struct ProjectionPredicate<'tcx> {
 pub type PolyProjectionPredicate<'tcx> = Binder<ProjectionPredicate<'tcx>>;
 
 impl<'tcx> PolyProjectionPredicate<'tcx> {
+    /// Returns the def-id of the associated item being projected.
+    pub fn item_def_id(&self) -> DefId {
+        self.skip_binder().projection_ty.item_def_id
+    }
+
     pub fn to_poly_trait_ref(&self, tcx: TyCtxt) -> PolyTraitRef<'tcx> {
         // Note: unlike with TraitRef::to_poly_trait_ref(),
         // self.0.trait_ref is permitted to have escaping regions.
         // This is because here `self` has a `Binder` and so does our
         // return value, so we are preserving the number of binding
         // levels.
-        ty::Binder(self.0.projection_ty.trait_ref(tcx))
+        self.map_bound(|predicate| predicate.projection_ty.trait_ref(tcx))
     }
 
     pub fn ty(&self) -> Binder<Ty<'tcx>> {
-        Binder(self.skip_binder().ty) // preserves binding levels
+        self.map_bound(|predicate| predicate.ty)
+    }
+
+    /// The DefId of the TraitItem for the associated type.
+    ///
+    /// Note that this is not the DefId of the TraitRef containing this
+    /// associated type, which is in tcx.associated_item(projection_def_id()).container.
+    pub fn projection_def_id(&self) -> DefId {
+        // ok to skip binder since trait def-id does not care about regions
+        self.skip_binder().projection_ty.item_def_id
     }
 }
 
@@ -1142,8 +1172,7 @@ pub trait ToPolyTraitRef<'tcx> {
 
 impl<'tcx> ToPolyTraitRef<'tcx> for TraitRef<'tcx> {
     fn to_poly_trait_ref(&self) -> PolyTraitRef<'tcx> {
-        assert!(!self.has_escaping_regions());
-        ty::Binder(self.clone())
+        ty::Binder::dummy(self.clone())
     }
 }
 
@@ -1159,12 +1188,7 @@ pub trait ToPredicate<'tcx> {
 
 impl<'tcx> ToPredicate<'tcx> for TraitRef<'tcx> {
     fn to_predicate(&self) -> Predicate<'tcx> {
-        // we're about to add a binder, so let's check that we don't
-        // accidentally capture anything, or else that might be some
-        // weird debruijn accounting.
-        assert!(!self.has_escaping_regions());
-
-        ty::Predicate::Trait(ty::Binder(ty::TraitPredicate {
+        ty::Predicate::Trait(ty::Binder::dummy(ty::TraitPredicate {
             trait_ref: self.clone()
         }))
     }
@@ -1203,17 +1227,19 @@ impl<'tcx> Predicate<'tcx> {
             ty::Predicate::Trait(ref data) => {
                 data.skip_binder().input_types().collect()
             }
-            ty::Predicate::Subtype(ty::Binder(SubtypePredicate { a, b, a_is_expected: _ })) => {
+            ty::Predicate::Subtype(binder) => {
+                let SubtypePredicate { a, b, a_is_expected: _ } = binder.skip_binder();
                 vec![a, b]
             }
-            ty::Predicate::TypeOutlives(ty::Binder(ref data)) => {
-                vec![data.0]
+            ty::Predicate::TypeOutlives(binder) => {
+                vec![binder.skip_binder().0]
             }
             ty::Predicate::RegionOutlives(..) => {
                 vec![]
             }
             ty::Predicate::Projection(ref data) => {
-                data.0.projection_ty.substs.types().chain(Some(data.0.ty)).collect()
+                let inner = data.skip_binder();
+                inner.projection_ty.substs.types().chain(Some(inner.ty)).collect()
             }
             ty::Predicate::WellFormed(data) => {
                 vec![data]
@@ -1344,15 +1370,13 @@ impl<'tcx> InstantiatedPredicates<'tcx> {
 /// type name in a non-zero universe is a skolemized type -- an
 /// idealized representative of "types in general" that we use for
 /// checking generic functions.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
 pub struct UniverseIndex(u32);
 
 impl UniverseIndex {
     /// The root universe, where things that the user defined are
     /// visible.
-    pub fn root() -> UniverseIndex {
-        UniverseIndex(0)
-    }
+    pub const ROOT: Self = UniverseIndex(0);
 
     /// A "subuniverse" corresponds to being inside a `forall` quantifier.
     /// So, for example, suppose we have this type in universe `U`:
@@ -1366,7 +1390,21 @@ impl UniverseIndex {
     /// region `'a`, but that region was not nameable from `U` because
     /// it was not in scope there.
     pub fn subuniverse(self) -> UniverseIndex {
-        UniverseIndex(self.0 + 1)
+        UniverseIndex(self.0.checked_add(1).unwrap())
+    }
+
+    pub fn as_u32(&self) -> u32 {
+        self.0
+    }
+
+    pub fn as_usize(&self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for UniverseIndex {
+    fn from(index: u32) -> Self {
+        UniverseIndex(index)
     }
 }
 
@@ -1450,7 +1488,11 @@ impl<'tcx> ParamEnv<'tcx> {
             }
 
             Reveal::All => {
-                if value.needs_infer() || value.has_param_types() || value.has_self_ty() {
+                if value.has_skol()
+                    || value.needs_infer()
+                    || value.has_param_types()
+                    || value.has_self_ty()
+                {
                     ParamEnvAnd {
                         param_env: self,
                         value,
@@ -1623,15 +1665,13 @@ bitflags! {
     #[derive(RustcEncodable, RustcDecodable, Default)]
     pub struct ReprFlags: u8 {
         const IS_C               = 1 << 0;
-        const IS_PACKED          = 1 << 1;
-        const IS_SIMD            = 1 << 2;
-        const IS_TRANSPARENT     = 1 << 3;
+        const IS_SIMD            = 1 << 1;
+        const IS_TRANSPARENT     = 1 << 2;
         // Internal only for now. If true, don't reorder fields.
-        const IS_LINEAR          = 1 << 4;
+        const IS_LINEAR          = 1 << 3;
 
         // Any of these flags being set prevent field reordering optimisation.
         const IS_UNOPTIMISABLE   = ReprFlags::IS_C.bits |
-                                   ReprFlags::IS_PACKED.bits |
                                    ReprFlags::IS_SIMD.bits |
                                    ReprFlags::IS_LINEAR.bits;
     }
@@ -1648,11 +1688,13 @@ impl_stable_hash_for!(struct ReprFlags {
 pub struct ReprOptions {
     pub int: Option<attr::IntType>,
     pub align: u32,
+    pub pack: u32,
     pub flags: ReprFlags,
 }
 
 impl_stable_hash_for!(struct ReprOptions {
     align,
+    pack,
     int,
     flags
 });
@@ -1662,11 +1704,19 @@ impl ReprOptions {
         let mut flags = ReprFlags::empty();
         let mut size = None;
         let mut max_align = 0;
+        let mut min_pack = 0;
         for attr in tcx.get_attrs(did).iter() {
             for r in attr::find_repr_attrs(tcx.sess.diagnostic(), attr) {
                 flags.insert(match r {
                     attr::ReprC => ReprFlags::IS_C,
-                    attr::ReprPacked => ReprFlags::IS_PACKED,
+                    attr::ReprPacked(pack) => {
+                        min_pack = if min_pack > 0 {
+                            cmp::min(pack, min_pack)
+                        } else {
+                            pack
+                        };
+                        ReprFlags::empty()
+                    },
                     attr::ReprTransparent => ReprFlags::IS_TRANSPARENT,
                     attr::ReprSimd => ReprFlags::IS_SIMD,
                     attr::ReprInt(i) => {
@@ -1685,7 +1735,7 @@ impl ReprOptions {
         if !tcx.consider_optimizing(|| format!("Reorder fields of {:?}", tcx.item_path_str(did))) {
             flags.insert(ReprFlags::IS_LINEAR);
         }
-        ReprOptions { int: size, align: max_align, flags: flags }
+        ReprOptions { int: size, align: max_align, pack: min_pack, flags: flags }
     }
 
     #[inline]
@@ -1693,7 +1743,7 @@ impl ReprOptions {
     #[inline]
     pub fn c(&self) -> bool { self.flags.contains(ReprFlags::IS_C) }
     #[inline]
-    pub fn packed(&self) -> bool { self.flags.contains(ReprFlags::IS_PACKED) }
+    pub fn packed(&self) -> bool { self.pack > 0 }
     #[inline]
     pub fn transparent(&self) -> bool { self.flags.contains(ReprFlags::IS_TRANSPARENT) }
     #[inline]
@@ -1708,6 +1758,12 @@ impl ReprOptions {
     /// single pointer.
     pub fn inhibit_enum_layout_opt(&self) -> bool {
         self.c() || self.int.is_some()
+    }
+
+    /// Returns true if this `#[repr()]` should inhibit struct field reordering
+    /// optimizations, such as with repr(C) or repr(packed(1)).
+    pub fn inhibit_struct_field_reordering_opt(&self) -> bool {
+        !(self.flags & ReprFlags::IS_UNOPTIMISABLE).is_empty() || (self.pack == 1)
     }
 }
 
@@ -1991,7 +2047,7 @@ impl<'a, 'gcx, 'tcx> AdtDef {
     /// Due to normalization being eager, this applies even if
     /// the associated type is behind a pointer, e.g. issue #31299.
     pub fn sized_constraint(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> &'tcx [Ty<'tcx>] {
-        match queries::adt_sized_constraint::try_get(tcx, DUMMY_SP, self.did) {
+        match tcx.try_get_query::<queries::adt_sized_constraint>(DUMMY_SP, self.did) {
             Ok(tys) => tys,
             Err(mut bug) => {
                 debug!("adt_sized_constraint: {:?} is recursive", self);
@@ -2061,7 +2117,7 @@ impl<'a, 'gcx, 'tcx> AdtDef {
                     Some(x) => x,
                     _ => return vec![ty]
                 };
-                let sized_predicate = Binder(TraitRef {
+                let sized_predicate = Binder::dummy(TraitRef {
                     def_id: sized_trait,
                     substs: tcx.mk_substs_trait(ty, &[])
                 }).to_predicate();
@@ -2080,32 +2136,6 @@ impl<'a, 'gcx, 'tcx> AdtDef {
         };
         debug!("sized_constraint_for_ty({:?}) = {:?}", ty, result);
         result
-    }
-}
-
-impl<'a, 'gcx, 'tcx> VariantDef {
-    #[inline]
-    pub fn find_field_named(&self, name: ast::Name) -> Option<&FieldDef> {
-        self.index_of_field_named(name).map(|index| &self.fields[index])
-    }
-
-    pub fn index_of_field_named(&self, name: ast::Name) -> Option<usize> {
-        if let Some(index) = self.fields.iter().position(|f| f.name == name) {
-            return Some(index);
-        }
-        let mut ident = name.to_ident();
-        while ident.ctxt != SyntaxContext::empty() {
-            ident.ctxt.remove_mark();
-            if let Some(field) = self.fields.iter().position(|f| f.name.to_ident() == ident) {
-                return Some(field);
-            }
-        }
-        None
-    }
-
-    #[inline]
-    pub fn field_named(&self, name: ast::Name) -> &FieldDef {
-        self.find_field_named(name).unwrap()
     }
 }
 
@@ -2375,6 +2405,17 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    pub fn field_index(self, node_id: NodeId, tables: &TypeckTables) -> usize {
+        let hir_id = self.hir.node_to_hir_id(node_id);
+        tables.field_indices().get(hir_id).cloned().expect("no index for a field")
+    }
+
+    pub fn find_field_index(self, ident: Ident, variant: &VariantDef) -> Option<usize> {
+        variant.fields.iter().position(|field| {
+            self.adjust_ident(ident.modern(), variant.did, DUMMY_NODE_ID).0 == field.name.to_ident()
+        })
+    }
+
     pub fn associated_items(
         self,
         def_id: DefId,
@@ -2438,7 +2479,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     pub fn item_name(self, id: DefId) -> InternedString {
         if id.index == CRATE_DEF_INDEX {
-            self.original_crate_name(id.krate).as_str()
+            self.original_crate_name(id.krate).as_interned_str()
         } else {
             let def_key = self.def_key(id);
             // The name of a StructCtor is that of its struct parent.
@@ -2564,7 +2605,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             LOCAL_CRATE => self.hir.definitions().expansion(scope.index),
             _ => Mark::root(),
         };
-        let scope = match ident.ctxt.adjust(expansion) {
+        let scope = match ident.span.adjust(expansion) {
             Some(macro_def) => self.hir.definitions().macro_def_scope(macro_def),
             None if block == DUMMY_NODE_ID => DefId::local(CRATE_DEF_INDEX), // Dummy DefId
             None => self.hir.get_module_parent(block),
@@ -2795,15 +2836,13 @@ impl_stable_hash_for!(struct self::SymbolName {
 impl SymbolName {
     pub fn new(name: &str) -> SymbolName {
         SymbolName {
-            name: Symbol::intern(name).as_str()
+            name: Symbol::intern(name).as_interned_str()
         }
     }
-}
 
-impl Deref for SymbolName {
-    type Target = str;
-
-    fn deref(&self) -> &str { &self.name }
+    pub fn as_str(&self) -> LocalInternedString {
+        self.name.as_str()
+    }
 }
 
 impl fmt::Display for SymbolName {

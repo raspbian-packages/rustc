@@ -28,9 +28,9 @@ use std::fmt;
 use std::usize;
 
 use rustc_data_structures::indexed_vec::Idx;
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 use syntax::ast::CRATE_NODE_ID;
-use syntax::symbol::Symbol;
+use syntax::symbol::{Symbol, InternedString};
 use hir;
 
 macro_rules! gen_display_debug_body {
@@ -130,7 +130,7 @@ macro_rules! print {
 }
 
 
-struct LateBoundRegionNameCollector(FxHashSet<Symbol>);
+struct LateBoundRegionNameCollector(FxHashSet<InternedString>);
 impl<'tcx> ty::fold::TypeVisitor<'tcx> for LateBoundRegionNameCollector {
     fn visit_region(&mut self, r: ty::Region<'tcx>) -> bool {
         match *r {
@@ -148,7 +148,7 @@ pub struct PrintContext {
     is_debug: bool,
     is_verbose: bool,
     identify_regions: bool,
-    used_region_names: Option<FxHashSet<Symbol>>,
+    used_region_names: Option<FxHashSet<InternedString>>,
     region_index: usize,
     binder_depth: usize,
 }
@@ -268,14 +268,31 @@ impl PrintContext {
             loop {
                 let key = tcx.def_key(item_def_id);
                 match key.disambiguated_data.data {
+                    DefPathData::AssocTypeInTrait(_) |
+                    DefPathData::AssocTypeInImpl(_) |
+                    DefPathData::Trait(_) |
                     DefPathData::TypeNs(_) => {
                         break;
                     }
-                    DefPathData::ValueNs(_) | DefPathData::EnumVariant(_) => {
+                    DefPathData::ValueNs(_) |
+                    DefPathData::EnumVariant(_) => {
                         is_value_path = true;
                         break;
                     }
-                    _ => {
+                    DefPathData::CrateRoot |
+                    DefPathData::Misc |
+                    DefPathData::Impl |
+                    DefPathData::Module(_) |
+                    DefPathData::MacroDef(_) |
+                    DefPathData::ClosureExpr |
+                    DefPathData::TypeParam(_) |
+                    DefPathData::LifetimeDef(_) |
+                    DefPathData::Field(_) |
+                    DefPathData::StructCtor |
+                    DefPathData::Initializer |
+                    DefPathData::ImplTrait |
+                    DefPathData::Typeof |
+                    DefPathData::GlobalMetaData(_) => {
                         // if we're making a symbol for something, there ought
                         // to be a value or type-def or something in there
                         // *somewhere*
@@ -440,12 +457,12 @@ impl PrintContext {
                                           lifted: Option<ty::Binder<U>>) -> fmt::Result
         where T: Print, U: Print + TypeFoldable<'tcx>, F: fmt::Write
     {
-        fn name_by_region_index(index: usize) -> Symbol {
+        fn name_by_region_index(index: usize) -> InternedString {
             match index {
                 0 => Symbol::intern("'r"),
                 1 => Symbol::intern("'s"),
                 i => Symbol::intern(&format!("'t{}", i-2)),
-            }
+            }.as_interned_str()
         }
 
         // Replace any anonymous late-bound regions with named
@@ -456,7 +473,7 @@ impl PrintContext {
         let value = if let Some(v) = lifted {
             v
         } else {
-            return original.0.print_display(f, self);
+            return original.skip_binder().print_display(f, self);
         };
 
         if self.binder_depth == 0 {
@@ -493,8 +510,7 @@ impl PrintContext {
                         }
                     };
                     let _ = write!(f, "{}", name);
-                    ty::BrNamed(tcx.hir.local_def_id(CRATE_NODE_ID),
-                                name)
+                    ty::BrNamed(tcx.hir.local_def_id(CRATE_NODE_ID), name)
                 }
             };
             tcx.mk_region(ty::ReLateBound(ty::DebruijnIndex::new(1), br))
@@ -510,7 +526,7 @@ impl PrintContext {
         result
     }
 
-    fn is_name_used(&self, name: &Symbol) -> bool {
+    fn is_name_used(&self, name: &InternedString) -> bool {
         match self.used_region_names {
             Some(ref names) => names.contains(name),
             None => false,
@@ -663,9 +679,9 @@ define_print! {
             ty::tls::with(|tcx| {
                 let dummy_self = tcx.mk_infer(ty::FreshTy(0));
 
-                let trait_ref = tcx.lift(&ty::Binder(*self))
+                let trait_ref = *tcx.lift(&ty::Binder::bind(*self))
                                    .expect("could not lift TraitRef for printing")
-                                   .with_self_ty(tcx, dummy_self).0;
+                                   .with_self_ty(tcx, dummy_self).skip_binder();
                 cx.parameterized(f, trait_ref.substs, trait_ref.def_id, &[])
             })
         }
@@ -697,7 +713,7 @@ define_print! {
                 BrAnon(n) => write!(f, "BrAnon({:?})", n),
                 BrFresh(n) => write!(f, "BrFresh({:?})", n),
                 BrNamed(did, name) => {
-                    write!(f, "BrNamed({:?}:{:?}, {:?})",
+                    write!(f, "BrNamed({:?}:{:?}, {})",
                            did.krate, did.index, name)
                 }
                 BrEnv => write!(f, "BrEnv"),
@@ -792,8 +808,8 @@ define_print! {
                     write!(f, "'?{}", c.index())
                 }
 
-                ty::ReSkolemized(id, ref bound_region) => {
-                    write!(f, "ReSkolemized({}, {:?})", id.index, bound_region)
+                ty::ReSkolemized(universe, ref bound_region) => {
+                    write!(f, "ReSkolemized({:?}, {:?})", universe, bound_region)
                 }
 
                 ty::ReEmpty => write!(f, "ReEmpty"),

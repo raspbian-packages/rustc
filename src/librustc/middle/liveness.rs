@@ -111,6 +111,7 @@ use ty::{self, TyCtxt};
 use lint;
 use util::nodemap::{NodeMap, NodeSet};
 
+use std::collections::VecDeque;
 use std::{fmt, usize};
 use std::io::prelude::*;
 use std::io;
@@ -184,6 +185,7 @@ impl<'a, 'tcx> Visitor<'tcx> for IrMaps<'a, 'tcx> {
                 b: hir::BodyId, s: Span, id: NodeId) {
         visit_fn(self, fk, fd, b, s, id);
     }
+
     fn visit_local(&mut self, l: &'tcx hir::Local) { visit_local(self, l); }
     fn visit_expr(&mut self, ex: &'tcx Expr) { visit_expr(self, ex); }
     fn visit_arm(&mut self, a: &'tcx hir::Arm) { visit_arm(self, a); }
@@ -361,6 +363,16 @@ fn visit_fn<'a, 'tcx: 'a>(ir: &mut IrMaps<'a, 'tcx>,
     // swap in a new set of IR maps for this function body:
     let mut fn_maps = IrMaps::new(ir.tcx);
 
+    // Don't run unused pass for #[derive()]
+    if let FnKind::Method(..) = fk {
+        let parent = ir.tcx.hir.get_parent(id);
+        if let Some(hir::map::Node::NodeItem(i)) = ir.tcx.hir.find(parent) {
+            if i.attrs.iter().any(|a| a.check_name("automatically_derived")) {
+                return;
+            }
+        }
+    }
+
     debug!("creating fn_maps: {:?}", &fn_maps as *const IrMaps);
 
     let body = ir.tcx.hir.body(body_id);
@@ -401,18 +413,43 @@ fn visit_local<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, local: &'tcx hir::Local) {
 }
 
 fn visit_arm<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, arm: &'tcx hir::Arm) {
-    for pat in &arm.pats {
-        // for struct patterns, take note of which fields used shorthand (`x` rather than `x: x`)
+    for mut pat in &arm.pats {
+        // For struct patterns, take note of which fields used shorthand
+        // (`x` rather than `x: x`).
         //
-        // FIXME: according to the rust-lang-nursery/rustc-guide book, `NodeId`s are to be phased
-        // out in favor of `HirId`s; however, we need to match the signature of `each_binding`,
-        // which uses `NodeIds`.
+        // FIXME: according to the rust-lang-nursery/rustc-guide book, `NodeId`s are to be
+        // phased out in favor of `HirId`s; however, we need to match the signature of
+        // `each_binding`, which uses `NodeIds`.
         let mut shorthand_field_ids = NodeSet();
-        if let hir::PatKind::Struct(_, ref fields, _) = pat.node {
-            for field in fields {
-                if field.node.is_shorthand {
-                    shorthand_field_ids.insert(field.node.pat.id);
+        let mut pats = VecDeque::new();
+        pats.push_back(pat);
+        while let Some(pat) = pats.pop_front() {
+            use hir::PatKind::*;
+            match pat.node {
+                Binding(_, _, _, ref inner_pat) => {
+                    pats.extend(inner_pat.iter());
                 }
+                Struct(_, ref fields, _) => {
+                    for field in fields {
+                        if field.node.is_shorthand {
+                            shorthand_field_ids.insert(field.node.pat.id);
+                        }
+                    }
+                }
+                Ref(ref inner_pat, _) |
+                Box(ref inner_pat) => {
+                    pats.push_back(inner_pat);
+                }
+                TupleStruct(_, ref inner_pats, _) |
+                Tuple(ref inner_pats, _) => {
+                    pats.extend(inner_pats.iter());
+                }
+                Slice(ref pre_pats, ref inner_pat, ref post_pats) => {
+                    pats.extend(pre_pats.iter());
+                    pats.extend(inner_pat.iter());
+                    pats.extend(post_pats.iter());
+                }
+                _ => {}
             }
         }
 
@@ -476,7 +513,7 @@ fn visit_expr<'a, 'tcx>(ir: &mut IrMaps<'a, 'tcx>, expr: &'tcx Expr) {
       }
 
       // otherwise, live nodes are not required:
-      hir::ExprIndex(..) | hir::ExprField(..) | hir::ExprTupField(..) |
+      hir::ExprIndex(..) | hir::ExprField(..) |
       hir::ExprArray(..) | hir::ExprCall(..) | hir::ExprMethodCall(..) |
       hir::ExprTup(..) | hir::ExprBinary(..) | hir::ExprAddrOf(..) |
       hir::ExprCast(..) | hir::ExprUnary(..) | hir::ExprBreak(..) |
@@ -912,10 +949,6 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
               self.propagate_through_expr(&e, succ)
           }
 
-          hir::ExprTupField(ref e, _) => {
-              self.propagate_through_expr(&e, succ)
-          }
-
           hir::ExprClosure(.., blk_id, _, _) => {
               debug!("{} is an ExprClosure", self.ir.tcx.hir.node_to_pretty_string(expr.id));
 
@@ -1226,7 +1259,6 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
         match expr.node {
             hir::ExprPath(_) => succ,
             hir::ExprField(ref e, _) => self.propagate_through_expr(&e, succ),
-            hir::ExprTupField(ref e, _) => self.propagate_through_expr(&e, succ),
             _ => self.propagate_through_expr(expr, succ)
         }
     }
@@ -1419,7 +1451,7 @@ fn check_expr<'a, 'tcx>(this: &mut Liveness<'a, 'tcx>, expr: &'tcx Expr) {
       // no correctness conditions related to liveness
       hir::ExprCall(..) | hir::ExprMethodCall(..) | hir::ExprIf(..) |
       hir::ExprMatch(..) | hir::ExprWhile(..) | hir::ExprLoop(..) |
-      hir::ExprIndex(..) | hir::ExprField(..) | hir::ExprTupField(..) |
+      hir::ExprIndex(..) | hir::ExprField(..) |
       hir::ExprArray(..) | hir::ExprTup(..) | hir::ExprBinary(..) |
       hir::ExprCast(..) | hir::ExprUnary(..) | hir::ExprRet(..) |
       hir::ExprBreak(..) | hir::ExprAgain(..) | hir::ExprLit(_) |

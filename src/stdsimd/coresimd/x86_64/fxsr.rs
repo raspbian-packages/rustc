@@ -21,9 +21,12 @@ extern "C" {
 ///
 /// [fxsave]: http://www.felixcloutier.com/x86/FXSAVE.html
 /// [fxrstor]: http://www.felixcloutier.com/x86/FXRSTOR.html
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_fxsave64)
 #[inline]
 #[target_feature(enable = "fxsr")]
 #[cfg_attr(test, assert_instr(fxsave64))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _fxsave64(mem_addr: *mut u8) {
     fxsave64(mem_addr)
 }
@@ -42,18 +45,21 @@ pub unsafe fn _fxsave64(mem_addr: *mut u8) {
 ///
 /// [fxsave]: http://www.felixcloutier.com/x86/FXSAVE.html
 /// [fxrstor]: http://www.felixcloutier.com/x86/FXRSTOR.html
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_fxrstor64)
 #[inline]
 #[target_feature(enable = "fxsr")]
 #[cfg_attr(test, assert_instr(fxrstor64))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _fxrstor64(mem_addr: *const u8) {
     fxrstor64(mem_addr)
 }
 
 #[cfg(test)]
 mod tests {
-    use coresimd::x86::x86_64::fxsr;
+    use coresimd::x86_64::*;
+    use std::{fmt, cmp::PartialEq};
     use stdsimd_test::simd_test;
-    use std::fmt;
 
     #[repr(align(16))]
     struct FxsaveArea {
@@ -93,7 +99,7 @@ mod tests {
         }
     }
 
-    #[simd_test = "fxsr"]
+    #[simd_test(enable = "fxsr")]
     unsafe fn fxsave64() {
         let mut a = FxsaveArea::new();
         let mut b = FxsaveArea::new();

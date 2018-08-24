@@ -8,6 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+// ignore-tidy-linelength
+
 // Test that the outlives computation runs for now...
 
 #![feature(rustc_attrs)]
@@ -16,7 +18,7 @@
 // https://github.com/rust-lang/rfcs/blob/master/text/2093-infer-outlives.md#example-1-a-reference
 
 #[rustc_outlives]
-struct Direct<'a, T> { //~ ERROR 19:1: 21:2: [] [E0640]
+struct Direct<'a, T> { //~ ERROR 21:1: 23:2: [Binder(OutlivesPredicate(T, ReEarlyBound(0, 'a)))] [E0640]
     field: &'a T
 }
 

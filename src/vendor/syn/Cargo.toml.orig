@@ -1,12 +1,13 @@
 [package]
 name = "syn"
-version = "0.12.14" # don't forget to update html_root_url
+version = "0.13.1" # don't forget to update html_root_url
 authors = ["David Tolnay <dtolnay@gmail.com>"]
 license = "MIT/Apache-2.0"
 description = "Nom parser for Rust source code"
 repository = "https://github.com/dtolnay/syn"
 documentation = "https://docs.rs/syn"
 categories = ["development-tools::procedural-macro-helpers"]
+readme = "README.md"
 include = ["/Cargo.toml", "/src/**/*.rs", "/README.md", "/LICENSE-APACHE", "/LICENSE-MIT"]
 
 [[example]]
@@ -15,7 +16,7 @@ path = "examples/dump-syntax/main.rs"
 required-features = ["full", "parsing", "extra-traits"]
 
 [features]
-default = ["derive", "parsing", "printing", "clone-impls"]
+default = ["derive", "parsing", "printing", "clone-impls", "proc-macro"]
 derive = []
 full = []
 parsing = []
@@ -25,15 +26,16 @@ visit-mut = []
 fold = []
 clone-impls = []
 extra-traits = []
+proc-macro = ["proc-macro2/proc-macro", "quote/proc-macro"]
 
 [dependencies]
-quote = { version = "0.4", optional = true }
-proc-macro2 = "0.2"
+proc-macro2 = { version = "0.3", default-features = false }
+quote = { version = "0.5", optional = true, default-features = false }
 unicode-xid = "0.1"
 
 [dev-dependencies]
 rayon = "1.0.0"
-walkdir = "1.0.1"
+walkdir = "2"
 
 [package.metadata.docs.rs]
 all-features = true

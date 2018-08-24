@@ -223,17 +223,20 @@ pub struct TestProps {
     // arguments. (In particular, it propagates to the aux-builds.)
     pub incremental_dir: Option<PathBuf>,
     // Specifies that a test must actually compile without errors.
-    pub must_compile_successfully: bool,
+    pub compile_pass: bool,
     // rustdoc will test the output of the `--test` option
     pub check_test_line_numbers_match: bool,
     // The test must be compiled and run successfully. Only used in UI tests for now.
     pub run_pass: bool,
+    // Skip any codegen step and running the executable. Only for run-pass.
+    pub skip_trans: bool,
     // Do not pass `-Z ui-testing` to UI tests
     pub disable_ui_testing_normalization: bool,
     // customized normalization rules
     pub normalize_stdout: Vec<(String, String)>,
     pub normalize_stderr: Vec<(String, String)>,
     pub failure_status: i32,
+    pub run_rustfix: bool,
 }
 
 impl TestProps {
@@ -257,13 +260,15 @@ impl TestProps {
             pretty_compare_only: false,
             forbid_output: vec![],
             incremental_dir: None,
-            must_compile_successfully: false,
+            compile_pass: false,
             check_test_line_numbers_match: false,
             run_pass: false,
+            skip_trans: false,
             disable_ui_testing_normalization: false,
             normalize_stdout: vec![],
             normalize_stderr: vec![],
             failure_status: 101,
+            run_rustfix: false,
         }
     }
 
@@ -375,11 +380,15 @@ impl TestProps {
                 self.run_pass = config.parse_run_pass(ln);
             }
 
-            if !self.must_compile_successfully {
+            if !self.compile_pass {
                 // run-pass implies must_compile_sucessfully
-                self.must_compile_successfully =
-                    config.parse_must_compile_successfully(ln) || self.run_pass;
+                self.compile_pass =
+                    config.parse_compile_pass(ln) || self.run_pass;
             }
+
+                        if !self.skip_trans {
+                            self.skip_trans = config.parse_skip_trans(ln);
+                        }
 
             if !self.disable_ui_testing_normalization {
                 self.disable_ui_testing_normalization =
@@ -395,6 +404,10 @@ impl TestProps {
 
             if let Some(code) = config.parse_failure_status(ln) {
                 self.failure_status = code;
+            }
+
+            if !self.run_rustfix {
+                self.run_rustfix = config.parse_run_rustfix(ln);
             }
         });
 
@@ -412,6 +425,15 @@ fn iter_header(testfile: &Path, cfg: Option<&str>, it: &mut FnMut(&str)) {
     if testfile.is_dir() {
         return;
     }
+
+    let comment = if testfile.to_string_lossy().ends_with(".rs") {
+        "//"
+    } else {
+        "#"
+    };
+
+    let comment_with_brace = comment.to_string() + "[";
+
     let rdr = BufReader::new(File::open(testfile).unwrap());
     for ln in rdr.lines() {
         // Assume that any directives will be found before the first
@@ -421,10 +443,11 @@ fn iter_header(testfile: &Path, cfg: Option<&str>, it: &mut FnMut(&str)) {
         let ln = ln.trim();
         if ln.starts_with("fn") || ln.starts_with("mod") {
             return;
-        } else if ln.starts_with("//[") {
+        } else if ln.starts_with(&comment_with_brace) {
             // A comment like `//[foo]` is specific to revision `foo`
             if let Some(close_brace) = ln.find(']') {
-                let lncfg = &ln[3..close_brace];
+                let open_brace = ln.find('[').unwrap();
+                let lncfg = &ln[open_brace + 1 .. close_brace];
                 let matches = match cfg {
                     Some(s) => s == &lncfg[..],
                     None => false,
@@ -433,11 +456,11 @@ fn iter_header(testfile: &Path, cfg: Option<&str>, it: &mut FnMut(&str)) {
                     it(ln[(close_brace + 1) ..].trim_left());
                 }
             } else {
-                panic!("malformed condition directive: expected `//[foo]`, found `{}`",
-                       ln)
+                panic!("malformed condition directive: expected `{}foo]`, found `{}`",
+                        comment_with_brace, ln)
             }
-        } else if ln.starts_with("//") {
-            it(ln[2..].trim_left());
+        } else if ln.starts_with(comment) {
+            it(ln[comment.len() ..].trim_left());
         }
     }
     return;
@@ -508,8 +531,8 @@ impl Config {
         }
     }
 
-    fn parse_must_compile_successfully(&self, line: &str) -> bool {
-        self.parse_name_directive(line, "must-compile-successfully")
+    fn parse_compile_pass(&self, line: &str) -> bool {
+        self.parse_name_directive(line, "compile-pass")
     }
 
     fn parse_disable_ui_testing_normalization(&self, line: &str) -> bool {
@@ -522,6 +545,10 @@ impl Config {
 
     fn parse_run_pass(&self, line: &str) -> bool {
         self.parse_name_directive(line, "run-pass")
+    }
+
+    fn parse_skip_trans(&self, line: &str) -> bool {
+        self.parse_name_directive(line, "skip-trans")
     }
 
     fn parse_env(&self, line: &str, name: &str) -> Option<(String, String)> {
@@ -595,7 +622,7 @@ impl Config {
     fn has_cfg_prefix(&self, line: &str, prefix: &str) -> bool {
         // returns whether this line contains this prefix or not. For prefix
         // "ignore", returns true if line says "ignore-x86_64", "ignore-arch",
-        // "ignore-andorid" etc.
+        // "ignore-android" etc.
         line.starts_with(prefix) && line.as_bytes().get(prefix.len()) == Some(&b'-')
     }
 
@@ -630,6 +657,10 @@ impl Config {
         }
 
         None
+    }
+
+    fn parse_run_rustfix(&self, line: &str) -> bool {
+        self.parse_name_directive(line, "run-rustfix")
     }
 }
 

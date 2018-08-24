@@ -12,7 +12,7 @@
 
 [package]
 name = "serde_derive_internals"
-version = "0.22.1"
+version = "0.23.1"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "AST representation used by Serde derive macros. Unstable."
@@ -23,10 +23,10 @@ keywords = ["serde", "serialization"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/serde-rs/serde"
 [dependencies.proc-macro2]
-version = "0.2"
+version = "0.3"
 
 [dependencies.syn]
-version = "0.12"
+version = "0.13"
 features = ["derive", "parsing", "clone-impls"]
 default-features = false
 [badges.travis-ci]

@@ -1,91 +1,96 @@
 //! Lane-wise arithmetic operations.
+#![allow(unused)]
 
 macro_rules! impl_arithmetic_ops {
     ($id:ident) => {
-        impl ops::Add for $id {
+        impl ::ops::Add for $id {
             type Output = Self;
             #[inline]
             fn add(self, other: Self) -> Self {
+                use coresimd::simd_llvm::simd_add;
                 unsafe { simd_add(self, other) }
             }
         }
 
-        impl ops::Sub for $id {
+        impl ::ops::Sub for $id {
             type Output = Self;
             #[inline]
             fn sub(self, other: Self) -> Self {
+                use coresimd::simd_llvm::simd_sub;
                 unsafe { simd_sub(self, other) }
             }
         }
 
-        impl ops::Mul for $id {
+        impl ::ops::Mul for $id {
             type Output = Self;
             #[inline]
             fn mul(self, other: Self) -> Self {
+                use coresimd::simd_llvm::simd_mul;
                 unsafe { simd_mul(self, other) }
             }
         }
 
-        impl ops::Div for $id {
+        impl ::ops::Div for $id {
             type Output = Self;
             #[inline]
             fn div(self, other: Self) -> Self {
+                use coresimd::simd_llvm::simd_div;
                 unsafe { simd_div(self, other) }
             }
         }
 
-        impl ops::Rem for $id {
+        impl ::ops::Rem for $id {
             type Output = Self;
             #[inline]
             fn rem(self, other: Self) -> Self {
+                use coresimd::simd_llvm::simd_rem;
                 unsafe { simd_rem(self, other) }
             }
         }
 
-        impl ops::AddAssign for $id {
+        impl ::ops::AddAssign for $id {
             #[inline]
             fn add_assign(&mut self, other: Self) {
                 *self = *self + other;
             }
         }
 
-        impl ops::SubAssign for $id {
+        impl ::ops::SubAssign for $id {
             #[inline]
             fn sub_assign(&mut self, other: Self) {
                 *self = *self - other;
             }
         }
 
-        impl ops::MulAssign for $id {
+        impl ::ops::MulAssign for $id {
             #[inline]
             fn mul_assign(&mut self, other: Self) {
                 *self = *self * other;
             }
         }
 
-        impl ops::DivAssign for $id {
+        impl ::ops::DivAssign for $id {
             #[inline]
             fn div_assign(&mut self, other: Self) {
                 *self = *self / other;
             }
         }
 
-        impl ops::RemAssign for $id {
+        impl ::ops::RemAssign for $id {
             #[inline]
             fn rem_assign(&mut self, other: Self) {
                 *self = *self % other;
             }
         }
-    }
+    };
 }
 
 #[cfg(test)]
-#[macro_export]
 macro_rules! test_arithmetic_ops {
     ($id:ident, $elem_ty:ident) => {
         #[test]
         fn arithmetic() {
-            use ::coresimd::simd::$id;
+            use coresimd::simd::$id;
             let z = $id::splat(0 as $elem_ty);
             let o = $id::splat(1 as $elem_ty);
             let t = $id::splat(2 as $elem_ty);
@@ -121,7 +126,7 @@ macro_rules! test_arithmetic_ops {
             {
                 let mut v = z;
                 assert_eq!(v, z);
-                v += o;  // add_assign
+                v += o; // add_assign
                 assert_eq!(v, o);
                 v -= o; // sub_assign
                 assert_eq!(v, z);

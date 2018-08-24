@@ -31,6 +31,7 @@ use rustc::session::Session;
 use rustc::ty::layout::{LayoutError, LayoutOf, Size, TyLayout};
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::util::nodemap::FxHashMap;
+use rustc_target::spec::{HasTargetSpec, Target};
 
 use std::ffi::{CStr, CString};
 use std::cell::{Cell, RefCell};
@@ -38,7 +39,7 @@ use std::ptr;
 use std::iter;
 use std::str;
 use std::sync::Arc;
-use syntax::symbol::InternedString;
+use syntax::symbol::LocalInternedString;
 use abi::Abi;
 
 /// There is one `CodegenCx` per compilation unit. Each one has its own LLVM
@@ -61,7 +62,7 @@ pub struct CodegenCx<'a, 'tcx: 'a> {
     pub vtables: RefCell<FxHashMap<(Ty<'tcx>,
                                 Option<ty::PolyExistentialTraitRef<'tcx>>), ValueRef>>,
     /// Cache of constant strings,
-    pub const_cstr_cache: RefCell<FxHashMap<InternedString, ValueRef>>,
+    pub const_cstr_cache: RefCell<FxHashMap<LocalInternedString, ValueRef>>,
 
     /// Reverse-direction for const ptrs cast from globals.
     /// Key is a ValueRef holding a *T,
@@ -162,7 +163,7 @@ pub unsafe fn create_context_and_module(sess: &Session, mod_name: &str) -> (Cont
 
     // Ensure the data-layout values hardcoded remain the defaults.
     if sess.target.target.options.is_builtin {
-        let tm = ::back::write::create_target_machine(sess);
+        let tm = ::back::write::create_target_machine(sess, false);
         llvm::LLVMRustSetDataLayoutFromTargetMachine(llmod, tm);
         llvm::LLVMRustDisposeTargetMachine(tm);
 
@@ -272,7 +273,7 @@ impl<'a, 'tcx> CodegenCx<'a, 'tcx> {
             let dbg_cx = if tcx.sess.opts.debuginfo != NoDebugInfo {
                 let dctx = debuginfo::CrateDebugContext::new(llmod);
                 debuginfo::metadata::compile_unit_metadata(tcx,
-                                                           codegen_unit.name(),
+                                                           &codegen_unit.name().as_str(),
                                                            &dctx);
                 Some(dctx)
             } else {
@@ -406,7 +407,7 @@ impl<'b, 'tcx> CodegenCx<'b, 'tcx> {
             return llfn;
         }
 
-        let ty = tcx.mk_fn_ptr(ty::Binder(tcx.mk_fn_sig(
+        let ty = tcx.mk_fn_ptr(ty::Binder::bind(tcx.mk_fn_sig(
             iter::once(tcx.mk_mut_ptr(tcx.types.u8)),
             tcx.types.never,
             false,
@@ -453,13 +454,20 @@ impl<'a, 'tcx> ty::layout::HasDataLayout for &'a CodegenCx<'a, 'tcx> {
     }
 }
 
+impl<'a, 'tcx> HasTargetSpec for &'a CodegenCx<'a, 'tcx> {
+    fn target_spec(&self) -> &Target {
+        &self.tcx.sess.target.target
+    }
+}
+
 impl<'a, 'tcx> ty::layout::HasTyCtxt<'tcx> for &'a CodegenCx<'a, 'tcx> {
     fn tcx<'b>(&'b self) -> TyCtxt<'b, 'tcx, 'tcx> {
         self.tcx
     }
 }
 
-impl<'a, 'tcx> LayoutOf<Ty<'tcx>> for &'a CodegenCx<'a, 'tcx> {
+impl<'a, 'tcx> LayoutOf for &'a CodegenCx<'a, 'tcx> {
+    type Ty = Ty<'tcx>;
     type TyLayout = TyLayout<'tcx>;
 
     fn layout_of(self, ty: Ty<'tcx>) -> Self::TyLayout {

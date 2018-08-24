@@ -5,7 +5,7 @@ fn x(y: &i32) -> i32 {
     *y
 }
 
-#[warn(clippy)]
+#[warn(clippy, needless_borrow)]
 #[allow(unused_variables)]
 fn main() {
     let a = 5;
@@ -42,7 +42,7 @@ trait Trait {}
 impl<'a> Trait for &'a str {}
 
 fn h(_: &Trait) {}
-
+#[warn(needless_borrow)]
 #[allow(dead_code)]
 fn issue_1432() {
     let mut v = Vec::<String>::new();
@@ -50,13 +50,4 @@ fn issue_1432() {
     let _ = v.iter().filter(|&ref a| a.is_empty());
 
     let _ = v.iter().filter(|&a| a.is_empty());
-}
-
-#[allow(dead_code)]
-fn test_cow_with_ref(c: &Cow<[i32]>) {
-}
-
-#[allow(dead_code)]
-fn test_cow(c: Cow<[i32]>) {
-    let _c = c;
 }

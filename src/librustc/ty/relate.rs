@@ -22,7 +22,7 @@ use mir::interpret::{GlobalId, Value, PrimVal};
 use util::common::ErrorReported;
 use std::rc::Rc;
 use std::iter;
-use syntax::abi;
+use rustc_target::spec::abi;
 use hir as ast;
 use rustc_data_structures::accumulate_vec::AccumulateVec;
 
@@ -431,10 +431,10 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
         {
             // Wrap our types with a temporary GeneratorWitness struct
             // inside the binder so we can related them
-            let a_types = ty::Binder(GeneratorWitness(*a_types.skip_binder()));
-            let b_types = ty::Binder(GeneratorWitness(*b_types.skip_binder()));
+            let a_types = a_types.map_bound(GeneratorWitness);
+            let b_types = b_types.map_bound(GeneratorWitness);
             // Then remove the GeneratorWitness for the result
-            let types = ty::Binder(relation.relate(&a_types, &b_types)?.skip_binder().0);
+            let types = relation.relate(&a_types, &b_types)?.map_bound(|witness| witness.0);
             Ok(tcx.mk_generator_witness(types))
         }
 

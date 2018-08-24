@@ -721,16 +721,6 @@ fn main() {
 ```
 "##,
 
-E0066: r##"
-Box placement expressions (like C++'s "placement new") do not yet support any
-place expression except the exchange heap (i.e. `std::boxed::HEAP`).
-Furthermore, the syntax is changing to use `in` instead of `box`. See [RFC 470]
-and [RFC 809] for more details.
-
-[RFC 470]: https://github.com/rust-lang/rfcs/pull/470
-[RFC 809]: https://github.com/rust-lang/rfcs/blob/master/text/0809-box-and-in-for-stdlib.md
-"##,
-
 E0067: r##"
 The left-hand side of a compound assignment expression must be a place
 expression. A place expression represents a memory location and includes
@@ -1918,16 +1908,16 @@ differs from the behavior for `&T`, which is always `Copy`).
 
 E0206: r##"
 You can only implement `Copy` for a struct or enum. Both of the following
-examples will fail, because neither `i32` (primitive type) nor `&'static Bar`
-(reference to `Bar`) is a struct or enum:
+examples will fail, because neither `[u8; 256]` nor `&'static mut Bar`
+(mutable reference to `Bar`) is a struct or enum:
 
 ```compile_fail,E0206
-type Foo = i32;
+type Foo = [u8; 256];
 impl Copy for Foo { } // error
 
 #[derive(Copy, Clone)]
 struct Bar;
-impl Copy for &'static Bar { } // error
+impl Copy for &'static mut Bar { } // error
 ```
 "##,
 
@@ -3794,7 +3784,6 @@ that impl must be declared as an `unsafe impl.
 Erroneous code example:
 
 ```compile_fail,E0569
-#![feature(generic_param_attrs)]
 #![feature(dropck_eyepatch)]
 
 struct Foo<X>(X);
@@ -4147,86 +4136,6 @@ println!("x: {}, y: {}", variable.x, variable.y);
 For more information about primitives and structs, take a look at The Book:
 https://doc.rust-lang.org/book/first-edition/primitive-types.html
 https://doc.rust-lang.org/book/first-edition/structs.html
-"##,
-
-E0611: r##"
-Attempted to access a private field on a tuple-struct.
-
-Erroneous code example:
-
-```compile_fail,E0611
-mod some_module {
-    pub struct Foo(u32);
-
-    impl Foo {
-        pub fn new() -> Foo { Foo(0) }
-    }
-}
-
-let y = some_module::Foo::new();
-println!("{}", y.0); // error: field `0` of tuple-struct `some_module::Foo`
-                     //        is private
-```
-
-Since the field is private, you have two solutions:
-
-1) Make the field public:
-
-```
-mod some_module {
-    pub struct Foo(pub u32); // The field is now public.
-
-    impl Foo {
-        pub fn new() -> Foo { Foo(0) }
-    }
-}
-
-let y = some_module::Foo::new();
-println!("{}", y.0); // So we can access it directly.
-```
-
-2) Add a getter function to keep the field private but allow for accessing its
-value:
-
-```
-mod some_module {
-    pub struct Foo(u32);
-
-    impl Foo {
-        pub fn new() -> Foo { Foo(0) }
-
-        // We add the getter function.
-        pub fn get(&self) -> &u32 { &self.0 }
-    }
-}
-
-let y = some_module::Foo::new();
-println!("{}", y.get()); // So we can get the value through the function.
-```
-"##,
-
-E0612: r##"
-Attempted out-of-bounds tuple index.
-
-Erroneous code example:
-
-```compile_fail,E0612
-struct Foo(u32);
-
-let y = Foo(0);
-println!("{}", y.1); // error: attempted out-of-bounds tuple index `1`
-                     //        on type `Foo`
-```
-
-If a tuple/tuple-struct type has n fields, you can only try to access these n
-fields from 0 to (n - 1). So in this case, you can only index `0`. Example:
-
-```
-struct Foo(u32);
-
-let y = Foo(0);
-println!("{}", y.0); // ok!
-```
 "##,
 
 E0614: r##"
@@ -4617,23 +4526,23 @@ but the type of the numeric value or binding could not be identified.
 The error happens on numeric literals:
 
 ```compile_fail,E0689
-2.0.powi(2);
+2.0.recip();
 ```
 
 and on numeric bindings without an identified concrete type:
 
 ```compile_fail,E0689
 let x = 2.0;
-x.powi(2);  // same error as above
+x.recip();  // same error as above
 ```
 
 Because of this, you must give the numeric literal or binding a type:
 
 ```
-let _ = 2.0_f32.powi(2);
+let _ = 2.0_f32.recip();
 let x: f32 = 2.0;
-let _ = x.powi(2);
-let _ = (2.0 as f32).powi(2);
+let _ = x.recip();
+let _ = (2.0 as f32).recip();
 ```
 "##,
 
@@ -4847,14 +4756,17 @@ register_diagnostics! {
 //  E0563, // cannot determine a type for this `impl Trait`: {} // removed in 6383de15
     E0564, // only named lifetimes are allowed in `impl Trait`,
            // but `{}` was found in the type `{}`
-    E0587, // struct has conflicting packed and align representation hints
-    E0588, // packed struct cannot transitively contain a `[repr(align)]` struct
+    E0587, // type has conflicting packed and align representation hints
+    E0588, // packed type cannot transitively contain a `[repr(align)]` type
     E0592, // duplicate definitions with name `{}`
+//  E0611, // merged into E0616
+//  E0612, // merged into E0609
 //  E0613, // Removed (merged with E0609)
-    E0640, // infer outlives
     E0627, // yield statement outside of generator literal
     E0632, // cannot provide explicit type parameters when `impl Trait` is used in
            // argument position.
+    E0634, // type has conflicting packed representaton hints
+    E0640, // infer outlives requirements
     E0641, // cannot cast to/from a pointer with an unknown kind
     E0645, // trait aliases not finished
     E0907, // type inside generator must be known in this context

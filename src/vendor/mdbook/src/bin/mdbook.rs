@@ -1,6 +1,6 @@
+extern crate chrono;
 #[macro_use]
 extern crate clap;
-extern crate chrono;
 extern crate env_logger;
 extern crate error_chain;
 #[macro_use]
@@ -19,6 +19,7 @@ use env_logger::Builder;
 use mdbook::utils;
 
 pub mod build;
+pub mod clean;
 pub mod init;
 pub mod test;
 #[cfg(feature = "serve")]
@@ -37,14 +38,15 @@ fn main() {
                 .author("Mathieu David <mathieudavid@mathieudavid.org>")
                 // Get the version from our Cargo.toml using clap's crate_version!() macro
                 .version(concat!("v",crate_version!()))
-                .setting(AppSettings::SubcommandRequired)
+                .setting(AppSettings::ArgRequiredElseHelp)
                 .after_help("For more information about a specific command, \
                              try `mdbook <command> --help`\n\
                              Source code for mdbook available \
                              at: https://github.com/rust-lang-nursery/mdBook")
                 .subcommand(init::make_subcommand())
                 .subcommand(build::make_subcommand())
-                .subcommand(test::make_subcommand());
+                .subcommand(test::make_subcommand())
+                .subcommand(clean::make_subcommand());
 
     #[cfg(feature = "watch")]
     let app = app.subcommand(watch::make_subcommand());
@@ -55,6 +57,7 @@ fn main() {
     let res = match app.get_matches().subcommand() {
         ("init", Some(sub_matches)) => init::execute(sub_matches),
         ("build", Some(sub_matches)) => build::execute(sub_matches),
+        ("clean", Some(sub_matches)) => clean::execute(sub_matches),
         #[cfg(feature = "watch")]
         ("watch", Some(sub_matches)) => watch::execute(sub_matches),
         #[cfg(feature = "serve")]
@@ -74,11 +77,14 @@ fn init_logger() {
     let mut builder = Builder::new();
 
     builder.format(|formatter, record| {
-        writeln!(formatter, "{} [{}] ({}): {}",
-                 Local::now().format("%Y-%m-%d %H:%M:%S"),
-                 record.level(),
-                 record.target(),
-                 record.args())
+        writeln!(
+            formatter,
+            "{} [{}] ({}): {}",
+            Local::now().format("%Y-%m-%d %H:%M:%S"),
+            record.level(),
+            record.target(),
+            record.args()
+        )
     });
 
     if let Ok(var) = env::var("RUST_LOG") {
@@ -86,6 +92,8 @@ fn init_logger() {
     } else {
         // if no RUST_LOG provided, default to logging at the Info level
         builder.filter(None, LevelFilter::Info);
+        // Filter extraneous html5ever not-implemented messages
+        builder.filter(Some("html5ever"), LevelFilter::Error);
     }
 
     builder.init();

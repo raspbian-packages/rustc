@@ -1,9 +1,6 @@
-//! Code Generation
+//! Work arounds for code generation issues
 
-pub mod sum;
-pub mod product;
-pub mod and;
-pub mod or;
-pub mod xor;
-pub mod min;
-pub mod max;
+#[cfg(target_arch = "aarch64")]
+pub mod wrapping;
+
+pub mod masks_reductions;

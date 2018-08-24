@@ -171,7 +171,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
             let mut segments = path.segments.into_vec();
             let last = segments.pop().unwrap();
 
-            let real_name = name.as_ref().map(|n| Symbol::from(n.as_str()));
+            let real_name = name.map(|name| Symbol::intern(&name));
 
             segments.push(hir::PathSegment::new(
                 real_name.unwrap_or(last.name),
@@ -224,7 +224,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
                     let name = if p.name == "" {
                         hir::LifetimeName::Static
                     } else {
-                        hir::LifetimeName::Name(p.name)
+                        hir::LifetimeName::Name(p.name.as_symbol())
                     };
 
                     hir::Lifetime {
@@ -261,7 +261,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
                     span: DUMMY_SP,
                     def: Def::TyParam(param.def_id),
                     segments: HirVec::from_vec(vec![
-                        hir::PathSegment::from_name(Symbol::intern(&param.name))
+                        hir::PathSegment::from_name(param.name.as_symbol())
                     ]),
                 }),
             )),
@@ -286,7 +286,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
             substs: tcx.mk_substs_trait(ty, &[]),
         };
 
-        let trait_pred = ty::Binder(trait_ref);
+        let trait_pred = ty::Binder::bind(trait_ref);
 
         let bail_out = tcx.infer_ctxt().enter(|infcx| {
             let mut selcx = SelectionContext::with_negative(&infcx, true);
@@ -407,7 +407,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
             let names_map: FxHashMap<String, Lifetime> = generics
                 .regions
                 .iter()
-                .map(|l| (l.name.as_str().to_string(), l.clean(self.cx)))
+                .map(|l| (l.name.to_string(), l.clean(self.cx)))
                 .collect();
 
             let body_ids: FxHashSet<_> = infcx
@@ -622,7 +622,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
 
         let mut already_visited = FxHashSet();
         let mut predicates = VecDeque::new();
-        predicates.push_back(ty::Binder(ty::TraitPredicate {
+        predicates.push_back(ty::Binder::bind(ty::TraitPredicate {
             trait_ref: ty::TraitRef {
                 def_id: trait_did,
                 substs: infcx.tcx.mk_substs_trait(ty, &[]),
@@ -728,7 +728,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
 
     fn region_name(&self, region: Region) -> Option<String> {
         match region {
-            &ty::ReEarlyBound(r) => Some(r.name.as_str().to_string()),
+            &ty::ReEarlyBound(r) => Some(r.name.to_string()),
             _ => None,
         }
     }
@@ -1005,7 +1005,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
                         // We only care about late bound regions, as we need to add them
                         // to the 'for<>' section
                         &ty::ReLateBound(_, ty::BoundRegion::BrNamed(_, name)) => {
-                            Some(GenericParam::Lifetime(Lifetime(name.as_str().to_string())))
+                            Some(GenericParam::Lifetime(Lifetime(name.to_string())))
                         }
                         &ty::ReVar(_) | &ty::ReEarlyBound(_) => None,
                         _ => panic!("Unexpected region type {:?}", r),
@@ -1437,9 +1437,7 @@ impl<'a, 'tcx, 'rcx> AutoTraitFinder<'a, 'tcx, 'rcx> {
     // involved (impls rarely have more than a few bounds) means that it
     // shouldn't matter in practice.
     fn unstable_debug_sort<T: Debug>(&self, vec: &mut Vec<T>) {
-        vec.sort_unstable_by(|first, second| {
-            format!("{:?}", first).cmp(&format!("{:?}", second))
-        });
+        vec.sort_by_cached_key(|x| format!("{:?}", x))
     }
 
     fn is_fn_ty(&self, tcx: &TyCtxt, ty: &Type) -> bool {

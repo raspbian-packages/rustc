@@ -1,4 +1,5 @@
-//! Lane-wise vector comparisons returning boolean vectors.
+//! Lane-wise vector comparisons returning vector masks.
+#![allow(unused)]
 
 macro_rules! impl_cmp {
     ($id:ident, $bool_ty:ident) => {
@@ -6,92 +7,102 @@ macro_rules! impl_cmp {
             /// Lane-wise equality comparison.
             #[inline]
             pub fn eq(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_eq;
                 unsafe { simd_eq(self, other) }
             }
 
             /// Lane-wise inequality comparison.
             #[inline]
             pub fn ne(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_ne;
                 unsafe { simd_ne(self, other) }
             }
 
             /// Lane-wise less-than comparison.
             #[inline]
             pub fn lt(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_lt;
                 unsafe { simd_lt(self, other) }
             }
 
             /// Lane-wise less-than-or-equals comparison.
             #[inline]
             pub fn le(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_le;
                 unsafe { simd_le(self, other) }
             }
 
             /// Lane-wise greater-than comparison.
             #[inline]
             pub fn gt(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_gt;
                 unsafe { simd_gt(self, other) }
             }
 
             /// Lane-wise greater-than-or-equals comparison.
             #[inline]
             pub fn ge(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_ge;
                 unsafe { simd_ge(self, other) }
             }
         }
-    }
+    };
 }
 
-macro_rules! impl_bool_cmp {
+macro_rules! impl_mask_cmp {
     ($id:ident, $bool_ty:ident) => {
         impl $id {
             /// Lane-wise equality comparison.
             #[inline]
             pub fn eq(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_eq;
                 unsafe { simd_eq(self, other) }
             }
 
             /// Lane-wise inequality comparison.
             #[inline]
             pub fn ne(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_ne;
                 unsafe { simd_ne(self, other) }
             }
 
             /// Lane-wise less-than comparison.
             #[inline]
             pub fn lt(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_gt;
                 unsafe { simd_gt(self, other) }
             }
 
             /// Lane-wise less-than-or-equals comparison.
             #[inline]
             pub fn le(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_ge;
                 unsafe { simd_ge(self, other) }
             }
 
             /// Lane-wise greater-than comparison.
             #[inline]
             pub fn gt(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_lt;
                 unsafe { simd_lt(self, other) }
             }
 
             /// Lane-wise greater-than-or-equals comparison.
             #[inline]
             pub fn ge(self, other: $id) -> $bool_ty {
+                use coresimd::simd_llvm::simd_le;
                 unsafe { simd_le(self, other) }
             }
         }
-    }
+    };
 }
 
 #[cfg(test)]
-#[macro_export]
 macro_rules! test_cmp {
-    ($id:ident, $elem_ty:ident, $bool_ty:ident,
-     $true:expr, $false:expr) => {
+    ($id:ident, $elem_ty:ident, $bool_ty:ident, $true:expr, $false:expr) => {
         #[test]
         fn cmp() {
-            use ::coresimd::simd::*;
+            use coresimd::simd::*;
 
             let a = $id::splat($false);
             let b = $id::splat($true);
@@ -127,5 +138,5 @@ macro_rules! test_cmp {
             let r = a.lt(b);
             assert!(r == e);
         }
-    }
+    };
 }

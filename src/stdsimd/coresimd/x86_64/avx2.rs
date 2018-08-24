@@ -22,10 +22,13 @@ use coresimd::simd_llvm::*;
 use coresimd::x86::*;
 
 /// Extract a 64-bit integer from `a`, selected with `imm8`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm256_extract_epi64)
 #[inline]
 #[target_feature(enable = "avx2")]
 #[rustc_args_required_const(1)]
 // This intrinsic has no corresponding instruction.
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_extract_epi64(a: __m256i, imm8: i32) -> i64 {
     let imm8 = (imm8 & 3) as u32;
     simd_extract(a.as_i64x4(), imm8)
@@ -37,7 +40,7 @@ mod tests {
 
     use coresimd::arch::x86_64::*;
 
-    #[simd_test = "avx2"]
+    #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_extract_epi64() {
         let a = _mm256_setr_epi64x(0, 1, 2, 3);
         let r = _mm256_extract_epi64(a, 3);

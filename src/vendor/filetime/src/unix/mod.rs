@@ -6,7 +6,7 @@ use std::io;
 use std::os::unix::prelude::*;
 use std::path::Path;
 
-use self::libc::{c_int, c_char, timeval, time_t, suseconds_t, c_long};
+use self::libc::{c_int, c_char, timeval, time_t, suseconds_t};
 use self::libc::{timespec};
 
 use FileTime;
@@ -72,21 +72,21 @@ fn utimensat(p: &Path,
     fn to_timespec(ft: &FileTime) -> timespec {
         timespec {
             tv_sec: ft.seconds() as time_t,
-            tv_nsec: ft.nanoseconds() as c_long,
+            tv_nsec: ft.nanoseconds() as _,
         }
     }
 }
 
 pub fn from_last_modification_time(meta: &fs::Metadata) -> FileTime {
     FileTime {
-        seconds: meta.mtime() as u64,
+        seconds: meta.mtime(),
         nanos: meta.mtime_nsec() as u32,
     }
 }
 
 pub fn from_last_access_time(meta: &fs::Metadata) -> FileTime {
     FileTime {
-        seconds: meta.atime() as u64,
+        seconds: meta.atime(),
         nanos: meta.atime_nsec() as u32,
     }
 }
@@ -101,7 +101,7 @@ pub fn from_creation_time(meta: &fs::Metadata) -> Option<FileTime> {
                     use std::os::$i::fs::MetadataExt;
                 )*
                 Some(FileTime {
-                    seconds: meta.st_birthtime() as u64,
+                    seconds: meta.st_birthtime(),
                     nanos: meta.st_birthtime_nsec() as u32,
                 })
             }

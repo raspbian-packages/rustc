@@ -17,6 +17,7 @@ fn main() {
     let (cell, mut gen);
     cell = Box::new(RefCell::new(0));
     let ref_ = Box::leak(Box::new(Some(cell.borrow_mut())));
+    //~^ ERROR `*cell` does not live long enough [E0597]
     // the upvar is the non-dropck `&mut Option<Ref<'a, i32>>`.
     gen = || {
         // but the generator can use it to drop a `Ref<'a, i32>`.

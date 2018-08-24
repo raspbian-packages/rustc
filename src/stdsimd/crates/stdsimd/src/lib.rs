@@ -8,7 +8,7 @@
 //! [stdsimd]: https://rust-lang-nursery.github.io/stdsimd/x86_64/stdsimd/
 
 #![feature(const_fn, integer_atomics, staged_api, stdsimd)]
-#![feature(cfg_target_feature, doc_cfg)]
+#![feature(doc_cfg, allow_internal_unstable)]
 #![cfg_attr(feature = "cargo-clippy", allow(shadow_reuse))]
 #![cfg_attr(target_os = "linux", feature(linkage))]
 #![no_std]
@@ -18,10 +18,10 @@
 extern crate cfg_if;
 extern crate coresimd;
 extern crate libc;
-extern crate std as _std;
+extern crate std as __do_not_use_this_import;
 
 #[cfg(test)]
-#[macro_use]
+#[macro_use(println, print)]
 extern crate std;
 
 #[path = "../../../stdsimd/mod.rs"]
@@ -29,6 +29,11 @@ mod stdsimd;
 
 pub use stdsimd::*;
 
-use _std::prelude;
-use _std::fs;
-use _std::io;
+#[allow(unused_imports)]
+use __do_not_use_this_import::fs;
+#[allow(unused_imports)]
+use __do_not_use_this_import::io;
+#[allow(unused_imports)]
+use __do_not_use_this_import::prelude;
+#[allow(unused_imports)]
+use __do_not_use_this_import::mem;

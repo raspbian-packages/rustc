@@ -250,7 +250,6 @@ use core::cell::Cell;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hash, Hasher};
-use core::heap::{Alloc, Layout};
 use core::intrinsics::abort;
 use core::marker;
 use core::marker::{Unsize, PhantomData};
@@ -260,7 +259,7 @@ use core::ops::CoerceUnsized;
 use core::ptr::{self, NonNull};
 use core::convert::From;
 
-use heap::{Heap, box_free};
+use alloc::{Global, Alloc, Layout, Opaque, box_free, oom};
 use string::String;
 use vec::Vec;
 
@@ -668,11 +667,11 @@ impl<T: ?Sized> Rc<T> {
 
         let layout = Layout::for_value(&*fake_ptr);
 
-        let mem = Heap.alloc(layout)
-            .unwrap_or_else(|e| Heap.oom(e));
+        let mem = Global.alloc(layout)
+            .unwrap_or_else(|_| oom());
 
         // Initialize the real RcBox
-        let inner = set_data_ptr(ptr as *mut T, mem) as *mut RcBox<T>;
+        let inner = set_data_ptr(ptr as *mut T, mem.as_ptr() as *mut u8) as *mut RcBox<T>;
 
         ptr::write(&mut (*inner).strong, Cell::new(1));
         ptr::write(&mut (*inner).weak, Cell::new(1));
@@ -682,7 +681,8 @@ impl<T: ?Sized> Rc<T> {
 
     fn from_box(v: Box<T>) -> Rc<T> {
         unsafe {
-            let bptr = Box::into_raw(v);
+            let box_unique = Box::into_unique(v);
+            let bptr = box_unique.as_ptr();
 
             let value_size = size_of_val(&*bptr);
             let ptr = Self::allocate_for_ptr(bptr);
@@ -694,7 +694,7 @@ impl<T: ?Sized> Rc<T> {
                 value_size);
 
             // Free the allocation without dropping its contents
-            box_free(bptr);
+            box_free(box_unique);
 
             Rc { ptr: NonNull::new_unchecked(ptr), phantom: PhantomData }
         }
@@ -738,7 +738,7 @@ impl<T: Clone> RcFromSlice<T> for Rc<[T]> {
         // In the event of a panic, elements that have been written
         // into the new RcBox will be dropped, then the memory freed.
         struct Guard<T> {
-            mem: *mut u8,
+            mem: NonNull<Opaque>,
             elems: *mut T,
             layout: Layout,
             n_elems: usize,
@@ -752,7 +752,7 @@ impl<T: Clone> RcFromSlice<T> for Rc<[T]> {
                     let slice = from_raw_parts_mut(self.elems, self.n_elems);
                     ptr::drop_in_place(slice);
 
-                    Heap.dealloc(self.mem, self.layout.clone());
+                    Global.dealloc(self.mem, self.layout.clone());
                 }
             }
         }
@@ -761,14 +761,14 @@ impl<T: Clone> RcFromSlice<T> for Rc<[T]> {
             let v_ptr = v as *const [T];
             let ptr = Self::allocate_for_ptr(v_ptr);
 
-            let mem = ptr as *mut _ as *mut u8;
+            let mem = ptr as *mut _ as *mut Opaque;
             let layout = Layout::for_value(&*ptr);
 
             // Pointer to first element
             let elems = &mut (*ptr).value as *mut [T] as *mut T;
 
             let mut guard = Guard{
-                mem: mem,
+                mem: NonNull::new_unchecked(mem),
                 elems: elems,
                 layout: layout,
                 n_elems: 0,
@@ -835,8 +835,6 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Rc<T> {
     /// ```
     fn drop(&mut self) {
         unsafe {
-            let ptr = self.ptr.as_ptr();
-
             self.dec_strong();
             if self.strong() == 0 {
                 // destroy the contained object
@@ -847,7 +845,7 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Rc<T> {
                 self.dec_weak();
 
                 if self.weak() == 0 {
-                    Heap.dealloc(ptr as *mut u8, Layout::for_value(&*ptr));
+                    Global.dealloc(self.ptr.as_opaque(), Layout::for_value(self.ptr.as_ref()));
                 }
             }
         }
@@ -1267,13 +1265,11 @@ impl<T: ?Sized> Drop for Weak<T> {
     /// ```
     fn drop(&mut self) {
         unsafe {
-            let ptr = self.ptr.as_ptr();
-
             self.dec_weak();
             // the weak count starts at 1, and will only go to zero if all
             // the strong pointers have disappeared.
             if self.weak() == 0 {
-                Heap.dealloc(ptr as *mut u8, Layout::for_value(&*ptr));
+                Global.dealloc(self.ptr.as_opaque(), Layout::for_value(self.ptr.as_ref()));
             }
         }
     }

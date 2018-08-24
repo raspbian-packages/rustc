@@ -23,13 +23,12 @@ use infer::outlives::env::OutlivesEnvironment;
 use middle::region;
 use middle::const_val::ConstEvalErr;
 use ty::subst::Substs;
-use ty::{self, AdtKind, Ty, TyCtxt, TypeFoldable, ToPredicate};
+use ty::{self, AdtKind, Slice, Ty, TyCtxt, TypeFoldable, ToPredicate};
 use ty::error::{ExpectedFound, TypeError};
 use infer::{InferCtxt};
 
 use rustc_data_structures::sync::Lrc;
 use std::rc::Rc;
-use std::convert::From;
 use syntax::ast;
 use syntax_pos::{Span, DUMMY_SP};
 
@@ -42,7 +41,7 @@ pub use self::object_safety::ObjectSafetyViolation;
 pub use self::object_safety::MethodViolationCode;
 pub use self::on_unimplemented::{OnUnimplementedDirective, OnUnimplementedNote};
 pub use self::select::{EvaluationCache, SelectionContext, SelectionCache};
-pub use self::select::IntercrateAmbiguityCause;
+pub use self::select::{EvaluationResult, IntercrateAmbiguityCause, OverflowError};
 pub use self::specialize::{OverlapError, specialization_graph, translate_substs};
 pub use self::specialize::{SpecializesCache, find_associated_item};
 pub use self::engine::TraitEngine;
@@ -73,6 +72,19 @@ pub mod query;
 pub enum IntercrateMode {
     Issue43355,
     Fixed
+}
+
+// The mode that trait queries run in
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum TraitQueryMode {
+    // Standard/un-canonicalized queries get accurate
+    // spans etc. passed in and hence can do reasonable
+    // error reporting on their own.
+    Standard,
+    // Canonicalized queries get dummy spans and hence
+    // must generally propagate errors to
+    // pre-canonicalization callsites.
+    Canonical,
 }
 
 /// An `Obligation` represents some trait reference (e.g. `int:Eq`) for
@@ -267,10 +279,13 @@ pub enum DomainGoal<'tcx> {
     WellFormed(WhereClauseAtom<'tcx>),
     FromEnv(WhereClauseAtom<'tcx>),
     WellFormedTy(Ty<'tcx>),
+    Normalize(ty::ProjectionPredicate<'tcx>),
     FromEnvTy(Ty<'tcx>),
     RegionOutlives(ty::RegionOutlivesPredicate<'tcx>),
     TypeOutlives(ty::TypeOutlivesPredicate<'tcx>),
 }
+
+pub type PolyDomainGoal<'tcx> = ty::Binder<DomainGoal<'tcx>>;
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum QuantifierKind {
@@ -278,14 +293,31 @@ pub enum QuantifierKind {
     Existential,
 }
 
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Goal<'tcx> {
-    // FIXME: use interned refs instead of `Box`
-    Implies(Vec<Clause<'tcx>>, Box<Goal<'tcx>>),
-    And(Box<Goal<'tcx>>, Box<Goal<'tcx>>),
-    Not(Box<Goal<'tcx>>),
+    Implies(Clauses<'tcx>, &'tcx Goal<'tcx>),
+    And(&'tcx Goal<'tcx>, &'tcx Goal<'tcx>),
+    Not(&'tcx Goal<'tcx>),
     DomainGoal(DomainGoal<'tcx>),
-    Quantified(QuantifierKind, Box<ty::Binder<Goal<'tcx>>>)
+    Quantified(QuantifierKind, ty::Binder<&'tcx Goal<'tcx>>),
+    CannotProve,
+}
+
+pub type Goals<'tcx> = &'tcx Slice<Goal<'tcx>>;
+
+impl<'tcx> Goal<'tcx> {
+    pub fn from_poly_domain_goal<'a>(
+        domain_goal: PolyDomainGoal<'tcx>,
+        tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    ) -> Goal<'tcx> {
+        match domain_goal.no_late_bound_regions() {
+            Some(p) => p.into(),
+            None => Goal::Quantified(
+                QuantifierKind::Universal,
+                domain_goal.map_bound(|p| tcx.mk_goal(Goal::from(p)))
+            ),
+        }
+    }
 }
 
 impl<'tcx> From<DomainGoal<'tcx>> for Goal<'tcx> {
@@ -294,20 +326,30 @@ impl<'tcx> From<DomainGoal<'tcx>> for Goal<'tcx> {
     }
 }
 
-impl<'tcx> From<DomainGoal<'tcx>> for Clause<'tcx> {
-    fn from(domain_goal: DomainGoal<'tcx>) -> Self {
-        Clause::DomainGoal(domain_goal)
-    }
-}
-
 /// This matches the definition from Page 7 of "A Proof Procedure for the Logic of Hereditary
 /// Harrop Formulas".
-#[derive(Clone, PartialEq, Eq, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum Clause<'tcx> {
-    // FIXME: again, use interned refs instead of `Box`
-    Implies(Vec<Goal<'tcx>>, DomainGoal<'tcx>),
-    DomainGoal(DomainGoal<'tcx>),
-    ForAll(Box<ty::Binder<Clause<'tcx>>>),
+    Implies(ProgramClause<'tcx>),
+    ForAll(ty::Binder<ProgramClause<'tcx>>),
+}
+
+/// Multiple clauses.
+pub type Clauses<'tcx> = &'tcx Slice<Clause<'tcx>>;
+
+/// A "program clause" has the form `D :- G1, ..., Gn`. It is saying
+/// that the domain goal `D` is true if `G1...Gn` are provable. This
+/// is equivalent to the implication `G1..Gn => D`; we usually write
+/// it with the reverse implication operator `:-` to emphasize the way
+/// that programs are actually solved (via backchaining, which starts
+/// with the goal to solve and proceeds from there).
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct ProgramClause<'tcx> {
+    /// This goal will be considered true...
+    pub goal: DomainGoal<'tcx>,
+
+    /// ...if we can prove these hypotheses (there may be no hypotheses at all):
+    pub hypotheses: Goals<'tcx>,
 }
 
 pub type Selection<'tcx> = Vtable<'tcx, PredicateObligation<'tcx>>;
@@ -320,6 +362,7 @@ pub enum SelectionError<'tcx> {
                                 ty::error::TypeError<'tcx>),
     TraitNotObjectSafe(DefId),
     ConstEvalFailure(ConstEvalErr<'tcx>),
+    Overflow,
 }
 
 pub struct FulfillmentError<'tcx> {
@@ -521,8 +564,7 @@ pub fn type_known_to_meet_bound<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx
         predicate: trait_ref.to_predicate(),
     };
 
-    let result = SelectionContext::new(infcx)
-        .evaluate_obligation_conservatively(&obligation);
+    let result = infcx.predicate_must_hold(&obligation);
     debug!("type_known_to_meet_ty={:?} bound={} => {:?}",
            ty, infcx.tcx.item_path_str(def_id), result);
 
@@ -826,16 +868,19 @@ fn vtable_methods<'a, 'tcx>(
 
                 // the method may have some early-bound lifetimes, add
                 // regions for those
-                let substs = Substs::for_item(tcx, def_id,
-                                              |_, _| tcx.types.re_erased,
-                                              |def, _| trait_ref.substs().type_for_def(def));
+                let substs = trait_ref.map_bound(|trait_ref| {
+                    Substs::for_item(
+                        tcx, def_id,
+                        |_, _| tcx.types.re_erased,
+                        |def, _| trait_ref.substs.type_for_def(def))
+                });
 
                 // the trait type may have higher-ranked lifetimes in it;
                 // so erase them if they appear, so that we get the type
                 // at some particular call site
                 let substs = tcx.normalize_erasing_late_bound_regions(
                     ty::ParamEnv::reveal_all(),
-                    &ty::Binder(substs),
+                    &substs
                 );
 
                 // It's possible that the method relies on where clauses that
@@ -968,7 +1013,7 @@ impl<'tcx> FulfillmentError<'tcx> {
 
 impl<'tcx> TraitObligation<'tcx> {
     fn self_ty(&self) -> ty::Binder<Ty<'tcx>> {
-        ty::Binder(self.predicate.skip_binder().self_ty())
+        self.predicate.map_bound(|p| p.self_ty())
     }
 }
 

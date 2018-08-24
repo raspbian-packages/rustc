@@ -57,7 +57,7 @@ pub enum AssocOp {
     /// `=`
     Assign,
     /// `<-`
-    Inplace,
+    ObsoleteInPlace,
     /// `?=` where ? is one of the BinOpToken
     AssignOp(BinOpToken),
     /// `as`
@@ -86,7 +86,7 @@ impl AssocOp {
         use self::AssocOp::*;
         match *t {
             Token::BinOpEq(k) => Some(AssignOp(k)),
-            Token::LArrow => Some(Inplace),
+            Token::LArrow => Some(ObsoleteInPlace),
             Token::Eq => Some(Assign),
             Token::BinOp(BinOpToken::Star) => Some(Multiply),
             Token::BinOp(BinOpToken::Slash) => Some(Divide),
@@ -156,7 +156,7 @@ impl AssocOp {
             LAnd => 6,
             LOr => 5,
             DotDot | DotDotEq => 4,
-            Inplace => 3,
+            ObsoleteInPlace => 3,
             Assign | AssignOp(_) => 2,
         }
     }
@@ -166,7 +166,7 @@ impl AssocOp {
         use self::AssocOp::*;
         // NOTE: it is a bug to have an operators that has same precedence but different fixities!
         match *self {
-            Inplace | Assign | AssignOp(_) => Fixity::Right,
+            ObsoleteInPlace | Assign | AssignOp(_) => Fixity::Right,
             As | Multiply | Divide | Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd |
             BitXor | BitOr | Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual |
             LAnd | LOr | Colon => Fixity::Left,
@@ -178,8 +178,8 @@ impl AssocOp {
         use self::AssocOp::*;
         match *self {
             Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual => true,
-            Inplace | Assign | AssignOp(_) | As | Multiply | Divide | Modulus | Add | Subtract |
-            ShiftLeft | ShiftRight | BitAnd | BitXor | BitOr | LAnd | LOr |
+            ObsoleteInPlace | Assign | AssignOp(_) | As | Multiply | Divide | Modulus | Add |
+            Subtract | ShiftLeft | ShiftRight | BitAnd | BitXor | BitOr | LAnd | LOr |
             DotDot | DotDotEq | Colon => false
         }
     }
@@ -187,7 +187,7 @@ impl AssocOp {
     pub fn is_assign_like(&self) -> bool {
         use self::AssocOp::*;
         match *self {
-            Assign | AssignOp(_) | Inplace => true,
+            Assign | AssignOp(_) | ObsoleteInPlace => true,
             Less | Greater | LessEqual | GreaterEqual | Equal | NotEqual | As | Multiply | Divide |
             Modulus | Add | Subtract | ShiftLeft | ShiftRight | BitAnd | BitXor | BitOr | LAnd |
             LOr | DotDot | DotDotEq | Colon => false
@@ -215,7 +215,7 @@ impl AssocOp {
             BitOr => Some(BinOpKind::BitOr),
             LAnd => Some(BinOpKind::And),
             LOr => Some(BinOpKind::Or),
-            Inplace | Assign | AssignOp(_) | As | DotDot | DotDotEq | Colon => None
+            ObsoleteInPlace | Assign | AssignOp(_) | As | DotDot | DotDotEq | Colon => None
         }
     }
 }
@@ -242,7 +242,7 @@ pub enum ExprPrecedence {
 
     Binary(BinOpKind),
 
-    InPlace,
+    ObsoleteInPlace,
     Cast,
     Type,
 
@@ -256,7 +256,6 @@ pub enum ExprPrecedence {
     Call,
     MethodCall,
     Field,
-    TupField,
     Index,
     Try,
     InlineAsm,
@@ -310,7 +309,7 @@ impl ExprPrecedence {
 
             // Binop-like expr kinds, handled by `AssocOp`.
             ExprPrecedence::Binary(op) => AssocOp::from_ast_binop(op).precedence() as i8,
-            ExprPrecedence::InPlace => AssocOp::Inplace.precedence() as i8,
+            ExprPrecedence::ObsoleteInPlace => AssocOp::ObsoleteInPlace.precedence() as i8,
             ExprPrecedence::Cast => AssocOp::As.precedence() as i8,
             ExprPrecedence::Type => AssocOp::Colon.precedence() as i8,
 
@@ -326,7 +325,6 @@ impl ExprPrecedence {
             ExprPrecedence::Call |
             ExprPrecedence::MethodCall |
             ExprPrecedence::Field |
-            ExprPrecedence::TupField |
             ExprPrecedence::Index |
             ExprPrecedence::Try |
             ExprPrecedence::InlineAsm |
@@ -371,7 +369,6 @@ pub fn contains_exterior_struct_lit(value: &ast::Expr) -> bool {
         ast::ExprKind::Cast(ref x, _) |
         ast::ExprKind::Type(ref x, _) |
         ast::ExprKind::Field(ref x, _) |
-        ast::ExprKind::TupField(ref x, _) |
         ast::ExprKind::Index(ref x, _) => {
             // &X { y: 1 }, X { y: 1 }.y
             contains_exterior_struct_lit(&x)

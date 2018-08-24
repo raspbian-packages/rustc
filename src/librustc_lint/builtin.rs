@@ -46,7 +46,7 @@ use syntax::attr;
 use syntax::feature_gate::{AttributeGate, AttributeType, Stability, deprecated_attributes};
 use syntax_pos::{BytePos, Span, SyntaxContext};
 use syntax::symbol::keywords;
-use syntax::errors::DiagnosticBuilder;
+use syntax::errors::{Applicability, DiagnosticBuilder};
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::intravisit::FnKind;
@@ -166,21 +166,32 @@ impl LintPass for NonShorthandFieldPatterns {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonShorthandFieldPatterns {
     fn check_pat(&mut self, cx: &LateContext, pat: &hir::Pat) {
-        if let PatKind::Struct(_, ref field_pats, _) = pat.node {
+        if let PatKind::Struct(ref qpath, ref field_pats, _) = pat.node {
+            let variant = cx.tables.pat_ty(pat).ty_adt_def()
+                                   .expect("struct pattern type is not an ADT")
+                                   .variant_of_def(cx.tables.qpath_def(qpath, pat.hir_id));
             for fieldpat in field_pats {
                 if fieldpat.node.is_shorthand {
                     continue;
                 }
-                if let PatKind::Binding(_, _, ident, None) = fieldpat.node.pat.node {
-                    if ident.node == fieldpat.node.name {
+                if fieldpat.span.ctxt().outer().expn_info().is_some() {
+                    // Don't lint if this is a macro expansion: macro authors
+                    // shouldn't have to worry about this kind of style issue
+                    // (Issue #49588)
+                    continue;
+                }
+                if let PatKind::Binding(_, _, name, None) = fieldpat.node.pat.node {
+                    let binding_ident = ast::Ident::new(name.node, name.span);
+                    if cx.tcx.find_field_index(binding_ident, &variant) ==
+                       Some(cx.tcx.field_index(fieldpat.node.id, cx.tables)) {
                         let mut err = cx.struct_span_lint(NON_SHORTHAND_FIELD_PATTERNS,
                                      fieldpat.span,
                                      &format!("the `{}:` in this pattern is redundant",
-                                              ident.node));
+                                              name.node));
                         let subspan = cx.tcx.sess.codemap().span_through_char(fieldpat.span, ':');
                         err.span_suggestion_short(subspan,
                                                   "remove this",
-                                                  format!("{}", ident.node));
+                                                  format!("{}", name.node));
                         err.emit();
                     }
                 }
@@ -625,7 +636,7 @@ impl EarlyLintPass for AnonymousParameters {
                 for arg in sig.decl.inputs.iter() {
                     match arg.pat.node {
                         ast::PatKind::Ident(_, ident, None) => {
-                            if ident.node.name == keywords::Invalid.name() {
+                            if ident.name == keywords::Invalid.name() {
                                 cx.span_lint(ANONYMOUS_PARAMETERS,
                                              arg.pat.span,
                                              "use of deprecated anonymous parameter");
@@ -664,9 +675,8 @@ impl LintPass for DeprecatedAttr {
 
 impl EarlyLintPass for DeprecatedAttr {
     fn check_attribute(&mut self, cx: &EarlyContext, attr: &ast::Attribute) {
-        let name = unwrap_or!(attr.name(), return);
         for &&(n, _, ref g) in &self.depr_attrs {
-            if name == n {
+            if attr.name() == n {
                 if let &AttributeGate::Gated(Stability::Deprecated(link),
                                              ref name,
                                              ref reason,
@@ -684,7 +694,7 @@ impl EarlyLintPass for DeprecatedAttr {
 }
 
 declare_lint! {
-    pub UNUSED_DOC_COMMENT,
+    pub UNUSED_DOC_COMMENTS,
     Warn,
     "detects doc comments that aren't used by rustdoc"
 }
@@ -694,7 +704,7 @@ pub struct UnusedDocComment;
 
 impl LintPass for UnusedDocComment {
     fn get_lints(&self) -> LintArray {
-        lint_array![UNUSED_DOC_COMMENT]
+        lint_array![UNUSED_DOC_COMMENTS]
     }
 }
 
@@ -703,7 +713,7 @@ impl UnusedDocComment {
                    I: Iterator<Item=&'a ast::Attribute>,
                    C: LintContext<'tcx>>(&self, mut attrs: I, cx: &C) {
         if let Some(attr) = attrs.find(|a| a.is_value_str() && a.check_name("doc")) {
-            cx.struct_span_lint(UNUSED_DOC_COMMENT, attr.span, "doc comment not used by rustdoc")
+            cx.struct_span_lint(UNUSED_DOC_COMMENTS, attr.span, "doc comment not used by rustdoc")
               .emit();
         }
     }
@@ -949,7 +959,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
                 // Attempt to select a concrete impl before checking.
                 ty::TraitContainer(trait_def_id) => {
                     let trait_ref = ty::TraitRef::from_method(tcx, trait_def_id, callee_substs);
-                    let trait_ref = ty::Binder(trait_ref);
+                    let trait_ref = ty::Binder::bind(trait_ref);
                     let span = tcx.hir.span(expr_id);
                     let obligation =
                         traits::Obligation::new(traits::ObligationCause::misc(span, expr_id),
@@ -1158,7 +1168,7 @@ impl LintPass for MutableTransmutes {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutableTransmutes {
     fn check_expr(&mut self, cx: &LateContext, expr: &hir::Expr) {
-        use syntax::abi::Abi::RustIntrinsic;
+        use rustc_target::spec::abi::Abi::RustIntrinsic;
 
         let msg = "mutating transmuted &mut T from &T may cause undefined behavior, \
                    consider instead using an UnsafeCell";
@@ -1290,7 +1300,19 @@ impl UnreachablePub {
             } else {
                 "pub(crate)"
             }.to_owned();
-            err.span_suggestion(pub_span, "consider restricting its visibility", replacement);
+            let app = if span.ctxt().outer().expn_info().is_none() {
+                // even if macros aren't involved the suggestion
+                // may be incorrect -- the user may have mistakenly
+                // hidden it behind a private module and this lint is
+                // a helpful way to catch that. However, we're trying
+                // not to change the nature of the code with this lint
+                // so it's marked as machine applicable.
+                Applicability::MachineApplicable
+            } else {
+                Applicability::MaybeIncorrect
+            };
+            err.span_suggestion_with_applicability(pub_span, "consider restricting its visibility",
+                                                   replacement, app);
             if exportable {
                 err.help("or consider exporting it for use by other crates");
             }

@@ -43,6 +43,43 @@ enum ReorderedEnum {
     B(u8, u16, u8),
 }
 
+enum EnumEmpty {}
+
+enum EnumSingle1 {
+    A,
+}
+
+enum EnumSingle2 {
+    A = 42 as isize,
+}
+
+enum EnumSingle3 {
+    A,
+    B(!),
+}
+
+#[repr(u8)]
+enum EnumSingle4 {
+    A,
+}
+
+#[repr(u8)]
+enum EnumSingle5 {
+    A = 42 as u8,
+}
+
+enum EnumWithMaybeUninhabitedVariant<T> {
+    A(&'static ()),
+    B(&'static (), T),
+    C,
+}
+
+enum NicheFilledEnumWithAbsentVariant {
+    A(&'static ()),
+    B((), !),
+    C,
+}
+
 pub fn main() {
     assert_eq!(size_of::<u8>(), 1 as usize);
     assert_eq!(size_of::<u32>(), 4 as usize);
@@ -68,4 +105,15 @@ pub fn main() {
     assert_eq!(size_of::<e3>(), 4 as usize);
     assert_eq!(size_of::<ReorderedStruct>(), 4);
     assert_eq!(size_of::<ReorderedEnum>(), 6);
+
+    assert_eq!(size_of::<EnumEmpty>(), 0);
+    assert_eq!(size_of::<EnumSingle1>(), 0);
+    assert_eq!(size_of::<EnumSingle2>(), 0);
+    assert_eq!(size_of::<EnumSingle3>(), 0);
+    assert_eq!(size_of::<EnumSingle4>(), 1);
+    assert_eq!(size_of::<EnumSingle5>(), 1);
+
+    assert_eq!(size_of::<EnumWithMaybeUninhabitedVariant<!>>(),
+               size_of::<EnumWithMaybeUninhabitedVariant<()>>());
+    assert_eq!(size_of::<NicheFilledEnumWithAbsentVariant>(), size_of::<&'static ()>());
 }

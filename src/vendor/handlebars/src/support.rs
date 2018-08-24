@@ -1,13 +1,16 @@
 pub mod str {
-    use std::io::{Write, Result};
+    use std::io::{Result, Write};
 
+    #[derive(Debug)]
     pub struct StringWriter {
         buf: Vec<u8>,
     }
 
     impl StringWriter {
         pub fn new() -> StringWriter {
-            StringWriter { buf: Vec::with_capacity(8 * 1024) }
+            StringWriter {
+                buf: Vec::with_capacity(8 * 1024),
+            }
         }
 
         pub fn to_string(self) -> String {

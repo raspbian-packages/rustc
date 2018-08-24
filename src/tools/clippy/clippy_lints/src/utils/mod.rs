@@ -8,7 +8,7 @@ use rustc::hir::map::Node;
 use rustc::lint::{LateContext, Level, Lint, LintContext};
 use rustc::session::Session;
 use rustc::traits;
-use rustc::ty::{self, Ty, TyCtxt, layout};
+use rustc::ty::{self, Ty, TyCtxt, layout::{self, IntegerExt}};
 use rustc_errors;
 use std::borrow::Cow;
 use std::env;
@@ -116,7 +116,7 @@ pub fn match_def_path(tcx: TyCtxt, def_id: DefId, path: &[&str]) -> bool {
     use syntax::symbol;
 
     struct AbsolutePathBuffer {
-        names: Vec<symbol::InternedString>,
+        names: Vec<symbol::LocalInternedString>,
     }
 
     impl ty::item_path::ItemPathBuffer for AbsolutePathBuffer {
@@ -237,7 +237,7 @@ pub fn match_path_ast(path: &ast::Path, segments: &[&str]) -> bool {
         .iter()
         .rev()
         .zip(segments.iter().rev())
-        .all(|(a, b)| a.identifier.name == *b)
+        .all(|(a, b)| a.ident.name == *b)
 }
 
 /// Get the definition associated to a path.
@@ -302,7 +302,7 @@ pub fn implements_trait<'a, 'tcx>(
         cx.tcx
             .predicate_for_trait_def(cx.param_env, traits::ObligationCause::dummy(), trait_id, 0, ty, ty_params);
     cx.tcx.infer_ctxt().enter(|infcx| {
-        traits::SelectionContext::new(&infcx).evaluate_obligation_conservatively(&obligation)
+        traits::SelectionContext::new(&infcx).infcx().predicate_must_hold(&obligation)
     })
 }
 
@@ -1085,4 +1085,37 @@ pub fn clip(tcx: TyCtxt, u: u128, ity: ast::UintTy) -> u128 {
     let bits = layout::Integer::from_attr(tcx, attr::IntType::UnsignedInt(ity)).size().bits();
     let amt = 128 - bits;
     (u << amt) >> amt
+}
+
+/// Remove block comments from the given Vec of lines
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// without_block_comments(vec!["/*", "foo", "*/"]);
+/// // => vec![]
+///
+/// without_block_comments(vec!["bar", "/*", "foo", "*/"]);
+/// // => vec!["bar"]
+/// ```
+pub fn without_block_comments(lines: Vec<&str>) -> Vec<&str> {
+    let mut without = vec![];
+
+    let mut nest_level = 0;
+
+    for line in lines {
+        if line.contains("/*") {
+            nest_level += 1;
+            continue;
+        } else if line.contains("*/") {
+            nest_level -= 1;
+            continue;
+        }
+
+        if nest_level == 0 {
+            without.push(line);
+        }
+    }
+
+    without
 }

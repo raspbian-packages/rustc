@@ -20,12 +20,12 @@ use rustc::mir::visit::{MutVisitor, TyContext};
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::subst::Substs;
 use rustc::util::nodemap::NodeMap;
-use rustc_back::PanicStrategy;
+use rustc_target::spec::PanicStrategy;
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
 use shim;
 use std::mem;
 use std::u32;
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 use syntax::ast;
 use syntax::attr::{self, UnwindAttr};
 use syntax::symbol::keywords;
@@ -291,8 +291,14 @@ struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     visibility_scope_info: IndexVec<VisibilityScope, VisibilityScopeInfo>,
     visibility_scope: VisibilityScope,
 
+    /// the guard-context: each time we build the guard expression for
+    /// a match arm, we push onto this stack, and then pop when we
+    /// finish building it.
+    guard_context: Vec<GuardFrame>,
+
     /// Maps node ids of variable bindings to the `Local`s created for them.
-    var_indices: NodeMap<Local>,
+    /// (A match binding can have two locals; the 2nd is for the arm's guard.)
+    var_indices: NodeMap<LocalsForNode>,
     local_decls: IndexVec<Local, LocalDecl<'tcx>>,
     unit_temp: Option<Place<'tcx>>,
 
@@ -303,6 +309,74 @@ struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     cached_return_block: Option<BasicBlock>,
     /// cached block with the UNREACHABLE terminator
     cached_unreachable_block: Option<BasicBlock>,
+}
+
+impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
+    fn is_bound_var_in_guard(&self, id: ast::NodeId) -> bool {
+        self.guard_context.iter().any(|frame| frame.locals.iter().any(|local| local.id == id))
+    }
+
+    fn var_local_id(&self, id: ast::NodeId, for_guard: ForGuard) -> Local {
+        self.var_indices[&id].local_id(for_guard)
+    }
+}
+
+#[derive(Debug)]
+enum LocalsForNode {
+    One(Local),
+    Two { for_guard: Local, for_arm_body: Local },
+}
+
+#[derive(Debug)]
+struct GuardFrameLocal {
+    id: ast::NodeId,
+}
+
+impl GuardFrameLocal {
+    fn new(id: ast::NodeId, _binding_mode: BindingMode) -> Self {
+        GuardFrameLocal {
+            id: id,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct GuardFrame {
+    /// These are the id's of names that are bound by patterns of the
+    /// arm of *this* guard.
+    ///
+    /// (Frames higher up the stack will have the id's bound in arms
+    /// further out, such as in a case like:
+    ///
+    /// match E1 {
+    ///      P1(id1) if (... (match E2 { P2(id2) if ... => B2 })) => B1,
+    /// }
+    ///
+    /// here, when building for FIXME
+    locals: Vec<GuardFrameLocal>,
+}
+
+/// ForGuard is isomorphic to a boolean flag. It indicates whether we are
+/// talking about the temp for a local binding for a use within a guard expression,
+/// or a temp for use outside of a guard expressions.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum ForGuard {
+    WithinGuard,
+    OutsideGuard,
+}
+
+impl LocalsForNode {
+    fn local_id(&self, for_guard: ForGuard) -> Local {
+        match (self, for_guard) {
+            (&LocalsForNode::One(local_id), ForGuard::OutsideGuard) |
+            (&LocalsForNode::Two { for_guard: local_id, .. }, ForGuard::WithinGuard) |
+            (&LocalsForNode::Two { for_arm_body: local_id, .. }, ForGuard::OutsideGuard) =>
+                local_id,
+
+            (&LocalsForNode::One(_), ForGuard::WithinGuard) =>
+                bug!("anything with one local should never be within a guard."),
+        }
+    }
 }
 
 struct CFG<'tcx> {
@@ -317,7 +391,7 @@ newtype_index!(ScopeId);
 /// macro (and methods below) makes working with `BlockAnd` much more
 /// convenient.
 
-#[must_use] // if you don't use one of these results, you're leaving a dangling edge
+#[must_use = "if you don't use one of these results, you're leaving a dangling edge"]
 struct BlockAnd<T>(BasicBlock, T);
 
 trait BlockAndExtension {
@@ -467,8 +541,8 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                 mutability: Mutability::Not,
             };
             if let Some(hir::map::NodeBinding(pat)) = tcx.hir.find(var_id) {
-                if let hir::PatKind::Binding(_, _, ref ident, _) = pat.node {
-                    decl.debug_name = ident.node;
+                if let hir::PatKind::Binding(_, _, ref name, _) = pat.node {
+                    decl.debug_name = name.node;
 
                     let bm = *hir.tables.pat_binding_modes()
                                         .get(pat.hir_id)
@@ -548,6 +622,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             visibility_scopes: IndexVec::new(),
             visibility_scope: ARGUMENT_VISIBILITY_SCOPE,
             visibility_scope_info: IndexVec::new(),
+            guard_context: vec![],
             push_unsafe_count: 0,
             unpushed_unsafe: safety,
             breakable_scopes: vec![],
@@ -636,11 +711,12 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     // Don't introduce extra copies for simple bindings
                     PatternKind::Binding { mutability, var, mode: BindingMode::ByValue, .. } => {
                         self.local_decls[local].mutability = mutability;
-                        self.var_indices.insert(var, local);
+                        self.var_indices.insert(var, LocalsForNode::One(local));
                     }
                     _ => {
                         scope = self.declare_bindings(scope, ast_body.span,
-                                                      LintLevel::Inherited, &pattern);
+                                                      LintLevel::Inherited, &pattern,
+                                                      matches::ArmHasGuard(false));
                         unpack!(block = self.place_into_pattern(block, pattern, &place));
                     }
                 }

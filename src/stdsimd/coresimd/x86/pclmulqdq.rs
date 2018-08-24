@@ -21,6 +21,8 @@ extern "C" {
 ///
 /// The immediate byte is used for determining which halves of `a` and `b`
 /// should be used. Immediate bits other than 0 and 4 are ignored.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_clmulepi64_si128)
 #[inline]
 #[target_feature(enable = "pclmulqdq")]
 #[cfg_attr(all(test, not(target_os = "linux")),
@@ -34,11 +36,14 @@ extern "C" {
 #[cfg_attr(all(test, target_os = "linux"),
            assert_instr(pclmulhqhqdq, imm8 = 17))]
 #[rustc_args_required_const(2)]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_clmulepi64_si128(
     a: __m128i, b: __m128i, imm8: i32
 ) -> __m128i {
     macro_rules! call {
-        ($imm8:expr) => (pclmulqdq(a, b, $imm8))
+        ($imm8:expr) => {
+            pclmulqdq(a, b, $imm8)
+        };
     }
     constify_imm8!(imm8, call)
 }
@@ -54,7 +59,7 @@ mod tests {
 
     use coresimd::x86::*;
 
-    #[simd_test = "pclmulqdq"]
+    #[simd_test(enable = "pclmulqdq")]
     unsafe fn test_mm_clmulepi64_si128() {
         // Constants taken from https://software.intel.com/sites/default/files/managed/72/cc/clmul-wp-rev-2.02-2014-04-20.pdf
         let a = _mm_set_epi64x(0x7b5b546573745665, 0x63746f725d53475d);

@@ -1,5 +1,43 @@
 # Change Log
 
+## [0.32.0] (https://github.com/sunng87/handlebars-rust/compare/0.30.1...0.32.0) - 2018-02-16
+
+* [Added] Strict mode that raises `RenderError` on accessing
+  non-existed field or array index.
+
+## [0.31.0](https://github.com/sunng87/handlebars-rust/compare/0.30.1...0.31.0) - 2018-02-09
+* [Changed] Fixed handlebars comment support, added html comment output
+* [Changed] Removed some wasted string clones
+
+## [0.30.1](https://github.com/sunng87/handlebars-rust/compare/0.30.0...0.30.1) - 2018-01-31
+* [Changed] Added `Debug` for public types
+
+## [0.30.0](https://github.com/sunng87/handlebars-rust/compare/0.30.0-beta.5...0.30.0) - 2018-01-21
+* [Changed] Use pest 1.0
+
+## [0.30.0-beta.5](https://github.com/sunng87/handlebars-rust/compare/0.30.0-beta.4...0.30.0-beta.5) - 2018-01-19
+
+* [Changed] Improve `TemplateError` display. Now includes a segment of
+  template string.
+* [Changed] Updated `lazy_static` to 1.0
+* [Changed] Renamed some render functions names.
+
+## [0.30.0-beta.4](https://github.com/sunng87/handlebars-rust/compare/0.30.0-beta.3...0.30.0-beta.4) - 2017-11-20
+* [Changed] Added `Sync` to the nested error of `RenderError`
+
+## [0.30.0-beta.3](https://github.com/sunng87/handlebars-rust/compare/0.30.0-beta.2...0.30.0-beta.3) - 2017-11-16
+* [Changed] Fixed issue `template_render` methods doesn't respect `source_map` setting
+
+## [0.30.0-beta.2](https://github.com/sunng87/handlebars-rust/compare/0.30.0-beta.1...0.30.0-beta.2) - 2017-10-07
+* [Changed] Fixed parsing keywords like `as`
+
+## [0.30.0-beta.1](https://github.com/sunng87/handlebars-rust/compare/0.29.1...0.30.0-beta.1) - 2017-10-03
+
+* [Changed] Upgrade pest to 1.0
+* [Changed] Fixed template parsing issue when parameter starts with "as"
+* [Changed] Added new HelperDef function to return JSON value
+* [Changed] Added support for @root
+
 ## [0.29.1](https://github.com/sunng87/handlebars-rust/compare/0.29.0...0.29.1) - 2017-09-01
 
 * [Changed] Remove `debug!` logging from render to avoid conflict when

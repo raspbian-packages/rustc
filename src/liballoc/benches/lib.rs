@@ -8,9 +8,6 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-#![deny(warnings)]
-
-#![cfg_attr(stage0, feature(i128_type))]
 #![feature(rand)]
 #![feature(repr_simd)]
 #![feature(slice_sort_by_cached_key)]

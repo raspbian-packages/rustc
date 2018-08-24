@@ -16,7 +16,7 @@ mod check_match;
 pub use self::check_match::check_crate;
 pub(crate) use self::check_match::check_match;
 
-use interpret::{const_val_field, const_discr, self};
+use interpret::{const_val_field, const_variant_index, self};
 
 use rustc::middle::const_val::ConstVal;
 use rustc::mir::{Field, BorrowKind, Mutability};
@@ -28,13 +28,13 @@ use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::pat_util::EnumerateAndAdjustIterator;
 
 use rustc_data_structures::indexed_vec::Idx;
-use rustc_const_math::ConstFloat;
 
 use std::cmp::Ordering;
 use std::fmt;
 use syntax::ast;
 use syntax::ptr::P;
 use syntax_pos::Span;
+use syntax_pos::symbol::Symbol;
 
 #[derive(Clone, Debug)]
 pub enum PatternError {
@@ -466,7 +466,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                 }
             }
 
-            PatKind::Binding(_, id, ref ident, ref sub) => {
+            PatKind::Binding(_, id, ref name, ref sub) => {
                 let var_ty = self.tables.node_id_to_type(pat.hir_id);
                 let region = match var_ty.sty {
                     ty::TyRef(r, _) => Some(r),
@@ -493,14 +493,14 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                     if let ty::TyRef(_, mt) = ty.sty {
                         ty = mt.ty;
                     } else {
-                        bug!("`ref {}` has wrong type {}", ident.node, ty);
+                        bug!("`ref {}` has wrong type {}", name.node, ty);
                     }
                 }
 
                 PatternKind::Binding {
                     mutability,
                     mode,
-                    name: ident.node,
+                    name: name.node,
                     var: id,
                     ty: var_ty,
                     subpattern: self.lower_opt_pattern(sub),
@@ -528,28 +528,12 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
 
             PatKind::Struct(ref qpath, ref fields, _) => {
                 let def = self.tables.qpath_def(qpath, pat.hir_id);
-                let adt_def = match ty.sty {
-                    ty::TyAdt(adt_def, _) => adt_def,
-                    _ => {
-                        span_bug!(
-                            pat.span,
-                            "struct pattern not applied to an ADT");
-                    }
-                };
-                let variant_def = adt_def.variant_of_def(def);
-
                 let subpatterns =
                     fields.iter()
                           .map(|field| {
-                              let index = variant_def.index_of_field_named(field.node.name);
-                              let index = index.unwrap_or_else(|| {
-                                  span_bug!(
-                                      pat.span,
-                                      "no field with name {:?}",
-                                      field.node.name);
-                              });
                               FieldPattern {
-                                  field: Field::new(index),
+                                  field: Field::new(self.tcx.field_index(field.node.id,
+                                                                         self.tables)),
                                   pattern: self.lower_pattern(&field.node.pat),
                               }
                           })
@@ -808,7 +792,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                 ConstVal::Value(miri) => const_val_field(
                     self.tcx, self.param_env, instance,
                     variant_opt, field, miri, cv.ty,
-                ).unwrap(),
+                ).expect("field access failed"),
                 _ => bug!("{:#?} is not a valid adt", cv),
             };
             self.const_to_pat(instance, val, id, span)
@@ -851,38 +835,9 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
             ty::TyAdt(adt_def, substs) if adt_def.is_enum() => {
                 match cv.val {
                     ConstVal::Value(val) => {
-                        let discr_val = const_discr(
+                        let variant_index = const_variant_index(
                             self.tcx, self.param_env, instance, val, cv.ty
-                        ).expect("const_discr failed");
-                        let layout = self
-                            .tcx
-                            .layout_of(self.param_env.and(cv.ty))
-                            .expect("layout of enum not available");
-                        let variant_index = match layout.variants {
-                            ty::layout::Variants::Single { index } => index,
-                            ty::layout::Variants::Tagged { ref discr, .. } => {
-                                // raw discriminants for enums are isize or bigger during
-                                // their computation, but later shrunk to the smallest possible
-                                // representation
-                                let size = discr.value.size(self.tcx).bits();
-                                let amt = 128 - size;
-                                adt_def
-                                    .discriminants(self.tcx)
-                                    .position(|var| ((var.val << amt) >> amt) == discr_val)
-                                    .unwrap_or_else(|| {
-                                        bug!("discriminant {} not found in {:#?}",
-                                            discr_val,
-                                            adt_def
-                                                .discriminants(self.tcx)
-                                                .collect::<Vec<_>>(),
-                                            );
-                                    })
-                            }
-                            ty::layout::Variants::NicheFilling { .. } => {
-                                assert_eq!(discr_val as usize as u128, discr_val);
-                                discr_val as usize
-                            },
-                        };
+                        ).expect("const_variant_index failed");
                         let subpatterns = adt_subpatterns(
                             adt_def.variants[variant_index].fields.len(),
                             Some(variant_index),
@@ -1098,29 +1053,22 @@ pub fn compare_const_vals<'a, 'tcx>(
     b: &ConstVal,
     ty: Ty<'tcx>,
 ) -> Option<Ordering> {
-    use rustc_const_math::ConstFloat;
     trace!("compare_const_vals: {:?}, {:?}", a, b);
     use rustc::mir::interpret::{Value, PrimVal};
     match (a, b) {
         (&ConstVal::Value(Value::ByVal(PrimVal::Bytes(a))),
          &ConstVal::Value(Value::ByVal(PrimVal::Bytes(b)))) => {
+            use ::rustc_apfloat::Float;
             match ty.sty {
-                ty::TyFloat(ty) => {
-                    let l = ConstFloat {
-                        bits: a,
-                        ty,
-                    };
-                    let r = ConstFloat {
-                        bits: b,
-                        ty,
-                    };
-                    // FIXME(oli-obk): report cmp errors?
-                    // FIXME: Just returning Ordering::Greater here is the previous behavior but may
-                    // not be what we want. It means that NaN > NaN is true, which if false.
-                    match l.try_cmp(r) {
-                        Ok(opt) => Some(opt.unwrap_or(Ordering::Greater)),
-                        _ => None,
-                    }
+                ty::TyFloat(ast::FloatTy::F32) => {
+                    let l = ::rustc_apfloat::ieee::Single::from_bits(a);
+                    let r = ::rustc_apfloat::ieee::Single::from_bits(b);
+                    l.partial_cmp(&r)
+                },
+                ty::TyFloat(ast::FloatTy::F64) => {
+                    let l = ::rustc_apfloat::ieee::Double::from_bits(a);
+                    let r = ::rustc_apfloat::ieee::Double::from_bits(b);
+                    l.partial_cmp(&r)
                 },
                 ty::TyInt(_) => {
                     let a = interpret::sign_extend(tcx, a, ty).expect("layout error for TyInt");
@@ -1198,26 +1146,14 @@ fn lit_to_const<'a, 'tcx>(lit: &'tcx ast::LitKind,
             Value::ByVal(PrimVal::Bytes(n))
         },
         LitKind::Float(n, fty) => {
-            let n = n.as_str();
-            let mut f = parse_float(&n, fty)?;
-            if neg {
-                f = -f;
-            }
-            let bits = f.bits;
-            Value::ByVal(PrimVal::Bytes(bits))
+            parse_float(n, fty, neg)?
         }
         LitKind::FloatUnsuffixed(n) => {
             let fty = match ty.sty {
                 ty::TyFloat(fty) => fty,
                 _ => bug!()
             };
-            let n = n.as_str();
-            let mut f = parse_float(&n, fty)?;
-            if neg {
-                f = -f;
-            }
-            let bits = f.bits;
-            Value::ByVal(PrimVal::Bytes(bits))
+            parse_float(n, fty, neg)?
         }
         LitKind::Bool(b) => Value::ByVal(PrimVal::Bytes(b as u128)),
         LitKind::Char(c) => Value::ByVal(PrimVal::Bytes(c as u128)),
@@ -1225,7 +1161,36 @@ fn lit_to_const<'a, 'tcx>(lit: &'tcx ast::LitKind,
     Ok(ConstVal::Value(lit))
 }
 
-fn parse_float<'tcx>(num: &str, fty: ast::FloatTy)
-                     -> Result<ConstFloat, ()> {
-    ConstFloat::from_str(num, fty).map_err(|_| ())
+pub fn parse_float(
+    num: Symbol,
+    fty: ast::FloatTy,
+    neg: bool,
+) -> Result<Value, ()> {
+    let num = num.as_str();
+    use rustc_apfloat::ieee::{Single, Double};
+    use rustc_apfloat::Float;
+    let bits = match fty {
+        ast::FloatTy::F32 => {
+            num.parse::<f32>().map_err(|_| ())?;
+            let mut f = num.parse::<Single>().unwrap_or_else(|e| {
+                panic!("apfloat::ieee::Single failed to parse `{}`: {:?}", num, e)
+            });
+            if neg {
+                f = -f;
+            }
+            f.to_bits()
+        }
+        ast::FloatTy::F64 => {
+            num.parse::<f64>().map_err(|_| ())?;
+            let mut f = num.parse::<Double>().unwrap_or_else(|e| {
+                panic!("apfloat::ieee::Single failed to parse `{}`: {:?}", num, e)
+            });
+            if neg {
+                f = -f;
+            }
+            f.to_bits()
+        }
+    };
+
+    Ok(Value::ByVal(PrimVal::Bytes(bits)))
 }

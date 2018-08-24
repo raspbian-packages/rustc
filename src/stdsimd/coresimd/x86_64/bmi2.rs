@@ -17,10 +17,13 @@ use stdsimd_test::assert_instr;
 ///
 /// Unsigned multiplication of `a` with `b` returning a pair `(lo, hi)` with
 /// the low half and the high half of the result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mulx_u64)
 #[inline]
 #[cfg_attr(test, assert_instr(mulx))]
 #[target_feature(enable = "bmi2")]
 #[cfg(not(target_arch = "x86"))] // calls an intrinsic
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mulx_u64(a: u64, b: u64, hi: &mut u64) -> u64 {
     let result: u128 = (a as u128) * (b as u128);
     *hi = (result >> 64) as u64;
@@ -28,30 +31,39 @@ pub unsafe fn _mulx_u64(a: u64, b: u64, hi: &mut u64) -> u64 {
 }
 
 /// Zero higher bits of `a` >= `index`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_bzhi_u64)
 #[inline]
 #[target_feature(enable = "bmi2")]
 #[cfg_attr(test, assert_instr(bzhi))]
 #[cfg(not(target_arch = "x86"))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _bzhi_u64(a: u64, index: u32) -> u64 {
     x86_bmi2_bzhi_64(a, index as u64)
 }
 
 /// Scatter contiguous low order bits of `a` to the result at the positions
 /// specified by the `mask`.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_pdep_u64)
 #[inline]
 #[target_feature(enable = "bmi2")]
 #[cfg_attr(test, assert_instr(pdep))]
 #[cfg(not(target_arch = "x86"))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _pdep_u64(a: u64, mask: u64) -> u64 {
     x86_bmi2_pdep_64(a, mask)
 }
 
 /// Gathers the bits of `x` specified by the `mask` into the contiguous low
 /// order bit positions of the result.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_pext_u64)
 #[inline]
 #[target_feature(enable = "bmi2")]
 #[cfg_attr(test, assert_instr(pext))]
 #[cfg(not(target_arch = "x86"))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _pext_u64(a: u64, mask: u64) -> u64 {
     x86_bmi2_pext_64(a, mask)
 }
@@ -71,7 +83,7 @@ mod tests {
 
     use coresimd::x86_64::*;
 
-    #[simd_test = "bmi2"]
+    #[simd_test(enable = "bmi2")]
     unsafe fn test_pext_u64() {
         let n = 0b1011_1110_1001_0011u64;
 
@@ -85,7 +97,7 @@ mod tests {
         assert_eq!(_pext_u64(n, m1), s1);
     }
 
-    #[simd_test = "bmi2"]
+    #[simd_test(enable = "bmi2")]
     unsafe fn test_pdep_u64() {
         let n = 0b1011_1110_1001_0011u64;
 
@@ -99,14 +111,14 @@ mod tests {
         assert_eq!(_pdep_u64(n, m1), s1);
     }
 
-    #[simd_test = "bmi2"]
+    #[simd_test(enable = "bmi2")]
     unsafe fn test_bzhi_u64() {
         let n = 0b1111_0010u64;
         let s = 0b0001_0010u64;
         assert_eq!(_bzhi_u64(n, 5), s);
     }
 
-    #[simd_test = "bmi2"]
+    #[simd_test(enable = "bmi2")]
     #[cfg_attr(rustfmt, rustfmt_skip)]
     unsafe fn test_mulx_u64() {
         let a: u64 = 9_223_372_036_854_775_800;

@@ -72,10 +72,6 @@ impl Foo for f64 {
     fn in_range(_: i32) -> bool { true }
 }
 
-#[cfg(target_arch = "powerpc64")]
-fn main() {}
-
-#[cfg(not(target_arch = "powerpc64"))]
 fn main() {
     macro_rules! test {
         ($from: ident, $to: ident) => {{

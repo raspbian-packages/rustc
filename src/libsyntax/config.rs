@@ -204,7 +204,7 @@ impl<'a> StripUnconfigured<'a> {
                     self.configure(v).map(|v| {
                         Spanned {
                             node: ast::Variant_ {
-                                name: v.node.name,
+                                ident: v.node.ident,
                                 attrs: v.node.attrs,
                                 data: self.configure_variant_data(v.node.data),
                                 disr_expr: v.node.disr_expr,
@@ -277,6 +277,22 @@ impl<'a> StripUnconfigured<'a> {
             }
             pattern
         })
+    }
+
+    // deny #[cfg] on generic parameters until we decide what to do with it.
+    // see issue #51279.
+    pub fn disallow_cfg_on_generic_param(&mut self, param: &ast::GenericParam) {
+        for attr in param.attrs() {
+            let offending_attr = if attr.check_name("cfg") {
+                "cfg"
+            } else if attr.check_name("cfg_attr") {
+                "cfg_attr"
+            } else {
+                continue;
+            };
+            let msg = format!("#[{}] cannot be applied on a generic parameter", offending_attr);
+            self.sess.span_diagnostic.span_err(attr.span, &msg);
+        }
     }
 }
 

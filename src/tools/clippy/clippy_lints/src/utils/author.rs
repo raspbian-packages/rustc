@@ -14,6 +14,7 @@ use std::collections::HashMap;
 ///
 /// **Example:**
 /// ```rust
+/// // ./tests/ui/my_lint.rs
 /// fn foo() {
 ///     // detect the following pattern
 ///     #[clippy(author)]
@@ -24,9 +25,11 @@ use std::collections::HashMap;
 /// }
 /// ```
 ///
-/// prints
+/// Running `TESTNAME=ui/my_lint cargo test --test compile-test` will produce
+/// a `./tests/ui/new_lint.stdout` file with the generated code:
 ///
-/// ```
+/// ```rust
+/// // ./tests/ui/new_lint.stdout
 /// if_chain!{
 ///     if let Expr_::ExprIf(ref cond, ref then, None) = item.node,
 ///     if let Expr_::ExprBinary(BinOp::Eq, ref left, ref right) = cond.node,
@@ -368,14 +371,6 @@ impl<'tcx> Visitor<'tcx> for PrintVisitor {
                 self.current = obj_pat;
                 self.visit_expr(object);
             },
-            Expr_::ExprTupField(ref object, ref field_id) => {
-                let obj_pat = self.next("object");
-                let field_id_pat = self.next("field_id");
-                println!("TupField(ref {}, ref {}) = {};", obj_pat, field_id_pat, current);
-                println!("    if {}.node == {}", field_id_pat, field_id.node);
-                self.current = obj_pat;
-                self.visit_expr(object);
-            },
             Expr_::ExprIndex(ref object, ref index) => {
                 let object_pat = self.next("object");
                 let index_pat = self.next("index");
@@ -468,7 +463,7 @@ fn has_attr(attrs: &[Attribute]) -> bool {
     attrs.iter().any(|attr| {
         attr.check_name("clippy") && attr.meta_item_list().map_or(false, |list| {
             list.len() == 1 && match list[0].node {
-                ast::NestedMetaItemKind::MetaItem(ref it) => it.name == "author",
+                ast::NestedMetaItemKind::MetaItem(ref it) => it.ident.name == "author",
                 ast::NestedMetaItemKind::Literal(_) => false,
             }
         })

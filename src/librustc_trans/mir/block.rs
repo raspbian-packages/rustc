@@ -10,13 +10,14 @@
 
 use llvm::{self, ValueRef, BasicBlockRef};
 use rustc::middle::lang_items;
-use rustc::ty::{self, TypeFoldable};
+use rustc::ty::{self, Ty, TypeFoldable};
 use rustc::ty::layout::{self, LayoutOf};
 use rustc::mir;
-use abi::{Abi, FnType, ArgType, PassMode};
+use rustc::mir::interpret::EvalErrorKind;
+use abi::{Abi, ArgType, ArgTypeExt, FnType, FnTypeExt, LlvmType, PassMode};
 use base;
 use callee;
-use builder::Builder;
+use builder::{Builder, MemFlags};
 use common::{self, C_bool, C_str_slice, C_struct, C_u32, C_uint_big, C_undef};
 use consts;
 use meth;
@@ -110,7 +111,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
         let do_call = |
             this: &mut Self,
             bx: Builder<'a, 'tcx>,
-            fn_ty: FnType<'tcx>,
+            fn_ty: FnType<'tcx, Ty<'tcx>>,
             fn_ptr: ValueRef,
             llargs: &[ValueRef],
             destination: Option<(ReturnDest<'tcx>, mir::BasicBlock)>,
@@ -127,7 +128,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                                            ret_bx,
                                            llblock(this, cleanup),
                                            cleanup_bundle);
-                fn_ty.apply_attrs_callsite(invokeret);
+                fn_ty.apply_attrs_callsite(&bx, invokeret);
 
                 if let Some((ret_dest, target)) = destination {
                     let ret_bx = this.build_block(target);
@@ -136,7 +137,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                 }
             } else {
                 let llret = bx.call(fn_ptr, &llargs, cleanup_bundle);
-                fn_ty.apply_attrs_callsite(llret);
+                fn_ty.apply_attrs_callsite(&bx, llret);
                 if this.mir[bb].is_cleanup {
                     // Cleanup is always the cold path. Don't inline
                     // drop glue. Also, when there is a deeply-nested
@@ -311,10 +312,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                 // checked operation, just a comparison with the minimum
                 // value, so we have to check for the assert message.
                 if !bx.cx.check_overflow {
-                    use rustc_const_math::ConstMathErr::Overflow;
-                    use rustc_const_math::Op::Neg;
-
-                    if let mir::AssertMessage::Math(Overflow(Neg)) = *msg {
+                    if let mir::interpret::EvalErrorKind::OverflowNeg = *msg {
                         const_cond = Some(expected);
                     }
                 }
@@ -354,7 +352,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
 
                 // Put together the arguments to the panic entry point.
                 let (lang_item, args) = match *msg {
-                    mir::AssertMessage::BoundsCheck { ref len, ref index } => {
+                    EvalErrorKind::BoundsCheck { ref len, ref index } => {
                         let len = self.trans_operand(&mut bx, len).immediate();
                         let index = self.trans_operand(&mut bx, index).immediate();
 
@@ -366,26 +364,8 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                         (lang_items::PanicBoundsCheckFnLangItem,
                          vec![file_line_col, index, len])
                     }
-                    mir::AssertMessage::Math(ref err) => {
-                        let msg_str = Symbol::intern(err.description()).as_str();
-                        let msg_str = C_str_slice(bx.cx, msg_str);
-                        let msg_file_line_col = C_struct(bx.cx,
-                                                     &[msg_str, filename, line, col],
-                                                     false);
-                        let msg_file_line_col = consts::addr_of(bx.cx,
-                                                                msg_file_line_col,
-                                                                align,
-                                                                "panic_loc");
-                        (lang_items::PanicFnLangItem,
-                         vec![msg_file_line_col])
-                    }
-                    mir::AssertMessage::GeneratorResumedAfterReturn |
-                    mir::AssertMessage::GeneratorResumedAfterPanic => {
-                        let str = if let mir::AssertMessage::GeneratorResumedAfterReturn = *msg {
-                            "generator resumed after completion"
-                        } else {
-                            "generator resumed after panicking"
-                        };
+                    _ => {
+                        let str = msg.description();
                         let msg_str = Symbol::intern(str).as_str();
                         let msg_str = C_str_slice(bx.cx, msg_str);
                         let msg_file_line_col = C_struct(bx.cx,
@@ -442,7 +422,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                 // Handle intrinsics old trans wants Expr's for, ourselves.
                 let intrinsic = match def {
                     Some(ty::InstanceDef::Intrinsic(def_id))
-                        => Some(bx.tcx().item_name(def_id)),
+                        => Some(bx.tcx().item_name(def_id).as_str()),
                     _ => None
                 };
                 let intrinsic = intrinsic.as_ref().map(|s| &s[..]);
@@ -604,7 +584,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                       bx: &Builder<'a, 'tcx>,
                       op: OperandRef<'tcx>,
                       llargs: &mut Vec<ValueRef>,
-                      arg: &ArgType<'tcx>) {
+                      arg: &ArgType<'tcx, Ty<'tcx>>) {
         // Fill padding with undef value, where applicable.
         if let Some(ty) = arg.pad {
             llargs.push(C_undef(ty.llvm_type(bx.cx)));
@@ -646,7 +626,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                     // have scary latent bugs around.
 
                     let scratch = PlaceRef::alloca(bx, arg.layout, "arg");
-                    base::memcpy_ty(bx, scratch.llval, llval, op.layout, align);
+                    base::memcpy_ty(bx, scratch.llval, llval, op.layout, align, MemFlags::empty());
                     (scratch.llval, scratch.align, true)
                 } else {
                     (llval, align, true)
@@ -683,7 +663,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
                                 bx: &Builder<'a, 'tcx>,
                                 operand: &mir::Operand<'tcx>,
                                 llargs: &mut Vec<ValueRef>,
-                                args: &[ArgType<'tcx>]) {
+                                args: &[ArgType<'tcx, Ty<'tcx>>]) {
         let tuple = self.trans_operand(bx, operand);
 
         // Handle both by-ref and immediate tuples.
@@ -776,7 +756,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
     }
 
     fn make_return_dest(&mut self, bx: &Builder<'a, 'tcx>,
-                        dest: &mir::Place<'tcx>, fn_ret: &ArgType<'tcx>,
+                        dest: &mir::Place<'tcx>, fn_ret: &ArgType<'tcx, Ty<'tcx>>,
                         llargs: &mut Vec<ValueRef>, is_intrinsic: bool)
                         -> ReturnDest<'tcx> {
         // If the return is ignored, we can just return a do-nothing ReturnDest
@@ -873,7 +853,7 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
     fn store_return(&mut self,
                     bx: &Builder<'a, 'tcx>,
                     dest: ReturnDest<'tcx>,
-                    ret_ty: &ArgType<'tcx>,
+                    ret_ty: &ArgType<'tcx, Ty<'tcx>>,
                     llval: ValueRef) {
         use self::ReturnDest::*;
 

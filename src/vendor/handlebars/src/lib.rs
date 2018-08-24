@@ -61,9 +61,9 @@
 //! #### Template inheritance
 //!
 //! Every time I look into a templating system, I will investigate its
-//! support for [template
-//! inheritance](https://docs.djangoproject.com/en/1.9/ref/templates/language/#template-inh
-//! eritance).
+//! support for [template inheritance][t].
+//!
+//! [t]: https://docs.djangoproject.com/en/1.9/ref/templates/language/#template-inheritance
 //!
 //! Template include is not enough. In most case you will need a skeleton
 //! of page as parent (header, footer, etc.), and embed you page into this
@@ -71,6 +71,23 @@
 //!
 //! You can find a real example for template inheritance in
 //! `examples/partials.rs`, and templates used by this file.
+//!
+//! #### Strict mode
+//!
+//! Handlebars, the language designed to work with JavaScript, has no
+//! strict restriction on accessing non-existed fields or index. It
+//! generates empty string for such case. However, in Rust we want a
+//! little bit strict sometime.
+//!
+//! By enabling `strcit_mode` on handlebars:
+//!
+//! ```
+//! # use handlebars::Handlebars;
+//! # let mut handlebars = Handlebars::new();
+//! handlebars.set_strict_mode(true);
+//! ```
+//!
+//! You will get a `RenderError` when accessing fields that not exists.
 //!
 //! ### Limitations
 //!
@@ -103,7 +120,6 @@
 //! Templates are created from String and registered to `Handlebars` with a name.
 //!
 //! ```
-//!
 //! extern crate handlebars;
 //!
 //! use handlebars::Handlebars;
@@ -121,7 +137,7 @@
 //! that involves template reference requires you to register those template first with
 //! a name so the registry can find it.
 //!
-//! If you template is small or just to expirement, you can use `template_render` API
+//! If you template is small or just to expirement, you can use `render_template` API
 //! without registration.
 //!
 //! ```
@@ -134,7 +150,7 @@
 //!
 //!   let mut data = BTreeMap::new();
 //!   data.insert("world".to_string(), "世界!".to_string());
-//!   assert_eq!(handlebars.template_render(source, &data).unwrap(),"hello 世界!".to_owned());
+//!   assert_eq!(handlebars.render_template(source, &data).unwrap(),"hello 世界!".to_owned());
 //! }
 //! ```
 //!
@@ -185,7 +201,7 @@
 //!       name: "Ning Sun".to_string(),
 //!       age: 27
 //!   };
-//!   assert_eq!(handlebars.template_render("Hello, {{name}}", &data).unwrap(),
+//!   assert_eq!(handlebars.render_template("Hello, {{name}}", &data).unwrap(),
 //!       "Hello, Ning Sun".to_owned());
 //! }
 //! ```
@@ -200,14 +216,14 @@
 //!
 //! ```
 //! use std::io::Write;
-//! use handlebars::{Handlebars, HelperDef, RenderError, RenderContext, Helper, Context, JsonRender};
+//! use handlebars::{Handlebars, HelperDef, RenderContext, Helper, Context, JsonRender, HelperResult};
 //!
 //! // implement by a structure impls HelperDef
 //! #[derive(Clone, Copy)]
 //! struct SimpleHelper;
 //!
 //! impl HelperDef for SimpleHelper {
-//!   fn call(&self, h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> Result<(), RenderError> {
+//!   fn call(&self, h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> HelperResult {
 //!     let param = h.param(0).unwrap();
 //!
 //!     try!(rc.writer.write("1st helper: ".as_bytes()));
@@ -217,7 +233,7 @@
 //! }
 //!
 //! // implement via bare function
-//! fn another_simple_helper (h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> Result<(), RenderError> {
+//! fn another_simple_helper (h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> HelperResult {
 //!     let param = h.param(0).unwrap();
 //!
 //!     try!(rc.writer.write("2nd helper: ".as_bytes()));
@@ -232,7 +248,7 @@
 //!   handlebars.register_helper("another-simple-helper", Box::new(another_simple_helper));
 //!   // via closure
 //!   handlebars.register_helper("closure-helper",
-//!       Box::new(|h: &Helper, r: &Handlebars, rc: &mut RenderContext| -> Result<(), RenderError>{
+//!       Box::new(|h: &Helper, r: &Handlebars, rc: &mut RenderContext| -> HelperResult {
 //!           let param = h.param(0).unwrap();
 //!
 //!           try!(rc.writer.write("3rd helper: ".as_bytes()));
@@ -241,7 +257,7 @@
 //!       }));
 //!
 //!   let tpl = "{{simple-helper 1}}\n{{another-simple-helper 2}}\n{{closure-helper 3}}";
-//!   assert_eq!(handlebars.template_render(tpl, &()).unwrap(),
+//!   assert_eq!(handlebars.render_template(tpl, &()).unwrap(),
 //!       "1st helper: 1\n2nd helper: 2\n3rd helper: 3".to_owned());
 //! }
 //! ```
@@ -252,7 +268,7 @@
 //!
 //! #### Built-in Helpers
 //!
-//! * `{{#raw}} ... {{/raw}}` escape handlebars expression within the block
+//! * `{{{{#raw}}}} ... {{{{/raw}}}}` escape handlebars expression within the block
 //! * `{{#if ...}} ... {{else}} ... {{/if}}` if-else block
 //! * `{{#unless ...}} ... {{else}} .. {{/unless}}` if-not-else block
 //! * `{{#each ...}} ... {{/each}}` iterates over an array or object. Handlebar-rust doesn't support mustach iteration syntax so use this instead.
@@ -272,17 +288,17 @@
 #![recursion_limit = "200"]
 
 #[macro_use]
-extern crate log;
-#[macro_use]
-extern crate quick_error;
-#[macro_use]
-extern crate pest;
-#[macro_use]
 extern crate lazy_static;
-
+#[macro_use]
+extern crate log;
 #[cfg(test)]
 #[macro_use]
 extern crate maplit;
+extern crate pest;
+#[macro_use]
+extern crate pest_derive;
+#[macro_use]
+extern crate quick_error;
 #[cfg(test)]
 #[macro_use]
 extern crate serde_derive;
@@ -295,12 +311,13 @@ extern crate serde_json;
 
 pub use self::template::Template;
 pub use self::error::{RenderError, TemplateError, TemplateFileError, TemplateRenderError};
-pub use self::registry::{EscapeFn, no_escape, html_escape, Registry as Handlebars};
-pub use self::render::{Renderable, Evaluable, RenderContext, Helper, ContextJson,
-                       Directive as Decorator};
-pub use self::helpers::HelperDef;
+pub use self::registry::{html_escape, no_escape, EscapeFn, Registry as Handlebars};
+pub use self::render::{ContextJson, Directive as Decorator, Evaluable, Helper, RenderContext,
+                       Renderable};
+pub use self::helpers::{HelperDef, HelperResult};
 pub use self::directives::DirectiveDef as DecoratorDef;
-pub use self::context::{Context, JsonRender, to_json};
+pub use self::context::{to_json, Context, JsonRender};
+pub use self::support::str::StringWriter;
 
 mod grammar;
 mod template;

@@ -15,10 +15,9 @@
 // the trait bound, and hence we propagate it to the caller as a type
 // test.
 
-// compile-flags:-Znll -Zborrowck=mir -Zverbose
+// compile-flags:-Zborrowck=mir -Zverbose
 
 #![allow(warnings)]
-#![feature(dyn_trait)]
 #![feature(rustc_attrs)]
 
 use std::cell::Cell;
@@ -47,7 +46,7 @@ where
     T: Anything<'b, 'c>,
 {
     with_signature(cell, t, |cell, t| require(cell, t));
-    //~^ WARNING not reporting region error due to -Znll
+    //~^ WARNING not reporting region error due to nll
     //~| ERROR associated type `<T as Anything<'_#5r, '_#6r>>::AssocType` may not live long enough
 }
 
@@ -58,7 +57,7 @@ where
     'a: 'a,
 {
     with_signature(cell, t, |cell, t| require(cell, t));
-    //~^ WARNING not reporting region error due to -Znll
+    //~^ WARNING not reporting region error due to nll
     //~| ERROR associated type `<T as Anything<'_#6r, '_#7r>>::AssocType` may not live long enough
 }
 
@@ -79,7 +78,7 @@ where
     // can do better here with a more involved verification step.
 
     with_signature(cell, t, |cell, t| require(cell, t));
-    //~^ WARNING not reporting region error due to -Znll
+    //~^ WARNING not reporting region error due to nll
     //~| ERROR associated type `<T as Anything<'_#6r, '_#7r>>::AssocType` may not live long enough
 }
 
@@ -107,7 +106,7 @@ where
     T: Anything<'b, 'b>,
 {
     with_signature(cell, t, |cell, t| require(cell, t));
-    //~^ WARNING not reporting region error due to -Znll
+    //~^ WARNING not reporting region error due to nll
     //~| ERROR does not outlive free region
 }
 

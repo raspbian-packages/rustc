@@ -16,7 +16,7 @@ use rustc::mir::tcx::PlaceTy;
 use rustc_data_structures::indexed_vec::Idx;
 use base;
 use builder::Builder;
-use common::{CodegenCx, C_usize, C_u8, C_u32, C_uint, C_int, C_null, C_uint_big};
+use common::{CodegenCx, C_undef, C_usize, C_u8, C_u32, C_uint, C_null, C_uint_big};
 use consts;
 use type_of::LayoutLlvmExt;
 use type_::Type;
@@ -91,24 +91,15 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
         }
 
         let scalar_load_metadata = |load, scalar: &layout::Scalar| {
-            let (min, max) = (scalar.valid_range.start, scalar.valid_range.end);
-            let max_next = max.wrapping_add(1);
-            let bits = scalar.value.size(bx.cx).bits();
-            assert!(bits <= 128);
-            let mask = !0u128 >> (128 - bits);
-            // For a (max) value of -1, max will be `-1 as usize`, which overflows.
-            // However, that is fine here (it would still represent the full range),
-            // i.e., if the range is everything.  The lo==hi case would be
-            // rejected by the LLVM verifier (it would mean either an
-            // empty set, which is impossible, or the entire range of the
-            // type, which is pointless).
+            let vr = scalar.valid_range.clone();
             match scalar.value {
-                layout::Int(..) if max_next & mask != min & mask => {
-                    // llvm::ConstantRange can deal with ranges that wrap around,
-                    // so an overflow on (max + 1) is fine.
-                    bx.range_metadata(load, min..max_next);
+                layout::Int(..) => {
+                    let range = scalar.valid_range_exclusive(bx.cx);
+                    if range.start != range.end {
+                        bx.range_metadata(load, range);
+                    }
                 }
-                layout::Pointer if 0 < min && min < max => {
+                layout::Pointer if vr.start() < vr.end() && !vr.contains(&0) => {
                     bx.nonnull_metadata(load);
                 }
                 _ => {}
@@ -264,9 +255,15 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
     /// Obtain the actual discriminant of a value.
     pub fn trans_get_discr(self, bx: &Builder<'a, 'tcx>, cast_to: Ty<'tcx>) -> ValueRef {
         let cast_to = bx.cx.layout_of(cast_to).immediate_llvm_type(bx.cx);
+        if self.layout.abi == layout::Abi::Uninhabited {
+            return C_undef(cast_to);
+        }
         match self.layout.variants {
             layout::Variants::Single { index } => {
-                return C_uint(cast_to, index as u64);
+                let discr_val = self.layout.ty.ty_adt_def().map_or(
+                    index as u128,
+                    |def| def.discriminant_for_variant(bx.cx.tcx, index).val);
+                return C_uint_big(cast_to, discr_val);
             }
             layout::Variants::Tagged { .. } |
             layout::Variants::NicheFilling { .. } => {},
@@ -276,8 +273,8 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
         let lldiscr = discr.load(bx).immediate();
         match self.layout.variants {
             layout::Variants::Single { .. } => bug!(),
-            layout::Variants::Tagged { ref discr, .. } => {
-                let signed = match discr.value {
+            layout::Variants::Tagged { ref tag, .. } => {
+                let signed = match tag.value {
                     layout::Int(_, signed) => signed,
                     _ => false
                 };
@@ -290,7 +287,7 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
                 ..
             } => {
                 let niche_llty = discr.layout.immediate_llvm_type(bx.cx);
-                if niche_variants.start == niche_variants.end {
+                if niche_variants.start() == niche_variants.end() {
                     // FIXME(eddyb) Check the actual primitive type here.
                     let niche_llval = if niche_start == 0 {
                         // HACK(eddyb) Using `C_null` as it works on all types.
@@ -299,13 +296,13 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
                         C_uint_big(niche_llty, niche_start)
                     };
                     bx.select(bx.icmp(llvm::IntEQ, lldiscr, niche_llval),
-                        C_uint(cast_to, niche_variants.start as u64),
+                        C_uint(cast_to, *niche_variants.start() as u64),
                         C_uint(cast_to, dataful_variant as u64))
                 } else {
                     // Rebase from niche values to discriminant values.
-                    let delta = niche_start.wrapping_sub(niche_variants.start as u128);
+                    let delta = niche_start.wrapping_sub(*niche_variants.start() as u128);
                     let lldiscr = bx.sub(lldiscr, C_uint_big(niche_llty, delta));
-                    let lldiscr_max = C_uint(niche_llty, niche_variants.end as u64);
+                    let lldiscr_max = C_uint(niche_llty, *niche_variants.end() as u64);
                     bx.select(bx.icmp(llvm::IntULE, lldiscr, lldiscr_max),
                         bx.intcast(lldiscr, cast_to, false),
                         C_uint(cast_to, dataful_variant as u64))
@@ -328,9 +325,11 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
                 let ptr = self.project_field(bx, 0);
                 let to = self.layout.ty.ty_adt_def().unwrap()
                     .discriminant_for_variant(bx.tcx(), variant_index)
-                    .val as u64;
-                bx.store(C_int(ptr.layout.llvm_type(bx.cx), to as i64),
-                    ptr.llval, ptr.align);
+                    .val;
+                bx.store(
+                    C_uint_big(ptr.layout.llvm_type(bx.cx), to),
+                    ptr.llval,
+                    ptr.align);
             }
             layout::Variants::NicheFilling {
                 dataful_variant,
@@ -353,7 +352,7 @@ impl<'a, 'tcx> PlaceRef<'tcx> {
 
                     let niche = self.project_field(bx, 0);
                     let niche_llty = niche.layout.immediate_llvm_type(bx.cx);
-                    let niche_value = ((variant_index - niche_variants.start) as u128)
+                    let niche_value = ((variant_index - *niche_variants.start()) as u128)
                         .wrapping_add(niche_start);
                     // FIXME(eddyb) Check the actual primitive type here.
                     let niche_llval = if niche_value == 0 {

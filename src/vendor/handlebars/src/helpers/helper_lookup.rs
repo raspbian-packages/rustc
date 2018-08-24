@@ -1,38 +1,38 @@
 use serde_json::value::Value as Json;
 
-use helpers::HelperDef;
+use helpers::{HelperDef, HelperResult};
 use registry::Registry;
 use context::JsonRender;
-use render::{RenderContext, Helper};
+use render::{Helper, RenderContext};
 use error::RenderError;
 
 #[derive(Clone, Copy)]
 pub struct LookupHelper;
 
 impl HelperDef for LookupHelper {
-    fn call(&self, h: &Helper, _: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
-        let collection_value = try!(h.param(0).ok_or_else(|| {
-            RenderError::new("Param not found for helper \"lookup\"")
-        }));
-        let index = try!(h.param(1).ok_or_else(|| {
-            RenderError::new("Insufficient params for helper \"lookup\"")
-        }));
+    fn call(&self, h: &Helper, _: &Registry, rc: &mut RenderContext) -> HelperResult {
+        let collection_value = try!(
+            h.param(0)
+                .ok_or_else(|| RenderError::new("Param not found for helper \"lookup\""))
+        );
+        let index = try!(
+            h.param(1)
+                .ok_or_else(|| RenderError::new("Insufficient params for helper \"lookup\""))
+        );
 
         let null = Json::Null;
         let value = match collection_value.value() {
-            &Json::Array(ref v) => {
-                index
-                    .value()
-                    .as_u64()
-                    .and_then(|u| Some(u as usize))
-                    .and_then(|u| v.get(u))
-                    .unwrap_or(&null)
-            }
-            &Json::Object(ref m) => {
-                index.value().as_str().and_then(|k| m.get(k)).unwrap_or(
-                    &null,
-                )
-            }
+            &Json::Array(ref v) => index
+                .value()
+                .as_u64()
+                .and_then(|u| Some(u as usize))
+                .and_then(|u| v.get(u))
+                .unwrap_or(&null),
+            &Json::Object(ref m) => index
+                .value()
+                .as_str()
+                .and_then(|k| m.get(k))
+                .unwrap_or(&null),
             _ => &null,
         };
         let r = value.render();
@@ -72,8 +72,7 @@ mod test {
         m.insert("v1".to_string(), vec![1u16, 2u16, 3u16]);
         m.insert("v2".to_string(), vec![9u16, 8u16, 7u16]);
 
-        let m2 =
-            btreemap!{
+        let m2 = btreemap!{
             "kk".to_string() => btreemap!{"a".to_string() => "world".to_string()}
         };
 

@@ -23,7 +23,7 @@ use rustc::middle::dependency_format::Linkage;
 use rustc::session::Session;
 use rustc::session::config::{self, CrateType, OptLevel, DebugInfoLevel};
 use rustc::ty::TyCtxt;
-use rustc_back::{LinkerFlavor, LldFlavor};
+use rustc_target::spec::{LinkerFlavor, LldFlavor};
 use serialize::{json, Encoder};
 
 /// For all the linkers we support, and information they might
@@ -959,7 +959,12 @@ impl Linker for WasmLd {
     }
 
     fn finalize(&mut self) -> Command {
-        self.cmd.arg("--threads");
+        // There have been reports in the wild (rustwasm/wasm-bindgen#119) of
+        // using threads causing weird hangs and bugs. Disable it entirely as
+        // this isn't yet the bottleneck of compilation at all anyway.
+        self.cmd.arg("--no-threads");
+
+        self.cmd.arg("-z").arg("stack-size=1048576");
 
         // FIXME we probably shouldn't pass this but instead pass an explicit
         // whitelist of symbols we'll allow to be undefined. Unfortunately

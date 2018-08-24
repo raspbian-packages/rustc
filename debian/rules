@@ -17,14 +17,7 @@ include /usr/share/dpkg/buildflags.mk
 # TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
 RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
 export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
-# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
-RUSTFLAGS_STAGE_NOT_0 = --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
-ifeq (0,$(shell dpkg --compare-versions "$(LOCAL_RUST_VERSION)" '>=' 1.26.0; echo $$?))
-RUSTFLAGS_STAGE_0 = $(RUSTFLAGS_STAGE_NOT_0)
-else
-RUSTFLAGS_STAGE_0 = -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
-endif
-export RUSTFLAGS_STAGE_0 RUSTFLAGS_STAGE_NOT_0
+RUSTFLAGS += --remap-path-prefix=$(CURDIR)=/usr/src/rustc-$(RUST_LONG_VERSION)
 ifneq (,$(filter $(DEB_BUILD_ARCH), sparc64))
 export CARGO_INCREMENTAL = 0
 endif
@@ -77,7 +70,7 @@ RUSTBUILD_TEST_FLAGS =
 update-version:
 	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
 	newver=$(RUST_VERSION); \
-	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver $(CARGO_NEW); fi
+	debian/update-version.sh $$oldver $$newver $(RUST_LONG_VERSION) $(CARGO_NEW)
 
 # Below we detect how we're supposed to bootstrap the stage0 compiler. See
 # README.Debian for more details of the cases described below.
@@ -168,7 +161,8 @@ debian/config.toml: debian/config.toml.in
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
 		-DRUST_DESTDIR="$(RUST_DESTDIR)" \
 		"$<" > "$@"
-	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
+	if $(DOWNLOAD_BOOTSTRAP) || [ $(HAVE_BINARY_TARBALL) != 0 ]; \
+	  then sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"; fi
 	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
 	[ $(DEB_BUILD_ARCH) != armhf -a \
 	  $(DEB_BUILD_ARCH) != armel ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
@@ -180,23 +174,20 @@ debian/rust-src.%: debian/rust-src.%.in
 override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
+	# fail the build if our version contains ~exp and we are not releasing to experimental
+	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental"
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
-	# We patched mdbook so have to rm the checksums
-	debian/prune-checksums src/vendor/mdbook/.cargo-checksum.json
+	# We patched some crates so have to rm the checksums
+	find src/vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
 	# compile it again for rust-installer, see #43449
 	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
-	debian/prune-checksums src/vendor/backtrace-sys/.cargo-checksum.json
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
-	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
-	# Other partially-excluded vendor crates in d/copyright
-	debian/prune-checksums src/vendor/winapi-*/.cargo-checksum.json
-	debian/prune-checksums src/vendor/shlex/.cargo-checksum.json
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
 
@@ -223,9 +214,14 @@ ifeq (true,$(BUILD_DOCS))
 endif
 
 TEST_LOG = debian/rustc-tests.log
+# This is advertised as "5 tests failed" in README.Debian because our counting
+# method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
+ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
+  FAILURES_ALLOWED = 36
+endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 18
+  FAILURES_ALLOWED = 44
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160

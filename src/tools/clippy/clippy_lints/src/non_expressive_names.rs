@@ -1,6 +1,6 @@
 use rustc::lint::*;
 use syntax::codemap::Span;
-use syntax::symbol::InternedString;
+use syntax::symbol::LocalInternedString;
 use syntax::ast::*;
 use syntax::attr;
 use syntax::visit::{walk_block, walk_expr, walk_pat, Visitor};
@@ -73,7 +73,7 @@ impl LintPass for NonExpressiveNames {
 }
 
 struct ExistingName {
-    interned: InternedString,
+    interned: LocalInternedString,
     span: Span,
     len: usize,
     whitelist: &'static [&'static str],
@@ -104,7 +104,7 @@ struct SimilarNamesNameVisitor<'a: 'b, 'tcx: 'a, 'b>(&'b mut SimilarNamesLocalVi
 impl<'a, 'tcx: 'a, 'b> Visitor<'tcx> for SimilarNamesNameVisitor<'a, 'tcx, 'b> {
     fn visit_pat(&mut self, pat: &'tcx Pat) {
         match pat.node {
-            PatKind::Ident(_, id, _) => self.check_name(id.span, id.node.name),
+            PatKind::Ident(_, ident, _) => self.check_name(ident.span, ident.name),
             PatKind::Struct(_, ref fields, _) => for field in fields {
                 if !field.node.is_shorthand {
                     self.visit_pat(&field.node.pat);

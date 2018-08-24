@@ -119,6 +119,7 @@ disambiguating
 DivAssign
 DraftPost
 DSTs
+ebook
 ebooks
 Edsger
 egular
@@ -172,6 +173,7 @@ HashMap
 HashSet
 Haskell
 hasn
+HelloMacro
 helloworld
 HelloWorld
 HelloWorldName
@@ -284,8 +286,12 @@ newtypes
 nitty
 nocapture
 nomicon
+nonadministrators
+nondeterministic
 nonequality
+nongeneric
 NotFound
+nsprust
 null's
 OCaml
 offsetof
@@ -314,6 +320,8 @@ portia
 powershell
 PowerShell
 powi
+preallocate
+preallocates
 preprocessing
 Preprocessing
 preprocessor
@@ -479,6 +487,7 @@ vers
 versa
 Versioning
 visualstudio
+Vlissides
 vtable
 wasn
 WeatherForecast

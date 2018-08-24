@@ -10,6 +10,8 @@
 
 #![allow(non_camel_case_types)]
 
+use rustc_data_structures::sync::Lock;
+
 use std::cell::{RefCell, Cell};
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -17,12 +19,13 @@ use std::fmt::Debug;
 use std::hash::{Hash, BuildHasher};
 use std::iter::repeat;
 use std::panic;
+use std::env;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
 use std::sync::mpsc::{Sender};
 use syntax_pos::{SpanData};
-use ty::maps::{QueryMsg};
+use ty::TyCtxt;
 use dep_graph::{DepNode};
 use proc_macro;
 use lazy_static;
@@ -48,7 +51,24 @@ lazy_static! {
 
 fn panic_hook(info: &panic::PanicInfo) {
     if !proc_macro::__internal::in_sess() {
-        (*DEFAULT_HOOK)(info)
+        (*DEFAULT_HOOK)(info);
+
+        let backtrace = env::var_os("RUST_BACKTRACE").map(|x| &x != "0").unwrap_or(false);
+
+        if backtrace {
+            TyCtxt::try_print_query_stack();
+        }
+
+        #[cfg(windows)]
+        unsafe {
+            if env::var("RUSTC_BREAK_ON_ICE").is_ok() {
+                extern "system" {
+                    fn DebugBreak();
+                }
+                // Trigger a debugger if we crashed during bootstrap
+                DebugBreak();
+            }
+        }
     }
 }
 
@@ -65,6 +85,13 @@ pub struct ProfQDumpParams {
     pub ack:Sender<()>,
     /// toggle dumping a log file with every `ProfileQueriesMsg`
     pub dump_profq_msg_log:bool,
+}
+
+#[allow(bad_style)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct QueryMsg {
+    pub query: &'static str,
+    pub msg: Option<String>,
 }
 
 /// A sequence of these messages induce a trace of query-based incremental compilation.
@@ -228,13 +255,14 @@ pub fn to_readable_str(mut val: usize) -> String {
     groups.join("_")
 }
 
-pub fn record_time<T, F>(accu: &Cell<Duration>, f: F) -> T where
+pub fn record_time<T, F>(accu: &Lock<Duration>, f: F) -> T where
     F: FnOnce() -> T,
 {
     let start = Instant::now();
     let rv = f();
     let duration = start.elapsed();
-    accu.set(duration + accu.get());
+    let mut accu = accu.lock();
+    *accu = *accu + duration;
     rv
 }
 
@@ -373,14 +401,4 @@ fn test_to_readable_str() {
     assert_eq!("999_999", to_readable_str(999_999));
     assert_eq!("1_000_000", to_readable_str(1_000_000));
     assert_eq!("1_234_567", to_readable_str(1_234_567));
-}
-
-pub trait CellUsizeExt {
-    fn increment(&self);
-}
-
-impl CellUsizeExt for Cell<usize> {
-    fn increment(&self) {
-        self.set(self.get() + 1);
-    }
 }

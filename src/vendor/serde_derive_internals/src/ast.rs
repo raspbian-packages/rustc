@@ -6,11 +6,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use syn;
 use attr;
 use check;
-use Ctxt;
+use syn;
 use syn::punctuated::Punctuated;
+use Ctxt;
 
 pub struct Container<'a> {
     pub ident: syn::Ident,
@@ -68,6 +68,9 @@ impl<'a> Container<'a> {
             Data::Enum(ref mut variants) => for variant in variants {
                 variant.attrs.rename_by_rule(attrs.rename_all());
                 for field in &mut variant.fields {
+                    if field.attrs.flatten() {
+                        has_flatten = true;
+                    }
                     field.attrs.rename_by_rule(variant.attrs.rename_all());
                 }
             },

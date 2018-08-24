@@ -37,13 +37,15 @@ use rustc::ty::maps::Providers;
 use rustc::ty::util::IntTypeExt;
 use rustc::ty::util::Discr;
 use rustc::util::captures::Captures;
-use rustc::util::nodemap::{FxHashSet, FxHashMap};
+use rustc::util::nodemap::FxHashMap;
+use rustc_target::spec::abi;
 
-use syntax::{abi, ast};
+use syntax::ast;
 use syntax::ast::MetaItemKind;
 use syntax::attr::{InlineAttr, list_contains_name, mark_used};
 use syntax::codemap::Spanned;
 use syntax::symbol::{Symbol, keywords};
+use syntax::feature_gate;
 use syntax_pos::{Span, DUMMY_SP};
 
 use rustc::hir::{self, map as hir_map, TransFnAttrs, TransFnAttrFlags, Unsafety};
@@ -64,6 +66,7 @@ pub fn provide(providers: &mut Providers) {
         type_of,
         generics_of,
         predicates_of,
+        explicit_predicates_of,
         super_predicates_of,
         type_param_predicates,
         trait_def,
@@ -241,7 +244,7 @@ fn type_param_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let param_owner_def_id = tcx.hir.local_def_id(param_owner);
     let generics = tcx.generics_of(param_owner_def_id);
     let index = generics.type_param_to_index[&def_id];
-    let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id).as_str());
+    let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id).as_interned_str());
 
     // Don't look for bounds where the type parameter isn't in scope.
     let parent = if item_def_id == param_owner_def_id {
@@ -513,11 +516,11 @@ fn convert_struct_variant<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     discr: ty::VariantDiscr,
                                     def: &hir::VariantData)
                                     -> ty::VariantDef {
-    let mut seen_fields: FxHashMap<ast::Name, Span> = FxHashMap();
+    let mut seen_fields: FxHashMap<ast::Ident, Span> = FxHashMap();
     let node_id = tcx.hir.as_local_node_id(did).unwrap();
     let fields = def.fields().iter().map(|f| {
         let fid = tcx.hir.local_def_id(f.id);
-        let dup_span = seen_fields.get(&f.name).cloned();
+        let dup_span = seen_fields.get(&f.name.to_ident()).cloned();
         if let Some(prev_span) = dup_span {
             struct_span_err!(tcx.sess, f.span, E0124,
                              "field `{}` is already declared",
@@ -526,7 +529,7 @@ fn convert_struct_variant<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 .span_label(prev_span, format!("`{}` first declared here", f.name))
                 .emit();
         } else {
-            seen_fields.insert(f.name, f.span);
+            seen_fields.insert(f.name.to_ident(), f.span);
         }
 
         ty::FieldDef {
@@ -839,7 +842,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
                     opt_self = Some(ty::TypeParameterDef {
                         index: 0,
-                        name: keywords::SelfType.name().as_str(),
+                        name: keywords::SelfType.name().as_interned_str(),
                         def_id: tcx.hir.local_def_id(param_id),
                         has_default: false,
                         object_lifetime_default: rl::Set1::Empty,
@@ -885,7 +888,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let early_lifetimes = early_bound_lifetimes_from_generics(tcx, ast_generics);
     let regions = early_lifetimes.enumerate().map(|(i, l)| {
         ty::RegionParameterDef {
-            name: l.lifetime.name.name(),
+            name: l.lifetime.name.name().as_interned_str(),
             index: own_start + i as u32,
             def_id: tcx.hir.local_def_id(l.lifetime.id),
             pure_wrt_drop: l.pure_wrt_drop,
@@ -915,7 +918,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         ty::TypeParameterDef {
             index: type_start + i as u32,
-            name: p.name.as_str(),
+            name: p.name.as_interned_str(),
             def_id: tcx.hir.local_def_id(p.id),
             has_default: p.default.is_some(),
             object_lifetime_default:
@@ -934,7 +937,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // add a dummy parameter for the closure kind
         types.push(ty::TypeParameterDef {
             index: type_start,
-            name: Symbol::intern("<closure_kind>").as_str(),
+            name: Symbol::intern("<closure_kind>").as_interned_str(),
             def_id,
             has_default: false,
             object_lifetime_default: rl::Set1::Empty,
@@ -945,7 +948,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // add a dummy parameter for the closure signature
         types.push(ty::TypeParameterDef {
             index: type_start + 1,
-            name: Symbol::intern("<closure_signature>").as_str(),
+            name: Symbol::intern("<closure_signature>").as_interned_str(),
             def_id,
             has_default: false,
             object_lifetime_default: rl::Set1::Empty,
@@ -956,7 +959,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         tcx.with_freevars(node_id, |fv| {
             types.extend(fv.iter().zip(2..).map(|(_, i)| ty::TypeParameterDef {
                 index: type_start + i,
-                name: Symbol::intern("<upvar>").as_str(),
+                name: Symbol::intern("<upvar>").as_interned_str(),
                 def_id,
                 has_default: false,
                 object_lifetime_default: rl::Set1::Empty,
@@ -1169,7 +1172,7 @@ fn fn_sig<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let inputs = fields.iter().map(|f| {
                 tcx.type_of(tcx.hir.local_def_id(f.id))
             });
-            ty::Binder(tcx.mk_fn_sig(
+            ty::Binder::bind(tcx.mk_fn_sig(
                 inputs,
                 ty,
                 false,
@@ -1296,13 +1299,17 @@ fn predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            def_id: DefId)
                            -> ty::GenericPredicates<'tcx> {
     let explicit = explicit_predicates_of(tcx, def_id);
+    let predicates = if tcx.sess.features_untracked().infer_outlives_requirements {
+        [&explicit.predicates[..], &tcx.inferred_outlives_of(def_id)[..]].concat()
+    } else { explicit.predicates };
+
     ty::GenericPredicates {
         parent: explicit.parent,
-        predicates: [&explicit.predicates[..], &tcx.inferred_outlives_of(def_id)[..]].concat()
+        predicates: predicates,
     }
 }
 
-fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
+pub fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                            def_id: DefId)
                            -> ty::GenericPredicates<'tcx> {
     use rustc::hir::map::*;
@@ -1422,13 +1429,13 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let region = tcx.mk_region(ty::ReEarlyBound(ty::EarlyBoundRegion {
             def_id: tcx.hir.local_def_id(param.lifetime.id),
             index,
-            name: param.lifetime.name.name(),
+            name: param.lifetime.name.name().as_interned_str(),
         }));
         index += 1;
 
         for bound in &param.bounds {
             let bound_region = AstConv::ast_region_to_region(&icx, bound, None);
-            let outlives = ty::Binder(ty::OutlivesPredicate(region, bound_region));
+            let outlives = ty::Binder::bind(ty::OutlivesPredicate(region, bound_region));
             predicates.push(outlives.to_predicate());
         }
     }
@@ -1436,7 +1443,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // Collect the predicates that were written inline by the user on each
     // type parameter (e.g., `<T:Foo>`).
     for param in ast_generics.ty_params() {
-        let param_ty = ty::ParamTy::new(index, param.name.as_str()).to_ty(tcx);
+        let param_ty = ty::ParamTy::new(index, param.name.as_interned_str()).to_ty(tcx);
         index += 1;
 
         let bounds = compute_bounds(&icx,
@@ -1476,7 +1483,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             let region = AstConv::ast_region_to_region(&icx,
                                                                        lifetime,
                                                                        None);
-                            let pred = ty::Binder(ty::OutlivesPredicate(ty, region));
+                            let pred = ty::Binder::bind(ty::OutlivesPredicate(ty, region));
                             predicates.push(ty::Predicate::TypeOutlives(pred))
                         }
                     }
@@ -1487,7 +1494,7 @@ fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 let r1 = AstConv::ast_region_to_region(&icx, &region_pred.lifetime, None);
                 for bound in &region_pred.bounds {
                     let r2 = AstConv::ast_region_to_region(&icx, bound, None);
-                    let pred = ty::Binder(ty::OutlivesPredicate(r1, r2));
+                    let pred = ty::Binder::bind(ty::OutlivesPredicate(r1, r2));
                     predicates.push(ty::Predicate::RegionOutlives(pred))
                 }
             }
@@ -1621,7 +1628,7 @@ fn predicates_from_bound<'tcx>(astconv: &AstConv<'tcx, 'tcx>,
         }
         hir::RegionTyParamBound(ref lifetime) => {
             let region = astconv.ast_region_to_region(lifetime, None);
-            let pred = ty::Binder(ty::OutlivesPredicate(param_ty, region));
+            let pred = ty::Binder::bind(ty::OutlivesPredicate(param_ty, region));
             vec![ty::Predicate::TypeOutlives(pred)]
         }
         hir::TraitTyParamBound(_, hir::TraitBoundModifier::Maybe) => {
@@ -1676,8 +1683,9 @@ fn is_foreign_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 fn from_target_feature(
     tcx: TyCtxt,
+    id: DefId,
     attr: &ast::Attribute,
-    whitelist: &FxHashSet<String>,
+    whitelist: &FxHashMap<String, Option<String>>,
     target_features: &mut Vec<Symbol>,
 ) {
     let list = match attr.meta_item_list() {
@@ -1689,16 +1697,19 @@ fn from_target_feature(
             return
         }
     };
-
+    let rust_features = tcx.features();
     for item in list {
+        // Only `enable = ...` is accepted in the meta item list
         if !item.check_name("enable") {
             let msg = "#[target_feature(..)] only accepts sub-keys of `enable` \
                        currently";
             tcx.sess.span_err(item.span, &msg);
             continue
         }
+
+        // Must be of the form `enable = "..."` ( a string)
         let value = match item.value_str() {
-            Some(list) => list,
+            Some(value) => value,
             None => {
                 let msg = "#[target_feature] attribute must be of the form \
                            #[target_feature(enable = \"..\")]";
@@ -1706,24 +1717,55 @@ fn from_target_feature(
                 continue
             }
         };
-        let value = value.as_str();
-        for feature in value.split(',') {
-            if whitelist.contains(feature) {
-                target_features.push(Symbol::intern(feature));
+
+        // We allow comma separation to enable multiple features
+        for feature in value.as_str().split(',') {
+
+            // Only allow whitelisted features per platform
+            let feature_gate = match whitelist.get(feature) {
+                Some(g) => g,
+                None => {
+                    let msg = format!("the feature named `{}` is not valid for \
+                                       this target", feature);
+                    let mut err = tcx.sess.struct_span_err(item.span, &msg);
+
+                    if feature.starts_with("+") {
+                        let valid = whitelist.contains_key(&feature[1..]);
+                        if valid {
+                            err.help("consider removing the leading `+` in the feature name");
+                        }
+                    }
+                    err.emit();
+                    continue
+                }
+            };
+
+            // Only allow features whose feature gates have been enabled
+            let allowed = match feature_gate.as_ref().map(|s| &**s) {
+                Some("arm_target_feature") => rust_features.arm_target_feature,
+                Some("aarch64_target_feature") => rust_features.aarch64_target_feature,
+                Some("hexagon_target_feature") => rust_features.hexagon_target_feature,
+                Some("powerpc_target_feature") => rust_features.powerpc_target_feature,
+                Some("mips_target_feature") => rust_features.mips_target_feature,
+                Some("avx512_target_feature") => rust_features.avx512_target_feature,
+                Some("mmx_target_feature") => rust_features.mmx_target_feature,
+                Some("sse4a_target_feature") => rust_features.sse4a_target_feature,
+                Some("tbm_target_feature") => rust_features.tbm_target_feature,
+                Some(name) => bug!("unknown target feature gate {}", name),
+                None => true,
+            };
+            if !allowed && id.is_local() {
+                feature_gate::emit_feature_err(
+                    &tcx.sess.parse_sess,
+                    feature_gate.as_ref().unwrap(),
+                    item.span,
+                    feature_gate::GateIssue::Language,
+                    &format!("the target feature `{}` is currently unstable",
+                             feature),
+                );
                 continue
             }
-
-            let msg = format!("the feature named `{}` is not valid for \
-                               this target", feature);
-            let mut err = tcx.sess.struct_span_err(item.span, &msg);
-
-            if feature.starts_with("+") {
-                let valid = whitelist.contains(&feature[1..]);
-                if valid {
-                    err.help("consider removing the leading `+` in the feature name");
-                }
-            }
-            err.emit();
+            target_features.push(Symbol::intern(feature));
         }
     }
 }
@@ -1832,26 +1874,12 @@ fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAt
                     .emit();
             }
         } else if attr.check_name("target_feature") {
-            // handle deprecated #[target_feature = "..."]
-            if let Some(val) = attr.value_str() {
-                for feat in val.as_str().split(",").map(|f| f.trim()) {
-                    if !feat.is_empty() && !feat.contains('\0') {
-                        trans_fn_attrs.target_features.push(Symbol::intern(feat));
-                    }
-                }
-                let msg = "#[target_feature = \"..\"] is deprecated and will \
-                           eventually be removed, use \
-                           #[target_feature(enable = \"..\")] instead";
-                tcx.sess.span_warn(attr.span, &msg);
-                continue
-            }
-
             if tcx.fn_sig(id).unsafety() == Unsafety::Normal {
                 let msg = "#[target_feature(..)] can only be applied to \
                            `unsafe` function";
                 tcx.sess.span_err(attr.span, msg);
             }
-            from_target_feature(tcx, attr, &whitelist, &mut trans_fn_attrs.target_features);
+            from_target_feature(tcx, id, attr, &whitelist, &mut trans_fn_attrs.target_features);
         } else if attr.check_name("linkage") {
             if let Some(val) = attr.value_str() {
                 trans_fn_attrs.linkage = Some(linkage_by_name(tcx, id, &val.as_str()));

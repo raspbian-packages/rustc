@@ -11,12 +11,10 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![allow(non_camel_case_types)]
 
 #![feature(from_ref)]
-#![cfg_attr(stage0, feature(match_default_bindings))]
 #![feature(quote)]
 
 #[macro_use] extern crate log;

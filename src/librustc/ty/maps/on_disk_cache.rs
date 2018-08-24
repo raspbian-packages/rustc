@@ -17,7 +17,7 @@ use hir::map::definitions::DefPathHash;
 use ich::{CachingCodemapView, Fingerprint};
 use mir::{self, interpret};
 use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::sync::Lrc;
+use rustc_data_structures::sync::{Lrc, Lock, HashMapExt, Once};
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
 use rustc_serialize::{Decodable, Decoder, Encodable, Encoder, opaque,
                       SpecializedDecoder, SpecializedEncoder,
@@ -32,6 +32,7 @@ use syntax_pos::hygiene::{Mark, SyntaxContext, ExpnInfo};
 use ty;
 use ty::codec::{self as ty_codec, TyDecoder, TyEncoder};
 use ty::context::TyCtxt;
+use util::common::time;
 
 const TAG_FILE_FOOTER: u128 = 0xC0FFEE_C0FFEE_C0FFEE_C0FFEE_C0FFEE;
 
@@ -56,17 +57,17 @@ pub struct OnDiskCache<'sess> {
 
     // This field collects all Diagnostics emitted during the current
     // compilation session.
-    current_diagnostics: RefCell<FxHashMap<DepNodeIndex, Vec<Diagnostic>>>,
+    current_diagnostics: Lock<FxHashMap<DepNodeIndex, Vec<Diagnostic>>>,
 
     prev_cnums: Vec<(u32, String, CrateDisambiguator)>,
-    cnum_map: RefCell<Option<IndexVec<CrateNum, Option<CrateNum>>>>,
+    cnum_map: Once<IndexVec<CrateNum, Option<CrateNum>>>,
 
     codemap: &'sess CodeMap,
     file_index_to_stable_id: FxHashMap<FileMapIndex, StableFilemapId>,
 
     // These two fields caches that are populated lazily during decoding.
-    file_index_to_file: RefCell<FxHashMap<FileMapIndex, Lrc<FileMap>>>,
-    synthetic_expansion_infos: RefCell<FxHashMap<AbsoluteBytePos, SyntaxContext>>,
+    file_index_to_file: Lock<FxHashMap<FileMapIndex, Lrc<FileMap>>>,
+    synthetic_expansion_infos: Lock<FxHashMap<AbsoluteBytePos, SyntaxContext>>,
 
     // A map from dep-node to the position of the cached query result in
     // `serialized_data`.
@@ -140,14 +141,14 @@ impl<'sess> OnDiskCache<'sess> {
         OnDiskCache {
             serialized_data: data,
             file_index_to_stable_id: footer.file_index_to_stable_id,
-            file_index_to_file: RefCell::new(FxHashMap()),
+            file_index_to_file: Lock::new(FxHashMap()),
             prev_cnums: footer.prev_cnums,
-            cnum_map: RefCell::new(None),
+            cnum_map: Once::new(),
             codemap: sess.codemap(),
-            current_diagnostics: RefCell::new(FxHashMap()),
+            current_diagnostics: Lock::new(FxHashMap()),
             query_result_index: footer.query_result_index.into_iter().collect(),
             prev_diagnostics_index: footer.diagnostics_index.into_iter().collect(),
-            synthetic_expansion_infos: RefCell::new(FxHashMap()),
+            synthetic_expansion_infos: Lock::new(FxHashMap()),
             prev_interpret_alloc_index: footer.interpret_alloc_index,
             interpret_alloc_cache: RefCell::new(FxHashMap::default()),
         }
@@ -157,14 +158,14 @@ impl<'sess> OnDiskCache<'sess> {
         OnDiskCache {
             serialized_data: Vec::new(),
             file_index_to_stable_id: FxHashMap(),
-            file_index_to_file: RefCell::new(FxHashMap()),
+            file_index_to_file: Lock::new(FxHashMap()),
             prev_cnums: vec![],
-            cnum_map: RefCell::new(None),
+            cnum_map: Once::new(),
             codemap,
-            current_diagnostics: RefCell::new(FxHashMap()),
+            current_diagnostics: Lock::new(FxHashMap()),
             query_result_index: FxHashMap(),
             prev_diagnostics_index: FxHashMap(),
-            synthetic_expansion_infos: RefCell::new(FxHashMap()),
+            synthetic_expansion_infos: Lock::new(FxHashMap()),
             prev_interpret_alloc_index: Vec::new(),
             interpret_alloc_cache: RefCell::new(FxHashMap::default()),
         }
@@ -213,7 +214,7 @@ impl<'sess> OnDiskCache<'sess> {
             // Encode query results
             let mut query_result_index = EncodedQueryResultIndex::new();
 
-            {
+            time(tcx.sess, "encode query results", || {
                 use ty::maps::queries::*;
                 let enc = &mut encoder;
                 let qri = &mut query_result_index;
@@ -237,8 +238,10 @@ impl<'sess> OnDiskCache<'sess> {
                 encode_query_results::<specialization_graph_of, _>(tcx, enc, qri)?;
 
                 // const eval is special, it only encodes successfully evaluated constants
-                use ty::maps::plumbing::GetCacheInternal;
-                for (key, entry) in const_eval::get_cache_internal(tcx).map.iter() {
+                use ty::maps::QueryConfig;
+                let map = const_eval::query_map(tcx).borrow();
+                assert!(map.active.is_empty());
+                for (key, entry) in map.results.iter() {
                     use ty::maps::config::QueryDescription;
                     if const_eval::cache_on_disk(key.clone()) {
                         if let Ok(ref value) = entry.value {
@@ -253,7 +256,9 @@ impl<'sess> OnDiskCache<'sess> {
                         }
                     }
                 }
-            }
+
+                Ok(())
+            })?;
 
             // Encode diagnostics
             let diagnostics_index = {
@@ -406,18 +411,16 @@ impl<'sess> OnDiskCache<'sess> {
             return None
         };
 
-        // Initialize the cnum_map if it is not initialized yet.
-        if self.cnum_map.borrow().is_none() {
-            let mut cnum_map = self.cnum_map.borrow_mut();
-            *cnum_map = Some(Self::compute_cnum_map(tcx, &self.prev_cnums[..]));
-        }
-        let cnum_map = self.cnum_map.borrow();
+        // Initialize the cnum_map using the value from the thread which finishes the closure first
+        self.cnum_map.init_nonlocking_same(|| {
+            Self::compute_cnum_map(tcx, &self.prev_cnums[..])
+        });
 
         let mut decoder = CacheDecoder {
             tcx,
             opaque: opaque::Decoder::new(&self.serialized_data[..], pos.to_usize()),
             codemap: self.codemap,
-            cnum_map: cnum_map.as_ref().unwrap(),
+            cnum_map: self.cnum_map.get(),
             file_index_to_file: &self.file_index_to_file,
             file_index_to_stable_id: &self.file_index_to_stable_id,
             synthetic_expansion_infos: &self.synthetic_expansion_infos,
@@ -481,8 +484,8 @@ struct CacheDecoder<'a, 'tcx: 'a, 'x> {
     opaque: opaque::Decoder<'x>,
     codemap: &'x CodeMap,
     cnum_map: &'x IndexVec<CrateNum, Option<CrateNum>>,
-    synthetic_expansion_infos: &'x RefCell<FxHashMap<AbsoluteBytePos, SyntaxContext>>,
-    file_index_to_file: &'x RefCell<FxHashMap<FileMapIndex, Lrc<FileMap>>>,
+    synthetic_expansion_infos: &'x Lock<FxHashMap<AbsoluteBytePos, SyntaxContext>>,
+    file_index_to_file: &'x Lock<FxHashMap<FileMapIndex, Lrc<FileMap>>>,
     file_index_to_stable_id: &'x FxHashMap<FileMapIndex, StableFilemapId>,
     interpret_alloc_cache: &'x RefCell<FxHashMap<usize, interpret::AllocId>>,
     /// maps from index in the cache file to location in the cache file
@@ -581,7 +584,8 @@ impl<'a, 'tcx: 'a, 'x> ty_codec::TyDecoder<'a, 'tcx> for CacheDecoder<'a, 'tcx, 
         }
 
         let ty = or_insert_with(self)?;
-        tcx.rcache.borrow_mut().insert(cache_key, ty);
+        // This may overwrite the entry, but it should overwrite with the same value
+        tcx.rcache.borrow_mut().insert_same(cache_key, ty);
         Ok(ty)
     }
 
@@ -1117,11 +1121,18 @@ fn encode_query_results<'enc, 'a, 'tcx, Q, E>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                               encoder: &mut CacheEncoder<'enc, 'a, 'tcx, E>,
                                               query_result_index: &mut EncodedQueryResultIndex)
                                               -> Result<(), E::Error>
-    where Q: super::plumbing::GetCacheInternal<'tcx>,
+    where Q: super::config::QueryDescription<'tcx>,
           E: 'enc + TyEncoder,
           Q::Value: Encodable,
 {
-    for (key, entry) in Q::get_cache_internal(tcx).map.iter() {
+    let desc = &format!("encode_query_results for {}",
+        unsafe { ::std::intrinsics::type_name::<Q>() });
+
+    time(tcx.sess, desc, || {
+
+    let map = Q::query_map(tcx).borrow();
+    assert!(map.active.is_empty());
+    for (key, entry) in map.results.iter() {
         if Q::cache_on_disk(key.clone()) {
             let dep_node = SerializedDepNodeIndex::new(entry.index.index());
 
@@ -1135,4 +1146,5 @@ fn encode_query_results<'enc, 'a, 'tcx, Q, E>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 
     Ok(())
+    })
 }

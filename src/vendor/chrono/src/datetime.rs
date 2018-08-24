@@ -6,8 +6,6 @@
 use std::{str, fmt, hash};
 use std::cmp::Ordering;
 use std::ops::{Add, Sub};
-#[cfg(feature = "rustc-serialize")]
-use std::ops::Deref;
 use std::time::{SystemTime, UNIX_EPOCH};
 use oldtime::Duration as OldDuration;
 
@@ -17,6 +15,37 @@ use naive::{NaiveTime, NaiveDateTime, IsoWeek};
 use Date;
 use format::{Item, Numeric, Pad, Fixed};
 use format::{parse, Parsed, ParseError, ParseResult, DelayedFormat, StrftimeItems};
+
+/// Specific formatting options for seconds. This may be extended in the
+/// future, so exhaustive matching in external code is not recommended.
+///
+/// See the `TimeZone::to_rfc3339_opts` function for usage.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SecondsFormat {
+    /// Format whole seconds only, with no decimal point nor subseconds.
+    Secs,
+
+    /// Use fixed 3 subsecond digits. This corresponds to
+    /// [Fixed::Nanosecond3](format/enum.Fixed.html#variant.Nanosecond3).
+    Millis,
+
+    /// Use fixed 6 subsecond digits. This corresponds to
+    /// [Fixed::Nanosecond6](format/enum.Fixed.html#variant.Nanosecond6).
+    Micros,
+
+    /// Use fixed 9 subsecond digits. This corresponds to
+    /// [Fixed::Nanosecond9](format/enum.Fixed.html#variant.Nanosecond9).
+    Nanos,
+
+    /// Automatically select one of `Secs`, `Millis`, `Micros`, or `Nanos` to
+    /// display all available non-zero sub-second digits.  This corresponds to
+    /// [Fixed::Nanosecond](format/enum.Fixed.html#variant.Nanosecond).
+    AutoSi,
+
+    // Do not match against this.
+    #[doc(hidden)]
+    __NonExhaustive,
+}
 
 /// ISO 8601 combined date and time with time zone.
 ///
@@ -28,30 +57,6 @@ pub struct DateTime<Tz: TimeZone> {
     datetime: NaiveDateTime,
     offset: Tz::Offset,
 }
-
-/// A DateTime that can be deserialized from a timestamp
-///
-/// A timestamp here is seconds since the epoch
-#[cfg(feature = "rustc-serialize")]
-pub struct TsSeconds<Tz: TimeZone>(DateTime<Tz>);
-
-#[cfg(feature = "rustc-serialize")]
-impl<Tz: TimeZone> From<TsSeconds<Tz>> for DateTime<Tz> {
-    /// Pull the inner DateTime<Tz> out
-    fn from(obj: TsSeconds<Tz>) -> DateTime<Tz> {
-        obj.0
-    }
-}
-
-#[cfg(feature = "rustc-serialize")]
-impl<Tz: TimeZone> Deref for TsSeconds<Tz> {
-    type Target = DateTime<Tz>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
 
 impl<Tz: TimeZone> DateTime<Tz> {
     /// Makes a new `DateTime` with given *UTC* datetime and offset.
@@ -92,6 +97,30 @@ impl<Tz: TimeZone> DateTime<Tz> {
         self.datetime.timestamp()
     }
 
+    /// Returns the number of non-leap-milliseconds since January 1, 1970 UTC
+    ///
+    /// Note that this does reduce the number of years that can be represented
+    /// from ~584 Billion to ~584 Million. (If this is a problem, please file
+    /// an issue to let me know what domain needs millisecond precision over
+    /// billions of years, I'm curious.)
+    ///
+    /// # Example
+    ///
+    /// ~~~~
+    /// use chrono::Utc;
+    /// use chrono::TimeZone;
+    ///
+    /// let dt = Utc.ymd(1970, 1, 1).and_hms_milli(0, 0, 1, 444);
+    /// assert_eq!(dt.timestamp_millis(), 1_444);
+    ///
+    /// let dt = Utc.ymd(2001, 9, 9).and_hms_milli(1, 46, 40, 555);
+    /// assert_eq!(dt.timestamp_millis(), 1_000_000_000_555);
+    /// ~~~~
+    #[inline]
+    pub fn timestamp_millis(&self) -> i64 {
+        self.datetime.timestamp_millis()
+    }
+
     /// Returns the number of milliseconds since the last second boundary
     ///
     /// warning: in event of a leap second, this may exceed 999
@@ -124,7 +153,7 @@ impl<Tz: TimeZone> DateTime<Tz> {
 
     /// Retrieves an associated offset from UTC.
     #[inline]
-    pub fn offset<'a>(&'a self) -> &'a Tz::Offset {
+    pub fn offset(&self) -> &Tz::Offset {
         &self.offset
     }
 
@@ -161,6 +190,7 @@ impl<Tz: TimeZone> DateTime<Tz> {
 
     /// Subtracts another `DateTime` from the current date and time.
     /// This does not overflow or underflow at all.
+    #[cfg_attr(feature = "cargo-clippy", allow(needless_pass_by_value))]
     #[inline]
     pub fn signed_duration_since<Tz2: TimeZone>(self, rhs: DateTime<Tz2>) -> OldDuration {
         self.datetime.signed_duration_since(rhs.datetime)
@@ -213,6 +243,20 @@ impl DateTime<FixedOffset> {
     /// on the supported escape sequences.
     ///
     /// See also `Offset::datetime_from_str` which gives a local `DateTime` on specific time zone.
+    ///
+    /// Note that this method *requires a timezone* in the string. See
+    /// [`NaiveDateTime::parse_from_str`](./naive/struct.NaiveDateTime.html#method.parse_from_str)
+    /// for a version that does not require a timezone in the to-be-parsed str.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use chrono::{DateTime, FixedOffset, TimeZone};
+    ///
+    /// let dt = DateTime::parse_from_str(
+    ///     "1983 Apr 13 12:09:14.274 +0000", "%Y %b %d %H:%M:%S%.3f %z");
+    /// assert_eq!(dt, Ok(FixedOffset::east(0).ymd(1983, 4, 13).and_hms_milli(12, 9, 14, 274)));
+    /// ```
     pub fn parse_from_str(s: &str, fmt: &str) -> ParseResult<DateTime<FixedOffset>> {
         let mut parsed = Parsed::new();
         try!(parse(&mut parsed, s, StrftimeItems::new(fmt)));
@@ -231,6 +275,80 @@ impl<Tz: TimeZone> DateTime<Tz> where Tz::Offset: fmt::Display {
     pub fn to_rfc3339(&self) -> String {
         const ITEMS: &'static [Item<'static>] = &[Item::Fixed(Fixed::RFC3339)];
         self.format_with_items(ITEMS.iter().cloned()).to_string()
+    }
+
+    /// Return an RFC 3339 and ISO 8601 date and time string with subseconds
+    /// formatted as per a `SecondsFormat`. If passed `use_z` true and the
+    /// timezone is UTC (offset 0), use 'Z', as per
+    /// [Fixed::TimezoneOffsetColonZ](format/enum.Fixed.html#variant.TimezoneOffsetColonZ).
+    /// If passed `use_z` false, use
+    /// [Fixed::TimezoneOffsetColon](format/enum.Fixed.html#variant.TimezoneOffsetColon).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # use chrono::{DateTime, FixedOffset, SecondsFormat, TimeZone, Utc};
+    /// let dt = Utc.ymd(2018, 1, 26).and_hms_micro(18, 30, 9, 453_829);
+    /// assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Millis, false),
+    ///            "2018-01-26T18:30:09.453+00:00");
+    /// assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Millis, true),
+    ///            "2018-01-26T18:30:09.453Z");
+    /// assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true),
+    ///            "2018-01-26T18:30:09Z");
+    ///
+    /// let pst = FixedOffset::east(8 * 60 * 60);
+    /// let dt = pst.ymd(2018, 1, 26).and_hms_micro(10, 30, 9, 453_829);
+    /// assert_eq!(dt.to_rfc3339_opts(SecondsFormat::Secs, true),
+    ///            "2018-01-26T10:30:09+08:00");
+    /// ```
+    pub fn to_rfc3339_opts(&self, secform: SecondsFormat, use_z: bool) -> String {
+        use format::Numeric::*;
+        use format::Pad::Zero;
+        use SecondsFormat::*;
+
+        debug_assert!(secform != __NonExhaustive, "Do not use __NonExhaustive!");
+
+        const PREFIX: &'static [Item<'static>] = &[
+            Item::Numeric(Year, Zero),
+            Item::Literal("-"),
+            Item::Numeric(Month, Zero),
+            Item::Literal("-"),
+            Item::Numeric(Day, Zero),
+            Item::Literal("T"),
+            Item::Numeric(Hour, Zero),
+            Item::Literal(":"),
+            Item::Numeric(Minute, Zero),
+            Item::Literal(":"),
+            Item::Numeric(Second, Zero),
+        ];
+
+        let ssitem = match secform {
+            Secs   => None,
+            Millis => Some(Item::Fixed(Fixed::Nanosecond3)),
+            Micros => Some(Item::Fixed(Fixed::Nanosecond6)),
+            Nanos  => Some(Item::Fixed(Fixed::Nanosecond9)),
+            AutoSi => Some(Item::Fixed(Fixed::Nanosecond)),
+            __NonExhaustive => unreachable!(),
+        };
+
+        let tzitem = Item::Fixed(
+            if use_z {
+                Fixed::TimezoneOffsetColonZ
+            } else {
+                Fixed::TimezoneOffsetColon
+            }
+        );
+
+        match ssitem {
+            None =>
+                self.format_with_items(
+                    PREFIX.iter().chain([tzitem].iter()).cloned()
+                ).to_string(),
+            Some(s) =>
+                self.format_with_items(
+                    PREFIX.iter().chain([s, tzitem].iter()).cloned()
+                ).to_string(),
+        }
     }
 
     /// Formats the combined date and time with the specified formatting items.
@@ -517,9 +635,9 @@ fn test_decodable_json<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
 fn test_decodable_json_timestamps<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
                                                            fixed_from_str: FFixed,
                                                            local_from_str: FLocal)
-    where FUtc: Fn(&str) -> Result<TsSeconds<Utc>, E>,
-          FFixed: Fn(&str) -> Result<TsSeconds<FixedOffset>, E>,
-          FLocal: Fn(&str) -> Result<TsSeconds<Local>, E>,
+    where FUtc: Fn(&str) -> Result<rustc_serialize::TsSeconds<Utc>, E>,
+          FFixed: Fn(&str) -> Result<rustc_serialize::TsSeconds<FixedOffset>, E>,
+          FLocal: Fn(&str) -> Result<rustc_serialize::TsSeconds<Local>, E>,
           E: ::std::fmt::Debug
 {
     fn norm<Tz: TimeZone>(dt: &Option<DateTime<Tz>>) -> Option<(&DateTime<Tz>, &Tz::Offset)> {
@@ -543,9 +661,10 @@ fn test_decodable_json_timestamps<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
 }
 
 #[cfg(feature = "rustc-serialize")]
-mod rustc_serialize {
+pub mod rustc_serialize {
     use std::fmt;
-    use super::{DateTime, TsSeconds};
+    use std::ops::Deref;
+    use super::DateTime;
     use offset::{TimeZone, LocalResult, Utc, Local, FixedOffset};
     use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
@@ -579,7 +698,7 @@ mod rustc_serialize {
     impl Decodable for TsSeconds<FixedOffset> {
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds<FixedOffset>, D::Error> {
             from(FixedOffset::east(0).timestamp_opt(d.read_i64()?, 0), d)
-                .map(|dt| TsSeconds(dt))
+                .map(TsSeconds)
         }
     }
 
@@ -592,10 +711,31 @@ mod rustc_serialize {
         }
     }
 
+    /// A `DateTime` that can be deserialized from a timestamp
+    ///
+    /// A timestamp here is seconds since the epoch
+    #[derive(Debug)]
+    pub struct TsSeconds<Tz: TimeZone>(DateTime<Tz>);
+
+    impl<Tz: TimeZone> From<TsSeconds<Tz>> for DateTime<Tz> {
+        /// Pull the inner DateTime<Tz> out
+        fn from(obj: TsSeconds<Tz>) -> DateTime<Tz> {
+            obj.0
+        }
+    }
+
+    impl<Tz: TimeZone> Deref for TsSeconds<Tz> {
+        type Target = DateTime<Tz>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
     impl Decodable for TsSeconds<Utc> {
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds<Utc>, D::Error> {
             from(Utc.timestamp_opt(d.read_i64()?, 0), d)
-                .map(|dt| TsSeconds(dt))
+                .map(TsSeconds)
         }
     }
 
@@ -634,15 +774,12 @@ mod rustc_serialize {
 
 }
 
-/// Ser/de helpers
-///
-/// The various modules in here are intended to be used with serde's [`with`
-/// annotation](https://serde.rs/attributes.html#field-attributes).
+/// documented at re-export site
 #[cfg(feature = "serde")]
 pub mod serde {
     use std::fmt;
     use super::DateTime;
-    use offset::{TimeZone, LocalResult, Utc, Local, FixedOffset};
+    use offset::{TimeZone, Utc, Local, FixedOffset};
     use serdelib::{ser, de};
 
     /// Ser/de to/from timestamps in seconds
@@ -686,10 +823,9 @@ pub mod serde {
         use serdelib::{ser, de};
 
         use {DateTime, Utc, FixedOffset};
-        use offset::TimeZone;
-        use super::from;
+        use offset::{LocalResult, TimeZone};
 
-        /// Deserialize a DateTime from a seconds timestamp
+        /// Deserialize a `DateTime` from a seconds timestamp
         ///
         /// Intended for use with `serde`s `deserialize_with` attribute.
         ///
@@ -775,22 +911,39 @@ pub mod serde {
             fn visit_i64<E>(self, value: i64) -> Result<DateTime<FixedOffset>, E>
                 where E: de::Error
             {
-                from(FixedOffset::east(0).timestamp_opt(value, 0), value)
+                from(FixedOffset::east(0).timestamp_opt(value, 0), &value)
             }
 
             /// Deserialize a timestamp in seconds since the epoch
             fn visit_u64<E>(self, value: u64) -> Result<DateTime<FixedOffset>, E>
                 where E: de::Error
             {
-                from(FixedOffset::east(0).timestamp_opt(value as i64, 0), value)
+                from(FixedOffset::east(0).timestamp_opt(value as i64, 0), &value)
             }
         }
 
+        // try!-like function to convert a LocalResult into a serde-ish Result
+        fn from<T, E, V>(me: LocalResult<T>, ts: &V) -> Result<T, E>
+            where E: de::Error,
+                  V: fmt::Display,
+                  T: fmt::Display,
+        {
+            match me {
+                LocalResult::None => Err(E::custom(
+                    format!("value is not a legal timestamp: {}", ts))),
+                LocalResult::Ambiguous(min, max) => Err(E::custom(
+                    format!("value is an ambiguous timestamp: {}, could be either of {}, {}",
+                            ts, min, max))),
+                LocalResult::Single(val) => Ok(val)
+            }
+        }
     }
 
-    // TODO not very optimized for space (binary formats would want something better)
-
     impl<Tz: TimeZone> ser::Serialize for DateTime<Tz> {
+        /// Serialize into a rfc3339 time string
+        ///
+        /// See [the `serde` module](./serde/index.html) for alternate
+        /// serializations.
         fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
             where S: ser::Serializer
         {
@@ -806,22 +959,6 @@ pub mod serde {
 
             // Debug formatting is correct RFC3339, and it allows Zulu.
             serializer.collect_str(&FormatWrapped { inner: &self })
-        }
-    }
-
-    // try!-like function to convert a LocalResult into a serde-ish Result
-    fn from<T, E, V>(me: LocalResult<T>, ts: V) -> Result<T, E>
-        where E: de::Error,
-              V: fmt::Display,
-              T: fmt::Display,
-    {
-        match me {
-            LocalResult::None => Err(E::custom(
-                format!("value is not a legal timestamp: {}", ts))),
-            LocalResult::Ambiguous(min, max) => Err(E::custom(
-                format!("value is an ambiguous timestamp: {}, could be either of {}, {}",
-                        ts, min, max))),
-            LocalResult::Single(val) => Ok(val)
         }
     }
 
@@ -845,8 +982,10 @@ pub mod serde {
     /// Deserialize a value that optionally includes a timezone offset in its
     /// string representation
     ///
-    /// The serialized value can be either a string representation or a unix
-    /// timestamp
+    /// The value to be deserialized must be an rfc3339 string.
+    ///
+    /// See [the `serde` module](./serde/index.html) for alternate
+    /// deserialization formats.
     impl<'de> de::Deserialize<'de> for DateTime<FixedOffset> {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where D: de::Deserializer<'de>
@@ -857,8 +996,10 @@ pub mod serde {
 
     /// Deserialize into a UTC value
     ///
-    /// The serialized value can be either a string representation or a unix
-    /// timestamp
+    /// The value to be deserialized must be an rfc3339 string.
+    ///
+    /// See [the `serde` module](./serde/index.html) for alternate
+    /// deserialization formats.
     impl<'de> de::Deserialize<'de> for DateTime<Utc> {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where D: de::Deserializer<'de>
@@ -870,8 +1011,10 @@ pub mod serde {
     /// Deserialize a value that includes no timezone in its string
     /// representation
     ///
-    /// The serialized value can be either a string representation or a unix
-    /// timestamp
+    /// The value to be deserialized must be an rfc3339 string.
+    ///
+    /// See [the `serde` module](./serde/index.html) for alternate
+    /// serialization formats.
     impl<'de> de::Deserialize<'de> for DateTime<Local> {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where D: de::Deserializer<'de>
@@ -1019,6 +1162,36 @@ mod tests {
                    Ok(EDT.ymd(2015, 2, 18).and_hms_milli(23, 59, 59, 1_000)));
         assert_eq!(DateTime::parse_from_rfc3339("2015-02-18T23:59:60.234567+05:00"),
                    Ok(EDT.ymd(2015, 2, 18).and_hms_micro(23, 59, 59, 1_234_567)));
+    }
+
+    #[test]
+    fn test_rfc3339_opts() {
+        use SecondsFormat::*;
+        let pst = FixedOffset::east(8 * 60 * 60);
+        let dt = pst.ymd(2018, 1, 11).and_hms_nano(10, 5, 13, 084_660_000);
+        assert_eq!(dt.to_rfc3339_opts(Secs, false),   "2018-01-11T10:05:13+08:00");
+        assert_eq!(dt.to_rfc3339_opts(Secs, true),    "2018-01-11T10:05:13+08:00");
+        assert_eq!(dt.to_rfc3339_opts(Millis, false), "2018-01-11T10:05:13.084+08:00");
+        assert_eq!(dt.to_rfc3339_opts(Micros, false), "2018-01-11T10:05:13.084660+08:00");
+        assert_eq!(dt.to_rfc3339_opts(Nanos, false),  "2018-01-11T10:05:13.084660000+08:00");
+        assert_eq!(dt.to_rfc3339_opts(AutoSi, false), "2018-01-11T10:05:13.084660+08:00");
+
+        let ut = DateTime::<Utc>::from_utc(dt.naive_utc(), Utc);
+        assert_eq!(ut.to_rfc3339_opts(Secs, false),   "2018-01-11T02:05:13+00:00");
+        assert_eq!(ut.to_rfc3339_opts(Secs, true),    "2018-01-11T02:05:13Z");
+        assert_eq!(ut.to_rfc3339_opts(Millis, false), "2018-01-11T02:05:13.084+00:00");
+        assert_eq!(ut.to_rfc3339_opts(Millis, true),  "2018-01-11T02:05:13.084Z");
+        assert_eq!(ut.to_rfc3339_opts(Micros, true),  "2018-01-11T02:05:13.084660Z");
+        assert_eq!(ut.to_rfc3339_opts(Nanos, true),   "2018-01-11T02:05:13.084660000Z");
+        assert_eq!(ut.to_rfc3339_opts(AutoSi, true),  "2018-01-11T02:05:13.084660Z");
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_rfc3339_opts_nonexhaustive() {
+        use SecondsFormat;
+        let dt = Utc.ymd(1999, 10, 9).and_hms(1, 2, 3);
+        dt.to_rfc3339_opts(SecondsFormat::__NonExhaustive, true);
     }
 
     #[test]

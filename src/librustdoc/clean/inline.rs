@@ -10,10 +10,7 @@
 
 //! Support for inlining external documentation into the current AST.
 
-use std::collections::BTreeMap;
-use std::io;
 use std::iter::once;
-use rustc_data_structures::sync::Lrc;
 
 use syntax::ast;
 use rustc::hir;
@@ -41,7 +38,7 @@ use super::Clean;
 ///
 /// The returned value is `None` if the definition could not be inlined,
 /// and `Some` of a vector of items if it was successfully expanded.
-pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name)
+pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name, visited: &mut FxHashSet<DefId>)
                   -> Option<Vec<clean::Item>> {
     if def == Def::Err { return None }
     let did = def.def_id();
@@ -90,7 +87,7 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name)
         Def::StructCtor(..) => return Some(Vec::new()),
         Def::Mod(did) => {
             record_extern_fqn(cx, did, clean::TypeKind::Module);
-            clean::ModuleItem(build_module(cx, did))
+            clean::ModuleItem(build_module(cx, did, visited))
         }
         Def::Static(did, mtbl) => {
             record_extern_fqn(cx, did, clean::TypeKind::Static);
@@ -100,6 +97,9 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name)
             record_extern_fqn(cx, did, clean::TypeKind::Const);
             clean::ConstantItem(build_const(cx, did))
         }
+        // Macros are eagerly inlined back in visit_ast, don't show their export statements
+        // FIXME(50647): the eager inline does not take doc(hidden)/doc(no_inline) into account
+        Def::Macro(..) => return Some(Vec::new()),
         _ => return None,
     };
     cx.renderinfo.borrow_mut().inlined.insert(did);
@@ -289,10 +289,15 @@ pub fn build_impls(cx: &DocContext, did: DefId, auto_traits: bool) -> Vec<clean:
         lang_items.u128_impl(),
         lang_items.f32_impl(),
         lang_items.f64_impl(),
+        lang_items.f32_runtime_impl(),
+        lang_items.f64_runtime_impl(),
         lang_items.char_impl(),
         lang_items.str_impl(),
         lang_items.slice_impl(),
         lang_items.slice_u8_impl(),
+        lang_items.str_alloc_impl(),
+        lang_items.slice_alloc_impl(),
+        lang_items.slice_u8_alloc_impl(),
         lang_items.const_ptr_impl(),
         lang_items.mut_ptr_impl(),
     ];
@@ -383,24 +388,24 @@ pub fn build_impl(cx: &DocContext, did: DefId, ret: &mut Vec<clean::Item>) {
     });
 }
 
-fn build_module(cx: &DocContext, did: DefId) -> clean::Module {
+fn build_module(cx: &DocContext, did: DefId, visited: &mut FxHashSet<DefId>) -> clean::Module {
     let mut items = Vec::new();
-    fill_in(cx, did, &mut items);
+    fill_in(cx, did, &mut items, visited);
     return clean::Module {
         items,
         is_crate: false,
     };
 
-    fn fill_in(cx: &DocContext, did: DefId, items: &mut Vec<clean::Item>) {
+    fn fill_in(cx: &DocContext, did: DefId, items: &mut Vec<clean::Item>,
+               visited: &mut FxHashSet<DefId>) {
         // If we're re-exporting a re-export it may actually re-export something in
         // two namespaces, so the target may be listed twice. Make sure we only
         // visit each node at most once.
-        let mut visited = FxHashSet();
         for &item in cx.tcx.item_children(did).iter() {
             let def_id = item.def.def_id();
             if item.vis == ty::Visibility::Public {
-                if !visited.insert(def_id) { continue }
-                if let Some(i) = try_inline(cx, item.def, item.ident.name) {
+                if did == def_id || !visited.insert(def_id) { continue }
+                if let Some(i) = try_inline(cx, item.def, item.ident.name, visited) {
                     items.extend(i)
                 }
             }
@@ -408,27 +413,8 @@ fn build_module(cx: &DocContext, did: DefId) -> clean::Module {
     }
 }
 
-struct InlinedConst {
-    nested_bodies: Lrc<BTreeMap<hir::BodyId, hir::Body>>
-}
-
-impl hir::print::PpAnn for InlinedConst {
-    fn nested(&self, state: &mut hir::print::State, nested: hir::print::Nested)
-              -> io::Result<()> {
-        if let hir::print::Nested::Body(body) = nested {
-            state.print_expr(&self.nested_bodies[&body].value)
-        } else {
-            Ok(())
-        }
-    }
-}
-
 pub fn print_inlined_const(cx: &DocContext, did: DefId) -> String {
-    let body = cx.tcx.extern_const_body(did).body;
-    let inlined = InlinedConst {
-        nested_bodies: cx.tcx.item_body_nested_bodies(did).nested_bodies
-    };
-    hir::print::to_string(&inlined, |s| s.print_expr(&body.value))
+    cx.tcx.rendered_const(did)
 }
 
 fn build_const(cx: &DocContext, did: DefId) -> clean::Constant {

@@ -1,0 +1,20 @@
+error[E0597]: `ref_` does not live long enough
+  --> $DIR/dropck.rs:22:11
+   |
+LL |       gen = || {
+   |  ___________^
+LL | |         // but the generator can use it to drop a `Ref<'a, i32>`.
+LL | |         let _d = ref_.take(); //~ ERROR `ref_` does not live long enough
+LL | |         yield;
+LL | |     };
+   | |_____^ borrowed value does not live long enough
+...
+LL |   }
+   |   -
+   |   |
+   |   borrowed value only lives until here
+   |   borrow later used here, when `gen` is dropped
+
+error: aborting due to previous error
+
+For more information about this error, try `rustc --explain E0597`.

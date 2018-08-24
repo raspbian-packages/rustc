@@ -108,8 +108,7 @@ declare_clippy_lint! {
 /// implements `IntoIterator`, so that possibly one value will be iterated,
 /// leading to some hard to find bugs. No one will want to write such code
 /// [except to win an Underhanded Rust
-/// Contest](https://www.reddit.
-/// com/r/rust/comments/3hb0wm/underhanded_rust_contest/cu5yuhr).
+/// Contest](https://www.reddit.com/r/rust/comments/3hb0wm/underhanded_rust_contest/cu5yuhr).
 ///
 /// **Known problems:** None.
 ///
@@ -603,7 +602,6 @@ fn never_loop_expr(expr: &Expr, main_loop_id: &NodeId) -> NeverLoopResult {
         ExprCast(ref e, _) |
         ExprType(ref e, _) |
         ExprField(ref e, _) |
-        ExprTupField(ref e, _) |
         ExprAddrOf(_, ref e) |
         ExprStruct(_, _, Some(ref e)) |
         ExprRepeat(ref e, _) => never_loop_expr(e, main_loop_id),
@@ -1800,7 +1798,7 @@ fn is_ref_iterable_type(cx: &LateContext, e: &Expr) -> bool {
 fn is_iterable_array(ty: Ty) -> bool {
     // IntoIterator is currently only implemented for array sizes <= 32 in rustc
     match ty.sty {
-        ty::TyArray(_, n) => (0..=32).contains(n.val.to_raw_bits().expect("array length")),
+        ty::TyArray(_, n) => (0..=32).contains(&n.val.to_raw_bits().expect("array length")),
         _ => false,
     }
 }
@@ -2237,7 +2235,7 @@ struct MutVarsDelegate {
 }
 
 impl<'tcx> MutVarsDelegate {
-    fn update(&mut self, cat: &'tcx Categorization, sp: Span) {
+    fn update(&mut self, cat: &'tcx Categorization) {
         match *cat {
             Categorization::Local(id) =>
                 if let Some(used) = self.used_mutably.get_mut(&id) {
@@ -2249,7 +2247,7 @@ impl<'tcx> MutVarsDelegate {
                 //`while`-body, not just the ones in the condition.
                 self.skip = true
             },
-            Categorization::Deref(ref cmt, _) => self.update(&cmt.cat, sp),
+            Categorization::Deref(ref cmt, _) | Categorization::Interior(ref cmt, _) => self.update(&cmt.cat),
             _ => {}
         }
     }
@@ -2263,14 +2261,14 @@ impl<'tcx> Delegate<'tcx> for MutVarsDelegate {
 
     fn consume_pat(&mut self, _: &Pat, _: cmt<'tcx>, _: ConsumeMode) {}
 
-    fn borrow(&mut self, _: NodeId, sp: Span, cmt: cmt<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
+    fn borrow(&mut self, _: NodeId, _: Span, cmt: cmt<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
         if let ty::BorrowKind::MutBorrow = bk {
-            self.update(&cmt.cat, sp)
+            self.update(&cmt.cat)
         }
     }
 
-    fn mutate(&mut self, _: NodeId, sp: Span, cmt: cmt<'tcx>, _: MutateMode) {
-        self.update(&cmt.cat, sp)
+    fn mutate(&mut self, _: NodeId, _: Span, cmt: cmt<'tcx>, _: MutateMode) {
+        self.update(&cmt.cat)
     }
 
     fn decl_without_init(&mut self, _: NodeId, _: Span) {}

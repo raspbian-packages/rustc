@@ -2,7 +2,7 @@ use rustc::mir;
 use rustc::ty::{self, Ty};
 use rustc::ty::layout::LayoutOf;
 use syntax::codemap::Span;
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 
 use rustc::mir::interpret::{EvalResult, PrimVal, Value};
 use super::{EvalContext, Place, Machine, ValTy};
@@ -37,7 +37,6 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 ref targets,
                 ..
             } => {
-                // FIXME(CTFE): forbid branching
                 let discr_val = self.eval_operand(discr)?;
                 let discr_prim = self.value_to_primval(discr_val)?;
 
@@ -45,8 +44,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 let mut target_block = targets[targets.len() - 1];
 
                 for (index, &const_int) in values.iter().enumerate() {
-                    let prim = PrimVal::Bytes(const_int);
-                    if discr_prim.to_bytes()? == prim.to_bytes()? {
+                    if discr_prim.to_bytes()? == const_int {
                         target_block = targets[index];
                         break;
                     }
@@ -150,23 +148,24 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 if expected == cond_val {
                     self.goto_block(target);
                 } else {
-                    use rustc::mir::AssertMessage::*;
+                    use rustc::mir::interpret::EvalErrorKind::*;
                     return match *msg {
                         BoundsCheck { ref len, ref index } => {
-                            let span = terminator.source_info.span;
                             let len = self.eval_operand_to_primval(len)
                                 .expect("can't eval len")
                                 .to_u64()?;
                             let index = self.eval_operand_to_primval(index)
                                 .expect("can't eval index")
                                 .to_u64()?;
-                            err!(ArrayIndexOutOfBounds(span, len, index))
+                            err!(BoundsCheck { len, index })
                         }
-                        Math(ref err) => {
-                            err!(Math(terminator.source_info.span, err.clone()))
-                        }
+                        Overflow(op) => Err(Overflow(op).into()),
+                        OverflowNeg => Err(OverflowNeg.into()),
+                        DivisionByZero => Err(DivisionByZero.into()),
+                        RemainderByZero => Err(RemainderByZero.into()),
                         GeneratorResumedAfterReturn |
                         GeneratorResumedAfterPanic => unimplemented!(),
+                        _ => bug!(),
                     };
                 }
             }

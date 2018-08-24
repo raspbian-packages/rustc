@@ -40,7 +40,7 @@ pub fn expand_deriving_debug(cx: &mut ExtCtxt,
                           name: "fmt",
                           generics: LifetimeBounds::empty(),
                           explicit_self: borrowed_explicit_self(),
-                          args: vec![fmtr],
+                          args: vec![(fmtr, "f")],
                           ret_ty: Literal(path_std!(cx, fmt::Result)),
                           attributes: Vec::new(),
                           is_unsafe: false,
@@ -61,7 +61,7 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span, substr: &Substructure) -> P<E
     // based on the "shape".
     let (ident, is_struct) = match *substr.fields {
         Struct(vdata, _) => (substr.type_ident, vdata.is_struct()),
-        EnumMatching(_, _, v, _) => (v.node.name, v.node.data.is_struct()),
+        EnumMatching(_, _, v, _) => (v.node.ident, v.node.data.is_struct()),
         EnumNonMatchingCollapsed(..) |
         StaticStruct(..) |
         StaticEnum(..) => cx.span_bug(span, "nonsensical .fields in `#[derive(Debug)]`"),
@@ -70,7 +70,7 @@ fn show_substructure(cx: &mut ExtCtxt, span: Span, substr: &Substructure) -> P<E
     // We want to make sure we have the ctxt set so that we can use unstable methods
     let span = span.with_ctxt(cx.backtrace());
     let name = cx.expr_lit(span, ast::LitKind::Str(ident.name, ast::StrStyle::Cooked));
-    let builder = Ident::from_str("__debug_trait_builder");
+    let builder = Ident::from_str("debug_trait_builder").gensym();
     let builder_expr = cx.expr_ident(span, builder.clone());
 
     let fmt = substr.nonself_args[0].clone();

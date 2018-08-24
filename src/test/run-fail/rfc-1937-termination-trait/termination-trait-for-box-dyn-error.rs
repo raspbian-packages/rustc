@@ -8,10 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// must-compile-successfully
+// compile-pass
 // failure-status: 1
-
-#![feature(dyn_trait)]
 
 use std::error::Error;
 use std::io;

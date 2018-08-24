@@ -25,9 +25,9 @@ use syntax_pos::{self, Span, FileName};
 use tokenstream::{TokenStream, TokenTree};
 use tokenstream;
 
-use std::cell::Cell;
 use std::{cmp, fmt};
-use rustc_data_structures::sync::Lrc;
+use std::mem;
+use rustc_data_structures::sync::{Lrc, Lock};
 
 #[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash, Debug, Copy)]
 pub enum BinOpToken {
@@ -73,9 +73,9 @@ pub enum Lit {
     Integer(ast::Name),
     Float(ast::Name),
     Str_(ast::Name),
-    StrRaw(ast::Name, usize), /* raw str delimited by n hash symbols */
+    StrRaw(ast::Name, u16), /* raw str delimited by n hash symbols */
     ByteStr(ast::Name),
-    ByteStrRaw(ast::Name, usize), /* raw byte str delimited by n hash symbols */
+    ByteStrRaw(ast::Name, u16), /* raw byte str delimited by n hash symbols */
 }
 
 impl Lit {
@@ -89,9 +89,15 @@ impl Lit {
             ByteStr(_) | ByteStrRaw(..) => "byte string"
         }
     }
+
+    // See comments in `interpolated_to_tokenstream` for why we care about
+    // *probably* equal here rather than actual equality
+    fn probably_equal_for_proc_macro(&self, other: &Lit) -> bool {
+        mem::discriminant(self) == mem::discriminant(other)
+    }
 }
 
-fn ident_can_begin_expr(ident: ast::Ident, is_raw: bool) -> bool {
+pub(crate) fn ident_can_begin_expr(ident: ast::Ident, is_raw: bool) -> bool {
     let ident_token: Token = Ident(ident, is_raw);
 
     !ident_token.is_reserved_ident() ||
@@ -271,9 +277,10 @@ impl Token {
             DotDot | DotDotDot | DotDotEq     | // range notation
             Lt | BinOp(Shl)                   | // associated path
             ModSep                            | // global path
+            Lifetime(..)                      | // labeled loop
             Pound                             => true, // expression attributes
             Interpolated(ref nt) => match nt.0 {
-                NtIdent(..) | NtExpr(..) | NtBlock(..) | NtPath(..) => true,
+                NtIdent(..) | NtExpr(..) | NtBlock(..) | NtPath(..) | NtLifetime(..) => true,
                 _ => false,
             },
             _ => false,
@@ -317,20 +324,44 @@ impl Token {
         }
     }
 
-    pub fn ident(&self) -> Option<(ast::Ident, bool)> {
+    /// Returns an identifier if this token is an identifier.
+    pub fn ident(&self) -> Option<(ast::Ident, /* is_raw */ bool)> {
         match *self {
             Ident(ident, is_raw) => Some((ident, is_raw)),
             Interpolated(ref nt) => match nt.0 {
-                NtIdent(ident, is_raw) => Some((ident.node, is_raw)),
+                NtIdent(ident, is_raw) => Some((ident, is_raw)),
                 _ => None,
             },
             _ => None,
         }
     }
-
+    /// Returns a lifetime identifier if this token is a lifetime.
+    pub fn lifetime(&self) -> Option<ast::Ident> {
+        match *self {
+            Lifetime(ident) => Some(ident),
+            Interpolated(ref nt) => match nt.0 {
+                NtLifetime(ident) => Some(ident),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
     /// Returns `true` if the token is an identifier.
     pub fn is_ident(&self) -> bool {
         self.ident().is_some()
+    }
+    /// Returns `true` if the token is a lifetime.
+    pub fn is_lifetime(&self) -> bool {
+        self.lifetime().is_some()
+    }
+
+    /// Returns `true` if the token is a identifier whose name is the given
+    /// string slice.
+    pub fn is_ident_named(&self, name: &str) -> bool {
+        match self.ident() {
+            Some((ident, _)) => ident.name.as_str() == name,
+            None => false
+        }
     }
 
     /// Returns `true` if the token is a documentation comment.
@@ -357,26 +388,6 @@ impl Token {
             }
         }
         false
-    }
-
-    /// Returns a lifetime with the span and a dummy id if it is a lifetime,
-    /// or the original lifetime if it is an interpolated lifetime, ignoring
-    /// the span.
-    pub fn lifetime(&self, span: Span) -> Option<ast::Lifetime> {
-        match *self {
-            Lifetime(ident) =>
-                Some(ast::Lifetime { ident: ident, span: span, id: ast::DUMMY_NODE_ID }),
-            Interpolated(ref nt) => match nt.0 {
-                NtLifetime(lifetime) => Some(lifetime),
-                _ => None,
-            },
-            _ => None,
-        }
-    }
-
-    /// Returns `true` if the token is a lifetime.
-    pub fn is_lifetime(&self) -> bool {
-        self.lifetime(syntax_pos::DUMMY_SP).is_some()
     }
 
     /// Returns `true` if the token is either the `mut` or `const` keyword.
@@ -427,6 +438,14 @@ impl Token {
     pub fn is_unused_keyword(&self) -> bool {
         match self.ident() {
             Some((id, false)) => is_unused_keyword(id),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the token is either a special identifier or a keyword.
+    pub fn is_reserved_ident(&self) -> bool {
+        match self.ident() {
+            Some((id, false)) => is_reserved_ident(id),
             _ => false,
         }
     }
@@ -497,14 +516,6 @@ impl Token {
         }
     }
 
-    /// Returns `true` if the token is either a special identifier or a keyword.
-    pub fn is_reserved_ident(&self) -> bool {
-        match self.ident() {
-            Some((id, false)) => is_reserved_ident(id),
-            _ => false,
-        }
-    }
-
     pub fn interpolated_to_tokenstream(&self, sess: &ParseSess, span: Span)
         -> TokenStream
     {
@@ -524,8 +535,9 @@ impl Token {
         // all span information.
         //
         // As a result, some AST nodes are annotated with the token
-        // stream they came from. Attempt to extract these lossless
-        // token streams before we fall back to the stringification.
+        // stream they came from. Here we attempt to extract these
+        // lossless token streams before we fall back to the
+        // stringification.
         let mut tokens = None;
 
         match nt.0 {
@@ -539,12 +551,12 @@ impl Token {
                 tokens = prepend_attrs(sess, &item.attrs, item.tokens.as_ref(), span);
             }
             Nonterminal::NtIdent(ident, is_raw) => {
-                let token = Token::Ident(ident.node, is_raw);
+                let token = Token::Ident(ident, is_raw);
                 tokens = Some(TokenTree::Token(ident.span, token).into());
             }
-            Nonterminal::NtLifetime(lifetime) => {
-                let token = Token::Lifetime(lifetime.ident);
-                tokens = Some(TokenTree::Token(lifetime.span, token).into());
+            Nonterminal::NtLifetime(ident) => {
+                let token = Token::Lifetime(ident);
+                tokens = Some(TokenTree::Token(ident.span, token).into());
             }
             Nonterminal::NtTT(ref tt) => {
                 tokens = Some(tt.clone().into());
@@ -552,17 +564,104 @@ impl Token {
             _ => {}
         }
 
-        tokens.unwrap_or_else(|| {
-            nt.1.force(|| {
-                // FIXME(jseyfried): Avoid this pretty-print + reparse hack
-                let source = pprust::token_to_string(self);
-                parse_stream_from_source_str(FileName::MacroExpansion, source, sess, Some(span))
-            })
-        })
+        let tokens_for_real = nt.1.force(|| {
+            // FIXME(#43081): Avoid this pretty-print + reparse hack
+            let source = pprust::token_to_string(self);
+            parse_stream_from_source_str(FileName::MacroExpansion, source, sess, Some(span))
+        });
+
+        // During early phases of the compiler the AST could get modified
+        // directly (e.g. attributes added or removed) and the internal cache
+        // of tokens my not be invalidated or updated. Consequently if the
+        // "lossless" token stream disagrees with our actual stringification
+        // (which has historically been much more battle-tested) then we go
+        // with the lossy stream anyway (losing span information).
+        //
+        // Note that the comparison isn't `==` here to avoid comparing spans,
+        // but it *also* is a "probable" equality which is a pretty weird
+        // definition. We mostly want to catch actual changes to the AST
+        // like a `#[cfg]` being processed or some weird `macro_rules!`
+        // expansion.
+        //
+        // What we *don't* want to catch is the fact that a user-defined
+        // literal like `0xf` is stringified as `15`, causing the cached token
+        // stream to not be literal `==` token-wise (ignoring spans) to the
+        // token stream we got from stringification.
+        //
+        // Instead the "probably equal" check here is "does each token
+        // recursively have the same discriminant?" We basically don't look at
+        // the token values here and assume that such fine grained modifications
+        // of token streams doesn't happen.
+        if let Some(tokens) = tokens {
+            if tokens.probably_equal_for_proc_macro(&tokens_for_real) {
+                return tokens
+            }
+        }
+        return tokens_for_real
+    }
+
+    // See comments in `interpolated_to_tokenstream` for why we care about
+    // *probably* equal here rather than actual equality
+    pub fn probably_equal_for_proc_macro(&self, other: &Token) -> bool {
+        if mem::discriminant(self) != mem::discriminant(other) {
+            return false
+        }
+        match (self, other) {
+            (&Eq, &Eq) |
+            (&Lt, &Lt) |
+            (&Le, &Le) |
+            (&EqEq, &EqEq) |
+            (&Ne, &Ne) |
+            (&Ge, &Ge) |
+            (&Gt, &Gt) |
+            (&AndAnd, &AndAnd) |
+            (&OrOr, &OrOr) |
+            (&Not, &Not) |
+            (&Tilde, &Tilde) |
+            (&At, &At) |
+            (&Dot, &Dot) |
+            (&DotDot, &DotDot) |
+            (&DotDotDot, &DotDotDot) |
+            (&DotDotEq, &DotDotEq) |
+            (&DotEq, &DotEq) |
+            (&Comma, &Comma) |
+            (&Semi, &Semi) |
+            (&Colon, &Colon) |
+            (&ModSep, &ModSep) |
+            (&RArrow, &RArrow) |
+            (&LArrow, &LArrow) |
+            (&FatArrow, &FatArrow) |
+            (&Pound, &Pound) |
+            (&Dollar, &Dollar) |
+            (&Question, &Question) |
+            (&Whitespace, &Whitespace) |
+            (&Comment, &Comment) |
+            (&Eof, &Eof) => true,
+
+            (&BinOp(a), &BinOp(b)) |
+            (&BinOpEq(a), &BinOpEq(b)) => a == b,
+
+            (&OpenDelim(a), &OpenDelim(b)) |
+            (&CloseDelim(a), &CloseDelim(b)) => a == b,
+
+            (&DocComment(a), &DocComment(b)) |
+            (&Shebang(a), &Shebang(b)) => a == b,
+
+            (&Lifetime(a), &Lifetime(b)) => a.name == b.name,
+            (&Ident(a, b), &Ident(c, d)) => a.name == c.name && b == d,
+
+            (&Literal(ref a, b), &Literal(ref c, d)) => {
+                b == d && a.probably_equal_for_proc_macro(c)
+            }
+
+            (&Interpolated(_), &Interpolated(_)) => false,
+
+            _ => panic!("forgot to add a token?"),
+        }
     }
 }
 
-#[derive(Clone, RustcEncodable, RustcDecodable, PartialEq, Eq, Hash)]
+#[derive(Clone, RustcEncodable, RustcDecodable, Eq, Hash)]
 /// For interpolation during macro expansion.
 pub enum Nonterminal {
     NtItem(P<ast::Item>),
@@ -571,7 +670,8 @@ pub enum Nonterminal {
     NtPat(P<ast::Pat>),
     NtExpr(P<ast::Expr>),
     NtTy(P<ast::Ty>),
-    NtIdent(ast::SpannedIdent, /* is_raw */ bool),
+    NtIdent(ast::Ident, /* is_raw */ bool),
+    NtLifetime(ast::Ident),
     /// Stuff inside brackets for attributes
     NtMeta(ast::MetaItem),
     NtPath(ast::Path),
@@ -581,10 +681,26 @@ pub enum Nonterminal {
     NtArm(ast::Arm),
     NtImplItem(ast::ImplItem),
     NtTraitItem(ast::TraitItem),
+    NtForeignItem(ast::ForeignItem),
     NtGenerics(ast::Generics),
     NtWhereClause(ast::WhereClause),
     NtArg(ast::Arg),
-    NtLifetime(ast::Lifetime),
+}
+
+impl PartialEq for Nonterminal {
+    fn eq(&self, rhs: &Self) -> bool {
+        match (self, rhs) {
+            (NtIdent(ident_lhs, is_raw_lhs), NtIdent(ident_rhs, is_raw_rhs)) =>
+                ident_lhs == ident_rhs && is_raw_lhs == is_raw_rhs,
+            (NtLifetime(ident_lhs), NtLifetime(ident_rhs)) => ident_lhs == ident_rhs,
+            (NtTT(tt_lhs), NtTT(tt_rhs)) => tt_lhs == tt_rhs,
+            // FIXME: Assume that all "complex" nonterminal are not equal, we can't compare them
+            // correctly based on data from AST. This will prevent them from matching each other
+            // in macros. The comparison will become possible only when each nonterminal has an
+            // attached token stream from which it was parsed.
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Debug for Nonterminal {
@@ -603,6 +719,7 @@ impl fmt::Debug for Nonterminal {
             NtArm(..) => f.pad("NtArm(..)"),
             NtImplItem(..) => f.pad("NtImplItem(..)"),
             NtTraitItem(..) => f.pad("NtTraitItem(..)"),
+            NtForeignItem(..) => f.pad("NtForeignItem(..)"),
             NtGenerics(..) => f.pad("NtGenerics(..)"),
             NtWhereClause(..) => f.pad("NtWhereClause(..)"),
             NtArg(..) => f.pad("NtArg(..)"),
@@ -621,15 +738,8 @@ pub fn is_op(tok: &Token) -> bool {
     }
 }
 
-pub struct LazyTokenStream(Cell<Option<TokenStream>>);
-
-impl Clone for LazyTokenStream {
-    fn clone(&self) -> Self {
-        let opt_stream = self.0.take();
-        self.0.set(opt_stream.clone());
-        LazyTokenStream(Cell::new(opt_stream))
-    }
-}
+#[derive(Clone)]
+pub struct LazyTokenStream(Lock<Option<TokenStream>>);
 
 impl cmp::Eq for LazyTokenStream {}
 impl PartialEq for LazyTokenStream {
@@ -646,15 +756,14 @@ impl fmt::Debug for LazyTokenStream {
 
 impl LazyTokenStream {
     pub fn new() -> Self {
-        LazyTokenStream(Cell::new(None))
+        LazyTokenStream(Lock::new(None))
     }
 
     pub fn force<F: FnOnce() -> TokenStream>(&self, f: F) -> TokenStream {
-        let mut opt_stream = self.0.take();
+        let mut opt_stream = self.0.lock();
         if opt_stream.is_none() {
-            opt_stream = Some(f());
+            *opt_stream = Some(f());
         }
-        self.0.set(opt_stream.clone());
         opt_stream.clone().unwrap()
     }
 }

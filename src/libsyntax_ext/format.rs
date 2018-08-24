@@ -543,6 +543,10 @@ impl<'a, 'b> Context<'a, 'b> {
         let mut pats = Vec::new();
         let mut heads = Vec::new();
 
+        let names_pos: Vec<_> = (0..self.args.len()).map(|i| {
+            self.ecx.ident_of(&format!("arg{}", i)).gensym()
+        }).collect();
+
         // First, build up the static array which will become our precompiled
         // format "string"
         let pieces = self.ecx.expr_vec_slice(self.fmtsp, self.str_pieces);
@@ -560,7 +564,7 @@ impl<'a, 'b> Context<'a, 'b> {
         // of each variable because we don't want to move out of the arguments
         // passed to this function.
         for (i, e) in self.args.into_iter().enumerate() {
-            let name = self.ecx.ident_of(&format!("__arg{}", i));
+            let name = names_pos[i];
             let span =
                 DUMMY_SP.with_ctxt(e.span.ctxt().apply_mark(self.ecx.current_expansion.mark));
             pats.push(self.ecx.pat_ident(span, name));
@@ -570,14 +574,12 @@ impl<'a, 'b> Context<'a, 'b> {
             heads.push(self.ecx.expr_addr_of(e.span, e));
         }
         for pos in self.count_args {
-            let name = self.ecx.ident_of(&match pos {
-                Exact(i) => format!("__arg{}", i),
-                _ => panic!("should never happen"),
-            });
-            let span = match pos {
-                Exact(i) => spans_pos[i],
+            let index = match pos {
+                Exact(i) => i,
                 _ => panic!("should never happen"),
             };
+            let name = names_pos[index];
+            let span = spans_pos[index];
             counts.push(Context::format_arg(self.ecx, self.macsp, span, &Count, name));
         }
 
@@ -641,7 +643,7 @@ impl<'a, 'b> Context<'a, 'b> {
                   ty: &ArgumentType,
                   arg: ast::Ident)
                   -> P<ast::Expr> {
-        sp = sp.with_ctxt(sp.ctxt().apply_mark(ecx.current_expansion.mark));
+        sp = sp.apply_mark(ecx.current_expansion.mark);
         let arg = ecx.expr_ident(sp, arg);
         let trait_ = match *ty {
             Placeholder(ref tyname) => {
@@ -678,7 +680,7 @@ pub fn expand_format_args<'cx>(ecx: &'cx mut ExtCtxt,
                                mut sp: Span,
                                tts: &[tokenstream::TokenTree])
                                -> Box<base::MacResult + 'cx> {
-    sp = sp.with_ctxt(sp.ctxt().apply_mark(ecx.current_expansion.mark));
+    sp = sp.apply_mark(ecx.current_expansion.mark);
     match parse_args(ecx, sp, tts) {
         Some((efmt, args, names)) => {
             MacEager::expr(expand_preparsed_format_args(ecx, sp, efmt, args, names))
@@ -700,7 +702,7 @@ pub fn expand_preparsed_format_args(ecx: &mut ExtCtxt,
     let arg_types: Vec<_> = (0..args.len()).map(|_| Vec::new()).collect();
     let arg_unique_types: Vec<_> = (0..args.len()).map(|_| Vec::new()).collect();
     let mut macsp = ecx.call_site();
-    macsp = macsp.with_ctxt(macsp.ctxt().apply_mark(ecx.current_expansion.mark));
+    macsp = macsp.apply_mark(ecx.current_expansion.mark);
     let msg = "format argument must be a string literal.";
     let fmt = match expr_to_spanned_string(ecx, efmt, msg) {
         Some(fmt) => fmt,

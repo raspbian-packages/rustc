@@ -1,6 +1,8 @@
+use std::rc::Rc;
+
 use directives::DirectiveDef;
 use registry::Registry;
-use render::{RenderContext, Directive};
+use render::{Directive, RenderContext};
 use error::RenderError;
 
 #[derive(Clone, Copy)]
@@ -8,13 +10,11 @@ pub struct InlineDirective;
 
 fn get_name<'a>(d: &'a Directive) -> Result<&'a str, RenderError> {
     d.param(0)
-        .ok_or_else(|| {
-            RenderError::new("Param required for directive \"inline\"")
-        })
+        .ok_or_else(|| RenderError::new("Param required for directive \"inline\""))
         .and_then(|v| {
-            v.value().as_str().ok_or_else(|| {
-                RenderError::new("inline name must be string")
-            })
+            v.value()
+                .as_str()
+                .ok_or_else(|| RenderError::new("inline name must be string"))
         })
 }
 
@@ -22,12 +22,12 @@ impl DirectiveDef for InlineDirective {
     fn call(&self, d: &Directive, _: &Registry, rc: &mut RenderContext) -> Result<(), RenderError> {
         let name = try!(get_name(d));
 
-        let template = try!(d.template().ok_or_else(|| {
-            RenderError::new("inline should have a block")
-        }));
+        let template = try!(
+            d.template()
+                .ok_or_else(|| RenderError::new("inline should have a block"))
+        );
 
-
-        rc.set_partial(name.to_owned(), template.clone());
+        rc.set_partial(name.to_owned(), Rc::new(template.clone()));
         Ok(())
     }
 }
@@ -39,7 +39,7 @@ mod test {
     use template::Template;
     use registry::Registry;
     use context::Context;
-    use render::{RenderContext, Evaluable};
+    use render::{Evaluable, RenderContext};
     use support::str::StringWriter;
     use std::collections::HashMap;
 

@@ -8,9 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use alloc::heap::Heap;
-use core::heap::{Alloc, Layout};
-
+use alloc::{Global, Alloc, Layout, CollectionAllocErr, oom};
 use cmp;
 use hash::{BuildHasher, Hash, Hasher};
 use marker;
@@ -18,7 +16,6 @@ use mem::{align_of, size_of, needs_drop};
 use mem;
 use ops::{Deref, DerefMut};
 use ptr::{self, Unique, NonNull};
-use alloc::allocator::CollectionAllocErr;
 
 use self::BucketState::*;
 
@@ -82,7 +79,7 @@ impl TaggedHashUintPtr {
 ///
 /// Essential invariants of this structure:
 ///
-///   - if t.hashes[i] == EMPTY_BUCKET, then `Bucket::at_index(&t, i).raw`
+///   - if `t.hashes[i] == EMPTY_BUCKET`, then `Bucket::at_index(&t, i).raw`
 ///     points to 'undefined' contents. Don't read from it. This invariant is
 ///     enforced outside this module with the `EmptyBucket`, `FullBucket`,
 ///     and `SafeHash` types.
@@ -486,21 +483,6 @@ impl<K, V, M> EmptyBucket<K, V, M>
             table: self.table,
         }
     }
-
-    /// Puts given key, remain value uninitialized.
-    /// It is only used for inplacement insertion.
-    pub unsafe fn put_key(mut self, hash: SafeHash, key: K) -> FullBucket<K, V, M> {
-        *self.raw.hash() = hash.inspect();
-        let pair_ptr = self.raw.pair();
-        ptr::write(&mut (*pair_ptr).0, key);
-
-        self.table.borrow_table_mut().size += 1;
-
-        FullBucket {
-            raw: self.raw,
-            table: self.table,
-        }
-    }
 }
 
 impl<K, V, M: Deref<Target = RawTable<K, V>>> FullBucket<K, V, M> {
@@ -575,17 +557,6 @@ impl<'t, K, V> FullBucket<K, V, &'t mut RawTable<K, V>> {
             k,
             v)
         }
-    }
-
-    /// Remove this bucket's `key` from the hashtable.
-    /// Only used for inplacement insertion.
-    /// NOTE: `Value` is uninitialized when this function is called, don't try to drop the `Value`.
-    pub unsafe fn remove_key(&mut self) {
-        self.table.size -= 1;
-
-        *self.raw.hash() = EMPTY_BUCKET;
-        let pair_ptr = self.raw.pair();
-        ptr::drop_in_place(&mut (*pair_ptr).0); // only drop key
     }
 }
 
@@ -783,15 +754,13 @@ impl<K, V> RawTable<K, V> {
             return Err(CollectionAllocErr::CapacityOverflow);
         }
 
-        let buffer = Heap.alloc(Layout::from_size_align(size, alignment)
-            .ok_or(CollectionAllocErr::CapacityOverflow)?)?;
-
-        let hashes = buffer as *mut HashUint;
+        let buffer = Global.alloc(Layout::from_size_align(size, alignment)
+            .map_err(|_| CollectionAllocErr::CapacityOverflow)?)?;
 
         Ok(RawTable {
             capacity_mask: capacity.wrapping_sub(1),
             size: 0,
-            hashes: TaggedHashUintPtr::new(hashes),
+            hashes: TaggedHashUintPtr::new(buffer.cast().as_ptr()),
             marker: marker::PhantomData,
         })
     }
@@ -801,7 +770,7 @@ impl<K, V> RawTable<K, V> {
     unsafe fn new_uninitialized(capacity: usize) -> RawTable<K, V> {
         match Self::try_new_uninitialized(capacity) {
             Err(CollectionAllocErr::CapacityOverflow) => panic!("capacity overflow"),
-            Err(CollectionAllocErr::AllocErr(e)) => Heap.oom(e),
+            Err(CollectionAllocErr::AllocErr) => oom(),
             Ok(table) => { table }
         }
     }
@@ -840,7 +809,7 @@ impl<K, V> RawTable<K, V> {
     pub fn new(capacity: usize) -> RawTable<K, V> {
         match Self::try_new(capacity) {
             Err(CollectionAllocErr::CapacityOverflow) => panic!("capacity overflow"),
-            Err(CollectionAllocErr::AllocErr(e)) => Heap.oom(e),
+            Err(CollectionAllocErr::AllocErr) => oom(),
             Ok(table) => { table }
         }
     }
@@ -1155,7 +1124,7 @@ impl<'a, K, V> ExactSizeIterator for Drain<'a, K, V> {
 
 impl<'a, K: 'a, V: 'a> Drop for Drain<'a, K, V> {
     fn drop(&mut self) {
-        for _ in self {}
+        self.for_each(drop);
     }
 }
 
@@ -1214,8 +1183,8 @@ unsafe impl<#[may_dangle] K, #[may_dangle] V> Drop for RawTable<K, V> {
         debug_assert!(!oflo, "should be impossible");
 
         unsafe {
-            Heap.dealloc(self.hashes.ptr() as *mut u8,
-                         Layout::from_size_align(size, align).unwrap());
+            Global.dealloc(NonNull::new_unchecked(self.hashes.ptr()).as_opaque(),
+                           Layout::from_size_align(size, align).unwrap());
             // Remember how everything was allocated out of one buffer
             // during initialization? We only need one call to free here.
         }

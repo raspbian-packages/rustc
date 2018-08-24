@@ -6,15 +6,17 @@
 //!
 //! [stdsimd]: https://rust-lang-nursery.github.io/stdsimd/x86_64/stdsimd/
 
-#![cfg_attr(feature = "strict", deny(warnings))]
+#![cfg_attr(stdsimd_strict, deny(warnings))]
 #![allow(dead_code)]
 #![allow(unused_features)]
 #![feature(const_fn, link_llvm_intrinsics, platform_intrinsics, repr_simd,
-           simd_ffi, target_feature, cfg_target_feature, i128_type, asm,
+           simd_ffi, asm,
            integer_atomics, stmt_expr_attributes, core_intrinsics,
            crate_in_paths, no_core, attr_literals, rustc_attrs, stdsimd,
-           staged_api, fn_must_use, core_float, core_slice_ext, align_offset,
-           doc_cfg)]
+           staged_api, core_float, core_slice_ext, align_offset,
+           doc_cfg, mmx_target_feature, tbm_target_feature,
+           sse4a_target_feature, arm_target_feature, aarch64_target_feature,
+           mips_target_feature)]
 #![cfg_attr(test,
             feature(proc_macro, test, attr_literals, abi_vectorcall,
                     untagged_unions))]
@@ -43,6 +45,28 @@ extern crate stdsimd;
 extern crate stdsimd_test;
 #[cfg(test)]
 extern crate test;
+
+macro_rules! test_v16 {
+    ($item:item) => {};
+}
+macro_rules! test_v32 {
+    ($item:item) => {};
+}
+macro_rules! test_v64 {
+    ($item:item) => {};
+}
+macro_rules! test_v128 {
+    ($item:item) => {};
+}
+macro_rules! test_v256 {
+    ($item:item) => {};
+}
+macro_rules! test_v512 {
+    ($item:item) => {};
+}
+macro_rules! vector_impl {
+    ($([$f:ident, $($args:tt)*]),*) => { $($f!($($args)*);)* }
+}
 
 #[path = "../../../coresimd/mod.rs"]
 mod coresimd;

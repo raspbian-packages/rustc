@@ -341,6 +341,10 @@ impl Config {
             if !self.defined("CMAKE_SYSTEM_NAME") {
                 cmd.arg("-DCMAKE_SYSTEM_NAME=Generic");
             }
+        } else if target.contains("solaris") {
+            if !self.defined("CMAKE_SYSTEM_NAME") {
+                cmd.arg("-DCMAKE_SYSTEM_NAME=SunOS");
+            }
         }
         let mut is_ninja = false;
         if let Some(ref generator) = self.generator {
@@ -495,10 +499,17 @@ impl Config {
 				}
                 _ if fs::metadata(&dst.join("build/Makefile")).is_ok() => {
                     match env::var_os("CARGO_MAKEFLAGS") {
-                        // Only do this on non-windows as we could actually be
-                        // invoking make instead of mingw32-make which doesn't
-                        // work with our jobserver
-                        Some(ref s) if !cfg!(windows) => makeflags = Some(s.clone()),
+                        // Only do this on non-windows and non-bsd
+                        // On Windows, we could be invoking make instead of
+                        // mingw32-make which doesn't work with our jobserver
+                        // bsdmake also does not work with our job server
+                        Some(ref s) if !(cfg!(windows) ||
+                                         cfg!(target_os = "openbsd") ||
+                                         cfg!(target_os = "netbsd") ||
+                                         cfg!(target_os = "freebsd") ||
+                                         cfg!(target_os = "bitrig") ||
+                                         cfg!(target_os = "dragonflybsd")
+                        ) => makeflags = Some(s.clone()),
 
                         // This looks like `make`, let's hope it understands `-jN`.
                         _ => parallel_args.push(format!("-j{}", s)),

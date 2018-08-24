@@ -11,10 +11,8 @@
 use self::Entry::*;
 use self::VacantEntryState::*;
 
-use alloc::heap::Heap;
-use alloc::allocator::CollectionAllocErr;
+use alloc::{CollectionAllocErr, oom};
 use cell::Cell;
-use core::heap::Alloc;
 use borrow::Borrow;
 use cmp::max;
 use fmt::{self, Debug};
@@ -22,8 +20,7 @@ use fmt::{self, Debug};
 use hash::{Hash, Hasher, BuildHasher, SipHasher13};
 use iter::{FromIterator, FusedIterator};
 use mem::{self, replace};
-use ops::{Deref, Index, InPlace, Place, Placer};
-use ptr;
+use ops::{Deref, Index};
 use sys;
 
 use super::table::{self, Bucket, EmptyBucket, FullBucket, FullBucketMut, RawTable, SafeHash};
@@ -36,6 +33,7 @@ const MIN_NONZERO_RAW_CAPACITY: usize = 32;     // must be a power of two
 struct DefaultResizePolicy;
 
 impl DefaultResizePolicy {
+    #[inline]
     fn new() -> DefaultResizePolicy {
         DefaultResizePolicy
     }
@@ -787,7 +785,7 @@ impl<K, V, S> HashMap<K, V, S>
     pub fn reserve(&mut self, additional: usize) {
         match self.try_reserve(additional) {
             Err(CollectionAllocErr::CapacityOverflow) => panic!("capacity overflow"),
-            Err(CollectionAllocErr::AllocErr(e)) => Heap.oom(e),
+            Err(CollectionAllocErr::AllocErr) => oom(),
             Ok(()) => { /* yay */ }
          }
     }
@@ -1382,7 +1380,6 @@ impl<K, V, S> HashMap<K, V, S>
     /// # Examples
     ///
     /// ```
-    /// #![feature(hash_map_remove_entry)]
     /// use std::collections::HashMap;
     ///
     /// # fn main() {
@@ -1392,7 +1389,7 @@ impl<K, V, S> HashMap<K, V, S>
     /// assert_eq!(map.remove(&1), None);
     /// # }
     /// ```
-    #[unstable(feature = "hash_map_remove_entry", issue = "46344")]
+    #[stable(feature = "hash_map_remove_entry", since = "1.27.0")]
     pub fn remove_entry<Q: ?Sized>(&mut self, k: &Q) -> Option<(K, V)>
         where K: Borrow<Q>,
               Q: Hash + Eq
@@ -2043,80 +2040,6 @@ impl<'a, K, V> fmt::Debug for Drain<'a, K, V>
     }
 }
 
-/// A place for insertion to a `Entry`.
-///
-/// See [`HashMap::entry`](struct.HashMap.html#method.entry) for details.
-#[must_use = "places do nothing unless written to with `<-` syntax"]
-#[unstable(feature = "collection_placement",
-           reason = "struct name and placement protocol is subject to change",
-           issue = "30172")]
-pub struct EntryPlace<'a, K: 'a, V: 'a> {
-    bucket: FullBucketMut<'a, K, V>,
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "struct name and placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, K: 'a + Debug, V: 'a + Debug> Debug for EntryPlace<'a, K, V> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("EntryPlace")
-            .field("key", self.bucket.read().0)
-            .field("value", self.bucket.read().1)
-            .finish()
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "struct name and placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, K, V> Drop for EntryPlace<'a, K, V> {
-    fn drop(&mut self) {
-        // Inplacement insertion failed. Only key need to drop.
-        // The value is failed to insert into map.
-        unsafe { self.bucket.remove_key() };
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, K, V> Placer<V> for Entry<'a, K, V> {
-    type Place = EntryPlace<'a, K, V>;
-
-    fn make_place(self) -> EntryPlace<'a, K, V> {
-        let b = match self {
-            Occupied(mut o) => {
-                unsafe { ptr::drop_in_place(o.elem.read_mut().1); }
-                o.elem
-            }
-            Vacant(v) => {
-                unsafe { v.insert_key() }
-            }
-        };
-        EntryPlace { bucket: b }
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-unsafe impl<'a, K, V> Place<V> for EntryPlace<'a, K, V> {
-    fn pointer(&mut self) -> *mut V {
-        self.bucket.read_mut().1
-    }
-}
-
-#[unstable(feature = "collection_placement",
-           reason = "placement protocol is subject to change",
-           issue = "30172")]
-impl<'a, K, V> InPlace<V> for EntryPlace<'a, K, V> {
-    type Owner = ();
-
-    unsafe fn finalize(self) {
-        mem::forget(self);
-    }
-}
-
 impl<'a, K, V> Entry<'a, K, V> {
     #[stable(feature = "rust1", since = "1.0.0")]
     /// Ensures a value is in the entry by inserting the default if empty, and returns
@@ -2539,26 +2462,6 @@ impl<'a, K: 'a, V: 'a> VacantEntry<'a, K, V> {
         };
         b.into_mut_refs().1
     }
-
-    // Only used for InPlacement insert. Avoid unnecessary value copy.
-    // The value remains uninitialized.
-    unsafe fn insert_key(self) -> FullBucketMut<'a, K, V> {
-        match self.elem {
-            NeqElem(mut bucket, disp) => {
-                if disp >= DISPLACEMENT_THRESHOLD {
-                    bucket.table_mut().set_tag(true);
-                }
-                let uninit = mem::uninitialized();
-                robin_hood(bucket, disp, self.hash, self.key, uninit)
-            },
-            NoElem(mut bucket, disp) => {
-                if disp >= DISPLACEMENT_THRESHOLD {
-                    bucket.table_mut().set_tag(true);
-                }
-                bucket.put_key(self.hash, self.key)
-            },
-        }
-    }
 }
 
 #[stable(feature = "rust1", since = "1.0.0")]
@@ -2823,7 +2726,6 @@ mod test_map {
     use super::RandomState;
     use cell::RefCell;
     use rand::{thread_rng, Rng};
-    use panic;
     use realstd::collections::CollectionAllocErr::*;
     use realstd::mem::size_of;
     use realstd::usize;
@@ -3710,59 +3612,6 @@ mod test_map {
     }
 
     #[test]
-    fn test_placement_in() {
-        let mut map = HashMap::new();
-        map.extend((0..10).map(|i| (i, i)));
-
-        map.entry(100) <- 100;
-        assert_eq!(map[&100], 100);
-
-        map.entry(0) <- 10;
-        assert_eq!(map[&0], 10);
-
-        assert_eq!(map.len(), 11);
-    }
-
-    #[test]
-    fn test_placement_panic() {
-        let mut map = HashMap::new();
-        map.extend((0..10).map(|i| (i, i)));
-
-        fn mkpanic() -> usize { panic!() }
-
-        // modify existing key
-        // when panic happens, previous key is removed.
-        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| { map.entry(0) <- mkpanic(); }));
-        assert_eq!(map.len(), 9);
-        assert!(!map.contains_key(&0));
-
-        // add new key
-        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| { map.entry(100) <- mkpanic(); }));
-        assert_eq!(map.len(), 9);
-        assert!(!map.contains_key(&100));
-    }
-
-    #[test]
-    fn test_placement_drop() {
-        // correctly drop
-        struct TestV<'a>(&'a mut bool);
-        impl<'a> Drop for TestV<'a> {
-            fn drop(&mut self) {
-                if !*self.0 { panic!("value double drop!"); } // no double drop
-                *self.0 = false;
-            }
-        }
-
-        fn makepanic<'a>() -> TestV<'a> { panic!() }
-
-        let mut can_drop = true;
-        let mut hm = HashMap::new();
-        hm.insert(0, TestV(&mut can_drop));
-        let _ = panic::catch_unwind(panic::AssertUnwindSafe(|| { hm.entry(0) <- makepanic(); }));
-        assert_eq!(hm.len(), 0);
-    }
-
-    #[test]
     fn test_try_reserve() {
 
         let mut empty_bytes: HashMap<u8,u8> = HashMap::new();
@@ -3785,7 +3634,7 @@ mod test_map {
             if let Err(CapacityOverflow) = empty_bytes.try_reserve(max_no_ovf) {
             } else { panic!("isize::MAX + 1 should trigger a CapacityOverflow!") }
         } else {
-            if let Err(AllocErr(_)) = empty_bytes.try_reserve(max_no_ovf) {
+            if let Err(AllocErr) = empty_bytes.try_reserve(max_no_ovf) {
             } else { panic!("isize::MAX + 1 should trigger an OOM!") }
         }
     }

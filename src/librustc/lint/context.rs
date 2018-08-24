@@ -27,6 +27,7 @@
 use self::TargetLint::*;
 
 use std::slice;
+use rustc_data_structures::sync::{RwLock, ReadGuard};
 use lint::{EarlyLintPassObject, LateLintPassObject};
 use lint::{Level, Lint, LintId, LintPass, LintBuffer};
 use lint::builtin::BuiltinLintDiagnostics;
@@ -39,7 +40,6 @@ use ty::layout::{LayoutError, LayoutOf, TyLayout};
 use util::nodemap::FxHashMap;
 
 use std::default::Default as StdDefault;
-use std::cell::{Ref, RefCell};
 use syntax::ast;
 use syntax::edition;
 use syntax_pos::{MultiSpan, Span};
@@ -78,7 +78,7 @@ pub struct LintStore {
 
 pub struct LintSession<'a, PassObject> {
     /// Reference to the store of registered lints.
-    lints: Ref<'a, LintStore>,
+    lints: ReadGuard<'a, LintStore>,
 
     /// Trait objects for each lint pass.
     passes: Option<Vec<PassObject>>,
@@ -336,7 +336,7 @@ impl<'a, PassObject: LintPassObject> LintSession<'a, PassObject> {
     /// Creates a new `LintSession`, by moving out the `LintStore`'s initial
     /// lint levels and pass objects. These can be restored using the `restore`
     /// method.
-    fn new(store: &'a RefCell<LintStore>) -> LintSession<'a, PassObject> {
+    fn new(store: &'a RwLock<LintStore>) -> LintSession<'a, PassObject> {
         let mut s = store.borrow_mut();
         let passes = PassObject::take_passes(&mut *s);
         drop(s);
@@ -347,7 +347,7 @@ impl<'a, PassObject: LintPassObject> LintSession<'a, PassObject> {
     }
 
     /// Restores the levels back to the original lint store.
-    fn restore(self, store: &RefCell<LintStore>) {
+    fn restore(self, store: &RwLock<LintStore>) {
         drop(self.lints);
         let mut s = store.borrow_mut();
         PassObject::restore_passes(&mut *s, self.passes);
@@ -657,7 +657,8 @@ impl<'a, 'tcx> LateContext<'a, 'tcx> {
     }
 }
 
-impl<'a, 'tcx> LayoutOf<Ty<'tcx>> for &'a LateContext<'a, 'tcx> {
+impl<'a, 'tcx> LayoutOf for &'a LateContext<'a, 'tcx> {
+    type Ty = Ty<'tcx>;
     type TyLayout = Result<TyLayout<'tcx>, LayoutError<'tcx>>;
 
     fn layout_of(self, ty: Ty<'tcx>) -> Self::TyLayout {
@@ -952,8 +953,8 @@ impl<'a> ast_visit::Visitor<'a> for EarlyContext<'a> {
         ast_visit::walk_ty(self, t);
     }
 
-    fn visit_ident(&mut self, sp: Span, id: ast::Ident) {
-        run_lints!(self, check_ident, early_passes, sp, id);
+    fn visit_ident(&mut self, ident: ast::Ident) {
+        run_lints!(self, check_ident, early_passes, ident);
     }
 
     fn visit_mod(&mut self, m: &'a ast::Mod, s: Span, _a: &[ast::Attribute], n: ast::NodeId) {

@@ -44,7 +44,7 @@ CloneTypeFoldableAndLiftImpls! {
     ::hir::MatchSource,
     ::hir::Mutability,
     ::hir::Unsafety,
-    ::syntax::abi::Abi,
+    ::rustc_target::spec::abi::Abi,
     ::mir::Local,
     ::mir::Promoted,
     ::traits::Reveal,
@@ -270,7 +270,7 @@ impl<'a, 'tcx> Lift<'tcx> for ty::Predicate<'a> {
 impl<'tcx, T: Lift<'tcx>> Lift<'tcx> for ty::Binder<T> {
     type Lifted = ty::Binder<T::Lifted>;
     fn lift_to_tcx<'a, 'gcx>(&self, tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        tcx.lift(&self.0).map(|x| ty::Binder(x))
+        tcx.lift(self.skip_binder()).map(ty::Binder::bind)
     }
 }
 
@@ -474,8 +474,18 @@ impl<'a, 'tcx> Lift<'tcx> for ConstEvalErr<'a> {
 impl<'a, 'tcx> Lift<'tcx> for interpret::EvalError<'a> {
     type Lifted = interpret::EvalError<'tcx>;
     fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
+        Some(interpret::EvalError {
+            kind: tcx.lift(&self.kind)?,
+            backtrace: self.backtrace.clone(),
+        })
+    }
+}
+
+impl<'a, 'tcx, O: Lift<'tcx>> Lift<'tcx> for interpret::EvalErrorKind<'a, O> {
+    type Lifted = interpret::EvalErrorKind<'tcx, <O as Lift<'tcx>>::Lifted>;
+    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
         use ::mir::interpret::EvalErrorKind::*;
-        let kind = match self.kind {
+        Some(match *self {
             MachineError(ref err) => MachineError(err.clone()),
             FunctionPointerTyMismatch(a, b) => FunctionPointerTyMismatch(
                 tcx.lift(&a)?,
@@ -504,10 +514,11 @@ impl<'a, 'tcx> Lift<'tcx> for interpret::EvalError<'a> {
             Unimplemented(ref s) => Unimplemented(s.clone()),
             DerefFunctionPointer => DerefFunctionPointer,
             ExecuteMemory => ExecuteMemory,
-            ArrayIndexOutOfBounds(sp, a, b) => ArrayIndexOutOfBounds(sp, a, b),
-            Math(sp, ref err) => Math(sp, err.clone()),
+            BoundsCheck { ref len, ref index } => BoundsCheck {
+                len: tcx.lift(len)?,
+                index: tcx.lift(index)?,
+            },
             Intrinsic(ref s) => Intrinsic(s.clone()),
-            OverflowingMath => OverflowingMath,
             InvalidChar(c) => InvalidChar(c),
             StackFrameLimitReached => StackFrameLimitReached,
             OutOfTls => OutOfTls,
@@ -568,10 +579,12 @@ impl<'a, 'tcx> Lift<'tcx> for interpret::EvalError<'a> {
             UnimplementedTraitSelection => UnimplementedTraitSelection,
             TypeckError => TypeckError,
             ReferencedConstant => ReferencedConstant,
-        };
-        Some(interpret::EvalError {
-            kind: kind,
-            backtrace: self.backtrace.clone(),
+            OverflowNeg => OverflowNeg,
+            Overflow(op) => Overflow(op),
+            DivisionByZero => DivisionByZero,
+            RemainderByZero => RemainderByZero,
+            GeneratorResumedAfterReturn => GeneratorResumedAfterReturn,
+            GeneratorResumedAfterPanic => GeneratorResumedAfterPanic,
         })
     }
 }
@@ -585,7 +598,6 @@ impl<'a, 'tcx> Lift<'tcx> for const_val::ErrKind<'a> {
             NonConstPath => NonConstPath,
             UnimplementedConstVal(s) => UnimplementedConstVal(s),
             IndexOutOfBounds { len, index } => IndexOutOfBounds { len, index },
-            Math(ref e) => Math(e.clone()),
 
             LayoutError(ref e) => {
                 return tcx.lift(e).map(LayoutError)
@@ -720,7 +732,7 @@ impl<'tcx, T: TypeFoldable<'tcx>> TypeFoldable<'tcx> for Vec<T> {
 
 impl<'tcx, T:TypeFoldable<'tcx>> TypeFoldable<'tcx> for ty::Binder<T> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        ty::Binder(self.0.fold_with(folder))
+        self.map_bound_ref(|ty| ty.fold_with(folder))
     }
 
     fn fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
@@ -728,7 +740,7 @@ impl<'tcx, T:TypeFoldable<'tcx>> TypeFoldable<'tcx> for ty::Binder<T> {
     }
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
-        self.0.visit_with(visitor)
+        self.skip_binder().visit_with(visitor)
     }
 
     fn visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {

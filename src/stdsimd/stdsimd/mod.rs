@@ -14,9 +14,6 @@
 /// `i686-pc-windows-msvc` target will have an `x86` module here, whereas
 /// `x86_64-pc-windows-msvc` has `x86_64`.
 ///
-/// > **Note**: This module is currently unstable. It was designed in
-/// > [RFC 2325][rfc] and is currently [tracked] for stabilization.
-///
 /// [rfc]: https://github.com/rust-lang/rfcs/pull/2325
 /// [tracked]: https://github.com/rust-lang/rust/issues/48556
 ///
@@ -188,11 +185,15 @@
 /// * [`x86_64`]
 /// * [`arm`]
 /// * [`aarch64`]
+/// * [`mips`]
+/// * [`mips64`]
 ///
 /// [`x86`]: https://rust-lang-nursery.github.io/stdsimd/i686/stdsimd/arch/x86/index.html
 /// [`x86_64`]: https://rust-lang-nursery.github.io/stdsimd/x86_64/stdsimd/arch/x86_64/index.html
 /// [`arm`]: https://rust-lang-nursery.github.io/stdsimd/arm/stdsimd/arch/arm/index.html
 /// [`aarch64`]: https://rust-lang-nursery.github.io/stdsimd/aarch64/stdsimd/arch/aarch64/index.html
+/// [`mips`]: https://rust-lang-nursery.github.io/stdsimd/aarch64/stdsimd/arch/mips/index.html
+/// [`mips64`]: https://rust-lang-nursery.github.io/stdsimd/aarch64/stdsimd/arch/mips64/index.html
 ///
 /// # Examples
 ///
@@ -201,7 +202,7 @@
 /// AVX2 and also for the default platform.
 ///
 /// ```rust
-/// #![feature(cfg_target_feature, target_feature, stdsimd)]
+/// # #![cfg_attr(not(dox), feature(cfg_target_feature, target_feature, stdsimd))]
 ///
 /// # #[cfg(not(dox))]
 /// # #[macro_use]
@@ -243,7 +244,7 @@
 /// we'll be using SSE4.1 features to implement hex encoding.
 ///
 /// ```
-/// #![feature(cfg_target_feature, target_feature, stdsimd)]
+/// # #![cfg_attr(not(dox), feature(cfg_target_feature, target_feature, stdsimd))]
 /// # #![cfg_attr(not(dox), no_std)]
 /// # #[cfg(not(dox))]
 /// # extern crate std as real_std;
@@ -318,8 +319,8 @@
 ///         let res2 = _mm_unpackhi_epi8(masked2, masked1);
 ///
 ///         _mm_storeu_si128(dst.as_mut_ptr().offset(i * 2) as *mut _, res1);
-///         _mm_storeu_si128(dst.as_mut_ptr().offset(i * 2 + 16) as *mut _, res2);
-///         src = &src[16..];
+/// _mm_storeu_si128(dst.as_mut_ptr().offset(i * 2 + 16) as *mut _,
+/// res2);         src = &src[16..];
 ///         i += 16;
 ///     }
 ///
@@ -339,24 +340,38 @@
 ///     }
 /// }
 /// ```
-#[unstable(feature = "stdsimd", issue = "0")]
+#[stable(feature = "simd_arch", since = "1.27.0")]
 pub mod arch {
     #[cfg(all(not(dox), target_arch = "x86"))]
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub use coresimd::arch::x86;
 
     #[cfg(all(not(dox), target_arch = "x86_64"))]
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub use coresimd::arch::x86_64;
 
     #[cfg(all(not(dox), target_arch = "arm"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub use coresimd::arch::arm;
 
     #[cfg(all(not(dox), target_arch = "aarch64"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub use coresimd::arch::aarch64;
 
     #[cfg(target_arch = "wasm32")]
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub use coresimd::arch::wasm32;
 
+    #[cfg(all(not(dox), target_arch = "mips"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
+    pub use coresimd::arch::mips;
+
+    #[cfg(all(not(dox), target_arch = "mips64"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
+    pub use coresimd::arch::mips64;
+
     #[doc(hidden)] // unstable implementation detail
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub mod detect;
 
     /// Platform-specific intrinsics for the `x86` platform.
@@ -368,6 +383,7 @@ pub mod arch {
     /// [libcore]: ../../../core/arch/x86/index.html
     #[cfg(dox)]
     #[doc(cfg(target_arch = "x86"))]
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub mod x86 {}
 
     /// Platform-specific intrinsics for the `x86_64` platform.
@@ -379,6 +395,7 @@ pub mod arch {
     /// [libcore]: ../../../core/arch/x86_64/index.html
     #[cfg(dox)]
     #[doc(cfg(target_arch = "x86_64"))]
+    #[stable(feature = "simd_x86", since = "1.27.0")]
     pub mod x86_64 {}
 
     /// Platform-specific intrinsics for the `arm` platform.
@@ -390,6 +407,7 @@ pub mod arch {
     /// [libcore]: ../../../core/arch/arm/index.html
     #[cfg(dox)]
     #[doc(cfg(target_arch = "arm"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub mod arm {}
 
     /// Platform-specific intrinsics for the `aarch64` platform.
@@ -401,7 +419,32 @@ pub mod arch {
     /// [libcore]: ../../../core/arch/aarch64/index.html
     #[cfg(dox)]
     #[doc(cfg(target_arch = "aarch64"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
     pub mod aarch64 {}
+
+    /// Platform-specific intrinsics for the `mips` platform.
+    ///
+    /// The documentation with the full listing of `mips` intrinsics is
+    /// available in [libcore], but the module is re-exported here in std
+    /// as well.
+    ///
+    /// [libcore]: ../../../core/arch/mips/index.html
+    #[cfg(dox)]
+    #[doc(cfg(target_arch = "mips"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
+    pub mod mips {}
+
+    /// Platform-specific intrinsics for the `mips64` platform.
+    ///
+    /// The documentation with the full listing of `mips64` intrinsics is
+    /// available in [libcore], but the module is re-exported here in std
+    /// as well.
+    ///
+    /// [libcore]: ../../../core/arch/mips64/index.html
+    #[cfg(dox)]
+    #[doc(cfg(target_arch = "mips64"))]
+    #[unstable(feature = "stdsimd", issue = "0")]
+    pub mod mips64 {}
 }
 
 #[unstable(feature = "stdsimd", issue = "0")]

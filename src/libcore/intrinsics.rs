@@ -638,6 +638,9 @@ extern "rust-intrinsic" {
     /// NB: This is very different from the `unreachable!()` macro: Unlike the
     /// macro, which panics when it is executed, it is *undefined behavior* to
     /// reach code marked with this function.
+    ///
+    /// The stabilized version of this intrinsic is
+    /// [`std::hint::unreachable_unchecked`](../../std/hint/fn.unreachable_unchecked.html).
     pub fn unreachable() -> !;
 
     /// Informs the optimizer that a condition is always true.
@@ -1293,7 +1296,6 @@ extern "rust-intrinsic" {
     pub fn bswap<T>(x: T) -> T;
 
     /// Reverses the bits in an integer type `T`.
-    #[cfg(not(stage0))]
     pub fn bitreverse<T>(x: T) -> T;
 
     /// Performs checked integer addition.
@@ -1316,7 +1318,6 @@ extern "rust-intrinsic" {
 
     /// Performs an exact division, resulting in undefined behavior where
     /// `x % y != 0` or `y == 0` or `x == T::min_value() && y == -1`
-    #[cfg(not(stage0))]
     pub fn exact_div<T>(x: T, y: T) -> T;
 
     /// Performs an unchecked division, resulting in undefined behavior
@@ -1400,9 +1401,4 @@ extern "rust-intrinsic" {
     /// Emits a `!nontemporal` store according to LLVM (see their docs).
     /// Probably will never become stable.
     pub fn nontemporal_store<T>(ptr: *mut T, val: T);
-}
-
-#[cfg(stage0)]
-pub unsafe fn exact_div<T>(a: T, b: T) -> T {
-    unchecked_div(a, b)
 }

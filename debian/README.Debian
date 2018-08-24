@@ -2,9 +2,9 @@ Test failures
 =============
 
 Starting from version 1.20.0+dfsg1-1 the Debian packages of rustc no longer
-fail the overall build if > 0 tests fail. Instead, we allow up to 5 tests to
-fail. In other words, if you're reading this in a binary package, between 0 and
-5 tests might have failed when building this.
+fail the overall build if > 0 tests fail. Instead, we allow up to around 5
+tests to fail. In other words, if you're reading this in a binary package,
+between 0 and 5 tests might have failed when building this.
 
 This is due to lack of maintainer time to investigate all failures. Many
 previous test failures were reported to upstream and did not receive a timely
@@ -27,6 +27,15 @@ reports on the Debian side.
 
 We will also examine these failures ourselves on a best-effort basis and
 attempt to fix the more serious-looking ones.
+
+Uncommon architectures
+----------------------
+
+Debian release architectures armel and s390x currently have more test failures,
+being tracked by upstream here:
+
+- https://github.com/rust-lang/rust/issues/52493 armel
+- https://github.com/rust-lang/rust/issues/52491 s390x
 
 Ports architectures
 -------------------

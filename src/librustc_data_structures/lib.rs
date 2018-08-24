@@ -19,21 +19,16 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://www.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![feature(collections_range)]
 #![feature(nonzero)]
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(unsize)]
-#![cfg_attr(stage0, feature(conservative_impl_trait))]
-#![cfg_attr(stage0, feature(i128_type, i128))]
 #![feature(specialization)]
 #![feature(optin_builtin_traits)]
-#![cfg_attr(stage0, feature(underscore_lifetimes))]
 #![feature(macro_vis_matcher)]
 #![feature(allow_internal_unstable)]
-#![cfg_attr(stage0, feature(universal_impl_trait))]
 
 #![cfg_attr(unix, feature(libc))]
 #![cfg_attr(test, feature(test))]
@@ -45,9 +40,14 @@ extern crate log;
 extern crate serialize as rustc_serialize; // used by deriving
 #[cfg(unix)]
 extern crate libc;
+extern crate parking_lot;
 #[macro_use]
 extern crate cfg_if;
 extern crate stable_deref_trait;
+
+// See librustc_cratesio_shim/Cargo.toml for a comment explaining this.
+#[allow(unused_extern_crates)]
+extern crate rustc_cratesio_shim;
 
 pub use rustc_serialize::hex::ToHex;
 
@@ -60,6 +60,7 @@ pub mod bitvec;
 pub mod graph;
 pub mod indexed_set;
 pub mod indexed_vec;
+pub mod lazy_btree_map;
 pub mod obligation_forest;
 pub mod sip128;
 pub mod snapshot_map;

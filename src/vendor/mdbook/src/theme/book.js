@@ -1,3 +1,5 @@
+"use strict";
+
 // Fix back button cache problem
 window.onunload = function () { };
 
@@ -55,6 +57,7 @@ function playpen_text(playpen) {
         var txt = playpen_text(pre_block);
         var re = /extern\s+crate\s+([a-zA-Z_0-9]+)\s*;/g;
         var snippet_crates = [];
+        var item;
         while (item = re.exec(txt)) {
             snippet_crates.push(item[1]);
         }
@@ -175,7 +178,7 @@ function playpen_text(playpen) {
         buttons.innerHTML = "<button class=\"fa fa-expand\" title=\"Show hidden lines\" aria-label=\"Show hidden lines\"></button>";
 
         // add expand button
-        pre_block.prepend(buttons);
+        pre_block.insertBefore(buttons, pre_block.firstChild);
 
         pre_block.querySelector('.buttons').addEventListener('click', function (e) {
             if (e.target.classList.contains('fa-expand')) {
@@ -213,7 +216,7 @@ function playpen_text(playpen) {
             if (!buttons) {
                 buttons = document.createElement('div');
                 buttons.className = 'buttons';
-                pre_block.prepend(buttons);
+                pre_block.insertBefore(buttons, pre_block.firstChild);
             }
 
             var clipButton = document.createElement('button');
@@ -222,7 +225,7 @@ function playpen_text(playpen) {
             clipButton.setAttribute('aria-label', clipButton.title);
             clipButton.innerHTML = '<i class=\"tooltiptext\"></i>';
 
-            buttons.prepend(clipButton);
+            buttons.insertBefore(clipButton, buttons.firstChild);
         }
     });
 
@@ -233,7 +236,7 @@ function playpen_text(playpen) {
         if (!buttons) {
             buttons = document.createElement('div');
             buttons.className = 'buttons';
-            pre_block.prepend(buttons);
+            pre_block.insertBefore(buttons, pre_block.firstChild);
         }
 
         var runCodeButton = document.createElement('button');
@@ -248,8 +251,8 @@ function playpen_text(playpen) {
         copyCodeClipboardButton.title = 'Copy to clipboard';
         copyCodeClipboardButton.setAttribute('aria-label', copyCodeClipboardButton.title);
 
-        buttons.prepend(runCodeButton);
-        buttons.prepend(copyCodeClipboardButton);
+        buttons.insertBefore(runCodeButton, buttons.firstChild);
+        buttons.insertBefore(copyCodeClipboardButton, buttons.firstChild);
 
         runCodeButton.addEventListener('click', function (e) {
             run_rust_code(pre_block);
@@ -262,7 +265,7 @@ function playpen_text(playpen) {
             undoChangesButton.title = 'Undo changes';
             undoChangesButton.setAttribute('aria-label', undoChangesButton.title);
 
-            buttons.prepend(undoChangesButton);
+            buttons.insertBefore(undoChangesButton, buttons.firstChild);
 
             undoChangesButton.addEventListener('click', function () {
                 let editor = window.ace.edit(code_block);
@@ -298,11 +301,13 @@ function playpen_text(playpen) {
     function showThemes() {
         themePopup.style.display = 'block';
         themeToggleButton.setAttribute('aria-expanded', true);
+        themePopup.querySelector("button#" + document.body.className).focus();
     }
 
     function hideThemes() {
         themePopup.style.display = 'none';
         themeToggleButton.setAttribute('aria-expanded', false);
+        themeToggleButton.focus();
     }
 
     function set_theme(theme) {
@@ -369,18 +374,50 @@ function playpen_text(playpen) {
         set_theme(theme);
     });
 
-    // Hide theme selector popup when clicking outside of it
-    document.addEventListener('click', function (event) {
-        if (themePopup.style.display === 'block' && !themeToggleButton.contains(event.target) && !themePopup.contains(event.target)) {
+    themePopup.addEventListener('focusout', function(e) {
+        // e.relatedTarget is null in Safari and Firefox on macOS (see workaround below)
+        if (!!e.relatedTarget && !themePopup.contains(e.relatedTarget)) {
+            hideThemes();
+        }
+    });
+
+    // Should not be needed, but it works around an issue on macOS & iOS: https://github.com/rust-lang-nursery/mdBook/issues/628
+    document.addEventListener('click', function(e) {
+        if (themePopup.style.display === 'block' && !themeToggleButton.contains(e.target) && !themePopup.contains(e.target)) {
             hideThemes();
         }
     });
 
     document.addEventListener('keydown', function (e) {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) { return; }
+        if (!themePopup.contains(e.target)) { return; }
+
         switch (e.key) {
             case 'Escape':
                 e.preventDefault();
                 hideThemes();
+                break;
+            case 'ArrowUp':
+                e.preventDefault();
+                var li = document.activeElement.parentElement;
+                if (li && li.previousElementSibling) {
+                    li.previousElementSibling.querySelector('button').focus();
+                }
+                break;
+            case 'ArrowDown':
+                e.preventDefault();
+                var li = document.activeElement.parentElement;
+                if (li && li.nextElementSibling) {
+                    li.nextElementSibling.querySelector('button').focus();
+                }
+                break;
+            case 'Home':
+                e.preventDefault();
+                themePopup.querySelector('li:first-child button').focus();
+                break;
+            case 'End':
+                e.preventDefault();
+                themePopup.querySelector('li:last-child button').focus();
                 break;
         }
     });
@@ -465,6 +502,7 @@ function playpen_text(playpen) {
 (function chapterNavigation() {
     document.addEventListener('keydown', function (e) {
         if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) { return; }
+        if (window.search && window.search.hasFocus()) { return; }
 
         switch (e.key) {
             case 'ArrowRight':
@@ -519,6 +557,14 @@ function playpen_text(playpen) {
 
     clipboardSnippets.on('error', function (e) {
         showTooltip(e.trigger, "Clipboard error!");
+    });
+})();
+
+(function scrollToTop () {
+    var menuTitle = document.querySelector('.menu-title');
+
+    menuTitle.addEventListener('click', function () {
+        document.scrollingElement.scrollTo({ top: 0, behavior: 'smooth' });
     });
 })();
 

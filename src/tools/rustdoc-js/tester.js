@@ -87,6 +87,7 @@ function loadContent(content) {
     var Module = module.constructor;
     var m = new Module();
     m._compile(content, "tmp.js");
+    m.exports.ignore_order = content.indexOf("\n// ignore-order\n") !== -1;
     return m.exports;
 }
 
@@ -130,10 +131,10 @@ function lookForEntry(entry, data) {
             }
         }
         if (allGood === true) {
-            return true;
+            return i;
         }
     }
-    return false;
+    return null;
 }
 
 function main(argv) {
@@ -144,6 +145,7 @@ function main(argv) {
     var toolchain = argv[2];
 
     var mainJs = readFile("build/" + toolchain + "/doc/main.js");
+    var ALIASES = readFile("build/" + toolchain + "/doc/aliases.js");
     var searchIndex = readFile("build/" + toolchain + "/doc/search-index.js").split("\n");
     if (searchIndex[searchIndex.length - 1].length === 0) {
         searchIndex.pop();
@@ -157,9 +159,11 @@ function main(argv) {
     // execQuery first parameter is built in getQuery (which takes in the search input).
     // execQuery last parameter is built in buildIndex.
     // buildIndex requires the hashmap from search-index.
-    var functionsToLoad = ["levenshtein", "validateResult", "getQuery", "buildIndex", "execQuery"];
+    var functionsToLoad = ["levenshtein", "validateResult", "getQuery", "buildIndex", "execQuery",
+                           "execSearch"];
 
     finalJS += 'window = { "currentCrate": "std" };\n';
+    finalJS += ALIASES;
     finalJS += loadThings(arraysToLoad, 'array', extractArrayVariable, mainJs);
     finalJS += loadThings(variablesToLoad, 'variable', extractVariable, mainJs);
     finalJS += loadThings(functionsToLoad, 'function', extractFunction, mainJs);
@@ -174,7 +178,8 @@ function main(argv) {
                                'exports.QUERY = QUERY;exports.EXPECTED = EXPECTED;');
         const expected = loadedFile.EXPECTED;
         const query = loadedFile.QUERY;
-        var results = loaded.execQuery(loaded.getQuery(query), index);
+        const ignore_order = loadedFile.ignore_order;
+        var results = loaded.execSearch(loaded.getQuery(query), index);
         process.stdout.write('Checking "' + file + '" ... ');
         var error_text = [];
         for (var key in expected) {
@@ -186,13 +191,17 @@ function main(argv) {
                 break;
             }
             var entry = expected[key];
-            var found = false;
+            var prev_pos = 0;
             for (var i = 0; i < entry.length; ++i) {
-                if (lookForEntry(entry[i], results[key]) === true) {
-                    found = true;
-                } else {
+                var entry_pos = lookForEntry(entry[i], results[key]);
+                if (entry_pos === null) {
                     error_text.push("==> Result not found in '" + key + "': '" +
                                     JSON.stringify(entry[i]) + "'");
+                } else if (entry_pos < prev_pos && ignore_order === false) {
+                    error_text.push("==> '" + JSON.stringify(entry[i]) + "' was supposed to be " +
+                                    " before '" + JSON.stringify(results[key][entry_pos]) + "'");
+                } else {
+                    prev_pos = entry_pos;
                 }
             }
         }

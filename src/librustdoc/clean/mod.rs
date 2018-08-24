@@ -20,10 +20,10 @@ pub use self::FunctionRetTy::*;
 pub use self::Visibility::*;
 
 use syntax;
-use syntax::abi::Abi;
-use syntax::ast::{self, AttrStyle};
+use rustc_target::spec::abi::Abi;
+use syntax::ast::{self, AttrStyle, Ident};
 use syntax::attr;
-use syntax::codemap::Spanned;
+use syntax::codemap::{dummy_spanned, Spanned};
 use syntax::feature_gate::UnstableFeatures;
 use syntax::ptr::P;
 use syntax::symbol::keywords;
@@ -120,7 +120,7 @@ impl<T: Clean<U>, U> Clean<Option<U>> for Option<T> {
 
 impl<T, U> Clean<U> for ty::Binder<T> where T: Clean<U> {
     fn clean(&self, cx: &DocContext) -> U {
-        self.0.clean(cx)
+        self.skip_binder().clean(cx)
     }
 }
 
@@ -840,7 +840,8 @@ impl Attributes {
         for attr in attrs.lists("target_feature") {
             if attr.check_name("enable") {
                 if let Some(feat) = attr.value_str() {
-                    let meta = attr::mk_name_value_item_str("target_feature".into(), feat);
+                    let meta = attr::mk_name_value_item_str(Ident::from_str("target_feature"),
+                                                            dummy_spanned(feat));
                     if let Ok(feat_cfg) = Cfg::parse(&meta) {
                         cfg &= feat_cfg;
                     }
@@ -1074,8 +1075,7 @@ fn resolve(cx: &DocContext, path_str: &str, is_val: bool) -> Result<(Def, Option
         let ty = cx.resolver.borrow_mut()
                             .with_scope(*id,
             |resolver| {
-                resolver.resolve_str_path_error(DUMMY_SP,
-                                                &path, false)
+                resolver.resolve_str_path_error(DUMMY_SP, &path, false)
         })?;
         match ty.def {
             Def::Struct(did) | Def::Union(did) | Def::Enum(did) | Def::TyAlias(did) => {
@@ -1090,7 +1090,27 @@ fn resolve(cx: &DocContext, path_str: &str, is_val: bool) -> Result<(Def, Option
                     };
                     Ok((ty.def, Some(format!("{}.{}", out, item_name))))
                 } else {
-                    Err(())
+                    let is_enum = match ty.def {
+                        Def::Enum(_) => true,
+                        _ => false,
+                    };
+                    let elem = if is_enum {
+                        cx.tcx.adt_def(did).all_fields().find(|item| item.name == item_name)
+                    } else {
+                        cx.tcx.adt_def(did)
+                              .non_enum_variant()
+                              .fields
+                              .iter()
+                              .find(|item| item.name == item_name)
+                    };
+                    if let Some(item) = elem {
+                        Ok((ty.def,
+                            Some(format!("{}.{}",
+                                         if is_enum { "variant" } else { "structfield" },
+                                         item.name))))
+                    } else {
+                        Err(())
+                    }
                 }
             }
             Def::Trait(did) => {
@@ -1101,7 +1121,13 @@ fn resolve(cx: &DocContext, path_str: &str, is_val: bool) -> Result<(Def, Option
                     let kind = match item.kind {
                         ty::AssociatedKind::Const if is_val => "associatedconstant",
                         ty::AssociatedKind::Type if !is_val => "associatedtype",
-                        ty::AssociatedKind::Method if is_val => "tymethod",
+                        ty::AssociatedKind::Method if is_val => {
+                            if item.defaultness.has_value() {
+                                "method"
+                            } else {
+                                "tymethod"
+                            }
+                        }
                         _ => return Err(())
                     };
 
@@ -1121,16 +1147,8 @@ fn resolve(cx: &DocContext, path_str: &str, is_val: bool) -> Result<(Def, Option
 fn macro_resolve(cx: &DocContext, path_str: &str) -> Option<Def> {
     use syntax::ext::base::{MacroKind, SyntaxExtension};
     use syntax::ext::hygiene::Mark;
-    let segment = ast::PathSegment {
-        identifier: ast::Ident::from_str(path_str),
-        span: DUMMY_SP,
-        parameters: None,
-    };
-    let path = ast::Path {
-        span: DUMMY_SP,
-        segments: vec![segment],
-    };
-
+    let segment = ast::PathSegment::from_ident(Ident::from_str(path_str));
+    let path = ast::Path { segments: vec![segment], span: DUMMY_SP };
     let mut resolver = cx.resolver.borrow_mut();
     let mark = Mark::root();
     let res = resolver
@@ -1141,7 +1159,7 @@ fn macro_resolve(cx: &DocContext, path_str: &str) -> Option<Def> {
         } else {
             None
         }
-    } else if let Some(def) = resolver.all_macros.get(&path_str.into()) {
+    } else if let Some(def) = resolver.all_macros.get(&Symbol::intern(path_str)) {
         Some(*def)
     } else {
         None
@@ -1158,6 +1176,10 @@ enum PathKind {
     Value,
     /// types, traits, everything in the type namespace
     Type,
+}
+
+fn resolution_failure(cx: &DocContext, path_str: &str) {
+    cx.sess().warn(&format!("[{}] cannot be resolved, ignoring it...", path_str));
 }
 
 impl Clean<Attributes> for [ast::Attribute] {
@@ -1210,6 +1232,7 @@ impl Clean<Attributes> for [ast::Attribute] {
                             if let Ok(def) = resolve(cx, path_str, true) {
                                 def
                             } else {
+                                resolution_failure(cx, path_str);
                                 // this could just be a normal link or a broken link
                                 // we could potentially check if something is
                                 // "intra-doc-link-like" and warn in that case
@@ -1220,6 +1243,7 @@ impl Clean<Attributes> for [ast::Attribute] {
                             if let Ok(def) = resolve(cx, path_str, false) {
                                 def
                             } else {
+                                resolution_failure(cx, path_str);
                                 // this could just be a normal link
                                 continue;
                             }
@@ -1264,6 +1288,7 @@ impl Clean<Attributes> for [ast::Attribute] {
                             } else if let Ok(value_def) = resolve(cx, path_str, true) {
                                 value_def
                             } else {
+                                resolution_failure(cx, path_str);
                                 // this could just be a normal link
                                 continue;
                             }
@@ -1272,6 +1297,7 @@ impl Clean<Attributes> for [ast::Attribute] {
                             if let Some(def) = macro_resolve(cx, path_str) {
                                 (def, None)
                             } else {
+                                resolution_failure(cx, path_str);
                                 continue
                             }
                         }
@@ -1341,7 +1367,7 @@ impl TyParamBound {
     fn maybe_sized(cx: &DocContext) -> TyParamBound {
         let did = cx.tcx.require_lang_item(lang_items::SizedTraitLangItem);
         let empty = cx.tcx.intern_substs(&[]);
-        let path = external_path(cx, &cx.tcx.item_name(did),
+        let path = external_path(cx, &cx.tcx.item_name(did).as_str(),
             Some(did), false, vec![], empty);
         inline::record_extern_fqn(cx, did, TypeKind::Trait);
         TraitBound(PolyTrait {
@@ -1448,7 +1474,7 @@ impl<'a, 'tcx> Clean<TyParamBound> for (&'a ty::TraitRef<'tcx>, Vec<TypeBinding>
     fn clean(&self, cx: &DocContext) -> TyParamBound {
         let (trait_ref, ref bounds) = *self;
         inline::record_extern_fqn(cx, trait_ref.def_id, TypeKind::Trait);
-        let path = external_path(cx, &cx.tcx.item_name(trait_ref.def_id),
+        let path = external_path(cx, &cx.tcx.item_name(trait_ref.def_id).as_str(),
                                  Some(trait_ref.def_id), true, bounds.clone(), trait_ref.substs);
 
         debug!("ty::TraitRef\n  subst: {:?}\n", trait_ref.substs);
@@ -2788,7 +2814,7 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
                     AdtKind::Enum => TypeKind::Enum,
                 };
                 inline::record_extern_fqn(cx, did, kind);
-                let path = external_path(cx, &cx.tcx.item_name(did),
+                let path = external_path(cx, &cx.tcx.item_name(did).as_str(),
                                          None, false, vec![], substs);
                 ResolvedPath {
                     path,
@@ -2799,7 +2825,7 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
             }
             ty::TyForeign(did) => {
                 inline::record_extern_fqn(cx, did, TypeKind::Foreign);
-                let path = external_path(cx, &cx.tcx.item_name(did),
+                let path = external_path(cx, &cx.tcx.item_name(did).as_str(),
                                          None, false, vec![], Substs::empty());
                 ResolvedPath {
                     path: path,
@@ -2817,7 +2843,7 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
                     reg.clean(cx).map(|b| typarams.push(RegionBound(b)));
                     for did in obj.auto_traits() {
                         let empty = cx.tcx.intern_substs(&[]);
-                        let path = external_path(cx, &cx.tcx.item_name(did),
+                        let path = external_path(cx, &cx.tcx.item_name(did).as_str(),
                             Some(did), false, vec![], empty);
                         inline::record_extern_fqn(cx, did, TypeKind::Trait);
                         let bound = TraitBound(PolyTrait {
@@ -2833,15 +2859,15 @@ impl<'tcx> Clean<Type> for Ty<'tcx> {
                     }
 
                     let mut bindings = vec![];
-                    for ty::Binder(ref pb) in obj.projection_bounds() {
+                    for pb in obj.projection_bounds() {
                         bindings.push(TypeBinding {
-                            name: cx.tcx.associated_item(pb.item_def_id).name.clean(cx),
-                            ty: pb.ty.clean(cx)
+                            name: cx.tcx.associated_item(pb.item_def_id()).name.clean(cx),
+                            ty: pb.skip_binder().ty.clean(cx)
                         });
                     }
 
-                    let path = external_path(cx, &cx.tcx.item_name(did), Some(did),
-                        false, bindings, principal.0.substs);
+                    let path = external_path(cx, &cx.tcx.item_name(did).as_str(), Some(did),
+                        false, bindings, principal.skip_binder().substs);
                     ResolvedPath {
                         path,
                         typarams: Some(typarams),
@@ -3648,7 +3674,7 @@ impl Clean<Vec<Item>> for doctree::Import {
         // #[doc(no_inline)] attribute is present.
         // Don't inline doc(hidden) imports so they can be stripped at a later stage.
         let denied = self.vis != hir::Public || self.attrs.iter().any(|a| {
-            a.name().unwrap() == "doc" && match a.meta_item_list() {
+            a.name() == "doc" && match a.meta_item_list() {
                 Some(l) => attr::list_contains_name(&l, "no_inline") ||
                            attr::list_contains_name(&l, "hidden"),
                 None => false,
@@ -3660,7 +3686,8 @@ impl Clean<Vec<Item>> for doctree::Import {
         } else {
             let name = self.name;
             if !denied {
-                if let Some(items) = inline::try_inline(cx, path.def, name) {
+                let mut visited = FxHashSet();
+                if let Some(items) = inline::try_inline(cx, path.def, name, &mut visited) {
                     return items;
                 }
             }
@@ -3868,6 +3895,7 @@ fn register_def(cx: &DocContext, def: Def) -> DefId {
         Def::Union(i) => (i, TypeKind::Union),
         Def::Mod(i) => (i, TypeKind::Module),
         Def::TyForeign(i) => (i, TypeKind::Foreign),
+        Def::Const(i) => (i, TypeKind::Const),
         Def::Static(i, _) => (i, TypeKind::Static),
         Def::Variant(i) => (cx.tcx.parent_def_id(i).unwrap(), TypeKind::Enum),
         Def::Macro(i, _) => (i, TypeKind::Macro),

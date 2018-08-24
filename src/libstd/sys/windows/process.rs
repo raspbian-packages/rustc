@@ -31,7 +31,7 @@ use sys::stdio;
 use sys::cvt;
 use sys_common::{AsInner, FromInner, IntoInner};
 use sys_common::process::{CommandEnv, EnvKey};
-use alloc::borrow::Borrow;
+use borrow::Borrow;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Command
@@ -414,6 +414,7 @@ impl ExitCode {
     pub const SUCCESS: ExitCode = ExitCode(EXIT_SUCCESS as _);
     pub const FAILURE: ExitCode = ExitCode(EXIT_FAILURE as _);
 
+    #[inline]
     pub fn as_i32(&self) -> i32 {
         self.0 as i32
     }

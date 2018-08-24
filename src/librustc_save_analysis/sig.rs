@@ -237,7 +237,7 @@ impl Sig for ast::Ty {
                 if f.unsafety == ast::Unsafety::Unsafe {
                     text.push_str("unsafe ");
                 }
-                if f.abi != ::syntax::abi::Abi::Rust {
+                if f.abi != ::rustc_target::spec::abi::Abi::Rust {
                     text.push_str("extern");
                     text.push_str(&f.abi.to_string());
                     text.push(' ');
@@ -388,7 +388,7 @@ impl Sig for ast::Item {
                 if unsafety == ast::Unsafety::Unsafe {
                     text.push_str("unsafe ");
                 }
-                if abi != ::syntax::abi::Abi::Rust {
+                if abi != ::rustc_target::spec::abi::Abi::Rust {
                     text.push_str("extern");
                     text.push_str(&abi.to_string());
                     text.push(' ');
@@ -671,7 +671,7 @@ impl Sig for ast::StructField {
     fn make(&self, offset: usize, _parent_id: Option<NodeId>, scx: &SaveContext) -> Result {
         let mut text = String::new();
         let mut defs = None;
-        if let Some(ref ident) = self.ident {
+        if let Some(ident) = self.ident {
             text.push_str(&ident.to_string());
             defs = Some(SigElement {
                 id: id_from_node_id(self.id, scx),
@@ -692,7 +692,7 @@ impl Sig for ast::StructField {
 
 impl Sig for ast::Variant_ {
     fn make(&self, offset: usize, _parent_id: Option<NodeId>, scx: &SaveContext) -> Result {
-        let mut text = self.name.to_string();
+        let mut text = self.ident.to_string();
         match self.data {
             ast::VariantData::Struct(ref fields, id) => {
                 let name_def = SigElement {
@@ -822,6 +822,7 @@ impl Sig for ast::ForeignItem {
                     refs: vec![],
                 })
             }
+            ast::ForeignItemKind::Macro(..) => Err("macro"),
         }
     }
 }
@@ -930,7 +931,7 @@ fn make_method_signature(
     if m.unsafety == ast::Unsafety::Unsafe {
         text.push_str("unsafe ");
     }
-    if m.abi != ::syntax::abi::Abi::Rust {
+    if m.abi != ::rustc_target::spec::abi::Abi::Rust {
         text.push_str("extern");
         text.push_str(&m.abi.to_string());
         text.push(' ');

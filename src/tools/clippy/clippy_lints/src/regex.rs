@@ -129,8 +129,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
     }
 }
 
-fn str_span(base: Span, c: regex_syntax::ast::Span, offset: usize) -> Span {
-    let offset = offset as u32;
+fn str_span(base: Span, c: regex_syntax::ast::Span, offset: u16) -> Span {
+    let offset = u32::from(offset);
     let end = base.lo() + BytePos(c.end.offset as u32 + offset);
     let start = base.lo() + BytePos(c.start.offset as u32 + offset);
     assert!(start <= end);
@@ -187,7 +187,10 @@ fn check_set<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr, utf8: bool)
 }
 
 fn check_regex<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr, utf8: bool) {
-    let mut parser = regex_syntax::ParserBuilder::new().unicode(utf8).build();
+    let mut parser = regex_syntax::ParserBuilder::new()
+        .unicode(utf8)
+        .allow_invalid_utf8(!utf8)
+        .build();
 
     if let ExprLit(ref lit) = expr.node {
         if let LitKind::Str(ref r, style) = lit.node {

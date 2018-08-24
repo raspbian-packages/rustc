@@ -133,6 +133,8 @@ expansions! {
         "trait item", .make_trait_items, lift .fold_trait_item, lift .visit_trait_item;
     ImplItems: SmallVector<ast::ImplItem> [SmallVector, ast::ImplItem],
         "impl item",  .make_impl_items,  lift .fold_impl_item,  lift .visit_impl_item;
+    ForeignItems: SmallVector<ast::ForeignItem> [SmallVector, ast::ForeignItem],
+        "foreign item", .make_foreign_items, lift .fold_foreign_item, lift .visit_foreign_item;
 }
 
 impl ExpansionKind {
@@ -149,6 +151,8 @@ impl ExpansionKind {
                 Expansion::ImplItems(items.map(Annotatable::expect_impl_item).collect()),
             ExpansionKind::TraitItems =>
                 Expansion::TraitItems(items.map(Annotatable::expect_trait_item).collect()),
+            ExpansionKind::ForeignItems =>
+                Expansion::ForeignItems(items.map(Annotatable::expect_foreign_item).collect()),
             ExpansionKind::Stmts => Expansion::Stmts(items.map(Annotatable::expect_stmt).collect()),
             ExpansionKind::Expr => Expansion::Expr(
                 items.next().expect("expected exactly one expression").expect_expr()
@@ -171,10 +175,10 @@ fn macro_bang_format(path: &ast::Path) -> ExpnFormat {
             path_str.push_str("::");
         }
 
-        if segment.identifier.name != keywords::CrateRoot.name() &&
-            segment.identifier.name != keywords::DollarCrate.name()
+        if segment.ident.name != keywords::CrateRoot.name() &&
+            segment.ident.name != keywords::DollarCrate.name()
         {
-            path_str.push_str(&segment.identifier.name.as_str())
+            path_str.push_str(&segment.ident.name.as_str())
         }
     }
 
@@ -442,6 +446,11 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             Annotatable::ImplItem(item) => {
                 Annotatable::ImplItem(item.map(|item| cfg.fold_impl_item(item).pop().unwrap()))
             }
+            Annotatable::ForeignItem(item) => {
+                Annotatable::ForeignItem(
+                    item.map(|item| cfg.fold_foreign_item(item).pop().unwrap())
+                )
+            }
             Annotatable::Stmt(stmt) => {
                 Annotatable::Stmt(stmt.map(|stmt| cfg.fold_stmt(stmt).pop().unwrap()))
             }
@@ -512,14 +521,17 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 Some(kind.expect_from_annotatables(items))
             }
             AttrProcMacro(ref mac) => {
+                self.gate_proc_macro_attr_item(attr.span, &item);
                 let item_tok = TokenTree::Token(DUMMY_SP, Token::interpolated(match item {
                     Annotatable::Item(item) => token::NtItem(item),
                     Annotatable::TraitItem(item) => token::NtTraitItem(item.into_inner()),
                     Annotatable::ImplItem(item) => token::NtImplItem(item.into_inner()),
+                    Annotatable::ForeignItem(item) => token::NtForeignItem(item.into_inner()),
                     Annotatable::Stmt(stmt) => token::NtStmt(stmt.into_inner()),
                     Annotatable::Expr(expr) => token::NtExpr(expr),
                 })).into();
-                let tok_result = mac.expand(self.cx, attr.span, attr.tokens, item_tok);
+                let input = self.extract_proc_macro_attr_input(attr.tokens, attr.span);
+                let tok_result = mac.expand(self.cx, attr.span, input, item_tok);
                 self.parse_expansion(tok_result, kind, &attr.path, attr.span)
             }
             ProcMacroDerive(..) | BuiltinDerive(..) => {
@@ -534,6 +546,49 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 kind.dummy(attr.span)
             }
         }
+    }
+
+    fn extract_proc_macro_attr_input(&self, tokens: TokenStream, span: Span) -> TokenStream {
+        let mut trees = tokens.trees();
+        match trees.next() {
+            Some(TokenTree::Delimited(_, delim)) => {
+                if trees.next().is_none() {
+                    return delim.tts.into()
+                }
+            }
+            Some(TokenTree::Token(..)) => {}
+            None => return TokenStream::empty(),
+        }
+        self.cx.span_err(span, "custom attribute invocations must be \
+            of the form #[foo] or #[foo(..)], the macro name must only be \
+            followed by a delimiter token");
+        TokenStream::empty()
+    }
+
+    fn gate_proc_macro_attr_item(&self, span: Span, item: &Annotatable) {
+        let (kind, gate) = match *item {
+            Annotatable::Item(ref item) => {
+                match item.node {
+                    ItemKind::Mod(_) if self.cx.ecfg.proc_macro_mod() => return,
+                    ItemKind::Mod(_) => ("modules", "proc_macro_mod"),
+                    _ => return,
+                }
+            }
+            Annotatable::TraitItem(_) => return,
+            Annotatable::ImplItem(_) => return,
+            Annotatable::ForeignItem(_) => return,
+            Annotatable::Stmt(_) |
+            Annotatable::Expr(_) if self.cx.ecfg.proc_macro_expr() => return,
+            Annotatable::Stmt(_) => ("statements", "proc_macro_expr"),
+            Annotatable::Expr(_) => ("expressions", "proc_macro_expr"),
+        };
+        emit_feature_err(
+            self.cx.parse_sess,
+            gate,
+            span,
+            GateIssue::Language,
+            &format!("custom attributes cannot be applied to {}", kind),
+        );
     }
 
     /// Expand a macro invocation. Returns the result of expansion.
@@ -662,6 +717,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                     self.cx.trace_macros_diag();
                     kind.dummy(span)
                 } else {
+                    self.gate_proc_macro_expansion_kind(span, kind);
                     invoc.expansion_data.mark.set_expn_info(ExpnInfo {
                         call_site: span,
                         callee: NameAndSpan {
@@ -685,11 +741,35 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
             opt_expanded
         } else {
             let msg = format!("non-{kind} macro in {kind} position: {name}",
-                              name = path.segments[0].identifier.name, kind = kind.name());
+                              name = path.segments[0].ident.name, kind = kind.name());
             self.cx.span_err(path.span, &msg);
             self.cx.trace_macros_diag();
             kind.dummy(span)
         }
+    }
+
+    fn gate_proc_macro_expansion_kind(&self, span: Span, kind: ExpansionKind) {
+        let kind = match kind {
+            ExpansionKind::Expr => "expressions",
+            ExpansionKind::OptExpr => "expressions",
+            ExpansionKind::Pat => "patterns",
+            ExpansionKind::Ty => "types",
+            ExpansionKind::Stmts => "statements",
+            ExpansionKind::Items => return,
+            ExpansionKind::TraitItems => return,
+            ExpansionKind::ImplItems => return,
+            ExpansionKind::ForeignItems => return,
+        };
+        if self.cx.ecfg.proc_macro_non_items() {
+            return
+        }
+        emit_feature_err(
+            self.cx.parse_sess,
+            "proc_macro_non_items",
+            span,
+            GateIssue::Language,
+            &format!("procedural macros cannot be expanded to {}", kind),
+        );
     }
 
     /// Expand a derive invocation. Returns the result of expansion.
@@ -730,7 +810,7 @@ impl<'a, 'b> MacroExpander<'a, 'b> {
                 invoc.expansion_data.mark.set_expn_info(expn_info);
                 let span = span.with_ctxt(self.cx.backtrace());
                 let dummy = ast::MetaItem { // FIXME(jseyfried) avoid this
-                    name: keywords::Invalid.name(),
+                    ident: Path::from_ident(keywords::Invalid.ident()),
                     span: DUMMY_SP,
                     node: ast::MetaItemKind::Word,
                 };
@@ -799,6 +879,15 @@ impl<'a> Parser<'a> {
                     items.push(self.parse_impl_item(&mut false)?);
                 }
                 Expansion::ImplItems(items)
+            }
+            ExpansionKind::ForeignItems => {
+                let mut items = SmallVector::new();
+                while self.token != token::Eof {
+                    if let Some(item) = self.parse_foreign_item()? {
+                        items.push(item);
+                    }
+                }
+                Expansion::ForeignItems(items)
             }
             ExpansionKind::Stmts => {
                 let mut stmts = SmallVector::new();
@@ -928,7 +1017,7 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
     fn check_attributes(&mut self, attrs: &[ast::Attribute]) {
         let features = self.cx.ecfg.features.unwrap();
         for attr in attrs.iter() {
-            feature_gate::check_attribute(attr, self.cx.parse_sess, features);
+            self.check_attribute_inner(attr, features);
 
             // macros are expanded before any lint passes so this warning has to be hardcoded
             if attr.path == "derive" {
@@ -941,6 +1030,10 @@ impl<'a, 'b> InvocationCollector<'a, 'b> {
 
     fn check_attribute(&mut self, at: &ast::Attribute) {
         let features = self.cx.ecfg.features.unwrap();
+        self.check_attribute_inner(at, features);
+    }
+
+    fn check_attribute_inner(&mut self, at: &ast::Attribute, features: &Features) {
         feature_gate::check_attribute(at, self.cx.parse_sess, features);
     }
 }
@@ -1212,11 +1305,54 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
         noop_fold_foreign_mod(self.cfg.configure_foreign_mod(foreign_mod), self)
     }
 
+    fn fold_foreign_item(&mut self,
+                         foreign_item: ast::ForeignItem) -> SmallVector<ast::ForeignItem> {
+        let (attr, traits, foreign_item) = self.classify_item(foreign_item);
+
+        let explain = if self.cx.ecfg.proc_macro_enabled() {
+            feature_gate::EXPLAIN_PROC_MACROS_IN_EXTERN
+        } else {
+            feature_gate::EXPLAIN_MACROS_IN_EXTERN
+        };
+
+        if attr.is_some() || !traits.is_empty()  {
+            if !self.cx.ecfg.macros_in_extern_enabled() {
+                if let Some(ref attr) = attr {
+                    emit_feature_err(&self.cx.parse_sess, "macros_in_extern", attr.span,
+                                     GateIssue::Language, explain);
+                }
+            }
+
+            let item = Annotatable::ForeignItem(P(foreign_item));
+            return self.collect_attr(attr, traits, item, ExpansionKind::ForeignItems)
+                .make_foreign_items();
+        }
+
+        if let ast::ForeignItemKind::Macro(mac) = foreign_item.node {
+            self.check_attributes(&foreign_item.attrs);
+
+            if !self.cx.ecfg.macros_in_extern_enabled() {
+                emit_feature_err(&self.cx.parse_sess, "macros_in_extern", foreign_item.span,
+                                 GateIssue::Language, explain);
+            }
+
+            return self.collect_bang(mac, foreign_item.span, ExpansionKind::ForeignItems)
+                .make_foreign_items();
+        }
+
+        noop_fold_foreign_item(foreign_item, self)
+    }
+
     fn fold_item_kind(&mut self, item: ast::ItemKind) -> ast::ItemKind {
         match item {
             ast::ItemKind::MacroDef(..) => item,
             _ => noop_fold_item_kind(self.cfg.configure_item_kind(item), self),
         }
+    }
+
+    fn fold_generic_param(&mut self, param: ast::GenericParam) -> ast::GenericParam {
+        self.cfg.disallow_cfg_on_generic_param(&param);
+        noop_fold_generic_param(param, self)
     }
 
     fn fold_attribute(&mut self, at: ast::Attribute) -> Option<ast::Attribute> {
@@ -1268,15 +1404,16 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
 
                             let include_info = vec![
                                 dummy_spanned(ast::NestedMetaItemKind::MetaItem(
-                                        attr::mk_name_value_item_str("file".into(),
-                                                                     file))),
+                                        attr::mk_name_value_item_str(Ident::from_str("file"),
+                                                                     dummy_spanned(file)))),
                                 dummy_spanned(ast::NestedMetaItemKind::MetaItem(
-                                        attr::mk_name_value_item_str("contents".into(),
-                                                                     (&*src).into()))),
+                                        attr::mk_name_value_item_str(Ident::from_str("contents"),
+                                                            dummy_spanned(Symbol::intern(&src))))),
                             ];
 
-                            items.push(dummy_spanned(ast::NestedMetaItemKind::MetaItem(
-                                        attr::mk_list_item("include".into(), include_info))));
+                            let include_ident = Ident::from_str("include");
+                            let item = attr::mk_list_item(DUMMY_SP, include_ident, include_info);
+                            items.push(dummy_spanned(ast::NestedMetaItemKind::MetaItem(item)));
                         }
                         Err(_) => {
                             self.cx.span_err(at.span,
@@ -1289,7 +1426,7 @@ impl<'a, 'b> Folder for InvocationCollector<'a, 'b> {
                 }
             }
 
-            let meta = attr::mk_list_item("doc".into(), items);
+            let meta = attr::mk_list_item(DUMMY_SP, Ident::from_str("doc"), items);
             match at.style {
                 ast::AttrStyle::Inner =>
                     Some(attr::mk_spanned_attr_inner(at.span, at.id, meta)),
@@ -1357,6 +1494,10 @@ impl<'feat> ExpansionConfig<'feat> {
         fn enable_allow_internal_unstable = allow_internal_unstable,
         fn enable_custom_derive = custom_derive,
         fn proc_macro_enabled = proc_macro,
+        fn macros_in_extern_enabled = macros_in_extern,
+        fn proc_macro_mod = proc_macro_mod,
+        fn proc_macro_expr = proc_macro_expr,
+        fn proc_macro_non_items = proc_macro_non_items,
     }
 }
 
@@ -1366,12 +1507,12 @@ pub struct Marker(pub Mark);
 
 impl Folder for Marker {
     fn fold_ident(&mut self, mut ident: Ident) -> Ident {
-        ident.ctxt = ident.ctxt.apply_mark(self.0);
+        ident.span = ident.span.apply_mark(self.0);
         ident
     }
 
     fn new_span(&mut self, span: Span) -> Span {
-        span.with_ctxt(span.ctxt().apply_mark(self.0))
+        span.apply_mark(self.0)
     }
 
     fn fold_mac(&mut self, mac: ast::Mac) -> ast::Mac {

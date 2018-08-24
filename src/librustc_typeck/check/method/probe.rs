@@ -471,12 +471,21 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             ty::TyStr => {
                 let lang_def_id = lang_items.str_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
+
+                let lang_def_id = lang_items.str_alloc_impl();
+                self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
             ty::TySlice(_) => {
                 let lang_def_id = lang_items.slice_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
 
                 let lang_def_id = lang_items.slice_u8_impl();
+                self.assemble_inherent_impl_for_primitive(lang_def_id);
+
+                let lang_def_id = lang_items.slice_alloc_impl();
+                self.assemble_inherent_impl_for_primitive(lang_def_id);
+
+                let lang_def_id = lang_items.slice_u8_alloc_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
             ty::TyRawPtr(ty::TypeAndMut { ty: _, mutbl: hir::MutImmutable }) => {
@@ -538,9 +547,15 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             ty::TyFloat(ast::FloatTy::F32) => {
                 let lang_def_id = lang_items.f32_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
+
+                let lang_def_id = lang_items.f32_runtime_impl();
+                self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
             ty::TyFloat(ast::FloatTy::F64) => {
                 let lang_def_id = lang_items.f64_impl();
+                self.assemble_inherent_impl_for_primitive(lang_def_id);
+
+                let lang_def_id = lang_items.f64_runtime_impl();
                 self.assemble_inherent_impl_for_primitive(lang_def_id);
             }
             _ => {}
@@ -635,7 +650,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             .filter_map(|predicate| {
                 match *predicate {
                     ty::Predicate::Trait(ref trait_predicate) => {
-                        match trait_predicate.0.trait_ref.self_ty().sty {
+                        match trait_predicate.skip_binder().trait_ref.self_ty().sty {
                             ty::TyParam(ref p) if *p == param_ty => {
                                 Some(trait_predicate.to_poly_trait_ref())
                             }
@@ -799,7 +814,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             .collect();
 
         // sort them by the name so we have a stable result
-        names.sort_by_key(|n| n.as_str());
+        names.sort_by_cached_key(|n| n.as_str());
         names
     }
 
@@ -1041,7 +1056,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
         unstable_candidates: &[(&Candidate<'tcx>, Symbol)],
     ) {
         let mut diag = self.tcx.struct_span_lint_node(
-            lint::builtin::UNSTABLE_NAME_COLLISION,
+            lint::builtin::UNSTABLE_NAME_COLLISIONS,
             self.fcx.body_id,
             self.span,
             "a method with this name may be added to the standard library in the future",
@@ -1158,7 +1173,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                     let predicate = trait_ref.to_predicate();
                     let obligation =
                         traits::Obligation::new(cause.clone(), self.param_env, predicate);
-                    if !selcx.evaluate_obligation(&obligation) {
+                    if !self.predicate_may_hold(&obligation) {
                         if self.probe(|_| self.select_trait_candidate(trait_ref).is_err()) {
                             // This candidate's primary obligation doesn't even
                             // select - don't bother registering anything in
@@ -1186,10 +1201,10 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             // Evaluate those obligations to see if they might possibly hold.
             for o in candidate_obligations.into_iter().chain(sub_obligations) {
                 let o = self.resolve_type_vars_if_possible(&o);
-                if !selcx.evaluate_obligation(&o) {
+                if !self.predicate_may_hold(&o) {
                     result = ProbeResult::NoMatch;
                     if let &ty::Predicate::Trait(ref pred) = &o.predicate {
-                        possibly_unsatisfied_predicates.push(pred.0.trait_ref);
+                        possibly_unsatisfied_predicates.push(pred.skip_binder().trait_ref);
                     }
                 }
             }
@@ -1470,7 +1485,10 @@ impl<'tcx> Candidate<'tcx> {
                     // inference variables or other artifacts. This
                     // means they are safe to put into the
                     // `WhereClausePick`.
-                    assert!(!trait_ref.substs().needs_infer());
+                    assert!(
+                        !trait_ref.skip_binder().substs.needs_infer()
+                            && !trait_ref.skip_binder().substs.has_skol()
+                    );
 
                     WhereClausePick(trait_ref.clone())
                 }

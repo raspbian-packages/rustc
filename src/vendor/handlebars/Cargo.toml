@@ -12,11 +12,11 @@
 
 [package]
 name = "handlebars"
-version = "0.29.1"
+version = "0.32.0"
 authors = ["Ning Sun <sunng@about.me>"]
 description = "Handlebars templating implemented in Rust."
 homepage = "https://github.com/sunng87/handlebars-rust"
-documentation = "https://docs.rs/handlebars/"
+documentation = "https://docs.rs/crate/handlebars/"
 readme = "README.md"
 keywords = ["handlebars", "templating", "web"]
 categories = ["template-engine"]
@@ -31,34 +31,44 @@ file = "CHANGELOG.md"
 replace = "{{version}}"
 search = "Unreleased"
 
+[[package.metadata.release.pre-release-replacements]]
+file = "CHANGELOG.md"
+replace = "{{date}}"
+search = "ReleaseDate"
+
 [lib]
 name = "handlebars"
 path = "src/lib.rs"
-[dependencies.serde]
+[dependencies.lazy_static]
+version = "^1.0.0"
+
+[dependencies.log]
+version = "^0.4.0"
+
+[dependencies.pest]
+version = "^1.0.0"
+
+[dependencies.pest_derive]
+version = "^1.0.0"
+
+[dependencies.quick-error]
 version = "^1.0.0"
 
 [dependencies.regex]
 version = "^0.2.0"
 
-[dependencies.quick-error]
+[dependencies.serde]
 version = "^1.0.0"
-
-[dependencies.lazy_static]
-version = "^0.2.2"
-
-[dependencies.log]
-version = "^0.3.1"
-
-[dependencies.pest]
-version = "^0.3.0"
 
 [dependencies.serde_json]
 version = "^1.0.0"
-[dev-dependencies.maplit]
-version = "^0.1.3"
-
 [dev-dependencies.env_logger]
 version = "^0.4.0"
 
+[dev-dependencies.maplit]
+version = "^1.0.0"
+
 [dev-dependencies.serde_derive]
 version = "^1.0.0"
+[badges.maintenance]
+status = "actively-developed"

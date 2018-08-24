@@ -8,35 +8,39 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+use borrow_check::borrow_set::BorrowSet;
+use borrow_check::location::LocationTable;
+use dataflow::move_paths::MoveData;
+use dataflow::FlowAtLocation;
+use dataflow::MaybeInitializedPlaces;
 use rustc::hir::def_id::DefId;
-use rustc::mir::{ClosureRegionRequirements, ClosureOutlivesSubject, Mir};
 use rustc::infer::InferCtxt;
+use rustc::mir::{ClosureOutlivesSubject, ClosureRegionRequirements, Mir};
 use rustc::ty::{self, RegionKind, RegionVid};
 use rustc::util::nodemap::FxHashMap;
 use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::io;
+use std::path::PathBuf;
 use transform::MirSource;
 use util::liveness::{LivenessResults, LocalSet};
-use dataflow::FlowAtLocation;
-use dataflow::MaybeInitializedPlaces;
-use dataflow::move_paths::MoveData;
 
+use self::mir_util::PassWhere;
 use util as mir_util;
 use util::pretty::{self, ALIGN};
-use self::mir_util::PassWhere;
 
 mod constraint_generation;
 pub mod explain_borrow;
-pub(crate) mod region_infer;
+mod facts;
+crate mod region_infer;
 mod renumber;
 mod subtype_constraint_generation;
-pub(crate) mod type_check;
+crate mod type_check;
 mod universal_regions;
 
+use self::facts::AllFacts;
 use self::region_infer::RegionInferenceContext;
 use self::universal_regions::UniversalRegions;
-
 
 /// Rewrites the regions in the MIR to use NLL variables, also
 /// scraping out the set of universal regions (e.g., region parameters)
@@ -70,9 +74,11 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
     def_id: DefId,
     universal_regions: UniversalRegions<'tcx>,
     mir: &Mir<'tcx>,
+    location_table: &LocationTable,
     param_env: ty::ParamEnv<'gcx>,
     flow_inits: &mut FlowAtLocation<MaybeInitializedPlaces<'cx, 'gcx, 'tcx>>,
     move_data: &MoveData<'tcx>,
+    borrow_set: &BorrowSet<'tcx>,
 ) -> (
     RegionInferenceContext<'tcx>,
     Option<ClosureRegionRequirements<'gcx>>,
@@ -90,15 +96,47 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
         move_data,
     );
 
+    let mut all_facts = if infcx.tcx.sess.opts.debugging_opts.nll_facts {
+        Some(AllFacts::default())
+    } else {
+        None
+    };
+
+    if let Some(all_facts) = &mut all_facts {
+        all_facts
+            .universal_region
+            .extend(universal_regions.universal_regions());
+    }
+
     // Create the region inference context, taking ownership of the region inference
     // data that was contained in `infcx`.
     let var_origins = infcx.take_region_var_origins();
-    let mut regioncx = RegionInferenceContext::new(var_origins, universal_regions, mir);
-    subtype_constraint_generation::generate(&mut regioncx, mir, constraint_sets);
+    let mut regioncx =
+        RegionInferenceContext::new(var_origins, universal_regions, mir);
 
+    // Generate various constraints.
+    subtype_constraint_generation::generate(
+        &mut regioncx,
+        &mut all_facts,
+        location_table,
+        mir,
+        constraint_sets,
+    );
+    constraint_generation::generate_constraints(
+        infcx,
+        &mut regioncx,
+        &mut all_facts,
+        location_table,
+        &mir,
+        borrow_set,
+    );
 
-    // Generate non-subtyping constraints.
-    constraint_generation::generate_constraints(infcx, &mut regioncx, &mir);
+    // Dump facts if requested.
+    if let Some(all_facts) = all_facts {
+        let def_path = infcx.tcx.hir.def_path(def_id);
+        let dir_path = PathBuf::from("nll-facts").join(def_path.to_filename_friendly_no_crate());
+        all_facts.write_to_dir(dir_path, location_table).unwrap();
+    }
 
     // Solve the region constraints.
     let closure_region_requirements = regioncx.solve(infcx, &mir, def_id);
@@ -202,11 +240,11 @@ fn dump_mir_results<'a, 'gcx, 'tcx>(
     });
 
     // Also dump the inference graph constraints as a graphviz file.
-    let _: io::Result<()> = do catch {
+    let _: io::Result<()> = do_catch! {{
         let mut file =
             pretty::create_dump_file(infcx.tcx, "regioncx.dot", None, "nll", &0, source)?;
-        regioncx.dump_graphviz(&mut file)
-    };
+        regioncx.dump_graphviz(&mut file)?;
+    }};
 }
 
 fn dump_annotation<'a, 'gcx, 'tcx>(

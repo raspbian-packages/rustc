@@ -79,6 +79,7 @@ o("llvm-release-debuginfo", "llvm.release-debuginfo", "build LLVM with debugger 
 o("debuginfo", "rust.debuginfo", "build with debugger metadata")
 o("debuginfo-lines", "rust.debuginfo-lines", "build with line number debugger metadata")
 o("debuginfo-only-std", "rust.debuginfo-only-std", "build only libstd with debugging information")
+o("debuginfo-tools", "rust.debuginfo-tools", "build extended tools with debugging information")
 o("debug-jemalloc", "rust.debug-jemalloc", "build jemalloc with --enable-debug --enable-fill")
 v("save-toolstates", "rust.save-toolstates", "save build and test status of external tools into this file")
 
@@ -119,6 +120,8 @@ v("musl-root-arm", "target.arm-unknown-linux-musleabi.musl-root",
   "arm-unknown-linux-musleabi install directory")
 v("musl-root-armhf", "target.arm-unknown-linux-musleabihf.musl-root",
   "arm-unknown-linux-musleabihf install directory")
+v("musl-root-armv5te", "target.armv5te-unknown-linux-musleabi.musl-root",
+  "armv5te-unknown-linux-musleabi install directory")
 v("musl-root-armv7", "target.armv7-unknown-linux-musleabihf.musl-root",
   "armv7-unknown-linux-musleabihf install directory")
 v("musl-root-aarch64", "target.aarch64-unknown-linux-musl.musl-root",
@@ -145,7 +148,7 @@ o("jemalloc", "rust.use-jemalloc", "build liballoc with jemalloc")
 o("full-bootstrap", "build.full-bootstrap", "build three compilers instead of two")
 o("extended", "build.extended", "build an extended rust tool set")
 
-v("tools", "build.tools", "List of extended tools will be installed")
+v("tools", None, "List of extended tools will be installed")
 v("build", "build.build", "GNUs ./configure syntax LLVM build triple")
 v("host", None, "GNUs ./configure syntax LLVM host triples")
 v("target", None, "GNUs ./configure syntax LLVM target triples")
@@ -321,6 +324,8 @@ for key in known_args:
         set('target.{}.llvm-config'.format(build()), value + '/bin/llvm-config')
     elif option.name == 'jemalloc-root':
         set('target.{}.jemalloc'.format(build()), value + '/libjemalloc_pic.a')
+    elif option.name == 'tools':
+        set('build.tools', value.split(','))
     elif option.name == 'host':
         set('build.host', value.split(','))
     elif option.name == 'target':

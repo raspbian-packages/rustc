@@ -1,17 +1,18 @@
-use helpers::HelperDef;
+use helpers::{HelperDef, HelperResult};
 use registry::Registry;
 use context::JsonRender;
-use render::{RenderContext, Helper};
+use render::{Helper, RenderContext};
 use error::RenderError;
 
 #[derive(Clone, Copy)]
 pub struct LogHelper;
 
 impl HelperDef for LogHelper {
-    fn call(&self, h: &Helper, _: &Registry, _: &mut RenderContext) -> Result<(), RenderError> {
-        let param = try!(h.param(0).ok_or_else(|| {
-            RenderError::new("Param not found for helper \"log\"")
-        }));
+    fn call(&self, h: &Helper, _: &Registry, _: &mut RenderContext) -> HelperResult {
+        let param = try!(
+            h.param(0)
+                .ok_or_else(|| RenderError::new("Param not found for helper \"log\""))
+        );
 
         info!(
             "{}: {}",

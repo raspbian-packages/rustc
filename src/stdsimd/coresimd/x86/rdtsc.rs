@@ -17,8 +17,11 @@ use stdsimd_test::assert_instr;
 ///
 /// On processors that support the Intel 64 architecture, the
 /// high-order 32 bits of each of RAX and RDX are cleared.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_rdtsc)
 #[inline]
 #[cfg_attr(test, assert_instr(rdtsc))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _rdtsc() -> i64 {
     rdtsc()
 }
@@ -37,8 +40,11 @@ pub unsafe fn _rdtsc() -> i64 {
 ///
 /// On processors that support the Intel 64 architecture, the
 /// high-order 32 bits of each of RAX, RDX, and RCX are cleared.
+///
+/// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=__rdtscp)
 #[inline]
 #[cfg_attr(test, assert_instr(rdtscp))]
+#[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn __rdtscp(aux: *mut u32) -> u64 {
     rdtscp(aux as *mut _)
 }
@@ -53,16 +59,16 @@ extern "C" {
 
 #[cfg(test)]
 mod tests {
-    use stdsimd_test::simd_test;
     use coresimd::x86::rdtsc;
+    use stdsimd_test::simd_test;
 
-    #[simd_test = "sse2"]
+    #[simd_test(enable = "sse2")]
     unsafe fn _rdtsc() {
         let r = rdtsc::_rdtsc();
         assert_ne!(r, 0); // The chances of this being 0 are infinitesimal
     }
 
-    #[simd_test = "sse2"]
+    #[simd_test(enable = "sse2")]
     unsafe fn _rdtscp() {
         let mut aux = 0;
         let r = rdtsc::__rdtscp(&mut aux);

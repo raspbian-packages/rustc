@@ -22,28 +22,25 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![cfg_attr(stage0, feature(i128_type))]
 #![feature(macro_vis_matcher)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
-#![cfg_attr(stage0, feature(never_type))]
 
-#[macro_use]
 extern crate syntax;
 #[macro_use]
 extern crate rustc;
 #[macro_use]
 extern crate log;
 extern crate rustc_mir;
+extern crate rustc_target;
 extern crate syntax_pos;
 
 use rustc::lint;
-use rustc::lint::builtin::BARE_TRAIT_OBJECT;
+use rustc::lint::builtin::{BARE_TRAIT_OBJECTS, ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE};
 use rustc::session;
 use rustc::util;
 
@@ -175,14 +172,14 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     UNUSED_ATTRIBUTES,
                     UNUSED_MACROS,
                     UNUSED_ALLOCATION,
-                    UNUSED_DOC_COMMENT,
+                    UNUSED_DOC_COMMENTS,
                     UNUSED_EXTERN_CRATES,
                     UNUSED_FEATURES,
                     UNUSED_PARENS);
 
     add_lint_group!(sess,
-                    "rust_2018_idioms",
-                    BARE_TRAIT_OBJECT,
+                    "rust_2018_migration",
+                    BARE_TRAIT_OBJECTS,
                     UNREACHABLE_PUB);
 
     // Guidelines for creating a future incompatibility lint:
@@ -276,15 +273,25 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
-            id: LintId::of(UNSTABLE_NAME_COLLISION),
+            id: LintId::of(UNSTABLE_NAME_COLLISIONS),
             reference: "issue #48919 <https://github.com/rust-lang/rust/issues/48919>",
             edition: None,
             // Note: this item represents future incompatibility of all unstable functions in the
             //       standard library, and thus should never be removed or changed to an error.
         },
+        FutureIncompatibleInfo {
+            id: LintId::of(ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE),
+            reference: "issue TBD",
+            edition: Some(Edition::Edition2018),
+        },
         ]);
 
     // Register renamed and removed lints
+    store.register_renamed("single_use_lifetime", "single_use_lifetimes");
+    store.register_renamed("elided_lifetime_in_path", "elided_lifetimes_in_paths");
+    store.register_renamed("bare_trait_object", "bare_trait_objects");
+    store.register_renamed("unstable_name_collision", "unstable_name_collisions");
+    store.register_renamed("unused_doc_comment", "unused_doc_comments");
     store.register_renamed("unknown_features", "unused_features");
     store.register_removed("unsigned_negation", "replaced by negate_unsigned feature gate");
     store.register_removed("negate_unsigned", "cast a signed value instead");

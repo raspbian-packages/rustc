@@ -21,11 +21,10 @@ use rustc::middle::allocator::AllocatorKind;
 use rustc::middle::cstore::DepKind;
 use rustc::session::{Session, CrateDisambiguator};
 use rustc::session::config::{Sanitizer, self};
-use rustc_back::PanicStrategy;
-use rustc_back::target::TargetTriple;
+use rustc_target::spec::{PanicStrategy, TargetTriple};
 use rustc::session::search_paths::PathKind;
 use rustc::middle;
-use rustc::middle::cstore::{validate_crate_name, ExternCrate};
+use rustc::middle::cstore::{validate_crate_name, ExternCrate, ExternCrateSource};
 use rustc::util::common::record_time;
 use rustc::util::nodemap::FxHashSet;
 use rustc::hir::map::Definitions;
@@ -262,6 +261,7 @@ impl<'a> CrateLoader<'a> {
                      ident: Symbol,
                      name: Symbol,
                      hash: Option<&Svh>,
+                     extra_filename: Option<&str>,
                      span: Span,
                      path_kind: PathKind,
                      mut dep_kind: DepKind)
@@ -277,6 +277,7 @@ impl<'a> CrateLoader<'a> {
                 ident,
                 crate_name: name,
                 hash: hash.map(|a| &*a),
+                extra_filename: extra_filename,
                 filesearch: self.sess.target_filesearch(path_kind),
                 target: &self.sess.target.target,
                 triple: &self.sess.opts.target_triple,
@@ -369,12 +370,19 @@ impl<'a> CrateLoader<'a> {
         // - something over nothing (tuple.0);
         // - direct extern crate to indirect (tuple.1);
         // - shorter paths to longer (tuple.2).
-        let new_rank = (true, extern_crate.direct, !extern_crate.path_len);
+        let new_rank = (
+            true,
+            extern_crate.direct,
+            cmp::Reverse(extern_crate.path_len),
+        );
         let old_rank = match *old_extern_crate {
-            None => (false, false, !0),
-            Some(ref c) => (true, c.direct, !c.path_len),
+            None => (false, false, cmp::Reverse(usize::max_value())),
+            Some(ref c) => (
+                true,
+                c.direct,
+                cmp::Reverse(c.path_len),
+            ),
         };
-
         if old_rank >= new_rank {
             return; // no change needed
         }
@@ -409,7 +417,8 @@ impl<'a> CrateLoader<'a> {
         ::std::iter::once(krate).chain(crate_root.crate_deps
                                                  .decode(metadata)
                                                  .map(|dep| {
-            debug!("resolving dep crate {} hash: `{}`", dep.name, dep.hash);
+            info!("resolving dep crate {} hash: `{}` extra filename: `{}`", dep.name, dep.hash,
+                  dep.extra_filename);
             if dep.kind == DepKind::UnexportedMacrosOnly {
                 return krate;
             }
@@ -418,7 +427,8 @@ impl<'a> CrateLoader<'a> {
                 _ => dep.kind,
             };
             let (local_cnum, ..) = self.resolve_crate(
-                root, dep.name, dep.name, Some(&dep.hash), span, PathKind::Dependency, dep_kind,
+                root, dep.name, dep.name, Some(&dep.hash), Some(&dep.extra_filename), span,
+                PathKind::Dependency, dep_kind,
             );
             local_cnum
         })).collect()
@@ -437,6 +447,7 @@ impl<'a> CrateLoader<'a> {
             ident: orig_name,
             crate_name: rename,
             hash: None,
+            extra_filename: None,
             filesearch: self.sess.host_filesearch(PathKind::Crate),
             target: &self.sess.host,
             triple: &host_triple,
@@ -609,6 +620,7 @@ impl<'a> CrateLoader<'a> {
         });
         if !any_non_rlib {
             info!("panic runtime injection skipped, only generating rlib");
+            self.sess.injected_panic_runtime.set(None);
             return
         }
 
@@ -641,6 +653,7 @@ impl<'a> CrateLoader<'a> {
         // we just don't need one at all, then we're done here and there's
         // nothing else to do.
         if !needs_panic_runtime || runtime_found {
+            self.sess.injected_panic_runtime.set(None);
             return
         }
 
@@ -664,7 +677,7 @@ impl<'a> CrateLoader<'a> {
 
         let dep_kind = DepKind::Implicit;
         let (cnum, data) =
-            self.resolve_crate(&None, name, name, None, DUMMY_SP, PathKind::Crate, dep_kind);
+            self.resolve_crate(&None, name, name, None, None, DUMMY_SP, PathKind::Crate, dep_kind);
 
         // Sanity check the loaded crate to ensure it is indeed a panic runtime
         // and the panic strategy is indeed what we thought it was.
@@ -771,7 +784,7 @@ impl<'a> CrateLoader<'a> {
                 let symbol = Symbol::intern(name);
                 let dep_kind = DepKind::Explicit;
                 let (_, data) =
-                    self.resolve_crate(&None, symbol, symbol, None, DUMMY_SP,
+                    self.resolve_crate(&None, symbol, symbol, None, None, DUMMY_SP,
                                        PathKind::Crate, dep_kind);
 
                 // Sanity check the loaded crate to ensure it is indeed a sanitizer runtime
@@ -794,7 +807,7 @@ impl<'a> CrateLoader<'a> {
             let symbol = Symbol::intern("profiler_builtins");
             let dep_kind = DepKind::Implicit;
             let (_, data) =
-                self.resolve_crate(&None, symbol, symbol, None, DUMMY_SP,
+                self.resolve_crate(&None, symbol, symbol, None, None, DUMMY_SP,
                                    PathKind::Crate, dep_kind);
 
             // Sanity check the loaded crate to ensure it is indeed a profiler runtime
@@ -807,9 +820,7 @@ impl<'a> CrateLoader<'a> {
 
     fn inject_allocator_crate(&mut self, krate: &ast::Crate) {
         let has_global_allocator = has_global_allocator(krate);
-        if has_global_allocator {
-            self.sess.has_global_allocator.set(true);
-        }
+        self.sess.has_global_allocator.set(has_global_allocator);
 
         // Check to see if we actually need an allocator. This desire comes
         // about through the `#![needs_allocator]` attribute and is typically
@@ -820,6 +831,8 @@ impl<'a> CrateLoader<'a> {
             needs_allocator = needs_allocator || data.needs_allocator(self.sess);
         });
         if !needs_allocator {
+            self.sess.injected_allocator.set(None);
+            self.sess.allocator_kind.set(None);
             return
         }
 
@@ -839,6 +852,8 @@ impl<'a> CrateLoader<'a> {
             }
         }
         if !need_lib_alloc && !need_exe_alloc {
+            self.sess.injected_allocator.set(None);
+            self.sess.allocator_kind.set(None);
             return
         }
 
@@ -876,6 +891,7 @@ impl<'a> CrateLoader<'a> {
         });
         if global_allocator.is_some() {
             self.sess.allocator_kind.set(Some(AllocatorKind::Global));
+            self.sess.injected_allocator.set(None);
             return
         }
 
@@ -909,6 +925,7 @@ impl<'a> CrateLoader<'a> {
                                                               name,
                                                               name,
                                                               None,
+                                                              None,
                                                               DUMMY_SP,
                                                               PathKind::Crate,
                                                               DepKind::Implicit);
@@ -918,6 +935,9 @@ impl<'a> CrateLoader<'a> {
             };
 
         let allocation_crate_data = exe_allocation_crate_data.or_else(|| {
+            // No allocator was injected
+            self.sess.injected_allocator.set(None);
+
             if attr::contains_name(&krate.attrs, "default_lib_allocator") {
                 // Prefer self as the allocator if there's a collision
                 return None;
@@ -1039,7 +1059,7 @@ impl<'a> middle::cstore::CrateLoader for CrateLoader<'a> {
         }
     }
 
-    fn process_item(&mut self, item: &ast::Item, definitions: &Definitions) {
+    fn process_extern_crate(&mut self, item: &ast::Item, definitions: &Definitions) -> CrateNum {
         match item.node {
             ast::ItemKind::ExternCrate(orig_name) => {
                 debug!("resolving extern crate stmt. ident: {} orig_name: {:?}",
@@ -1059,21 +1079,78 @@ impl<'a> middle::cstore::CrateLoader for CrateLoader<'a> {
                 };
 
                 let (cnum, ..) = self.resolve_crate(
-                    &None, item.ident.name, orig_name, None, item.span, PathKind::Crate, dep_kind,
+                    &None, item.ident.name, orig_name, None, None,
+                    item.span, PathKind::Crate, dep_kind,
                 );
 
                 let def_id = definitions.opt_local_def_id(item.id).unwrap();
                 let path_len = definitions.def_path(def_id.index).data.len();
-
-                let extern_crate = ExternCrate { def_id, span: item.span, direct: true, path_len };
-                self.update_extern_crate(cnum, extern_crate, &mut FxHashSet());
+                self.update_extern_crate(
+                    cnum,
+                    ExternCrate {
+                        src: ExternCrateSource::Extern(def_id),
+                        span: item.span,
+                        path_len,
+                        direct: true,
+                    },
+                    &mut FxHashSet(),
+                );
                 self.cstore.add_extern_mod_stmt_cnum(item.id, cnum);
+                cnum
             }
-            _ => {}
+            _ => bug!(),
         }
     }
 
-    fn resolve_crate_from_path(&mut self, name: Symbol, span: Span) -> CrateNum {
-        self.resolve_crate(&None, name, name, None, span, PathKind::Crate, DepKind::Explicit).0
+    fn process_path_extern(
+        &mut self,
+        name: Symbol,
+        span: Span,
+    ) -> CrateNum {
+        let cnum = self.resolve_crate(
+            &None, name, name, None, None, span, PathKind::Crate, DepKind::Explicit
+        ).0;
+
+        self.update_extern_crate(
+            cnum,
+            ExternCrate {
+                src: ExternCrateSource::Path,
+                span,
+                // to have the least priority in `update_extern_crate`
+                path_len: usize::max_value(),
+                direct: true,
+            },
+            &mut FxHashSet(),
+        );
+
+        cnum
+    }
+
+    fn process_use_extern(
+        &mut self,
+        name: Symbol,
+        span: Span,
+        id: ast::NodeId,
+        definitions: &Definitions,
+    ) -> CrateNum {
+        let cnum = self.resolve_crate(
+            &None, name, name, None, None, span, PathKind::Crate, DepKind::Explicit
+        ).0;
+
+        let def_id = definitions.opt_local_def_id(id).unwrap();
+        let path_len = definitions.def_path(def_id.index).data.len();
+
+        self.update_extern_crate(
+            cnum,
+            ExternCrate {
+                src: ExternCrateSource::Use,
+                span,
+                path_len,
+                direct: true,
+            },
+            &mut FxHashSet(),
+        );
+
+        cnum
     }
 }

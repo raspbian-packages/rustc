@@ -17,7 +17,7 @@ use rustc::ty::{self, TyCtxt, Ty};
 use rustc::util::nodemap::FxHashMap;
 use require_same_types;
 
-use syntax::abi::Abi;
+use rustc_target::spec::abi::Abi;
 use syntax::ast;
 use syntax::symbol::Symbol;
 use syntax_pos::Span;
@@ -61,7 +61,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         return;
     }
 
-    let fty = tcx.mk_fn_ptr(ty::Binder(tcx.mk_fn_sig(
+    let fty = tcx.mk_fn_ptr(ty::Binder::bind(tcx.mk_fn_sig(
         inputs.into_iter(),
         output,
         false,
@@ -76,7 +76,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 /// and in libcore/intrinsics.rs
 pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       it: &hir::ForeignItem) {
-    let param = |n| tcx.mk_param(n, Symbol::intern(&format!("P{}", n)).as_str());
+    let param = |n| tcx.mk_param(n, Symbol::intern(&format!("P{}", n)).as_interned_str());
     let name = it.name.as_str();
     let (n_tps, inputs, output) = if name.starts_with("atomic_") {
         let split : Vec<&str> = name.split('_').collect();
@@ -304,7 +304,7 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
             "try" => {
                 let mut_u8 = tcx.mk_mut_ptr(tcx.types.u8);
-                let fn_ty = ty::Binder(tcx.mk_fn_sig(
+                let fn_ty = ty::Binder::bind(tcx.mk_fn_sig(
                     iter::once(mut_u8),
                     tcx.mk_nil(),
                     false,
@@ -341,7 +341,7 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 pub fn check_platform_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                it: &hir::ForeignItem) {
     let param = |n| {
-        let name = Symbol::intern(&format!("P{}", n)).as_str();
+        let name = Symbol::intern(&format!("P{}", n)).as_interned_str();
         tcx.mk_param(n, name)
     };
 

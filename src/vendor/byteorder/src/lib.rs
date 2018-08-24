@@ -1,17 +1,24 @@
 /*!
 This crate provides convenience methods for encoding and decoding numbers
-in either big-endian or little-endian order.
+in either [big-endian or little-endian order].
 
-The organization of the crate is pretty simple. A trait, `ByteOrder`, specifies
+The organization of the crate is pretty simple. A trait, [`ByteOrder`], specifies
 byte conversion methods for each type of number in Rust (sans numbers that have
-a platform dependent size like `usize` and `isize`). Two types, `BigEndian`
-and `LittleEndian` implement these methods. Finally, `ReadBytesExt` and
-`WriteBytesExt` provide convenience methods available to all types that
-implement `Read` and `Write`.
+a platform dependent size like `usize` and `isize`). Two types, [`BigEndian`]
+and [`LittleEndian`] implement these methods. Finally, [`ReadBytesExt`] and
+[`WriteBytesExt`] provide convenience methods available to all types that
+implement [`Read`] and [`Write`].
+
+An alias, [`NetworkEndian`], for [`BigEndian`] is provided to help improve
+code clarity.
+
+An additional alias, [`NativeEndian`], is provided for the endianness of the
+local platform. This is convenient when serializing data for use and
+conversions are not desired.
 
 # Examples
 
-Read unsigned 16 bit big-endian integers from a `Read` type:
+Read unsigned 16 bit big-endian integers from a [`Read`] type:
 
 ```rust
 use std::io::Cursor;
@@ -24,7 +31,7 @@ assert_eq!(517, rdr.read_u16::<BigEndian>().unwrap());
 assert_eq!(768, rdr.read_u16::<BigEndian>().unwrap());
 ```
 
-Write unsigned 16 bit little-endian integers to a `Write` type:
+Write unsigned 16 bit little-endian integers to a [`Write`] type:
 
 ```rust
 use byteorder::{LittleEndian, WriteBytesExt};
@@ -34,6 +41,24 @@ wtr.write_u16::<LittleEndian>(517).unwrap();
 wtr.write_u16::<LittleEndian>(768).unwrap();
 assert_eq!(wtr, vec![5, 2, 0, 3]);
 ```
+
+# Optional Features
+
+This crate optionally provides support for 128 bit values (`i128` and `u128`)
+when built with the `i128` feature enabled.
+
+This crate can also be used without the standard library.
+
+[big-endian or little-endian order]: https://en.wikipedia.org/wiki/Endianness
+[`ByteOrder`]: trait.ByteOrder.html
+[`BigEndian`]: enum.BigEndian.html
+[`LittleEndian`]: enum.LittleEndian.html
+[`ReadBytesExt`]: trait.ReadBytesExt.html
+[`WriteBytesExt`]: trait.WriteBytesExt.html
+[`NetworkEndian`]: type.NetworkEndian.html
+[`NativeEndian`]: type.NativeEndian.html
+[`Read`]: https://doc.rust-lang.org/std/io/trait.Read.html
+[`Write`]: https://doc.rust-lang.org/std/io/trait.Write.html
 */
 
 #![deny(missing_docs)]
@@ -47,8 +72,8 @@ extern crate core;
 
 use core::fmt::Debug;
 use core::hash::Hash;
-use core::mem::transmute;
 use core::ptr::copy_nonoverlapping;
+use core::slice;
 
 #[cfg(feature = "std")]
 pub use io::{ReadBytesExt, WriteBytesExt};
@@ -149,14 +174,14 @@ mod private {
     impl Sealed for super::BigEndian {}
 }
 
-/// ByteOrder describes types that can serialize integers as bytes.
+/// `ByteOrder` describes types that can serialize integers as bytes.
 ///
 /// Note that `Self` does not appear anywhere in this trait's definition!
 /// Therefore, in order to use it, you'll need to use syntax like
 /// `T::read_u16(&[0, 1])` where `T` implements `ByteOrder`.
 ///
-/// This crate provides two types that implement `ByteOrder`: `BigEndian`
-/// and `LittleEndian`.
+/// This crate provides two types that implement `ByteOrder`: [`BigEndian`]
+/// and [`LittleEndian`].
 /// This trait is sealed and cannot be implemented for callers to avoid
 /// breaking backwards compatibility when adding new derived traits.
 ///
@@ -181,6 +206,9 @@ mod private {
 /// BigEndian::write_i16(&mut buf, -50_000);
 /// assert_eq!(-50_000, BigEndian::read_i16(&buf));
 /// ```
+///
+/// [`BigEndian`]: enum.BigEndian.html
+/// [`LittleEndian`]: enum.LittleEndian.html
 pub trait ByteOrder
     : Clone + Copy + Debug + Default + Eq + Hash + Ord + PartialEq + PartialOrd
     + private::Sealed
@@ -629,7 +657,7 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_f32(buf: &[u8]) -> f32 {
-        unsafe { transmute(Self::read_u32(buf)) }
+        unsafe { *(&Self::read_u32(buf) as *const u32 as *const f32) }
     }
 
     /// Reads a IEEE754 double-precision (8 bytes) floating point number.
@@ -652,7 +680,7 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_f64(buf: &[u8]) -> f64 {
-        unsafe { transmute(Self::read_u64(buf)) }
+        unsafe { *(&Self::read_u64(buf) as *const u64 as *const f64) }
     }
 
     /// Writes a signed 16 bit integer `n` to `buf`.
@@ -833,7 +861,8 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn write_f32(buf: &mut [u8], n: f32) {
-        Self::write_u32(buf, unsafe { transmute(n) })
+        let n = unsafe { *(&n as *const f32 as *const u32) };
+        Self::write_u32(buf, n)
     }
 
     /// Writes a IEEE754 double-precision (8 bytes) floating point number.
@@ -856,7 +885,8 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn write_f64(buf: &mut [u8], n: f64) {
-        Self::write_u64(buf, unsafe { transmute(n) })
+        let n = unsafe { *(&n as *const f64 as *const u64) };
+        Self::write_u64(buf, n)
     }
 
     /// Reads unsigned 16 bit integers from `src` into `dst`.
@@ -975,7 +1005,10 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_i16_into(src: &[u8], dst: &mut [i16]) {
-        Self::read_u16_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u16, dst.len())
+        };
+        Self::read_u16_into(src, dst)
     }
 
     /// Reads signed 32 bit integers from `src` into `dst`.
@@ -1001,7 +1034,10 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_i32_into(src: &[u8], dst: &mut [i32]) {
-        Self::read_u32_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u32, dst.len())
+        };
+        Self::read_u32_into(src, dst);
     }
 
     /// Reads signed 64 bit integers from `src` into `dst`.
@@ -1027,7 +1063,10 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_i64_into(src: &[u8], dst: &mut [i64]) {
-        Self::read_u64_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u64, dst.len())
+        };
+        Self::read_u64_into(src, dst);
     }
 
     /// Reads signed 128 bit integers from `src` into `dst`.
@@ -1054,7 +1093,10 @@ pub trait ByteOrder
     #[cfg(feature = "i128")]
     #[inline]
     fn read_i128_into(src: &[u8], dst: &mut [i128]) {
-        Self::read_u128_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u128, dst.len())
+        };
+        Self::read_u128_into(src, dst);
     }
 
     /// Reads IEEE754 single-precision (4 bytes) floating point numbers from
@@ -1081,7 +1123,10 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_f32_into_unchecked(src: &[u8], dst: &mut [f32]) {
-        Self::read_u32_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u32, dst.len())
+        };
+        Self::read_u32_into(src, dst);
     }
 
     /// Reads IEEE754 single-precision (4 bytes) floating point numbers from
@@ -1108,7 +1153,10 @@ pub trait ByteOrder
     /// ```
     #[inline]
     fn read_f64_into_unchecked(src: &[u8], dst: &mut [f64]) {
-        Self::read_u64_into(src, unsafe { transmute(dst) });
+        let dst = unsafe {
+            slice::from_raw_parts_mut(dst.as_mut_ptr() as *mut u64, dst.len())
+        };
+        Self::read_u64_into(src, dst);
     }
 
     /// Writes unsigned 16 bit integers from `src` into `dst`.
@@ -1226,7 +1274,10 @@ pub trait ByteOrder
     /// assert_eq!(numbers_given, numbers_got);
     /// ```
     fn write_i16_into(src: &[i16], dst: &mut [u8]) {
-        Self::write_u16_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u16, src.len())
+        };
+        Self::write_u16_into(src, dst);
     }
 
     /// Writes signed 32 bit integers from `src` into `dst`.
@@ -1251,7 +1302,10 @@ pub trait ByteOrder
     /// assert_eq!(numbers_given, numbers_got);
     /// ```
     fn write_i32_into(src: &[i32], dst: &mut [u8]) {
-        Self::write_u32_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u32, src.len())
+        };
+        Self::write_u32_into(src, dst);
     }
 
     /// Writes signed 64 bit integers from `src` into `dst`.
@@ -1276,7 +1330,10 @@ pub trait ByteOrder
     /// assert_eq!(numbers_given, numbers_got);
     /// ```
     fn write_i64_into(src: &[i64], dst: &mut [u8]) {
-        Self::write_u64_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u64, src.len())
+        };
+        Self::write_u64_into(src, dst);
     }
 
     /// Writes signed 128 bit integers from `src` into `dst`.
@@ -1302,7 +1359,10 @@ pub trait ByteOrder
     /// ```
     #[cfg(feature = "i128")]
     fn write_i128_into(src: &[i128], dst: &mut [u8]) {
-        Self::write_u128_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u128, src.len())
+        };
+        Self::write_u128_into(src, dst);
     }
 
     /// Writes IEEE754 single-precision (4 bytes) floating point numbers from
@@ -1330,7 +1390,10 @@ pub trait ByteOrder
     /// assert_eq!(numbers_given, numbers_got);
     /// ```
     fn write_f32_into(src: &[f32], dst: &mut [u8]) {
-        Self::write_u32_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u32, src.len())
+        };
+        Self::write_u32_into(src, dst);
     }
 
     /// Writes IEEE754 double-precision (8 bytes) floating point numbers from
@@ -1358,7 +1421,10 @@ pub trait ByteOrder
     /// assert_eq!(numbers_given, numbers_got);
     /// ```
     fn write_f64_into(src: &[f64], dst: &mut [u8]) {
-        Self::write_u64_into(unsafe { transmute(src) }, dst);
+        let src = unsafe {
+            slice::from_raw_parts(src.as_ptr() as *const u64, src.len())
+        };
+        Self::write_u64_into(src, dst);
     }
 
     /// Converts the given slice of unsigned 16 bit integers to a particular
@@ -1478,8 +1544,11 @@ pub trait ByteOrder
     /// }
     /// ```
     #[inline]
-    fn from_slice_i16(numbers: &mut [i16]) {
-        Self::from_slice_u16(unsafe { transmute(numbers) });
+    fn from_slice_i16(src: &mut [i16]) {
+        let src = unsafe {
+            slice::from_raw_parts_mut(src.as_ptr() as *mut u16, src.len())
+        };
+        Self::from_slice_u16(src);
     }
 
     /// Converts the given slice of signed 32 bit integers to a particular
@@ -1504,8 +1573,11 @@ pub trait ByteOrder
     /// }
     /// ```
     #[inline]
-    fn from_slice_i32(numbers: &mut [i32]) {
-        Self::from_slice_u32(unsafe { transmute(numbers) });
+    fn from_slice_i32(src: &mut [i32]) {
+        let src = unsafe {
+            slice::from_raw_parts_mut(src.as_ptr() as *mut u32, src.len())
+        };
+        Self::from_slice_u32(src);
     }
 
     /// Converts the given slice of signed 64 bit integers to a particular
@@ -1530,8 +1602,11 @@ pub trait ByteOrder
     /// }
     /// ```
     #[inline]
-    fn from_slice_i64(numbers: &mut [i64]) {
-        Self::from_slice_u64(unsafe { transmute(numbers) });
+    fn from_slice_i64(src: &mut [i64]) {
+        let src = unsafe {
+            slice::from_raw_parts_mut(src.as_ptr() as *mut u64, src.len())
+        };
+        Self::from_slice_u64(src);
     }
 
     /// Converts the given slice of signed 128 bit integers to a particular
@@ -1559,8 +1634,11 @@ pub trait ByteOrder
     /// ```
     #[cfg(feature = "i128")]
     #[inline]
-    fn from_slice_i128(numbers: &mut [i128]) {
-        Self::from_slice_u128(unsafe { transmute(numbers) });
+    fn from_slice_i128(src: &mut [i128]) {
+        let src = unsafe {
+            slice::from_raw_parts_mut(src.as_ptr() as *mut u128, src.len())
+        };
+        Self::from_slice_u128(src);
     }
 
     /// Converts the given slice of IEEE754 single-precision (4 bytes) floating
@@ -1603,7 +1681,9 @@ impl Default for BigEndian {
     }
 }
 
-/// A type alias for `BigEndian`.
+/// A type alias for [`BigEndian`].
+///
+/// [`BigEndian`]: enum.BigEndian.html
 pub type BE = BigEndian;
 
 /// Defines little-endian serialization.
@@ -1631,14 +1711,16 @@ impl Default for LittleEndian {
     }
 }
 
-/// A type alias for `LittleEndian`.
+/// A type alias for [`LittleEndian`].
+///
+/// [`LittleEndian`]: enum.LittleEndian.html
 pub type LE = LittleEndian;
 
 /// Defines network byte order serialization.
 ///
 /// Network byte order is defined by [RFC 1700][1] to be big-endian, and is
 /// referred to in several protocol specifications.  This type is an alias of
-/// BigEndian.
+/// [`BigEndian`].
 ///
 /// [1]: https://tools.ietf.org/html/rfc1700
 ///
@@ -1656,12 +1738,18 @@ pub type LE = LittleEndian;
 /// BigEndian::write_i16(&mut buf, -50_000);
 /// assert_eq!(-50_000, NetworkEndian::read_i16(&buf));
 /// ```
+///
+/// [`BigEndian`]: enum.BigEndian.html
 pub type NetworkEndian = BigEndian;
 
 /// Defines system native-endian serialization.
 ///
 /// Note that this type has no value constructor. It is used purely at the
 /// type level.
+///
+/// On this platform, this is an alias for [`LittleEndian`].
+///
+/// [`LittleEndian`]: enum.LittleEndian.html
 #[cfg(target_endian = "little")]
 pub type NativeEndian = LittleEndian;
 
@@ -1669,6 +1757,10 @@ pub type NativeEndian = LittleEndian;
 ///
 /// Note that this type has no value constructor. It is used purely at the
 /// type level.
+///
+/// On this platform, this is an alias for [`BigEndian`].
+///
+/// [`BigEndian`]: enum.BigEndian.html
 #[cfg(target_endian = "big")]
 pub type NativeEndian = BigEndian;
 
@@ -1692,7 +1784,7 @@ macro_rules! write_num_bytes {
         assert!($size <= $dst.len());
         unsafe {
             // N.B. https://github.com/rust-lang/rust/issues/22776
-            let bytes = transmute::<_, [u8; $size]>($n.$which());
+            let bytes = *(&$n.$which() as *const _ as *const [u8; $size]);
             copy_nonoverlapping((&bytes).as_ptr(), $dst.as_mut_ptr(), $size);
         }
     });
@@ -1812,7 +1904,7 @@ impl ByteOrder for BigEndian {
         assert!(pack_size(n) <= nbytes && nbytes <= 8);
         assert!(nbytes <= buf.len());
         unsafe {
-            let bytes: [u8; 8] = transmute(n.to_be());
+            let bytes = *(&n.to_be() as *const u64 as *const [u8; 8]);
             copy_nonoverlapping(
                 bytes.as_ptr().offset((8 - nbytes) as isize),
                 buf.as_mut_ptr(),
@@ -1826,7 +1918,7 @@ impl ByteOrder for BigEndian {
         assert!(pack_size128(n) <= nbytes && nbytes <= 16);
         assert!(nbytes <= buf.len());
         unsafe {
-            let bytes: [u8; 16] = transmute(n.to_be());
+            let bytes = *(&n.to_be() as *const u128 as *const [u8; 16]);
             copy_nonoverlapping(
                 bytes.as_ptr().offset((16 - nbytes) as isize),
                 buf.as_mut_ptr(),
@@ -1933,8 +2025,10 @@ impl ByteOrder for BigEndian {
     fn from_slice_f32(numbers: &mut [f32]) {
         if cfg!(target_endian = "little") {
             for n in numbers {
-                let int: u32 = unsafe { transmute(*n) };
-                *n = unsafe { transmute(int.to_be()) };
+                unsafe {
+                    let int = *(n as *const f32 as *const u32);
+                    *n = *(&int.to_be() as *const u32 as *const f32);
+                }
             }
         }
     }
@@ -1943,8 +2037,10 @@ impl ByteOrder for BigEndian {
     fn from_slice_f64(numbers: &mut [f64]) {
         if cfg!(target_endian = "little") {
             for n in numbers {
-                let int: u64 = unsafe { transmute(*n) };
-                *n = unsafe { transmute(int.to_be()) };
+                unsafe {
+                    let int = *(n as *const f64 as *const u64);
+                    *n = *(&int.to_be() as *const u64 as *const f64);
+                }
             }
         }
     }
@@ -2021,7 +2117,7 @@ impl ByteOrder for LittleEndian {
         assert!(pack_size(n as u64) <= nbytes && nbytes <= 8);
         assert!(nbytes <= buf.len());
         unsafe {
-            let bytes: [u8; 8] = transmute(n.to_le());
+            let bytes = *(&n.to_le() as *const u64 as *const [u8; 8]);
             copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr(), nbytes);
         }
     }
@@ -2032,7 +2128,7 @@ impl ByteOrder for LittleEndian {
         assert!(pack_size128(n as u128) <= nbytes && nbytes <= 16);
         assert!(nbytes <= buf.len());
         unsafe {
-            let bytes: [u8; 16] = transmute(n.to_le());
+            let bytes = *(&n.to_le() as *const u128 as *const [u8; 16]);
             copy_nonoverlapping(bytes.as_ptr(), buf.as_mut_ptr(), nbytes);
         }
     }
@@ -2136,8 +2232,10 @@ impl ByteOrder for LittleEndian {
     fn from_slice_f32(numbers: &mut [f32]) {
         if cfg!(target_endian = "big") {
             for n in numbers {
-                let int: u32 = unsafe { transmute(*n) };
-                *n = unsafe { transmute(int.to_le()) };
+                unsafe {
+                    let int = *(n as *const f32 as *const u32);
+                    *n = *(&int.to_le() as *const u32 as *const f32);
+                }
             }
         }
     }
@@ -2146,8 +2244,10 @@ impl ByteOrder for LittleEndian {
     fn from_slice_f64(numbers: &mut [f64]) {
         if cfg!(target_endian = "big") {
             for n in numbers {
-                let int: u64 = unsafe { transmute(*n) };
-                *n = unsafe { transmute(int.to_le()) };
+                unsafe {
+                    let int = *(n as *const f64 as *const u64);
+                    *n = *(&int.to_le() as *const u64 as *const f64);
+                }
             }
         }
     }

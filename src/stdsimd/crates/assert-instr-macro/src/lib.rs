@@ -33,14 +33,27 @@ pub fn assert_instr(
     };
 
     let instr = &invoc.instr;
-    let maybe_ignore = if cfg!(optimized) {
+    let name = &func.ident;
+
+    // Disable assert_instr for x86 targets compiled with avx enabled, which
+    // causes LLVM to generate different intrinsics that the ones we are testing
+    // for.
+    let disable_assert_instr = std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
+    let maybe_ignore = if cfg!(optimized) && !disable_assert_instr {
         TokenStream::empty()
     } else {
         (quote! { #[ignore] }).into()
     };
-    let name = &func.ident;
+
+    use quote::ToTokens;
+    let instr_str = instr
+        .clone()
+        .into_tokens()
+        .to_string()
+        .replace('.', "_")
+        .replace(|c: char| c.is_whitespace(), "");
     let assert_name = syn::Ident::from(
-        &format!("assert_{}_{}", name.as_ref(), instr.as_ref())[..],
+        &format!("assert_{}_{}", name.as_ref(), instr_str)[..],
     );
     let shim_name = syn::Ident::from(format!("{}_shim", name.as_ref()));
     let mut inputs = Vec::new();
@@ -55,7 +68,11 @@ pub fn assert_instr(
             syn::Pat::Ident(ref i) => &i.ident,
             _ => panic!("must have bare arguments"),
         };
-        match invoc.args.iter().find(|a| a.0 == ident.as_ref()) {
+        match invoc
+            .args
+            .iter()
+            .find(|a| a.0 == ident.as_ref())
+        {
             Some(&(_, ref tts)) => {
                 input_vals.push(quote! { #tts });
             }
@@ -72,7 +89,7 @@ pub fn assert_instr(
             attr.path
                 .segments
                 .first()
-                .unwrap()
+                .expect("attr.path.segments.first() failed")
                 .value()
                 .ident
                 .as_ref()
@@ -109,7 +126,9 @@ pub fn assert_instr(
         }
     }.into();
     // why? necessary now to get tests to work?
-    let tts: TokenStream = tts.to_string().parse().unwrap();
+    let tts: TokenStream = tts.to_string()
+        .parse()
+        .expect("cannot parse tokenstream");
 
     let tts: TokenStream = quote! {
         #item
@@ -119,13 +138,13 @@ pub fn assert_instr(
 }
 
 struct Invoc {
-    instr: syn::Ident,
+    instr: syn::Expr,
     args: Vec<(syn::Ident, syn::Expr)>,
 }
 
 impl syn::synom::Synom for Invoc {
-    named!(parse -> Self, map!(parens!(do_parse!(
-        instr: syn!(syn::Ident) >>
+    named!(parse -> Self, do_parse!(
+        instr: syn!(syn::Expr) >>
         args: many0!(do_parse!(
             syn!(syn::token::Comma) >>
             name: syn!(syn::Ident) >>
@@ -137,7 +156,7 @@ impl syn::synom::Synom for Invoc {
             instr,
             args,
         })
-    )), |p| p.1));
+    ));
 }
 
 struct Append<T>(T);

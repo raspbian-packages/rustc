@@ -148,8 +148,8 @@ fn expand_deriving_encodable_imp(cx: &mut ExtCtxt,
                     ],
                 },
                 explicit_self: borrowed_explicit_self(),
-                args: vec![Ptr(Box::new(Literal(Path::new_local(typaram))),
-                           Borrowed(None, Mutability::Mutable))],
+                args: vec![(Ptr(Box::new(Literal(Path::new_local(typaram))),
+                           Borrowed(None, Mutability::Mutable)), "s")],
                 ret_ty: Literal(Path::new_(
                     pathvec_std!(cx, result::Result),
                     None,
@@ -277,7 +277,7 @@ fn encodable_substructure(cx: &mut ExtCtxt,
             }
 
             let blk = cx.lambda_stmts_1(trait_span, stmts, blkarg);
-            let name = cx.expr_str(trait_span, variant.node.name.name);
+            let name = cx.expr_str(trait_span, variant.node.ident.name);
             let call = cx.expr_method_call(trait_span,
                                            blkencoder,
                                            cx.ident_of("emit_enum_variant"),

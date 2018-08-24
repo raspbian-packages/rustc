@@ -12,7 +12,7 @@
 
 [package]
 name = "cmake"
-version = "0.1.29"
+version = "0.1.30"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "A build dependency for running `cmake` to build a native library\n"
 homepage = "https://github.com/alexcrichton/cmake-rs"

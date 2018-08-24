@@ -56,9 +56,9 @@ impl<'a, 'gcx, 'tcx> Iterator for Autoderef<'a, 'gcx, 'tcx> {
             return Some((self.cur_ty, 0));
         }
 
-        if self.steps.len() >= tcx.sess.recursion_limit.get() {
+        if self.steps.len() >= *tcx.sess.recursion_limit.get() {
             // We've reached the recursion limit, error gracefully.
-            let suggested_limit = tcx.sess.recursion_limit.get() * 2;
+            let suggested_limit = *tcx.sess.recursion_limit.get() * 2;
             let msg = format!("reached the recursion limit while auto-dereferencing {:?}",
                               self.cur_ty);
             let error_id = (DiagnosticMessageId::ErrorId(55), Some(self.span), msg.clone());
@@ -120,15 +120,15 @@ impl<'a, 'gcx, 'tcx> Autoderef<'a, 'gcx, 'tcx> {
 
         let cause = traits::ObligationCause::misc(self.span, self.fcx.body_id);
 
-        let mut selcx = traits::SelectionContext::new(self.fcx);
         let obligation = traits::Obligation::new(cause.clone(),
                                                  self.fcx.param_env,
                                                  trait_ref.to_predicate());
-        if !selcx.evaluate_obligation(&obligation) {
+        if !self.fcx.predicate_may_hold(&obligation) {
             debug!("overloaded_deref_ty: cannot match obligation");
             return None;
         }
 
+        let mut selcx = traits::SelectionContext::new(self.fcx);
         let normalized = traits::normalize_projection_type(&mut selcx,
                                                            self.fcx.param_env,
                                                            ty::ProjectionTy::from_ref_and_name(

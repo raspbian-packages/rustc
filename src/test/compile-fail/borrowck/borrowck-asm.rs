@@ -16,7 +16,7 @@
 // ignore-sparc
 
 // revisions: ast mir
-//[mir]compile-flags: -Z borrowck=mir -Z nll
+//[mir]compile-flags: -Z borrowck=mir
 
 #![feature(asm)]
 

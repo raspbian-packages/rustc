@@ -140,14 +140,18 @@ pub fn check(build: &mut Build) {
             continue;
         }
 
-        cmd_finder.must_have(build.cc(*target));
-        if let Some(ar) = build.ar(*target) {
-            cmd_finder.must_have(ar);
+        if !build.config.dry_run {
+            cmd_finder.must_have(build.cc(*target));
+            if let Some(ar) = build.ar(*target) {
+                cmd_finder.must_have(ar);
+            }
         }
     }
 
     for host in &build.hosts {
-        cmd_finder.must_have(build.cxx(*host).unwrap());
+        if !build.config.dry_run {
+            cmd_finder.must_have(build.cxx(*host).unwrap());
+        }
 
         // The msvc hosts don't use jemalloc, turn it off globally to
         // avoid packaging the dummy liballoc_jemalloc on that platform.
@@ -167,6 +171,19 @@ pub fn check(build: &mut Build) {
         if target.contains("apple-ios") &&
            !build.build.contains("apple-darwin") {
             panic!("the iOS target is only supported on macOS");
+        }
+
+        if target.contains("-none-") {
+            if build.no_std(*target).is_none() {
+                let target = build.config.target_config.entry(target.clone())
+                    .or_insert(Default::default());
+
+                target.no_std = true;
+            }
+
+            if build.no_std(*target) == Some(false) {
+                panic!("All the *-none-* targets are no-std targets")
+            }
         }
 
         // Make sure musl-root is valid

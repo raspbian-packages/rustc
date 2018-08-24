@@ -14,7 +14,7 @@
 //! compiler code, rather than using their own custom pass. Those
 //! lints are all available in `rustc_lint::builtin`.
 
-use errors::DiagnosticBuilder;
+use errors::{Applicability, DiagnosticBuilder};
 use lint::{LintPass, LateLintPass, LintArray};
 use session::Session;
 use syntax::codemap::Span;
@@ -231,7 +231,7 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub SINGLE_USE_LIFETIME,
+    pub SINGLE_USE_LIFETIMES,
     Allow,
    "detects single use lifetimes"
 }
@@ -243,15 +243,22 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub ELIDED_LIFETIME_IN_PATH,
+    pub ELIDED_LIFETIMES_IN_PATHS,
     Allow,
     "hidden lifetime parameters are deprecated, try `Foo<'_>`"
 }
 
 declare_lint! {
-    pub BARE_TRAIT_OBJECT,
+    pub BARE_TRAIT_OBJECTS,
     Allow,
     "suggest using `dyn Trait` for trait objects"
+}
+
+declare_lint! {
+    pub ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
+    Allow,
+    "fully qualified paths that start with a module name \
+     instead of `crate`, `self`, or an extern crate name"
 }
 
 declare_lint! {
@@ -261,7 +268,7 @@ declare_lint! {
 }
 
 declare_lint! {
-    pub UNSTABLE_NAME_COLLISION,
+    pub UNSTABLE_NAME_COLLISIONS,
     Warn,
     "detects name collision with an existing but unstable method"
 }
@@ -310,11 +317,12 @@ impl LintPass for HardwiredLints {
             DEPRECATED,
             UNUSED_UNSAFE,
             UNUSED_MUT,
-            SINGLE_USE_LIFETIME,
+            SINGLE_USE_LIFETIMES,
             TYVAR_BEHIND_RAW_POINTER,
-            ELIDED_LIFETIME_IN_PATH,
-            BARE_TRAIT_OBJECT,
-            UNSTABLE_NAME_COLLISION,
+            ELIDED_LIFETIMES_IN_PATHS,
+            BARE_TRAIT_OBJECTS,
+            ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
+            UNSTABLE_NAME_COLLISIONS,
         )
     }
 }
@@ -324,7 +332,8 @@ impl LintPass for HardwiredLints {
 #[derive(PartialEq, RustcEncodable, RustcDecodable, Debug)]
 pub enum BuiltinLintDiagnostics {
     Normal,
-    BareTraitObject(Span, /* is_global */ bool)
+    BareTraitObject(Span, /* is_global */ bool),
+    AbsPathWithModule(Span),
 }
 
 impl BuiltinLintDiagnostics {
@@ -332,12 +341,30 @@ impl BuiltinLintDiagnostics {
         match self {
             BuiltinLintDiagnostics::Normal => (),
             BuiltinLintDiagnostics::BareTraitObject(span, is_global) => {
-                let sugg = match sess.codemap().span_to_snippet(span) {
-                    Ok(ref s) if is_global => format!("dyn ({})", s),
-                    Ok(s) => format!("dyn {}", s),
-                    Err(_) => format!("dyn <type>")
+                let (sugg, app) = match sess.codemap().span_to_snippet(span) {
+                    Ok(ref s) if is_global => (format!("dyn ({})", s),
+                                               Applicability::MachineApplicable),
+                    Ok(s) => (format!("dyn {}", s), Applicability::MachineApplicable),
+                    Err(_) => (format!("dyn <type>"), Applicability::HasPlaceholders)
                 };
-                db.span_suggestion(span, "use `dyn`", sugg);
+                db.span_suggestion_with_applicability(span, "use `dyn`", sugg, app);
+            }
+            BuiltinLintDiagnostics::AbsPathWithModule(span) => {
+                let (sugg, app) = match sess.codemap().span_to_snippet(span) {
+                    Ok(ref s) => {
+                        // FIXME(Manishearth) ideally the emitting code
+                        // can tell us whether or not this is global
+                        let opt_colon = if s.trim_left().starts_with("::") {
+                            ""
+                        } else {
+                            "::"
+                        };
+
+                        (format!("crate{}{}", opt_colon, s), Applicability::MachineApplicable)
+                    }
+                    Err(_) => (format!("crate::<path>"), Applicability::HasPlaceholders)
+                };
+                db.span_suggestion_with_applicability(span, "use `crate`", sugg, app);
             }
         }
     }

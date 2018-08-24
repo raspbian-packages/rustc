@@ -302,7 +302,7 @@ struct Generalizer<'cx, 'gcx: 'cx+'tcx, 'tcx: 'cx> {
 
 /// Result from a generalization operation. This includes
 /// not only the generalized type, but also a bool flag
-/// indicating whether further WF checks are needed.q
+/// indicating whether further WF checks are needed.
 struct Generalization<'tcx> {
     ty: Ty<'tcx>,
 
@@ -351,7 +351,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
                   -> RelateResult<'tcx, ty::Binder<T>>
         where T: Relate<'tcx>
     {
-        Ok(ty::Binder(self.relate(a.skip_binder(), b.skip_binder())?))
+        Ok(ty::Binder::bind(self.relate(a.skip_binder(), b.skip_binder())?))
     }
 
     fn relate_item_substs(&mut self,
@@ -407,7 +407,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
                             drop(variables);
                             self.relate(&u, &u)
                         }
-                        TypeVariableValue::Unknown { .. } => {
+                        TypeVariableValue::Unknown { universe } => {
                             match self.ambient_variance {
                                 // Invariant: no need to make a fresh type variable.
                                 ty::Invariant => return Ok(t),
@@ -424,7 +424,7 @@ impl<'cx, 'gcx, 'tcx> TypeRelation<'cx, 'gcx, 'tcx> for Generalizer<'cx, 'gcx, '
                             }
 
                             let origin = *variables.var_origin(vid);
-                            let new_var_id = variables.new_var(false, origin);
+                            let new_var_id = variables.new_var(universe, false, origin);
                             let u = self.tcx().mk_var(new_var_id);
                             debug!("generalize: replacing original vid={:?} with new={:?}",
                                    vid, u);

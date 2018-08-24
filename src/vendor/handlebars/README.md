@@ -7,8 +7,7 @@ Rust templating with [Handlebars templating language](https://handlebarsjs.com).
 [![](http://meritbadge.herokuapp.com/handlebars)](https://crates.io/crates/handlebars)
 [![](https://img.shields.io/crates/d/handlebars.svg)](https://crates.io/crates/handlebars)
 [![MIT licensed](https://img.shields.io/badge/license-MIT-blue.svg)](./LICENSE)
-[![Gitter](https://img.shields.io/gitter/room/sunng87/handlebars-rust.svg?maxAge=2592000)](https://gitter.im/sunng87/handlebars-rust)
-[![Docs](https://docs.rs/handlebars/badge.svg)](https://docs.rs/handlebars/)
+[![Docs](https://docs.rs/handlebars/badge.svg)](https://docs.rs/crate/handlebars/)
 
 ## Getting Started
 
@@ -26,7 +25,7 @@ fn main() {
     // render without register
     println!(
         "{}",
-        reg.template_render("Hello {{name}}", &json!({"name": "foo"}))
+        reg.render_template("Hello {{name}}", &json!({"name": "foo"}))
             .unwrap()
     );
 
@@ -142,6 +141,21 @@ You can use this handlebars implementation in your rust project that
 compiles to WebAssembly. Checkout my fork of
 [todomvc](https://github.com/sunng87/rust-todomvc) demo.
 
+#### Strict mode
+
+Handlebars, the language designed to work with JavaScript, has no
+strict restriction on accessing non-existed fields or index. It
+generates empty string for such case. However, in Rust we want a
+little bit strict sometime.
+
+By enabling `strcit_mode` on handlebars:
+
+```rust
+handlebars.set_strict_mode(true);
+```
+
+You will get a `RenderError` when accessing fields that not exists.
+
 ### Limitations
 
 * This implementation is **not fully compatible** with the original
@@ -195,4 +209,4 @@ This library (handlebars-rust) is open sourced under MIT License.
 
 ## Contact
 
-[Ning Sun](https://github.com/sunng87) (sunng@about.me)
+[Ning Sun](https://github.com/sunng87) (sunng@protonmail.com)

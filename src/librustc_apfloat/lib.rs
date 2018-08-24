@@ -43,13 +43,9 @@
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
       html_favicon_url = "https://doc.rust-lang.org/favicon.ico",
       html_root_url = "https://doc.rust-lang.org/nightly/")]
-#![deny(warnings)]
 #![forbid(unsafe_code)]
 
-#![cfg_attr(stage0, feature(slice_patterns))]
-#![cfg_attr(stage0, feature(i128_type))]
 #![feature(try_from)]
-
 // See librustc_cratesio_shim/Cargo.toml for a comment explaining this.
 #[allow(unused_extern_crates)]
 extern crate rustc_cratesio_shim;

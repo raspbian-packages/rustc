@@ -2,33 +2,47 @@
 
 set -ex
 
+: ${TARGET?"The TARGET environment variable must be set."}
+
 # Tests are all super fast anyway, and they fault often enough on travis that
 # having only one thread increases debuggability to be worth it.
 export RUST_TEST_THREADS=1
-#export RUST_BACKTRACE=1
+#export RUST_BACKTRACE=full
 #export RUST_TEST_NOCAPTURE=1
 
-# FIXME(rust-lang-nursery/stdsimd#120) run-time feature detection for ARM Neon
+RUSTFLAGS="$RUSTFLAGS --cfg stdsimd_strict"
+
+# FIXME: on armv7 neon intrinsics require the neon target-feature to be
+# unconditionally enabled.
 case ${TARGET} in
-    aarch*)
+    armv7*)
         export RUSTFLAGS="${RUSTFLAGS} -C target-feature=+neon"
         ;;
     *)
         ;;
 esac
 
-FEATURES="strict,$FEATURES"
-
 echo "RUSTFLAGS=${RUSTFLAGS}"
 echo "FEATURES=${FEATURES}"
 echo "OBJDUMP=${OBJDUMP}"
 
 cargo_test() {
-    cmd="cargo test --target=$TARGET --features $FEATURES $1"
-    cmd="$cmd -p coresimd -p stdsimd --manifest-path crates/stdsimd/Cargo.toml"
+    cmd="cargo test --target=$TARGET $1"
+    cmd="$cmd -p coresimd -p stdsimd"
     cmd="$cmd -- $2"
     $cmd
 }
 
 cargo_test
 cargo_test "--release"
+
+# Test x86 targets compiled with AVX.
+case ${TARGET} in
+    x86*)
+        RUSTFLAGS="${RUSTFLAGS} -C target-feature=+avx"
+        export STDSIMD_DISABLE_ASSERT_INSTR=1
+        cargo_test "--release"
+        ;;
+    *)
+        ;;
+esac

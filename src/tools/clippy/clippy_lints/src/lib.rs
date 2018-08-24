@@ -10,14 +10,16 @@
 #![feature(macro_vis_matcher)]
 #![allow(unknown_lints, indexing_slicing, shadow_reuse, missing_docs_in_private_items)]
 #![recursion_limit = "256"]
-
 // FIXME(mark-i-m) remove after i128 stablization merges
 #![allow(stable_features)]
 #![feature(i128, i128_type)]
+#![feature(iterator_find_map)]
+
 
 #[macro_use]
 extern crate rustc;
 extern crate rustc_typeck;
+extern crate rustc_target;
 extern crate syntax;
 extern crate syntax_pos;
 
@@ -125,6 +127,7 @@ pub mod erasing_op;
 pub mod escape;
 pub mod eta_reduction;
 pub mod eval_order_dependence;
+pub mod excessive_precision;
 pub mod explicit_write;
 pub mod fallible_impl_from;
 pub mod format;
@@ -134,6 +137,7 @@ pub mod identity_conversion;
 pub mod identity_op;
 pub mod if_let_redundant_pattern_matching;
 pub mod if_not_else;
+pub mod infallible_destructuring_match;
 pub mod infinite_iter;
 pub mod inline_fn_without_body;
 pub mod int_plus_one;
@@ -146,6 +150,7 @@ pub mod lifetimes;
 pub mod literal_representation;
 pub mod loops;
 pub mod map_clone;
+pub mod map_unit_fn;
 pub mod matches;
 pub mod mem_forget;
 pub mod methods;
@@ -172,7 +177,6 @@ pub mod overflow_check_conditional;
 pub mod panic;
 pub mod partialeq_ne_impl;
 pub mod precedence;
-pub mod print;
 pub mod ptr;
 pub mod question_mark;
 pub mod ranges;
@@ -195,6 +199,7 @@ pub mod unused_io_amount;
 pub mod unused_label;
 pub mod use_self;
 pub mod vec;
+pub mod write;
 pub mod zero_div_zero;
 // end lints modules, do not remove this comment, it’s used in `update_lints`
 
@@ -277,6 +282,10 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         "string_to_string",
         "using `string::to_string` is common even today and specialization will likely happen soon",
     );
+    store.register_removed(
+        "misaligned_transmute",
+        "this lint has been split into cast_ptr_alignment and transmute_ptr_to_ptr",
+    );
     // end deprecated lints, do not remove this comment, it’s used in `update_lints`
 
     reg.register_late_lint_pass(box serde_api::Serde);
@@ -290,6 +299,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
     reg.register_early_lint_pass(box enum_variants::EnumVariantNames::new(conf.enum_variant_name_threshold));
     reg.register_late_lint_pass(box enum_glob_use::EnumGlobUse);
     reg.register_late_lint_pass(box enum_clike::UnportableVariant);
+    reg.register_late_lint_pass(box excessive_precision::ExcessivePrecision);
     reg.register_late_lint_pass(box bit_mask::BitMask::new(conf.verbose_bit_mask_threshold));
     reg.register_late_lint_pass(box ptr::PointerPass);
     reg.register_late_lint_pass(box needless_bool::NeedlessBool);
@@ -343,7 +353,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
     reg.register_late_lint_pass(box strings::StringLitAsBytes);
     reg.register_late_lint_pass(box derive::Derive);
     reg.register_late_lint_pass(box types::CharLitAsU8);
-    reg.register_late_lint_pass(box print::Pass);
+    reg.register_late_lint_pass(box write::Pass);
     reg.register_late_lint_pass(box vec::Pass);
     reg.register_early_lint_pass(box non_expressive_names::NonExpressiveNames {
         single_char_binding_names_threshold: conf.single_char_binding_names_threshold,
@@ -402,6 +412,8 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
     reg.register_late_lint_pass(box question_mark::QuestionMarkPass);
     reg.register_late_lint_pass(box suspicious_trait_impl::SuspiciousImpl);
     reg.register_late_lint_pass(box redundant_field_names::RedundantFieldNames);
+    reg.register_late_lint_pass(box map_unit_fn::Pass);
+    reg.register_late_lint_pass(box infallible_destructuring_match::Pass);
 
 
     reg.register_lint_group("clippy_restriction", vec![
@@ -418,12 +430,12 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         methods::WRONG_PUB_SELF_CONVENTION,
         misc::FLOAT_CMP_CONST,
         missing_doc::MISSING_DOCS_IN_PRIVATE_ITEMS,
-        print::PRINT_STDOUT,
-        print::USE_DEBUG,
         shadow::SHADOW_REUSE,
         shadow::SHADOW_SAME,
         shadow::SHADOW_UNRELATED,
         strings::STRING_ADD,
+        write::PRINT_STDOUT,
+        write::USE_DEBUG,
     ]);
 
     reg.register_lint_group("clippy_pedantic", vec![
@@ -472,7 +484,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         assign_ops::ASSIGN_OP_PATTERN,
         assign_ops::MISREFACTORED_ASSIGN_OP,
         attrs::DEPRECATED_SEMVER,
-        attrs::EMPTY_LINE_AFTER_OUTER_ATTR,
         attrs::USELESS_ATTRIBUTE,
         bit_mask::BAD_BIT_MASK,
         bit_mask::INEFFECTIVE_BIT_MASK,
@@ -506,6 +517,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         eta_reduction::REDUNDANT_CLOSURE,
         eval_order_dependence::DIVERGING_SUB_EXPRESSION,
         eval_order_dependence::EVAL_ORDER_DEPENDENCE,
+        excessive_precision::EXCESSIVE_PRECISION,
         explicit_write::EXPLICIT_WRITE,
         format::USELESS_FORMAT,
         formatting::POSSIBLE_MISSING_COMMA,
@@ -516,6 +528,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         identity_conversion::IDENTITY_CONVERSION,
         identity_op::IDENTITY_OP,
         if_let_redundant_pattern_matching::IF_LET_REDUNDANT_PATTERN_MATCHING,
+        infallible_destructuring_match::INFALLIBLE_DESTRUCTURING_MATCH,
         infinite_iter::INFINITE_ITER,
         inline_fn_without_body::INLINE_FN_WITHOUT_BODY,
         int_plus_one::INT_PLUS_ONE,
@@ -547,6 +560,8 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         loops::WHILE_LET_LOOP,
         loops::WHILE_LET_ON_ITERATOR,
         map_clone::MAP_CLONE,
+        map_unit_fn::OPTION_MAP_UNIT_FN,
+        map_unit_fn::RESULT_MAP_UNIT_FN,
         matches::MATCH_AS_REF,
         matches::MATCH_BOOL,
         matches::MATCH_OVERLAPPING_ARM,
@@ -594,7 +609,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         mutex_atomic::MUTEX_ATOMIC,
         needless_bool::BOOL_COMPARISON,
         needless_bool::NEEDLESS_BOOL,
-        needless_borrow::NEEDLESS_BORROW,
         needless_borrowed_ref::NEEDLESS_BORROWED_REFERENCE,
         needless_pass_by_value::NEEDLESS_PASS_BY_VALUE,
         needless_update::NEEDLESS_UPDATE,
@@ -611,8 +625,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         panic::PANIC_PARAMS,
         partialeq_ne_impl::PARTIALEQ_NE_IMPL,
         precedence::PRECEDENCE,
-        print::PRINT_WITH_NEWLINE,
-        print::PRINTLN_EMPTY_STRING,
         ptr::CMP_NULL,
         ptr::MUT_FROM_REF,
         ptr::PTR_ARG,
@@ -635,11 +647,11 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         swap::MANUAL_SWAP,
         temporary_assignment::TEMPORARY_ASSIGNMENT,
         transmute::CROSSPOINTER_TRANSMUTE,
-        transmute::MISALIGNED_TRANSMUTE,
         transmute::TRANSMUTE_BYTES_TO_STR,
         transmute::TRANSMUTE_INT_TO_BOOL,
         transmute::TRANSMUTE_INT_TO_CHAR,
         transmute::TRANSMUTE_INT_TO_FLOAT,
+        transmute::TRANSMUTE_PTR_TO_PTR,
         transmute::TRANSMUTE_PTR_TO_REF,
         transmute::USELESS_TRANSMUTE,
         transmute::WRONG_TRANSMUTE,
@@ -647,6 +659,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         types::BORROWED_BOX,
         types::BOX_VEC,
         types::CAST_LOSSLESS,
+        types::CAST_PTR_ALIGNMENT,
         types::CHAR_LIT_AS_U8,
         types::IMPLICIT_HASHER,
         types::LET_UNIT_VALUE,
@@ -660,12 +673,17 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         unused_io_amount::UNUSED_IO_AMOUNT,
         unused_label::UNUSED_LABEL,
         vec::USELESS_VEC,
+        write::PRINT_LITERAL,
+        write::PRINT_WITH_NEWLINE,
+        write::PRINTLN_EMPTY_STRING,
+        write::WRITE_LITERAL,
+        write::WRITE_WITH_NEWLINE,
+        write::WRITELN_EMPTY_STRING,
         zero_div_zero::ZERO_DIVIDED_BY_ZERO,
     ]);
 
     reg.register_lint_group("clippy_style", vec![
         assign_ops::ASSIGN_OP_PATTERN,
-        attrs::EMPTY_LINE_AFTER_OUTER_ATTR,
         bit_mask::VERBOSE_BIT_MASK,
         blacklisted_name::BLACKLISTED_NAME,
         block_in_if_condition::BLOCK_IN_IF_CONDITION_EXPR,
@@ -676,9 +694,11 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         enum_variants::MODULE_INCEPTION,
         eq_op::OP_REF,
         eta_reduction::REDUNDANT_CLOSURE,
+        excessive_precision::EXCESSIVE_PRECISION,
         formatting::SUSPICIOUS_ASSIGNMENT_FORMATTING,
         formatting::SUSPICIOUS_ELSE_FORMATTING,
         if_let_redundant_pattern_matching::IF_LET_REDUNDANT_PATTERN_MATCHING,
+        infallible_destructuring_match::INFALLIBLE_DESTRUCTURING_MATCH,
         len_zero::LEN_WITHOUT_IS_EMPTY,
         len_zero::LEN_ZERO,
         let_if_seq::USELESS_LET_IF_SEQ,
@@ -725,8 +745,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         non_expressive_names::MANY_SINGLE_CHAR_NAMES,
         ok_if_let::IF_LET_SOME_RESULT,
         panic::PANIC_PARAMS,
-        print::PRINT_WITH_NEWLINE,
-        print::PRINTLN_EMPTY_STRING,
         ptr::CMP_NULL,
         ptr::PTR_ARG,
         question_mark::QUESTION_MARK,
@@ -740,6 +758,12 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         types::IMPLICIT_HASHER,
         types::LET_UNIT_VALUE,
         unsafe_removed_from_name::UNSAFE_REMOVED_FROM_NAME,
+        write::PRINT_LITERAL,
+        write::PRINT_WITH_NEWLINE,
+        write::PRINTLN_EMPTY_STRING,
+        write::WRITE_LITERAL,
+        write::WRITE_WITH_NEWLINE,
+        write::WRITELN_EMPTY_STRING,
     ]);
 
     reg.register_lint_group("clippy_complexity", vec![
@@ -761,6 +785,8 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         loops::EXPLICIT_COUNTER_LOOP,
         loops::MUT_RANGE_BOUND,
         loops::WHILE_LET_LOOP,
+        map_unit_fn::OPTION_MAP_UNIT_FN,
+        map_unit_fn::RESULT_MAP_UNIT_FN,
         matches::MATCH_AS_REF,
         methods::CHARS_NEXT_CMP,
         methods::CLONE_ON_COPY,
@@ -772,7 +798,6 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         misc_early::ZERO_PREFIXED_LITERAL,
         needless_bool::BOOL_COMPARISON,
         needless_bool::NEEDLESS_BOOL,
-        needless_borrow::NEEDLESS_BORROW,
         needless_borrowed_ref::NEEDLESS_BORROWED_REFERENCE,
         needless_update::NEEDLESS_UPDATE,
         no_effect::NO_EFFECT,
@@ -785,11 +810,11 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         swap::MANUAL_SWAP,
         temporary_assignment::TEMPORARY_ASSIGNMENT,
         transmute::CROSSPOINTER_TRANSMUTE,
-        transmute::MISALIGNED_TRANSMUTE,
         transmute::TRANSMUTE_BYTES_TO_STR,
         transmute::TRANSMUTE_INT_TO_BOOL,
         transmute::TRANSMUTE_INT_TO_CHAR,
         transmute::TRANSMUTE_INT_TO_FLOAT,
+        transmute::TRANSMUTE_PTR_TO_PTR,
         transmute::TRANSMUTE_PTR_TO_REF,
         transmute::USELESS_TRANSMUTE,
         types::BORROWED_BOX,
@@ -848,6 +873,7 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
         swap::ALMOST_SWAPPED,
         transmute::WRONG_TRANSMUTE,
         types::ABSURD_EXTREME_COMPARISONS,
+        types::CAST_PTR_ALIGNMENT,
         types::UNIT_CMP,
         unicode::ZERO_WIDTH_SPACE,
         unused_io_amount::UNUSED_IO_AMOUNT,
@@ -870,8 +896,10 @@ pub fn register_plugins(reg: &mut rustc_plugin::Registry) {
     ]);
 
     reg.register_lint_group("clippy_nursery", vec![
+        attrs::EMPTY_LINE_AFTER_OUTER_ATTR,
         fallible_impl_from::FALLIBLE_IMPL_FROM,
         mutex_atomic::MUTEX_INTEGER,
+        needless_borrow::NEEDLESS_BORROW,
         ranges::RANGE_PLUS_ONE,
     ]);
 }

@@ -22,11 +22,9 @@ struct MarkAttrs<'a>(&'a [ast::Name]);
 
 impl<'a> Visitor<'a> for MarkAttrs<'a> {
     fn visit_attribute(&mut self, attr: &Attribute) {
-        if let Some(name) = attr.name() {
-            if self.0.contains(&name) {
-                mark_used(attr);
-                mark_known(attr);
-            }
+        if self.0.contains(&attr.name()) {
+            mark_used(attr);
+            mark_known(attr);
         }
     }
 
@@ -55,6 +53,7 @@ impl MultiItemModifier for ProcMacroDerive {
             Annotatable::Item(item) => item,
             Annotatable::ImplItem(_) |
             Annotatable::TraitItem(_) |
+            Annotatable::ForeignItem(_) |
             Annotatable::Stmt(_) |
             Annotatable::Expr(_) => {
                 ecx.span_err(span, "proc-macro derives may only be \

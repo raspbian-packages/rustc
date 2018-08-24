@@ -19,6 +19,7 @@ use rustc_data_structures::indexed_set::{IdxSet};
 use rustc_data_structures::indexed_vec::Idx;
 
 use super::MoveDataParamEnv;
+
 use util::elaborate_drops::DropFlagState;
 
 use super::move_paths::{HasMoveData, MoveData, MoveOutIndex, MovePathIndex, InitIndex};
@@ -37,7 +38,6 @@ mod borrowed_locals;
 
 pub use self::borrowed_locals::*;
 
-#[allow(dead_code)]
 pub(super) mod borrows;
 
 /// `MaybeInitializedPlaces` tracks all places that might be
@@ -389,7 +389,7 @@ impl<'a, 'gcx, 'tcx> BitDenotation for MaybeUninitializedPlaces<'a, 'gcx, 'tcx> 
     // sets on_entry bits for Arg places
     fn start_block_effect(&self, entry_set: &mut IdxSet<MovePathIndex>) {
         // set all bits to 1 (uninit) before gathering counterevidence
-        for e in entry_set.words_mut() { *e = !0; }
+        entry_set.set_up_to(self.bits_per_block());
 
         drop_flag_effects_for_function_entry(
             self.tcx, self.mir, self.mdpe,
@@ -443,7 +443,7 @@ impl<'a, 'gcx, 'tcx> BitDenotation for DefinitelyInitializedPlaces<'a, 'gcx, 'tc
 
     // sets on_entry bits for Arg places
     fn start_block_effect(&self, entry_set: &mut IdxSet<MovePathIndex>) {
-        for e in entry_set.words_mut() { *e = 0; }
+        entry_set.clear();
 
         drop_flag_effects_for_function_entry(
             self.tcx, self.mir, self.mdpe,

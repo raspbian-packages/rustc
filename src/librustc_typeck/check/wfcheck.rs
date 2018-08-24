@@ -508,7 +508,7 @@ fn check_method_receiver<'fcx, 'gcx, 'tcx>(fcx: &FnCtxt<'fcx, 'gcx, 'tcx>,
     let self_ty = fcx.normalize_associated_types_in(span, &self_ty);
     let self_ty = fcx.tcx.liberate_late_bound_regions(
         method.def_id,
-        &ty::Binder(self_ty)
+        &ty::Binder::bind(self_ty)
     );
 
     let self_arg_ty = sig.inputs()[0];
@@ -517,7 +517,7 @@ fn check_method_receiver<'fcx, 'gcx, 'tcx>(fcx: &FnCtxt<'fcx, 'gcx, 'tcx>,
     let self_arg_ty = fcx.normalize_associated_types_in(span, &self_arg_ty);
     let self_arg_ty = fcx.tcx.liberate_late_bound_regions(
         method.def_id,
-        &ty::Binder(self_arg_ty)
+        &ty::Binder::bind(self_arg_ty)
     );
 
     let mut autoderef = fcx.autoderef(span, self_arg_ty).include_raw_pointers();
@@ -655,7 +655,7 @@ fn reject_shadowing_type_parameters(tcx: TyCtxt, def_id: DefId) {
             // local so it should be okay to just unwrap everything.
             let trait_def_id = impl_params[&method_param.name];
             let trait_decl_span = tcx.def_span(trait_def_id);
-            error_194(tcx, type_span, trait_decl_span, &method_param.name[..]);
+            error_194(tcx, type_span, trait_decl_span, &method_param.name.as_str()[..]);
         }
     }
 }

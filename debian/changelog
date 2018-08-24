@@ -1,11 +1,59 @@
-rustc (1.26.1+dfsg1-3+rpi1) buster-staging; urgency=medium
+rustc (1.27.2+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Fri, 22 Jun 2018 18:21:22 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Fri, 24 Aug 2018 06:54:48 +0000
+
+rustc (1.27.2+dfsg1-1) unstable; urgency=medium
+
+  [ Sylvestre Ledru ]
+  * Update of the alioth ML address.
+
+  [ Ximin Luo ]
+  * Fail the build if our version contains ~exp and we are not releasing to
+    experimental, this has happened by accident a few times already.
+  * Allow 36 and 44 test failures on armel and s390x respectively.
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 24 Jul 2018 21:35:56 -0700
+
+rustc (1.27.1+dfsg1-1~exp4) experimental; urgency=medium
+
+  * Unconditonally prune crate checksums to avoid having to manually prune them
+    whenever we patch the vendored crates.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 14:49:18 -0700
+
+rustc (1.27.1+dfsg1-1~exp3) experimental; urgency=medium
+
+  * Add patch from Fedora to fix rebuild against same version.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 19 Jul 2018 08:52:03 -0700
+
+rustc (1.27.1+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Fix some failing tests.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 18 Jul 2018 09:06:44 -0700
+
+rustc (1.27.1+dfsg1-1~exp1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 13 Jul 2018 22:58:02 -0700
+
+rustc (1.26.2+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Stop ignoring tests that now pass.
+  * Don't ignore tests that still fail, instead raise FAILURES_ALLOWED.
+    This allows us to see the test failures in the build logs, rather than
+    hiding them.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 16 Jun 2018 12:39:59 -0700
 
 rustc (1.26.1+dfsg1-3) unstable; urgency=medium
 

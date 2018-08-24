@@ -2,22 +2,23 @@
 extern crate env_logger;
 extern crate handlebars;
 extern crate serde;
-extern crate serde_json;
 #[macro_use]
 extern crate serde_derive;
+extern crate serde_json;
 use serde::Serialize;
-use serde_json::value::{self, Value as Json, Map};
+use serde_json::value::{self, Map, Value as Json};
 
-use std::io::{Write, Read};
+use std::io::{Read, Write};
 use std::fs::File;
 
-use handlebars::{Handlebars, RenderError, RenderContext, Helper, Context, JsonRender, to_json};
+use handlebars::{to_json, Context, Handlebars, Helper, JsonRender, RenderContext, RenderError};
 
 // define a custom helper
 fn format_helper(h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> Result<(), RenderError> {
-    let param = try!(h.param(0).ok_or(RenderError::new(
-        "Param 0 is required for format helper.",
-    )));
+    let param = try!(
+        h.param(0,)
+            .ok_or(RenderError::new("Param 0 is required for format helper.",),)
+    );
     let rendered = format!("{} pts", param.value().render());
     try!(rc.writer.write(rendered.into_bytes().as_ref()));
     Ok(())
@@ -25,12 +26,20 @@ fn format_helper(h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> Result<(
 
 // another custom helper
 fn rank_helper(h: &Helper, _: &Handlebars, rc: &mut RenderContext) -> Result<(), RenderError> {
-    let rank = try!(h.param(0).and_then(|v| v.value().as_u64()).ok_or(
-        RenderError::new("Param 0 with u64 type is required for rank helper."),
-    )) as usize;
-    let teams = try!(h.param(1).and_then(|v| v.value().as_array()).ok_or(
-        RenderError::new("Param 1 with array type is required for rank helper"),
-    ));
+    let rank = try!(
+        h.param(0,)
+            .and_then(|v| v.value().as_u64(),)
+            .ok_or(RenderError::new(
+                "Param 0 with u64 type is required for rank helper."
+            ),)
+    ) as usize;
+    let teams = try!(
+        h.param(1,)
+            .and_then(|v| v.value().as_array(),)
+            .ok_or(RenderError::new(
+                "Param 1 with array type is required for rank helper"
+            ),)
+    );
     let total = teams.len();
     if rank == 0 {
         try!(rc.writer.write("champion".as_bytes()));
@@ -111,9 +120,11 @@ fn main() {
     // Never use this style in your real-world projects.
     let mut source_template = File::open(&"./examples/render_file/template.hbs").unwrap();
     let mut output_file = File::create("target/table.html").unwrap();
-    if let Ok(_) = handlebars.template_renderw2(&mut source_template, &data, &mut output_file) {
-        println!("target/table.html generated");
+    if let Err(e) =
+        handlebars.render_template_source_to_write(&mut source_template, &data, &mut output_file)
+    {
+        println!("Failed to generate target/table.html: {}", e);
     } else {
-        println!("Failed to geneate target/table.html");
+        println!("target/table.html generated");
     };
 }

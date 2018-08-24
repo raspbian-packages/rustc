@@ -23,7 +23,6 @@ use symbol::Symbol;
 use tokenstream::{TokenStream, TokenTree};
 use diagnostics::plugin::ErrorMap;
 
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::iter;
 use std::path::{Path, PathBuf};
@@ -46,17 +45,17 @@ pub struct ParseSess {
     pub span_diagnostic: Handler,
     pub unstable_features: UnstableFeatures,
     pub config: CrateConfig,
-    pub missing_fragment_specifiers: RefCell<HashSet<Span>>,
+    pub missing_fragment_specifiers: Lock<HashSet<Span>>,
     /// Places where raw identifiers were used. This is used for feature gating
     /// raw identifiers
-    pub raw_identifier_spans: RefCell<Vec<Span>>,
+    pub raw_identifier_spans: Lock<Vec<Span>>,
     /// The registered diagnostics codes
     pub registered_diagnostics: Lock<ErrorMap>,
     // Spans where a `mod foo;` statement was included in a non-mod.rs file.
     // These are used to issue errors if the non_modrs_mods feature is not enabled.
-    pub non_modrs_mods: RefCell<Vec<(ast::Ident, Span)>>,
+    pub non_modrs_mods: Lock<Vec<(ast::Ident, Span)>>,
     /// Used to determine and report recursive mod inclusions
-    included_mod_stack: RefCell<Vec<PathBuf>>,
+    included_mod_stack: Lock<Vec<PathBuf>>,
     code_map: Lrc<CodeMap>,
 }
 
@@ -75,12 +74,12 @@ impl ParseSess {
             span_diagnostic: handler,
             unstable_features: UnstableFeatures::from_environment(),
             config: HashSet::new(),
-            missing_fragment_specifiers: RefCell::new(HashSet::new()),
-            raw_identifier_spans: RefCell::new(Vec::new()),
+            missing_fragment_specifiers: Lock::new(HashSet::new()),
+            raw_identifier_spans: Lock::new(Vec::new()),
             registered_diagnostics: Lock::new(ErrorMap::new()),
-            included_mod_stack: RefCell::new(vec![]),
+            included_mod_stack: Lock::new(vec![]),
             code_map,
-            non_modrs_mods: RefCell::new(vec![]),
+            non_modrs_mods: Lock::new(vec![]),
         }
     }
 
@@ -272,8 +271,16 @@ pub fn char_lit(lit: &str, diag: Option<(Span, &Handler)>) -> (char, isize) {
         'u' => {
             assert_eq!(lit.as_bytes()[2], b'{');
             let idx = lit.find('}').unwrap();
-            let s = &lit[3..idx].chars().filter(|&c| c != '_').collect::<String>();
-            let v = u32::from_str_radix(&s, 16).unwrap();
+
+            // All digits and '_' are ascii, so treat each byte as a char.
+            let mut v: u32 = 0;
+            for c in lit[3..idx].bytes() {
+                let c = char::from(c);
+                if c != '_' {
+                    let x = c.to_digit(16).unwrap();
+                    v = v.checked_mul(16).unwrap().checked_add(x).unwrap();
+                }
+            }
             let c = char::from_u32(v).unwrap_or_else(|| {
                 if let Some((span, diag)) = diag {
                     let mut diag = diag.struct_span_err(span, "invalid unicode character escape");
@@ -291,14 +298,10 @@ pub fn char_lit(lit: &str, diag: Option<(Span, &Handler)>) -> (char, isize) {
     }
 }
 
-pub fn escape_default(s: &str) -> String {
-    s.chars().map(char::escape_default).flat_map(|x| x).collect()
-}
-
 /// Parse a string representing a string literal into its final form. Does
 /// unescaping.
 pub fn str_lit(lit: &str, diag: Option<(Span, &Handler)>) -> String {
-    debug!("parse_str_lit: given {}", escape_default(lit));
+    debug!("str_lit: given {}", lit.escape_default());
     let mut res = String::with_capacity(lit.len());
 
     let error = |i| format!("lexer should have rejected {} at {}", lit, i);
@@ -367,7 +370,7 @@ pub fn str_lit(lit: &str, diag: Option<(Span, &Handler)>) -> String {
 /// Parse a string representing a raw string literal into its final form. The
 /// only operation this does is convert embedded CRLF into a single LF.
 pub fn raw_str_lit(lit: &str) -> String {
-    debug!("raw_str_lit: given {}", escape_default(lit));
+    debug!("raw_str_lit: given {}", lit.escape_default());
     let mut res = String::with_capacity(lit.len());
 
     let mut chars = lit.chars().peekable();
@@ -671,7 +674,7 @@ mod tests {
     use syntax_pos::{self, Span, BytePos, Pos, NO_EXPANSION};
     use codemap::{respan, Spanned};
     use ast::{self, Ident, PatKind};
-    use abi::Abi;
+    use rustc_target::spec::abi::Abi;
     use attr::first_attr_value_str_by_name;
     use parse;
     use parse::parser::Parser;
@@ -689,7 +692,7 @@ mod tests {
     }
 
     fn str2seg(s: &str, lo: u32, hi: u32) -> ast::PathSegment {
-        ast::PathSegment::from_ident(Ident::from_str(s), sp(lo, hi))
+        ast::PathSegment::from_ident(Ident::new(Symbol::intern(s), sp(lo, hi)))
     }
 
     #[test] fn path_exprs_1() {
@@ -873,10 +876,8 @@ mod tests {
                     == P(ast::Pat{
                     id: ast::DUMMY_NODE_ID,
                     node: PatKind::Ident(ast::BindingMode::ByValue(ast::Mutability::Immutable),
-                                        Spanned{ span:sp(0, 1),
-                                                node: Ident::from_str("b")
-                        },
-                                        None),
+                                         Ident::new(Symbol::intern("b"), sp(0, 1)),
+                                         None),
                     span: sp(0,1)}));
             parser_done(parser);
         })
@@ -912,9 +913,7 @@ mod tests {
                                             node: PatKind::Ident(
                                                 ast::BindingMode::ByValue(
                                                     ast::Mutability::Immutable),
-                                                Spanned{
-                                                    span: sp(6,7),
-                                                    node: Ident::from_str("b")},
+                                                Ident::new(Symbol::intern("b"), sp(6, 7)),
                                                 None
                                             ),
                                             span: sp(6,7)

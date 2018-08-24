@@ -8,9 +8,9 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! Machinery for hygienic macros, inspired by the MTWT[1] paper.
+//! Machinery for hygienic macros, inspired by the `MTWT[1]` paper.
 //!
-//! [1] Matthew Flatt, Ryan Culpepper, David Darais, and Robert Bruce Findler. 2012.
+//! `[1]` Matthew Flatt, Ryan Culpepper, David Darais, and Robert Bruce Findler. 2012.
 //! *Macros that work together: Compile-time bindings, partial expansion,
 //! and definition contexts*. J. Funct. Program. 22, 2 (March 2012), 181-216.
 //! DOI=10.1017/S0956796812000093 <http://dx.doi.org/10.1017/S0956796812000093>
@@ -21,6 +21,7 @@ use symbol::{Ident, Symbol};
 
 use serialize::{Encodable, Decodable, Encoder, Decoder};
 use std::collections::HashMap;
+use rustc_data_structures::fx::FxHashSet;
 use std::fmt;
 
 /// A SyntaxContext represents a chain of macro expansions (represented by marks).
@@ -117,13 +118,39 @@ impl Mark {
             true
         })
     }
+
+    /// Computes a mark such that both input marks are descendants of (or equal to) the returned
+    /// mark. That is, the following holds:
+    ///
+    /// ```rust
+    /// let la = least_ancestor(a, b);
+    /// assert!(a.is_descendant_of(la))
+    /// assert!(b.is_descendant_of(la))
+    /// ```
+    pub fn least_ancestor(mut a: Mark, mut b: Mark) -> Mark {
+        HygieneData::with(|data| {
+            // Compute the path from a to the root
+            let mut a_path = FxHashSet::<Mark>();
+            while a != Mark::root() {
+                a_path.insert(a);
+                a = data.marks[a.0 as usize].parent;
+            }
+
+            // While the path from b to the root hasn't intersected, move up the tree
+            while !a_path.contains(&b) {
+                b = data.marks[b.0 as usize].parent;
+            }
+
+            b
+        })
+    }
 }
 
 pub struct HygieneData {
     marks: Vec<MarkData>,
     syntax_contexts: Vec<SyntaxContextData>,
     markings: HashMap<(SyntaxContext, Mark), SyntaxContext>,
-    gensym_to_ctxt: HashMap<Symbol, SyntaxContext>,
+    gensym_to_ctxt: HashMap<Symbol, Span>,
 }
 
 impl HygieneData {
@@ -238,6 +265,22 @@ impl SyntaxContext {
         })
     }
 
+    /// Pulls a single mark off of the syntax context. This effectively moves the
+    /// context up one macro definition level. That is, if we have a nested macro
+    /// definition as follows:
+    ///
+    /// ```rust
+    /// macro_rules! f {
+    ///    macro_rules! g {
+    ///        ...
+    ///    }
+    /// }
+    /// ```
+    ///
+    /// and we have a SyntaxContext that is referring to something declared by an invocation
+    /// of g (call it g1), calling remove_mark will result in the SyntaxContext for the
+    /// invocation of f that created g1.
+    /// Returns the mark that was removed.
     pub fn remove_mark(&mut self) -> Mark {
         HygieneData::with(|data| {
             let outer_mark = data.syntax_contexts[self.0 as usize].outer_mark;
@@ -430,18 +473,18 @@ pub enum ExpnFormat {
 /// The kind of compiler desugaring.
 #[derive(Clone, Hash, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum CompilerDesugaringKind {
-    BackArrow,
     DotFill,
     QuestionMark,
+    Catch,
 }
 
 impl CompilerDesugaringKind {
     pub fn as_symbol(&self) -> Symbol {
         use CompilerDesugaringKind::*;
         let s = match *self {
-            BackArrow => "<-",
             DotFill => "...",
             QuestionMark => "?",
+            Catch => "do catch",
         };
         Symbol::intern(s)
     }
@@ -463,7 +506,7 @@ impl Symbol {
     pub fn from_ident(ident: Ident) -> Symbol {
         HygieneData::with(|data| {
             let gensym = ident.name.gensymed();
-            data.gensym_to_ctxt.insert(gensym, ident.ctxt);
+            data.gensym_to_ctxt.insert(gensym, ident.span);
             gensym
         })
     }
@@ -471,7 +514,7 @@ impl Symbol {
     pub fn to_ident(self) -> Ident {
         HygieneData::with(|data| {
             match data.gensym_to_ctxt.get(&self) {
-                Some(&ctxt) => Ident { name: self.interned(), ctxt: ctxt },
+                Some(&span) => Ident::new(self.interned(), span),
                 None => Ident::with_empty_ctxt(self),
             }
         })

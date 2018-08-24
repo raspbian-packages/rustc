@@ -11,7 +11,7 @@ Comment:
 This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/tools/linkchecker/main.rs
 +++ b/src/tools/linkchecker/main.rs
-@@ -178,6 +178,11 @@
+@@ -180,6 +180,11 @@
             url.starts_with("irc:") || url.starts_with("data:") {
              return;
          }
@@ -164,54 +164,54 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 --- a/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
 +++ b/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
 @@ -3,7 +3,7 @@
- use book::{Book, BookItem, Chapter};
- use config::{Config, HtmlConfig, Playpen};
- use {theme, utils};
--use theme::{playpen_editor, Theme};
-+use theme::{Theme};
  use errors::*;
- use regex::{Captures, Regex};
+ use renderer::{RenderContext, Renderer};
+ use renderer::html_handlebars::helpers;
+-use theme::{self, Theme, playpen_editor};
++use theme::{self, Theme};
+ use utils;
  
-@@ -156,62 +156,8 @@
-         self.write_file(destination, "book.js", &theme.js)?;
-         self.write_file(destination, "book.css", &theme.css)?;
-         self.write_file(destination, "favicon.png", &theme.favicon)?;
--        self.write_file(destination, "highlight.css", &theme.highlight_css)?;
-         self.write_file(destination, "tomorrow-night.css", &theme.tomorrow_night_css)?;
-         self.write_file(destination, "ayu-highlight.css", &theme.ayu_highlight_css)?;
--        self.write_file(destination, "highlight.js", &theme.highlight_js)?;
--        self.write_file(destination, "clipboard.min.js", &theme.clipboard_js)?;
--        self.write_file(
+ use std::collections::BTreeMap;
+@@ -145,61 +145,8 @@
+         write_file(destination, "book.js", &theme.js)?;
+         write_file(destination, "book.css", &theme.css)?;
+         write_file(destination, "favicon.png", &theme.favicon)?;
+-        write_file(destination, "highlight.css", &theme.highlight_css)?;
+         write_file(destination, "tomorrow-night.css", &theme.tomorrow_night_css)?;
+         write_file(destination, "ayu-highlight.css", &theme.ayu_highlight_css)?;
+-        write_file(destination, "highlight.js", &theme.highlight_js)?;
+-        write_file(destination, "clipboard.min.js", &theme.clipboard_js)?;
+-        write_file(
 -            destination,
 -            "_FontAwesome/css/font-awesome.css",
 -            theme::FONT_AWESOME,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/fontawesome-webfont.eot",
 -            theme::FONT_AWESOME_EOT,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/fontawesome-webfont.svg",
 -            theme::FONT_AWESOME_SVG,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/fontawesome-webfont.ttf",
 -            theme::FONT_AWESOME_TTF,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/fontawesome-webfont.woff",
 -            theme::FONT_AWESOME_WOFF,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/fontawesome-webfont.woff2",
 -            theme::FONT_AWESOME_WOFF2,
 -        )?;
--        self.write_file(
+-        write_file(
 -            destination,
 -            "_FontAwesome/fonts/FontAwesome.ttf",
 -            theme::FONT_AWESOME_TTF,
@@ -220,16 +220,15 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -        let playpen_config = &html_config.playpen;
 -
 -        // Ace is a very large dependency, so only load it when requested
--        if playpen_config.editable {
+-        if playpen_config.editable && playpen_config.copy_js {
 -            // Load the editor
--            let editor = playpen_editor::PlaypenEditor::new(&playpen_config.editor);
--            self.write_file(destination, "editor.js", &editor.js)?;
--            self.write_file(destination, "ace.js", &editor.ace_js)?;
--            self.write_file(destination, "mode-rust.js", &editor.mode_rust_js)?;
--            self.write_file(destination, "theme-dawn.js", &editor.theme_dawn_js)?;
--            self.write_file(destination,
+-            write_file(destination, "editor.js", playpen_editor::JS)?;
+-            write_file(destination, "ace.js", playpen_editor::ACE_JS)?;
+-            write_file(destination, "mode-rust.js", playpen_editor::MODE_RUST_JS)?;
+-            write_file(destination, "theme-dawn.js", playpen_editor::THEME_DAWN_JS)?;
+-            write_file(destination,
 -                "theme-tomorrow_night.js",
--                &editor.theme_tomorrow_night_js,
+-                playpen_editor::THEME_TOMORROW_NIGHT_JS,
 -            )?;
 -        }
  
@@ -237,7 +236,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
      }
 --- a/src/vendor/mdbook/src/theme/index.hbs
 +++ b/src/vendor/mdbook/src/theme/index.hbs
-@@ -11,15 +11,13 @@
+@@ -12,15 +12,13 @@
          <base href="{{ path_to_root }}">
  
          <link rel="stylesheet" href="book.css">
@@ -247,7 +246,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <link rel="shortcut icon" href="{{ favicon }}">
  
          <!-- Font Awesome -->
--        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/font-awesome/4.3.0/css/font-awesome.min.css">
+-        <link rel="stylesheet" href="_FontAwesome/css/font-awesome.css">
 +        <link rel="stylesheet" href="../font-awesome.min.css">
  
 -        <link rel="stylesheet" href="highlight.css">
@@ -255,22 +254,14 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <link rel="stylesheet" href="tomorrow-night.css">
          <link rel="stylesheet" href="ayu-highlight.css">
  
-@@ -30,53 +28,12 @@
+@@ -31,47 +29,12 @@
  
          {{#if mathjax_support}}
          <!-- MathJax -->
--        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
-+        <script type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
+-        <script async type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
++        <script async type="text/javascript" src="../mathjax/MathJax.js?config=TeX-AMS-MML_HTMLorMML"></script>
          {{/if}}
  
--        <!-- Fetch Clipboard.js from CDN but have a local fallback -->
--        <script src="https://cdn.jsdelivr.net/clipboard.js/1.6.1/clipboard.min.js"></script>
--        <script>
--            if (typeof Clipboard == 'undefined') {
--                document.write(unescape("%3Cscript src='clipboard.min.js'%3E%3C/script%3E"));
--            }
--        </script>
--
      </head>
      <body class="light">
 -        <!-- Work around some values being stored in localStorage wrapped in quotes -->
@@ -282,59 +273,43 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -                if (theme.startsWith('"') && theme.endsWith('"')) {
 -                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
 -                }
- 
+-
 -                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
 -                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
 -                }
 -            } catch (e) { }
 -        </script>
--
+ 
 -        <!-- Set the theme before any content is loaded, prevents flash -->
 -        <script type="text/javascript">
 -            var theme;
 -            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { } 
 -            if (theme === null || theme === undefined) { theme = 'light'; }
 -            document.body.className = theme;
--            document.querySelector('html').className = theme;
+-            document.querySelector('html').className = theme + ' js';
 -        </script>
 -
 -        <!-- Hide / unhide sidebar before it is displayed -->
 -        <script type="text/javascript">
+-            var html = document.querySelector('html');
 -            var sidebar = 'hidden';
 -            if (document.body.clientWidth >= 1080) {
 -                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
 -                sidebar = sidebar || 'visible';
 -            }
--            document.querySelector('html').classList.add("sidebar-" + sidebar);
+-            html.classList.remove('sidebar-visible');
+-            html.classList.add("sidebar-" + sidebar);
 -        </script>
  
          <nav id="sidebar" class="sidebar" aria-label="Table of contents">
              {{#toc}}{{/toc}}
-@@ -164,17 +121,6 @@
-         </div>
- 
- 
--        <!-- Local fallback for Font Awesome -->
--        <script>
--            if (getComputedStyle(document.querySelector(".fa")).fontFamily !== "FontAwesome") {
--                var link = document.createElement('link');
--                link.rel = 'stylesheet';
--                link.type = 'text/css';
--                link.href = '_FontAwesome/css/font-awesome.css';
--                document.head.insertBefore(link, document.head.firstChild)
--            }
--        </script>
--
-         {{#if livereload}}
-         <!-- Livereload script (if served using the cli tool) -->
-         <script type="text/javascript">
-@@ -192,32 +138,7 @@
+@@ -193,24 +156,7 @@
          </script>
          {{/if}}
  
 -        {{#if google_analytics}}
 -        <!-- Google Analytics Tag -->
--        <script>
+-        <script type="text/javascript">
 -            var localAddrs = ["localhost", "127.0.0.1", ""];
  
 -            // make sure we don't activate google analytics if the developer is
@@ -350,36 +325,47 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
 -            }
 -        </script>
 -        {{/if}}
--
--        {{#if playpens_editable}}
--        <script src="{{ ace_js }}" type="text/javascript" charset="utf-8"></script>
--        <script src="{{ editor_js }}" type="text/javascript" charset="utf-8"></script>
--        <script src="{{ mode_rust_js }}" type="text/javascript" charset="utf-8"></script>
--        <script src="{{ theme_dawn_js }}" type="text/javascript" charset="utf-8"></script>
--        <script src="{{ theme_tomorrow_night_js }}" type="text/javascript" charset="utf-8"></script>
--        {{/if}}
  
          {{#if is_print}}
-         <script>
-@@ -227,7 +148,7 @@
+         <script type="text/javascript">
+@@ -220,25 +166,11 @@
          </script>
          {{/if}}
  
--        <script src="highlight.js"></script>
-+        <script src="../highlight.js"></script>
-         <script src="book.js"></script>
+-        {{#if playpen_js}}
+-        <script src="ace.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="editor.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="mode-rust.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="theme-dawn.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="theme-tomorrow_night.js" type="text/javascript" charset="utf-8"></script>
+-        {{/if}}
+-
+         {{#if search_enabled}}
+         <script src="searchindex.js" type="text/javascript" charset="utf-8"></script>
+         {{/if}}
+-        {{#if search_js}}
+-        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+-        {{/if}}
  
-         <!-- Custom JS script -->
+-        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+-        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
++        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+         <script src="book.js" type="text/javascript" charset="utf-8"></script>
+ 
+         <!-- Custom JS scripts -->
 --- a/src/vendor/mdbook/src/theme/mod.rs
 +++ b/src/vendor/mdbook/src/theme/mod.rs
-@@ -1,6 +1,4 @@
- #![allow(missing_docs)] // FIXME: Document this
+@@ -1,7 +1,5 @@
+ #![allow(missing_docs)]
+ 
 -pub mod playpen_editor;
 -
- use std::path::Path;
- use std::fs::File;
- use std::io::Read;
-@@ -12,23 +10,8 @@
+ #[cfg(feature = "search")]
+ pub mod searcher;
+ 
+@@ -16,23 +14,8 @@
  pub static CSS: &'static [u8] = include_bytes!("book.css");
  pub static FAVICON: &'static [u8] = include_bytes!("favicon.png");
  pub static JS: &'static [u8] = include_bytes!("book.js");
@@ -403,7 +389,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
  
  /// The `Theme` struct should be used instead of the static variables because
-@@ -44,11 +27,8 @@
+@@ -48,11 +31,8 @@
      pub css: Vec<u8>,
      pub favicon: Vec<u8>,
      pub js: Vec<u8>,
@@ -415,7 +401,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  }
  
  impl Theme {
-@@ -69,9 +49,6 @@
+@@ -75,9 +55,6 @@
                  (theme_dir.join("book.js"), &mut theme.js),
                  (theme_dir.join("book.css"), &mut theme.css),
                  (theme_dir.join("favicon.png"), &mut theme.favicon),
@@ -425,7 +411,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
                  (theme_dir.join("tomorrow-night.css"), &mut theme.tomorrow_night_css),
                  (theme_dir.join("ayu-highlight.css"), &mut theme.ayu_highlight_css),
              ];
-@@ -99,11 +76,8 @@
+@@ -105,11 +82,8 @@
              css: CSS.to_owned(),
              favicon: FAVICON.to_owned(),
              js: JS.to_owned(),
@@ -437,7 +423,7 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          }
      }
  }
-@@ -169,11 +143,8 @@
+@@ -175,11 +149,8 @@
              css: Vec::new(),
              favicon: Vec::new(),
              js: Vec::new(),
@@ -449,3 +435,22 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          };
  
          assert_eq!(got, empty);
+--- a/src/vendor/mdbook/src/renderer/html_handlebars/search.rs
++++ b/src/vendor/mdbook/src/renderer/html_handlebars/search.rs
+@@ -29,8 +29,6 @@
+     if search_config.copy_js {
+         utils::fs::write_file(destination, "searchindex.js", index.as_bytes())?;
+         utils::fs::write_file(destination, "searcher.js", searcher::JS)?;
+-        utils::fs::write_file(destination, "mark.min.js", searcher::MARK_JS)?;
+-        utils::fs::write_file(destination, "elasticlunr.min.js", searcher::ELASTICLUNR_JS)?;
+         debug!("Copying search files ✓");
+     }
+ 
+--- a/src/vendor/mdbook/src/theme/searcher/mod.rs
++++ b/src/vendor/mdbook/src/theme/searcher/mod.rs
+@@ -2,5 +2,3 @@
+ //! the "search" cargo feature is disabled.
+ 
+ pub static JS: &'static [u8] = include_bytes!("searcher.js");
+-pub static MARK_JS: &'static [u8] = include_bytes!("mark.min.js");
+-pub static ELASTICLUNR_JS: &'static [u8] = include_bytes!("elasticlunr.min.js");

@@ -1,4 +1,8 @@
-#![allow(missing_docs)] // FIXME: Document this
+#![allow(missing_docs)]
+
+#[cfg(feature = "search")]
+pub mod searcher;
+
 use std::path::Path;
 use std::fs::File;
 use std::io::Read;
@@ -15,7 +19,7 @@ pub static AYU_HIGHLIGHT_CSS: &'static [u8] = include_bytes!("ayu-highlight.css"
 
 
 /// The `Theme` struct should be used instead of the static variables because
-/// the `new()` method will look if the user has a theme directory in his
+/// the `new()` method will look if the user has a theme directory in their
 /// source folder and use the users theme instead of the default.
 ///
 /// You should only ever use the static variables directly if you want to
@@ -32,6 +36,8 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Creates a `Theme` from the given `theme_dir`.
+    /// If a file is found in the theme dir, it will override the default version.
     pub fn new<P: AsRef<Path>>(theme_dir: P) -> Self {
         let theme_dir = theme_dir.as_ref();
         let mut theme = Theme::default();
@@ -102,7 +108,7 @@ fn load_file_contents<P: AsRef<Path>>(filename: P, dest: &mut Vec<u8>) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempdir::TempDir;
+    use tempfile::Builder as TempFileBuilder;
     use std::path::PathBuf;
 
     #[test]
@@ -127,7 +133,7 @@ mod tests {
             .map(|f| f.path())
             .filter(|p| p.is_file() && !p.ends_with(".rs"));
 
-        let temp = TempDir::new("mdbook").unwrap();
+        let temp = TempFileBuilder::new().prefix("mdbook").tempdir().unwrap();
 
         // "touch" all of the special files so we have empty copies
         for special_file in special_files {

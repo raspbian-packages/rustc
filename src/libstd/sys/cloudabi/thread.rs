@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use alloc::boxed::FnBox;
+use boxed::FnBox;
 use cmp;
 use ffi::CStr;
 use io;
@@ -118,6 +118,7 @@ pub mod guard {
     pub unsafe fn init() -> Option<Guard> {
         None
     }
+    pub unsafe fn deinit() {}
 }
 
 fn min_stack_size(_: *const libc::pthread_attr_t) -> usize {

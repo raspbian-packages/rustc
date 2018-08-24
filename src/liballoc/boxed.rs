@@ -55,54 +55,20 @@
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
-use heap::Heap;
-use raw_vec::RawVec;
-
 use core::any::Any;
 use core::borrow;
 use core::cmp::Ordering;
 use core::fmt;
 use core::hash::{Hash, Hasher};
-use core::heap::{Alloc, Layout};
 use core::iter::FusedIterator;
-use core::marker::{self, Unpin, Unsize};
+use core::marker::{Unpin, Unsize};
 use core::mem::{self, Pin};
 use core::ops::{CoerceUnsized, Deref, DerefMut, Generator, GeneratorState};
-use core::ops::{BoxPlace, Boxed, InPlace, Place, Placer};
 use core::ptr::{self, NonNull, Unique};
 use core::convert::From;
+
+use raw_vec::RawVec;
 use str::from_boxed_utf8_unchecked;
-
-/// A value that represents the heap. This is the default place that the `box`
-/// keyword allocates into when no place is supplied.
-///
-/// The following two examples are equivalent:
-///
-/// ```
-/// #![feature(box_heap)]
-///
-/// #![feature(box_syntax, placement_in_syntax)]
-/// use std::boxed::HEAP;
-///
-/// fn main() {
-///     let foo: Box<i32> = in HEAP { 5 };
-///     let foo = box 5;
-/// }
-/// ```
-#[unstable(feature = "box_heap",
-           reason = "may be renamed; uncertain about custom allocator design",
-           issue = "27779")]
-pub const HEAP: ExchangeHeapSingleton = ExchangeHeapSingleton { _force_singleton: () };
-
-/// This the singleton type used solely for `boxed::HEAP`.
-#[unstable(feature = "box_heap",
-           reason = "may be renamed; uncertain about custom allocator design",
-           issue = "27779")]
-#[allow(missing_debug_implementations)]
-#[derive(Copy, Clone)]
-pub struct ExchangeHeapSingleton {
-    _force_singleton: (),
-}
 
 /// A pointer type for heap allocation.
 ///
@@ -111,121 +77,6 @@ pub struct ExchangeHeapSingleton {
 #[fundamental]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Box<T: ?Sized>(Unique<T>);
-
-/// `IntermediateBox` represents uninitialized backing storage for `Box`.
-///
-/// FIXME (pnkfelix): Ideally we would just reuse `Box<T>` instead of
-/// introducing a separate `IntermediateBox<T>`; but then you hit
-/// issues when you e.g. attempt to destructure an instance of `Box`,
-/// since it is a lang item and so it gets special handling by the
-/// compiler.  Easier just to make this parallel type for now.
-///
-/// FIXME (pnkfelix): Currently the `box` protocol only supports
-/// creating instances of sized types. This IntermediateBox is
-/// designed to be forward-compatible with a future protocol that
-/// supports creating instances of unsized types; that is why the type
-/// parameter has the `?Sized` generalization marker, and is also why
-/// this carries an explicit size. However, it probably does not need
-/// to carry the explicit alignment; that is just a work-around for
-/// the fact that the `align_of` intrinsic currently requires the
-/// input type to be Sized (which I do not think is strictly
-/// necessary).
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-#[allow(missing_debug_implementations)]
-pub struct IntermediateBox<T: ?Sized> {
-    ptr: *mut u8,
-    layout: Layout,
-    marker: marker::PhantomData<*mut T>,
-}
-
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-unsafe impl<T> Place<T> for IntermediateBox<T> {
-    fn pointer(&mut self) -> *mut T {
-        self.ptr as *mut T
-    }
-}
-
-unsafe fn finalize<T>(b: IntermediateBox<T>) -> Box<T> {
-    let p = b.ptr as *mut T;
-    mem::forget(b);
-    Box::from_raw(p)
-}
-
-fn make_place<T>() -> IntermediateBox<T> {
-    let layout = Layout::new::<T>();
-
-    let p = if layout.size() == 0 {
-        mem::align_of::<T>() as *mut u8
-    } else {
-        unsafe {
-            Heap.alloc(layout.clone()).unwrap_or_else(|err| {
-                Heap.oom(err)
-            })
-        }
-    };
-
-    IntermediateBox {
-        ptr: p,
-        layout,
-        marker: marker::PhantomData,
-    }
-}
-
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-impl<T> BoxPlace<T> for IntermediateBox<T> {
-    fn make_place() -> IntermediateBox<T> {
-        make_place()
-    }
-}
-
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-impl<T> InPlace<T> for IntermediateBox<T> {
-    type Owner = Box<T>;
-    unsafe fn finalize(self) -> Box<T> {
-        finalize(self)
-    }
-}
-
-#[unstable(feature = "placement_new_protocol", issue = "27779")]
-impl<T> Boxed for Box<T> {
-    type Data = T;
-    type Place = IntermediateBox<T>;
-    unsafe fn finalize(b: IntermediateBox<T>) -> Box<T> {
-        finalize(b)
-    }
-}
-
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-impl<T> Placer<T> for ExchangeHeapSingleton {
-    type Place = IntermediateBox<T>;
-
-    fn make_place(self) -> IntermediateBox<T> {
-        make_place()
-    }
-}
-
-#[unstable(feature = "placement_in",
-           reason = "placement box design is still being worked out.",
-           issue = "27779")]
-impl<T: ?Sized> Drop for IntermediateBox<T> {
-    fn drop(&mut self) {
-        if self.layout.size() > 0 {
-            unsafe {
-                Heap.dealloc(self.ptr, self.layout.clone())
-            }
-        }
-    }
-}
 
 impl<T> Box<T> {
     /// Allocates memory on the heap and then places `x` into it.
@@ -333,6 +184,7 @@ impl<T: ?Sized> Box<T> {
 
     #[unstable(feature = "ptr_internals", issue = "0", reason = "use into_raw_non_null instead")]
     #[inline]
+    #[doc(hidden)]
     pub fn into_unique(b: Box<T>) -> Unique<T> {
         let unique = b.0;
         mem::forget(b);
@@ -578,6 +430,7 @@ impl<'a, T: Copy> From<&'a [T]> for Box<[T]> {
 
 #[stable(feature = "box_from_slice", since = "1.17.0")]
 impl<'a> From<&'a str> for Box<str> {
+    #[inline]
     fn from(s: &'a str) -> Box<str> {
         unsafe { from_boxed_utf8_unchecked(Box::from(s.as_bytes())) }
     }
@@ -585,6 +438,7 @@ impl<'a> From<&'a str> for Box<str> {
 
 #[stable(feature = "boxed_str_conv", since = "1.19.0")]
 impl From<Box<str>> for Box<[u8]> {
+    #[inline]
     fn from(s: Box<str>) -> Self {
         unsafe { Box::from_raw(Box::into_raw(s) as *mut [u8]) }
     }
@@ -994,3 +848,6 @@ impl<T: ?Sized> fmt::Pointer for PinBox<T> {
 
 #[unstable(feature = "pin", issue = "49150")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<PinBox<U>> for PinBox<T> {}
+
+#[unstable(feature = "pin", issue = "49150")]
+unsafe impl<T: ?Sized> Unpin for PinBox<T> {}

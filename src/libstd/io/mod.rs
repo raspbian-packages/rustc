@@ -595,6 +595,11 @@ pub trait Read {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// (See also the [`std::fs::read`] convenience function for reading from a
+    /// file.)
+    ///
+    /// [`std::fs::read`]: ../fs/fn.read.html
     #[stable(feature = "rust1", since = "1.0.0")]
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
         read_to_end(self, buf)
@@ -633,6 +638,11 @@ pub trait Read {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// (See also the [`std::fs::read_to_string`] convenience function for
+    /// reading from a file.)
+    ///
+    /// [`std::fs::read_to_string`]: ../fs/fn.read_to_string.html
     #[stable(feature = "rust1", since = "1.0.0")]
     fn read_to_string(&mut self, buf: &mut String) -> Result<usize> {
         // Note that we do *not* call `.read_to_end()` here. We are passing
@@ -830,6 +840,9 @@ pub trait Read {
                                          of where errors happen is currently \
                                          unclear and may change",
                issue = "27802")]
+    #[rustc_deprecated(since = "1.27.0", reason = "Use str::from_utf8 instead:
+        https://doc.rust-lang.org/nightly/std/str/struct.Utf8Error.html#examples")]
+    #[allow(deprecated)]
     fn chars(self) -> Chars<Self> where Self: Sized {
         Chars { inner: self }
     }
@@ -1819,7 +1832,6 @@ impl<T> Take<T> {
     /// # Examples
     ///
     /// ```no_run
-    /// #![feature(take_set_limit)]
     /// use std::io;
     /// use std::io::prelude::*;
     /// use std::fs::File;
@@ -1835,7 +1847,7 @@ impl<T> Take<T> {
     ///     Ok(())
     /// }
     /// ```
-    #[unstable(feature = "take_set_limit", issue = "42781")]
+    #[stable(feature = "take_set_limit", since = "1.27.0")]
     pub fn set_limit(&mut self, limit: u64) {
         self.limit = limit;
     }
@@ -2001,16 +2013,22 @@ impl<R: Read> Iterator for Bytes<R> {
 /// [chars]: trait.Read.html#method.chars
 #[unstable(feature = "io", reason = "awaiting stability of Read::chars",
            issue = "27802")]
+#[rustc_deprecated(since = "1.27.0", reason = "Use str::from_utf8 instead:
+    https://doc.rust-lang.org/nightly/std/str/struct.Utf8Error.html#examples")]
 #[derive(Debug)]
+#[allow(deprecated)]
 pub struct Chars<R> {
     inner: R,
 }
 
 /// An enumeration of possible errors that can be generated from the `Chars`
 /// adapter.
-#[derive(Debug)]
 #[unstable(feature = "io", reason = "awaiting stability of Read::chars",
            issue = "27802")]
+#[rustc_deprecated(since = "1.27.0", reason = "Use str::from_utf8 instead:
+    https://doc.rust-lang.org/nightly/std/str/struct.Utf8Error.html#examples")]
+#[derive(Debug)]
+#[allow(deprecated)]
 pub enum CharsError {
     /// Variant representing that the underlying stream was read successfully
     /// but it did not contain valid utf8 data.
@@ -2022,6 +2040,7 @@ pub enum CharsError {
 
 #[unstable(feature = "io", reason = "awaiting stability of Read::chars",
            issue = "27802")]
+#[allow(deprecated)]
 impl<R: Read> Iterator for Chars<R> {
     type Item = result::Result<char, CharsError>;
 
@@ -2054,6 +2073,7 @@ impl<R: Read> Iterator for Chars<R> {
 
 #[unstable(feature = "io", reason = "awaiting stability of Read::chars",
            issue = "27802")]
+#[allow(deprecated)]
 impl std_error::Error for CharsError {
     fn description(&self) -> &str {
         match *self {
@@ -2071,6 +2091,7 @@ impl std_error::Error for CharsError {
 
 #[unstable(feature = "io", reason = "awaiting stability of Read::chars",
            issue = "27802")]
+#[allow(deprecated)]
 impl fmt::Display for CharsError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {

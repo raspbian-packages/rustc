@@ -30,13 +30,10 @@ use unicode_xid::UnicodeXID;
 #[derive(Copy, Clone)]
 pub struct Lifetime {
     term: Term,
-    pub span: Span,
 }
 
 impl Lifetime {
-    pub fn new(term: Term, span: Span) -> Self {
-        let s = term.as_str();
-
+    pub fn new(s: &str, span: Span) -> Self {
         if !s.starts_with('\'') {
             panic!(
                 "lifetime name must start with apostrophe as in \"'a\", \
@@ -68,9 +65,16 @@ impl Lifetime {
         }
 
         Lifetime {
-            term: term,
-            span: span,
+            term: Term::new(s, span),
         }
+    }
+
+    pub fn span(&self) -> Span {
+        self.term.span()
+    }
+
+    pub fn set_span(&mut self, span: Span) {
+        self.term.set_span(span);
     }
 }
 
@@ -116,7 +120,7 @@ pub mod parsing {
 
     impl Synom for Lifetime {
         fn parse(input: Cursor) -> PResult<Self> {
-            let (span, term, rest) = match input.term() {
+            let (term, rest) = match input.term() {
                 Some(term) => term,
                 _ => return parse_error(),
             };
@@ -127,7 +131,6 @@ pub mod parsing {
             Ok((
                 Lifetime {
                     term: term,
-                    span: span,
                 },
                 rest,
             ))
@@ -143,14 +146,10 @@ pub mod parsing {
 mod printing {
     use super::*;
     use quote::{ToTokens, Tokens};
-    use proc_macro2::{TokenNode, TokenTree};
 
     impl ToTokens for Lifetime {
         fn to_tokens(&self, tokens: &mut Tokens) {
-            tokens.append(TokenTree {
-                span: self.span,
-                kind: TokenNode::Term(self.term),
-            })
+            self.term.to_tokens(tokens);
         }
     }
 }

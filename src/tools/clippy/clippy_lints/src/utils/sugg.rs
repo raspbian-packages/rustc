@@ -69,7 +69,6 @@ impl<'a> Sugg<'a> {
                 hir::ExprRet(..) |
                 hir::ExprStruct(..) |
                 hir::ExprTup(..) |
-                hir::ExprTupField(..) |
                 hir::ExprWhile(..) => Sugg::NonParen(snippet),
                 hir::ExprAssign(..) => Sugg::BinOp(AssocOp::Assign, snippet),
                 hir::ExprAssignOp(op, ..) => Sugg::BinOp(hirbinop2assignop(op), snippet),
@@ -98,7 +97,6 @@ impl<'a> Sugg<'a> {
             ast::ExprKind::Closure(..) |
             ast::ExprKind::If(..) |
             ast::ExprKind::IfLet(..) |
-            ast::ExprKind::InPlace(..) |
             ast::ExprKind::Unary(..) |
             ast::ExprKind::Match(..) => Sugg::MaybeParen(snippet),
             ast::ExprKind::Block(..) |
@@ -122,7 +120,6 @@ impl<'a> Sugg<'a> {
             ast::ExprKind::Struct(..) |
             ast::ExprKind::Try(..) |
             ast::ExprKind::Tup(..) |
-            ast::ExprKind::TupField(..) |
             ast::ExprKind::Array(..) |
             ast::ExprKind::While(..) |
             ast::ExprKind::WhileLet(..) => Sugg::NonParen(snippet),
@@ -159,6 +156,20 @@ impl<'a> Sugg<'a> {
     /// Convenience method to create the `*<expr>` suggestion.
     pub fn deref(self) -> Sugg<'static> {
         make_unop("*", self)
+    }
+
+    /// Convenience method to create the `&*<expr>` suggestion. Currently this
+    /// is needed because `sugg.deref().addr()` produces an unnecessary set of
+    /// parentheses around the deref.
+    pub fn addr_deref(self) -> Sugg<'static> {
+        make_unop("&*", self)
+    }
+
+    /// Convenience method to create the `&mut *<expr>` suggestion. Currently
+    /// this is needed because `sugg.deref().mut_addr()` produces an unnecessary
+    /// set of parentheses around the deref.
+    pub fn mut_addr_deref(self) -> Sugg<'static> {
+        make_unop("&mut *", self)
     }
 
     /// Convenience method to create the `<lhs>..<rhs>` or `<lhs>...<rhs>`
@@ -308,7 +319,6 @@ pub fn make_assoc(op: AssocOp, lhs: &Sugg, rhs: &Sugg) -> Sugg<'static> {
         AssocOp::ShiftLeft |
         AssocOp::ShiftRight |
         AssocOp::Subtract => format!("{} {} {}", lhs, op.to_ast_binop().expect("Those are AST ops").to_string(), rhs),
-        AssocOp::Inplace => format!("in ({}) {}", lhs, rhs),
         AssocOp::Assign => format!("{} = {}", lhs, rhs),
         AssocOp::AssignOp(op) => format!("{} {}= {}", lhs, token_to_string(&token::BinOp(op)), rhs),
         AssocOp::As => format!("{} as {}", lhs, rhs),
@@ -350,7 +360,7 @@ fn associativity(op: &AssocOp) -> Associativity {
     use syntax::util::parser::AssocOp::*;
 
     match *op {
-        Inplace | Assign | AssignOp(_) => Associativity::Right,
+        Assign | AssignOp(_) => Associativity::Right,
         Add | BitAnd | BitOr | BitXor | LAnd | LOr | Multiply | As | Colon => Associativity::Both,
         Divide |
         Equal |

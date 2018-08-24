@@ -1,15 +1,10 @@
-//!
+//! Minimal portable vector types API.
+#![allow(unused)]
 
 /// Minimal interface: all packed SIMD vector types implement this.
 macro_rules! impl_minimal {
     ($id:ident, $elem_ty:ident, $elem_count:expr, $($elem_name:ident),+) => {
-        #[cfg_attr(feature = "cargo-clippy", allow(expl_impl_clone_on_copy))]
-        impl Clone for $id {
-            #[inline] // currently needed for correctness
-            fn clone(&self) -> Self {
-                *self
-            }
-        }
+        impl super::api::Lanes<[u32; $elem_count]> for $id {}
 
         impl $id {
             /// Creates a new instance with each vector elements initialized
@@ -49,9 +44,12 @@ macro_rules! impl_minimal {
 
             /// Extracts the value at `index`.
             ///
+            /// # Precondition
+            ///
             /// If `index >= Self::lanes()` the behavior is undefined.
             #[inline]
             pub unsafe fn extract_unchecked(self, index: usize) -> $elem_ty {
+                use coresimd::simd_llvm::simd_extract;
                 simd_extract(self, index as u32)
             }
 
@@ -69,9 +67,9 @@ macro_rules! impl_minimal {
 
             /// Returns a new vector where the value at `index` is replaced by `new_value`.
             ///
-            /// # Panics
+            /// # Precondition
             ///
-            /// If `index >= Self::lanes()`.
+            /// If `index >= Self::lanes()` the behavior is undefined.
             #[inline]
             #[must_use = "replace_unchecked does not modify the original value - it returns a new vector with the value at `index` replaced by `new_value`d"]
             pub unsafe fn replace_unchecked(
@@ -79,6 +77,7 @@ macro_rules! impl_minimal {
                 index: usize,
                 new_value: $elem_ty,
             ) -> Self {
+                use coresimd::simd_llvm::simd_insert;
                 simd_insert(self, index as u32, new_value)
             }
         }
@@ -90,7 +89,7 @@ macro_rules! test_minimal {
     ($id:ident, $elem_ty:ident, $elem_count:expr) => {
         #[test]
         fn minimal() {
-            use ::coresimd::simd::$id;
+            use coresimd::simd::$id;
             // TODO: test new
 
             // lanes:
@@ -125,7 +124,7 @@ macro_rules! test_minimal {
         #[test]
         #[should_panic]
         fn minimal_extract_panic_on_out_of_bounds() {
-            use ::coresimd::simd::$id;
+            use coresimd::simd::$id;
             const VAL: $elem_ty = 7 as $elem_ty;
             const VEC: $id = $id::splat(VAL);
             let _ = VEC.extract($id::lanes());
@@ -133,10 +132,10 @@ macro_rules! test_minimal {
         #[test]
         #[should_panic]
         fn minimal_replace_panic_on_out_of_bounds() {
-            use ::coresimd::simd::$id;
+            use coresimd::simd::$id;
             const VAL: $elem_ty = 7 as $elem_ty;
             const VEC: $id = $id::splat(VAL);
             let _ = VEC.replace($id::lanes(), 42 as $elem_ty);
         }
-    }
+    };
 }

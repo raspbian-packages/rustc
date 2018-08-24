@@ -1,5 +1,6 @@
 
 
+#![allow(print_literal, write_literal)]
 #![warn(print_stdout, use_debug)]
 
 use std::fmt::{Debug, Display, Formatter, Result};

@@ -12,11 +12,16 @@
 // ignore-aarch64
 // ignore-wasm
 // ignore-emscripten
+// ignore-mips
+// ignore-powerpc
+// ignore-powerpc64
+// ignore-powerpc64le
+// ignore-s390x
 
 #![feature(target_feature)]
 
 #[target_feature = "+sse2"]
-//~^ WARN: deprecated
+//~^ ERROR: must be of the form
 #[target_feature(enable = "foo")]
 //~^ ERROR: not valid for this target
 #[target_feature(bar)]

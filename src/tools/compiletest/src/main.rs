@@ -23,9 +23,13 @@ extern crate libc;
 extern crate log;
 extern crate regex;
 #[macro_use]
+#[cfg(windows)]
+extern crate lazy_static;
+#[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 extern crate test;
+extern crate rustfix;
 
 use std::env;
 use std::ffi::OsString;
@@ -38,6 +42,7 @@ use getopts::Options;
 use common::{Config, TestPaths};
 use common::{DebugInfoGdb, DebugInfoLldb, Mode, Pretty};
 use common::{expected_output_path, UI_EXTENSIONS};
+use common::CompareMode;
 use test::ColorConfig;
 use util::logv;
 
@@ -227,6 +232,12 @@ pub fn parse_config(args: Vec<String>) -> Config {
             "path to the remote test client",
             "PATH",
         )
+        .optopt(
+            "",
+            "compare-mode",
+            "mode describing what file the actual ui output will be compared to",
+            "COMPARE MODE"
+        )
         .optflag("h", "help", "show this message");
 
     let (argv0, args_) = args.split_first().unwrap();
@@ -276,6 +287,8 @@ pub fn parse_config(args: Vec<String>) -> Config {
         ),
     };
 
+    let src_base = opt_path(matches, "src-base");
+    let run_ignored = matches.opt_present("ignored");
     Config {
         compile_lib_path: make_absolute(opt_path(matches, "compile-lib-path")),
         run_lib_path: make_absolute(opt_path(matches, "run-lib-path")),
@@ -286,7 +299,7 @@ pub fn parse_config(args: Vec<String>) -> Config {
         valgrind_path: matches.opt_str("valgrind-path"),
         force_valgrind: matches.opt_present("force-valgrind"),
         llvm_filecheck: matches.opt_str("llvm-filecheck").map(|s| PathBuf::from(&s)),
-        src_base: opt_path(matches, "src-base"),
+        src_base,
         build_base: opt_path(matches, "build-base"),
         stage_id: matches.opt_str("stage-id").unwrap(),
         mode: matches
@@ -294,7 +307,7 @@ pub fn parse_config(args: Vec<String>) -> Config {
             .unwrap()
             .parse()
             .expect("invalid mode"),
-        run_ignored: matches.opt_present("ignored"),
+        run_ignored,
         filter: matches.free.first().cloned(),
         filter_exact: matches.opt_present("exact"),
         logfile: matches.opt_str("logfile").map(|s| PathBuf::from(&s)),
@@ -320,6 +333,7 @@ pub fn parse_config(args: Vec<String>) -> Config {
         quiet: matches.opt_present("quiet"),
         color,
         remote_test_client: matches.opt_str("remote-test-client").map(PathBuf::from),
+        compare_mode: matches.opt_str("compare-mode").map(CompareMode::parse),
 
         cc: matches.opt_str("cc").unwrap(),
         cxx: matches.opt_str("cxx").unwrap(),
@@ -600,7 +614,12 @@ pub fn is_test(file_name: &OsString) -> bool {
 }
 
 pub fn make_test(config: &Config, testpaths: &TestPaths) -> test::TestDescAndFn {
-    let early_props = EarlyProps::from_file(config, &testpaths.file);
+
+    let early_props = if config.mode == Mode::RunMake {
+        EarlyProps::from_file(config, &testpaths.file.join("Makefile"))
+    } else {
+        EarlyProps::from_file(config, &testpaths.file)
+    };
 
     // The `should-fail` annotation doesn't apply to pretty tests,
     // since we run the pretty printer across all tests by default.
@@ -615,7 +634,8 @@ pub fn make_test(config: &Config, testpaths: &TestPaths) -> test::TestDescAndFn 
     };
 
     // Debugging emscripten code doesn't make sense today
-    let ignore = early_props.ignore || !up_to_date(config, testpaths, &early_props)
+    let ignore = early_props.ignore
+        || !up_to_date(config, testpaths, &early_props)
         || (config.mode == DebugInfoGdb || config.mode == DebugInfoLldb)
             && config.target.contains("emscripten");
 
@@ -631,10 +651,15 @@ pub fn make_test(config: &Config, testpaths: &TestPaths) -> test::TestDescAndFn 
 }
 
 fn stamp(config: &Config, testpaths: &TestPaths) -> PathBuf {
+    let mode_suffix = match config.compare_mode {
+        Some(ref mode) => format!("-{}", mode.to_str()),
+        None => format!(""),
+    };
     let stamp_name = format!(
-        "{}-{}.stamp",
+        "{}-{}{}.stamp",
         testpaths.file.file_name().unwrap().to_str().unwrap(),
-        config.stage_id
+        config.stage_id,
+        mode_suffix
     );
     config
         .build_base
@@ -688,12 +713,15 @@ fn up_to_date(config: &Config, testpaths: &TestPaths, props: &EarlyProps) -> boo
     // UI test files.
     for extension in UI_EXTENSIONS {
         for revision in &props.revisions {
-            let path = &expected_output_path(testpaths, Some(revision), extension);
+            let path = &expected_output_path(testpaths,
+                                             Some(revision),
+                                             &config.compare_mode,
+                                             extension);
             inputs.push(mtime(path));
         }
 
         if props.revisions.is_empty() {
-            let path = &expected_output_path(testpaths, None, extension);
+            let path = &expected_output_path(testpaths, None, &config.compare_mode, extension);
             inputs.push(mtime(path));
         }
     }
@@ -714,7 +742,11 @@ pub fn make_test_name(config: &Config, testpaths: &TestPaths) -> test::TestName 
     let path = PathBuf::from(config.src_base.file_name().unwrap())
         .join(&testpaths.relative_dir)
         .join(&testpaths.file.file_name().unwrap());
-    test::DynTestName(format!("[{}] {}", config.mode, path.display()))
+    let mode_suffix = match config.compare_mode {
+        Some(ref mode) => format!(" ({})", mode.to_str()),
+        None => format!(""),
+    };
+    test::DynTestName(format!("[{}{}] {}", config.mode, mode_suffix, path.display()))
 }
 
 pub fn make_test_closure(config: &Config, testpaths: &TestPaths) -> test::TestFn {
