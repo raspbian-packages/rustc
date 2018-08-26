@@ -10,8 +10,7 @@ use utils::{is_direct_expn_of, match_def_path, opt_def_id, paths, resolve_node, 
 /// is not a format string and used literally. So while `format!("{}")` will
 /// fail to compile, `panic!("{}")` will not.
 ///
-/// **Known problems:** Should you want to use curly brackets in `panic!`
-/// without any parameter, this lint will warn.
+/// **Known problems:** None.
 ///
 /// **Example:**
 /// ```rust
@@ -35,7 +34,7 @@ impl LintPass for Pass {
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
     fn check_expr(&mut self, cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr) {
         if_chain! {
-            if let ExprBlock(ref block) = expr.node;
+            if let ExprBlock(ref block, _) = expr.node;
             if let Some(ref ex) = block.expr;
             if let ExprCall(ref fun, ref params) = ex.node;
             if params.len() == 2;
@@ -45,8 +44,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
             if let ExprLit(ref lit) = params[0].node;
             if is_direct_expn_of(expr.span, "panic").is_some();
             if let LitKind::Str(ref string, _) = lit.node;
-            if let Some(par) = string.as_str().find('{');
-            if string.as_str()[par..].contains('}');
+            let string = string.as_str().replace("{{", "").replace("}}", "");
+            if let Some(par) = string.find('{');
+            if string[par..].contains('}');
             if params[0].span.source_callee().is_none();
             if params[0].span.lo() != params[0].span.hi();
             then {

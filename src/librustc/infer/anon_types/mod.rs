@@ -9,12 +9,13 @@
 // except according to those terms.
 
 use hir::def_id::DefId;
+use hir;
 use infer::{self, InferCtxt, InferOk, TypeVariableOrigin};
 use infer::outlives::free_region_map::FreeRegionRelations;
 use rustc_data_structures::fx::FxHashMap;
 use syntax::ast;
 use traits::{self, PredicateObligation};
-use ty::{self, Ty, TyCtxt};
+use ty::{self, Ty, TyCtxt, GenericParamDefKind};
 use ty::fold::{BottomUpFolder, TypeFoldable, TypeFolder};
 use ty::outlives::Component;
 use ty::subst::{Kind, Substs, UnpackedKind};
@@ -313,12 +314,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         // `['a]` for the first impl trait and `'b` for the
         // second.
         let mut least_region = None;
-        for region_def in &abstract_type_generics.regions {
-            // Find the index of this region in the list of substitutions.
-            let index = region_def.index as usize;
-
+        for param in &abstract_type_generics.params {
+            match param.kind {
+                GenericParamDefKind::Lifetime => {}
+                _ => continue
+            }
             // Get the value supplied for this region from the substs.
-            let subst_arg = anon_defn.substs.region_at(index);
+            let subst_arg = anon_defn.substs.region_at(param.index as usize);
 
             // Compute the least upper bound of it with the other regions.
             debug!("constrain_anon_types: least_region={:?}", least_region);
@@ -555,7 +557,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for ReverseMapper<'cx, 'gcx, 'tcx> 
                         let mut err = struct_span_err!(
                             self.tcx.sess,
                             span,
-                            E0909,
+                            E0700,
                             "hidden type for `impl Trait` captures lifetime that \
                              does not appear in bounds",
                         );
@@ -613,13 +615,12 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for ReverseMapper<'cx, 'gcx, 'tcx> 
                 // compiler; those regions are ignored for the
                 // outlives relation, and hence don't affect trait
                 // selection or auto traits, and they are erased
-                // during trans.
+                // during codegen.
 
                 let generics = self.tcx.generics_of(def_id);
-                let parent_len = generics.parent_count();
                 let substs = self.tcx.mk_substs(substs.substs.iter().enumerate().map(
                     |(index, &kind)| {
-                        if index < parent_len {
+                        if index < generics.parent_count {
                             // Accommodate missing regions in the parent kinds...
                             self.fold_kind_mapping_missing_regions_to_empty(kind)
                         } else {
@@ -689,8 +690,16 @@ impl<'a, 'gcx, 'tcx> Instantiator<'a, 'gcx, 'tcx> {
                     // }
                     // ```
                     if let Some(anon_node_id) = tcx.hir.as_local_node_id(def_id) {
-                        let anon_parent_node_id = tcx.hir.get_parent(anon_node_id);
-                        let anon_parent_def_id = tcx.hir.local_def_id(anon_parent_node_id);
+                        let anon_parent_def_id = match tcx.hir.expect_item(anon_node_id).node {
+                            hir::ItemExistential(hir::ExistTy {
+                                impl_trait_fn: Some(parent),
+                                ..
+                            }) => parent,
+                            _ => {
+                                let anon_parent_node_id = tcx.hir.get_parent(anon_node_id);
+                                tcx.hir.local_def_id(anon_parent_node_id)
+                            },
+                        };
                         if self.parent_def_id == anon_parent_def_id {
                             return self.fold_anon_ty(ty, def_id, substs);
                         }

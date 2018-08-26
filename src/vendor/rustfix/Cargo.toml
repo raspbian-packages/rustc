@@ -12,16 +12,19 @@
 
 [package]
 name = "rustfix"
-version = "0.2.0"
+version = "0.3.1"
 authors = ["Pascal Hertleif <killercup@gmail.com>", "Oliver Schneider <oli-obk@users.noreply.github.com>"]
 exclude = ["etc/*", "examples/*", "tests/*"]
 description = "Automatically apply the suggestions made by rustc"
 documentation = "https://docs.rs/rustfix"
 readme = "README.md"
 license = "Apache-2.0/MIT"
-repository = "https://github.com/killercup/rustfix"
-[dependencies.quick-error]
-version = "1.2.1"
+repository = "https://github.com/rust-lang-nursery/rustfix"
+[dependencies.failure]
+version = "0.1.1"
+
+[dependencies.log]
+version = "0.4.1"
 
 [dependencies.serde]
 version = "1.0"
@@ -31,8 +34,11 @@ version = "1.0"
 
 [dependencies.serde_json]
 version = "1.0"
+[dev-dependencies.difference]
+version = "2.0.0"
+
 [dev-dependencies.duct]
-version = "0.8.2"
+version = "0.9"
 
 [dev-dependencies.env_logger]
 version = "0.5.0-rc.1"
@@ -40,8 +46,8 @@ version = "0.5.0-rc.1"
 [dev-dependencies.log]
 version = "0.4.1"
 
-[dev-dependencies.pretty_assertions]
-version = "0.4.1"
+[dev-dependencies.proptest]
+version = "0.7.0"
 
 [dev-dependencies.tempdir]
 version = "0.3.5"

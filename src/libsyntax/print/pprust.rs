@@ -13,7 +13,7 @@ pub use self::AnnNode::*;
 use rustc_target::spec::abi::{self, Abi};
 use ast::{self, BlockCheckMode, PatKind, RangeEnd, RangeSyntax};
 use ast::{SelfKind, RegionTyParamBound, TraitTyParamBound, TraitBoundModifier};
-use ast::Attribute;
+use ast::{Attribute, MacDelimiter};
 use util::parser::{self, AssocOp, Fixity};
 use attr;
 use codemap::{self, CodeMap};
@@ -224,6 +224,7 @@ pub fn token_to_string(tok: &Token) -> String {
         token::Pound                => "#".to_string(),
         token::Dollar               => "$".to_string(),
         token::Question             => "?".to_string(),
+        token::SingleQuote          => "'".to_string(),
 
         /* Literals */
         token::Literal(lit, suf) => {
@@ -273,6 +274,7 @@ pub fn token_to_string(tok: &Token) -> String {
             token::NtIdent(e, false)    => ident_to_string(e),
             token::NtIdent(e, true)     => format!("r#{}", ident_to_string(e)),
             token::NtLifetime(e)        => ident_to_string(e),
+            token::NtLiteral(ref e)     => expr_to_string(e),
             token::NtTT(ref tree)       => tt_to_string(tree.clone()),
             token::NtArm(ref e)         => arm_to_string(e),
             token::NtImplItem(ref e)    => impl_item_to_string(e),
@@ -420,7 +422,7 @@ pub fn arg_to_string(arg: &ast::Arg) -> String {
 }
 
 pub fn mac_to_string(arg: &ast::Mac) -> String {
-    to_string(|s| s.print_mac(arg, ::parse::token::Paren))
+    to_string(|s| s.print_mac(arg))
 }
 
 pub fn foreign_item_to_string(arg: &ast::ForeignItem) -> String {
@@ -722,7 +724,7 @@ pub trait PrintState<'a> {
             if segment.ident.name != keywords::CrateRoot.name() &&
                segment.ident.name != keywords::DollarCrate.name()
             {
-                self.writer().word(&segment.ident.name.as_str())?;
+                self.writer().word(&segment.ident.as_str())?;
             } else if segment.ident.name == keywords::DollarCrate.name() {
                 self.print_dollar_crate(segment.ident.span.ctxt())?;
             }
@@ -1074,16 +1076,16 @@ impl<'a> State<'a> {
             ast::TyKind::ImplTrait(ref bounds) => {
                 self.print_bounds("impl", &bounds[..])?;
             }
-            ast::TyKind::Array(ref ty, ref v) => {
+            ast::TyKind::Array(ref ty, ref length) => {
                 self.s.word("[")?;
                 self.print_type(ty)?;
                 self.s.word("; ")?;
-                self.print_expr(v)?;
+                self.print_expr(&length.value)?;
                 self.s.word("]")?;
             }
             ast::TyKind::Typeof(ref e) => {
                 self.s.word("typeof(")?;
-                self.print_expr(e)?;
+                self.print_expr(&e.value)?;
                 self.s.word(")")?;
             }
             ast::TyKind::Infer => {
@@ -1096,7 +1098,7 @@ impl<'a> State<'a> {
                 self.s.word("Self")?;
             }
             ast::TyKind::Mac(ref m) => {
-                self.print_mac(m, token::Paren)?;
+                self.print_mac(m)?;
             }
         }
         self.end()
@@ -1138,8 +1140,11 @@ impl<'a> State<'a> {
                 self.end() // end the outer cbox
             }
             ast::ForeignItemKind::Macro(ref m) => {
-                self.print_mac(m, token::Paren)?;
-                self.s.word(";")
+                self.print_mac(m)?;
+                match m.node.delim {
+                    MacDelimiter::Brace => Ok(()),
+                    _ => self.s.word(";")
+                }
             }
         }
     }
@@ -1392,16 +1397,24 @@ impl<'a> State<'a> {
                 self.print_where_clause(&generics.where_clause)?;
                 self.s.word(";")?;
             }
-            ast::ItemKind::Mac(codemap::Spanned { ref node, .. }) => {
-                self.print_path(&node.path, false, 0)?;
-                self.s.word("! ")?;
-                self.print_ident(item.ident)?;
-                self.cbox(INDENT_UNIT)?;
-                self.popen()?;
-                self.print_tts(node.stream())?;
-                self.pclose()?;
-                self.s.word(";")?;
-                self.end()?;
+            ast::ItemKind::Mac(ref mac) => {
+                if item.ident.name == keywords::Invalid.name() {
+                    self.print_mac(mac)?;
+                    match mac.node.delim {
+                        MacDelimiter::Brace => {}
+                        _ => self.s.word(";")?,
+                    }
+                } else {
+                    self.print_path(&mac.node.path, false, 0)?;
+                    self.s.word("! ")?;
+                    self.print_ident(item.ident)?;
+                    self.cbox(INDENT_UNIT)?;
+                    self.popen()?;
+                    self.print_tts(mac.node.stream())?;
+                    self.pclose()?;
+                    self.s.word(";")?;
+                    self.end()?;
+                }
             }
             ast::ItemKind::MacroDef(ref tts) => {
                 self.s.word("macro_rules! ")?;
@@ -1550,7 +1563,7 @@ impl<'a> State<'a> {
             Some(ref d) => {
                 self.s.space()?;
                 self.word_space("=")?;
-                self.print_expr(d)
+                self.print_expr(&d.value)
             }
             _ => Ok(())
         }
@@ -1607,16 +1620,12 @@ impl<'a> State<'a> {
                 self.print_associated_type(ti.ident, Some(bounds),
                                            default.as_ref().map(|ty| &**ty))?;
             }
-            ast::TraitItemKind::Macro(codemap::Spanned { ref node, .. }) => {
-                // code copied from ItemKind::Mac:
-                self.print_path(&node.path, false, 0)?;
-                self.s.word("! ")?;
-                self.cbox(INDENT_UNIT)?;
-                self.popen()?;
-                self.print_tts(node.stream())?;
-                self.pclose()?;
-                self.s.word(";")?;
-                self.end()?
+            ast::TraitItemKind::Macro(ref mac) => {
+                self.print_mac(mac)?;
+                match mac.node.delim {
+                    MacDelimiter::Brace => {}
+                    _ => self.s.word(";")?,
+                }
             }
         }
         self.ann.post(self, NodeSubItem(ti.id))
@@ -1641,16 +1650,12 @@ impl<'a> State<'a> {
             ast::ImplItemKind::Type(ref ty) => {
                 self.print_associated_type(ii.ident, None, Some(ty))?;
             }
-            ast::ImplItemKind::Macro(codemap::Spanned { ref node, .. }) => {
-                // code copied from ItemKind::Mac:
-                self.print_path(&node.path, false, 0)?;
-                self.s.word("! ")?;
-                self.cbox(INDENT_UNIT)?;
-                self.popen()?;
-                self.print_tts(node.stream())?;
-                self.pclose()?;
-                self.s.word(";")?;
-                self.end()?
+            ast::ImplItemKind::Macro(ref mac) => {
+                self.print_mac(mac)?;
+                match mac.node.delim {
+                    MacDelimiter::Brace => {}
+                    _ => self.s.word(";")?,
+                }
             }
         }
         self.ann.post(self, NodeSubItem(ii.id))
@@ -1693,11 +1698,7 @@ impl<'a> State<'a> {
                 let (ref mac, style, ref attrs) = **mac;
                 self.space_if_not_bol()?;
                 self.print_outer_attributes(attrs)?;
-                let delim = match style {
-                    ast::MacStmtStyle::Braces => token::Brace,
-                    _ => token::Paren
-                };
-                self.print_mac(mac, delim)?;
+                self.print_mac(mac)?;
                 if style == ast::MacStmtStyle::Semicolon {
                     self.s.word(";")?;
                 }
@@ -1790,7 +1791,7 @@ impl<'a> State<'a> {
                         self.print_else(e.as_ref().map(|e| &**e))
                     }
                     // "final else"
-                    ast::ExprKind::Block(ref b) => {
+                    ast::ExprKind::Block(ref b, _) => {
                         self.cbox(INDENT_UNIT - 1)?;
                         self.ibox(0)?;
                         self.s.word(" else ")?;
@@ -1827,25 +1828,22 @@ impl<'a> State<'a> {
         self.print_else(elseopt)
     }
 
-    pub fn print_mac(&mut self, m: &ast::Mac, delim: token::DelimToken)
-                     -> io::Result<()> {
+    pub fn print_mac(&mut self, m: &ast::Mac) -> io::Result<()> {
         self.print_path(&m.node.path, false, 0)?;
         self.s.word("!")?;
-        match delim {
-            token::Paren => self.popen()?,
-            token::Bracket => self.s.word("[")?,
-            token::Brace => {
+        match m.node.delim {
+            MacDelimiter::Parenthesis => self.popen()?,
+            MacDelimiter::Bracket => self.s.word("[")?,
+            MacDelimiter::Brace => {
                 self.head("")?;
                 self.bopen()?;
             }
-            token::NoDelim => {}
         }
         self.print_tts(m.node.stream())?;
-        match delim {
-            token::Paren => self.pclose(),
-            token::Bracket => self.s.word("]"),
-            token::Brace => self.bclose(m.span),
-            token::NoDelim => Ok(()),
+        match m.node.delim {
+            MacDelimiter::Parenthesis => self.pclose(),
+            MacDelimiter::Bracket => self.s.word("]"),
+            MacDelimiter::Brace => self.bclose(m.span),
         }
     }
 
@@ -1903,14 +1901,14 @@ impl<'a> State<'a> {
 
     fn print_expr_repeat(&mut self,
                          element: &ast::Expr,
-                         count: &ast::Expr,
+                         count: &ast::AnonConst,
                          attrs: &[Attribute]) -> io::Result<()> {
         self.ibox(INDENT_UNIT)?;
         self.s.word("[")?;
         self.print_inner_attributes_inline(attrs)?;
         self.print_expr(element)?;
         self.word_space(";")?;
-        self.print_expr(count)?;
+        self.print_expr(&count.value)?;
         self.s.word("]")?;
         self.end()
     }
@@ -2187,7 +2185,11 @@ impl<'a> State<'a> {
                 // empty box to satisfy the close.
                 self.ibox(0)?;
             }
-            ast::ExprKind::Block(ref blk) => {
+            ast::ExprKind::Block(ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
+                    self.word_space(":")?;
+                }
                 // containing cbox, will be closed by print-block at }
                 self.cbox(INDENT_UNIT)?;
                 // head-box, will be closed by print-block after {
@@ -2334,7 +2336,7 @@ impl<'a> State<'a> {
 
                 self.pclose()?;
             }
-            ast::ExprKind::Mac(ref m) => self.print_mac(m, token::Paren)?,
+            ast::ExprKind::Mac(ref m) => self.print_mac(m)?,
             ast::ExprKind::Paren(ref e) => {
                 self.popen()?;
                 self.print_inner_attributes_inline(attrs)?;
@@ -2375,10 +2377,10 @@ impl<'a> State<'a> {
     }
 
     pub fn print_ident(&mut self, ident: ast::Ident) -> io::Result<()> {
-        if token::is_raw_guess(ident) {
+        if ident.is_raw_guess() {
             self.s.word(&format!("r#{}", ident))?;
         } else {
-            self.s.word(&ident.name.as_str())?;
+            self.s.word(&ident.as_str())?;
         }
         self.ann.post(self, NodeIdent(&ident))
     }
@@ -2661,7 +2663,7 @@ impl<'a> State<'a> {
                 self.print_pat(inner)?;
                 self.pclose()?;
             }
-            PatKind::Mac(ref m) => self.print_mac(m, token::Paren)?,
+            PatKind::Mac(ref m) => self.print_mac(m)?,
         }
         self.ann.post(self, NodePat(pat))
     }
@@ -2700,7 +2702,12 @@ impl<'a> State<'a> {
         self.word_space("=>")?;
 
         match arm.body.node {
-            ast::ExprKind::Block(ref blk) => {
+            ast::ExprKind::Block(ref blk, opt_label) => {
+                if let Some(label) = opt_label {
+                    self.print_ident(label.ident)?;
+                    self.word_space(":")?;
+                }
+
                 // the block will close the pattern's ibox
                 self.print_block_unclosed_indent(blk, INDENT_UNIT)?;
 
@@ -2951,7 +2958,7 @@ impl<'a> State<'a> {
 
     pub fn print_use_tree(&mut self, tree: &ast::UseTree) -> io::Result<()> {
         match tree.kind {
-            ast::UseTreeKind::Simple(rename) => {
+            ast::UseTreeKind::Simple(rename, ..) => {
                 self.print_path(&tree.prefix, false, 0)?;
                 if let Some(rename) = rename {
                     self.s.space()?;

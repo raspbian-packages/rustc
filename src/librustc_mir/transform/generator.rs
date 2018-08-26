@@ -61,10 +61,9 @@
 
 use rustc::hir;
 use rustc::hir::def_id::DefId;
-use rustc::middle::const_val::ConstVal;
 use rustc::mir::*;
 use rustc::mir::visit::{PlaceContext, Visitor, MutVisitor};
-use rustc::ty::{self, TyCtxt, AdtDef, Ty, GeneratorInterior};
+use rustc::ty::{self, TyCtxt, AdtDef, Ty};
 use rustc::ty::subst::Substs;
 use util::dump_mir;
 use util::liveness::{self, LivenessMode};
@@ -79,7 +78,6 @@ use transform::simplify;
 use transform::no_landing_pads::no_landing_pads;
 use dataflow::{do_dataflow, DebugFormatted, state_for_location};
 use dataflow::{MaybeStorageLive, HaveBeenBorrowedLocals};
-use rustc::mir::interpret::{Value, PrimVal};
 
 pub struct StateTransform;
 
@@ -180,10 +178,10 @@ impl<'a, 'tcx> TransformVisitor<'a, 'tcx> {
             span: source_info.span,
             ty: self.tcx.types.u32,
             literal: Literal::Value {
-                value: self.tcx.mk_const(ty::Const {
-                    val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(state_disc.into()))),
-                    ty: self.tcx.types.u32
-                }),
+                value: ty::Const::from_bits(
+                    self.tcx,
+                    state_disc.into(),
+                    ty::ParamEnv::empty().and(self.tcx.types.u32)),
             },
         });
         Statement {
@@ -297,14 +295,15 @@ fn make_generator_state_argument_indirect<'a, 'tcx>(
 
 fn replace_result_variable<'tcx>(ret_ty: Ty<'tcx>,
                             mir: &mut Mir<'tcx>) -> Local {
+    let source_info = source_info(mir);
     let new_ret = LocalDecl {
         mutability: Mutability::Mut,
         ty: ret_ty,
         name: None,
-        source_info: source_info(mir),
-        syntactic_scope: ARGUMENT_VISIBILITY_SCOPE,
+        source_info,
+        visibility_scope: source_info.scope,
         internal: false,
-        is_user_variable: false,
+        is_user_variable: None,
     };
     let new_ret_local = Local::new(mir.local_decls.len());
     mir.local_decls.push(new_ret);
@@ -464,7 +463,8 @@ fn locals_live_across_suspend_points<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 fn compute_layout<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             source: MirSource,
                             upvars: Vec<Ty<'tcx>>,
-                            interior: GeneratorInterior<'tcx>,
+                            interior: Ty<'tcx>,
+                            movable: bool,
                             mir: &mut Mir<'tcx>)
     -> (HashMap<Local, (Ty<'tcx>, usize)>,
         GeneratorLayout<'tcx>,
@@ -474,11 +474,11 @@ fn compute_layout<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let (live_locals, storage_liveness) = locals_live_across_suspend_points(tcx,
                                                                             mir,
                                                                             source,
-                                                                            interior.movable);
+                                                                            movable);
     // Erase regions from the types passed in from typeck so we can compare them with
     // MIR types
     let allowed_upvars = tcx.erase_regions(&upvars);
-    let allowed = match interior.witness.sty {
+    let allowed = match interior.sty {
         ty::TyGeneratorWitness(s) => tcx.erase_late_bound_regions(&s),
         _ => bug!(),
     };
@@ -642,9 +642,9 @@ fn create_generator_drop_shim<'a, 'tcx>(
         ty: tcx.mk_nil(),
         name: None,
         source_info,
-        syntactic_scope: ARGUMENT_VISIBILITY_SCOPE,
+        visibility_scope: source_info.scope,
         internal: false,
-        is_user_variable: false,
+        is_user_variable: None,
     };
 
     make_generator_state_argument_indirect(tcx, def_id, &mut mir);
@@ -658,9 +658,9 @@ fn create_generator_drop_shim<'a, 'tcx>(
         }),
         name: None,
         source_info,
-        syntactic_scope: ARGUMENT_VISIBILITY_SCOPE,
+        visibility_scope: source_info.scope,
         internal: false,
-        is_user_variable: false,
+        is_user_variable: None,
     };
 
     no_landing_pads(tcx, &mut mir);
@@ -697,10 +697,7 @@ fn insert_panic_block<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             span: mir.span,
             ty: tcx.types.bool,
             literal: Literal::Value {
-                value: tcx.mk_const(ty::Const {
-                    val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(0))),
-                    ty: tcx.types.bool
-                }),
+                value: ty::Const::from_bool(tcx, false),
             },
         }),
         expected: true,
@@ -766,7 +763,7 @@ fn create_generator_resume_function<'a, 'tcx>(
 fn source_info<'a, 'tcx>(mir: &Mir<'tcx>) -> SourceInfo {
     SourceInfo {
         span: mir.span,
-        scope: ARGUMENT_VISIBILITY_SCOPE,
+        scope: OUTERMOST_SOURCE_SCOPE,
     }
 }
 
@@ -853,9 +850,11 @@ impl MirPass for StateTransform {
         let gen_ty = mir.local_decls.raw[1].ty;
 
         // Get the interior types and substs which typeck computed
-        let (upvars, interior) = match gen_ty.sty {
-            ty::TyGenerator(_, substs, interior) => {
-                (substs.upvar_tys(def_id, tcx).collect(), interior)
+        let (upvars, interior, movable) = match gen_ty.sty {
+            ty::TyGenerator(_, substs, movability) => {
+                (substs.upvar_tys(def_id, tcx).collect(),
+                 substs.witness(def_id, tcx),
+                 movability == hir::GeneratorMovability::Movable)
             }
             _ => bug!(),
         };
@@ -863,8 +862,10 @@ impl MirPass for StateTransform {
         // Compute GeneratorState<yield_ty, return_ty>
         let state_did = tcx.lang_items().gen_state().unwrap();
         let state_adt_ref = tcx.adt_def(state_did);
-        let state_substs = tcx.mk_substs([yield_ty.into(),
-            mir.return_ty().into()].iter());
+        let state_substs = tcx.intern_substs(&[
+            yield_ty.into(),
+            mir.return_ty().into(),
+        ]);
         let ret_ty = tcx.mk_adt(state_adt_ref, state_substs);
 
         // We rename RETURN_PLACE which has type mir.return_ty to new_ret_local
@@ -874,7 +875,13 @@ impl MirPass for StateTransform {
         // Extract locals which are live across suspension point into `layout`
         // `remap` gives a mapping from local indices onto generator struct indices
         // `storage_liveness` tells us which locals have live storage at suspension points
-        let (remap, layout, storage_liveness) = compute_layout(tcx, source, upvars, interior, mir);
+        let (remap, layout, storage_liveness) = compute_layout(
+            tcx,
+            source,
+            upvars,
+            interior,
+            movable,
+            mir);
 
         let state_field = mir.upvar_decls.len();
 

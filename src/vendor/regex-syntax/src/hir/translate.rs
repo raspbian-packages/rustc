@@ -289,13 +289,13 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                 self.set_flags(&x.flags);
             }
             Ast::Literal(ref x) => {
-                self.push(HirFrame::Expr(try!(self.hir_literal(x))));
+                self.push(HirFrame::Expr(self.hir_literal(x)?));
             }
             Ast::Dot(span) => {
-                self.push(HirFrame::Expr(try!(self.hir_dot(span))));
+                self.push(HirFrame::Expr(self.hir_dot(span)?));
             }
             Ast::Assertion(ref x) => {
-                self.push(HirFrame::Expr(try!(self.hir_assertion(x))));
+                self.push(HirFrame::Expr(self.hir_assertion(x)?));
             }
             Ast::Class(ast::Class::Perl(ref x)) => {
                 if self.flags().unicode() {
@@ -309,7 +309,7 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                 }
             }
             Ast::Class(ast::Class::Unicode(ref x)) => {
-                let cls = hir::Class::Unicode(try!(self.hir_unicode_class(x)));
+                let cls = hir::Class::Unicode(self.hir_unicode_class(x)?);
                 self.push(HirFrame::Expr(Hir::class(cls)));
             }
             Ast::Class(ast::Class::Bracketed(ref ast)) => {
@@ -324,8 +324,8 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                     self.push(HirFrame::Expr(expr));
                 } else {
                     let mut cls = self.pop().unwrap().unwrap_class_bytes();
-                    try!(self.bytes_fold_and_negate(
-                        &ast.span, ast.negated, &mut cls));
+                    self.bytes_fold_and_negate(
+                        &ast.span, ast.negated, &mut cls)?;
                     if cls.iter().next().is_none() {
                         return Err(self.error(
                             ast.span, ErrorKind::EmptyClassNotAllowed));
@@ -349,7 +349,9 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
             Ast::Concat(_) => {
                 let mut exprs = vec![];
                 while let Some(HirFrame::Expr(expr)) = self.pop() {
-                    exprs.push(expr);
+                    if !expr.kind().is_empty() {
+                        exprs.push(expr);
+                    }
                 }
                 exprs.reverse();
                 self.push(HirFrame::Expr(Hir::concat(exprs)));
@@ -400,7 +402,7 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                     self.push(HirFrame::ClassUnicode(cls));
                 } else {
                     let mut cls = self.pop().unwrap().unwrap_class_bytes();
-                    let byte = try!(self.class_literal_byte(x));
+                    let byte = self.class_literal_byte(x)?;
                     cls.push(hir::ClassBytesRange::new(byte, byte));
                     self.push(HirFrame::ClassBytes(cls));
                 }
@@ -412,8 +414,8 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                     self.push(HirFrame::ClassUnicode(cls));
                 } else {
                     let mut cls = self.pop().unwrap().unwrap_class_bytes();
-                    let start = try!(self.class_literal_byte(&x.start));
-                    let end = try!(self.class_literal_byte(&x.end));
+                    let start = self.class_literal_byte(&x.start)?;
+                    let end = self.class_literal_byte(&x.end)?;
                     cls.push(hir::ClassBytesRange::new(start, end));
                     self.push(HirFrame::ClassBytes(cls));
                 }
@@ -431,13 +433,13 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                     for &(s, e) in ascii_class(&x.kind) {
                         cls.push(hir::ClassBytesRange::new(s as u8, e as u8));
                     }
-                    try!(self.bytes_fold_and_negate(
-                        &x.span, x.negated, &mut cls));
+                    self.bytes_fold_and_negate(
+                        &x.span, x.negated, &mut cls)?;
                     self.push(HirFrame::ClassBytes(cls));
                 }
             }
             ast::ClassSetItem::Unicode(ref x) => {
-                let xcls = try!(self.hir_unicode_class(x));
+                let xcls = self.hir_unicode_class(x)?;
                 let mut cls = self.pop().unwrap().unwrap_class_unicode();
                 cls.union(&xcls);
                 self.push(HirFrame::ClassUnicode(cls));
@@ -465,8 +467,8 @@ impl<'t, 'p> Visitor for TranslatorI<'t, 'p> {
                     self.push(HirFrame::ClassUnicode(cls2));
                 } else {
                     let mut cls1 = self.pop().unwrap().unwrap_class_bytes();
-                    try!(self.bytes_fold_and_negate(
-                        &ast.span, ast.negated, &mut cls1));
+                    self.bytes_fold_and_negate(
+                        &ast.span, ast.negated, &mut cls1)?;
 
                     let mut cls2 = self.pop().unwrap().unwrap_class_bytes();
                     cls2.union(&cls1);
@@ -602,7 +604,7 @@ impl<'t, 'p> TranslatorI<'t, 'p> {
     }
 
     fn hir_literal(&self, lit: &ast::Literal) -> Result<Hir> {
-        let ch = match try!(self.literal_to_char(lit)) {
+        let ch = match self.literal_to_char(lit)? {
             byte @ hir::Literal::Byte(_) => return Ok(Hir::literal(byte)),
             hir::Literal::Unicode(ch) => ch,
         };
@@ -722,13 +724,10 @@ impl<'t, 'p> TranslatorI<'t, 'p> {
                     // It is possible for negated ASCII word boundaries to
                     // match at invalid UTF-8 boundaries, even when searching
                     // valid UTF-8.
-                    //
-                    // TODO(ag): Enable this error when regex goes to 1.0.
-                    // Otherwise, it is too steep of a breaking change.
-                    // if !self.trans().allow_invalid_utf8 {
-                        // return Err(self.error(
-                            // asst.span, ErrorKind::InvalidUtf8));
-                    // }
+                    if !self.trans().allow_invalid_utf8 {
+                        return Err(self.error(
+                            asst.span, ErrorKind::InvalidUtf8));
+                    }
                     hir::WordBoundary::AsciiNegate
                 })
             }
@@ -913,7 +912,7 @@ impl<'t, 'p> TranslatorI<'t, 'p> {
     /// Return a scalar byte value suitable for use as a literal in a byte
     /// character class.
     fn class_literal_byte(&self, ast: &ast::Literal) -> Result<u8> {
-        match try!(self.literal_to_char(ast)) {
+        match self.literal_to_char(ast)? {
             hir::Literal::Byte(byte) => Ok(byte),
             hir::Literal::Unicode(ch) => {
                 if ch <= 0x7F as char {
@@ -1024,8 +1023,8 @@ fn hir_ascii_class_bytes(kind: &ast::ClassAsciiKind) -> hir::ClassBytes {
 fn ascii_class(kind: &ast::ClassAsciiKind) -> &'static [(char, char)] {
     use ast::ClassAsciiKind::*;
 
-    // TODO: Get rid of these consts, which appear necessary for older
-    // versions of Rust.
+    // The contortions below with `const` appear necessary for older versions
+    // of Rust.
     type T = &'static [(char, char)];
     match *kind {
         Alnum => {
@@ -1509,11 +1508,10 @@ mod tests {
             t_bytes(r"(?-u)\B"),
             hir_word(hir::WordBoundary::AsciiNegate));
 
-        // TODO(ag): Enable this tests when regex goes to 1.0.
-        // assert_eq!(t_err(r"(?-u)\B"), TestError {
-            // kind: hir::ErrorKind::InvalidUtf8,
-            // span: Span::new(Position::new(5, 1, 6), Position::new(7, 1, 8)),
-        // });
+        assert_eq!(t_err(r"(?-u)\B"), TestError {
+            kind: hir::ErrorKind::InvalidUtf8,
+            span: Span::new(Position::new(5, 1, 6), Position::new(7, 1, 8)),
+        });
     }
 
     #[test]
@@ -1601,8 +1599,7 @@ mod tests {
     fn escape() {
         assert_eq!(
             t(r"\\\.\+\*\?\(\)\|\[\]\{\}\^\$\#"),
-            hir_lit(r"\.+*?()|[]{}^$#"),
-        );
+            hir_lit(r"\.+*?()|[]{}^$#"));
     }
 
     #[test]
@@ -1897,6 +1894,12 @@ mod tests {
         assert_eq!(
             t(r"\p{gc=Separator}"),
             hir_uclass_query(ClassQuery::Binary("Z")));
+        assert_eq!(
+            t(r"\p{Other}"),
+            hir_uclass_query(ClassQuery::Binary("Other")));
+        assert_eq!(
+            t(r"\pC"),
+            hir_uclass_query(ClassQuery::Binary("Other")));
 
         assert_eq!(
             t(r"\PZ"),

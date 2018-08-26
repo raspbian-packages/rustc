@@ -21,7 +21,6 @@ use rustc::session::Session;
 use syntax::ast::*;
 use syntax::attr;
 use syntax::codemap::Spanned;
-use syntax::parse::token;
 use syntax::symbol::keywords;
 use syntax::visit::{self, Visitor};
 use syntax_pos::Span;
@@ -40,14 +39,13 @@ impl<'a> AstValidator<'a> {
         let valid_names = [keywords::UnderscoreLifetime.name(),
                            keywords::StaticLifetime.name(),
                            keywords::Invalid.name()];
-        if !valid_names.contains(&ident.name) &&
-            token::is_reserved_ident(ident.without_first_quote()) {
+        if !valid_names.contains(&ident.name) && ident.without_first_quote().is_reserved() {
             self.err_handler().span_err(ident.span, "lifetimes cannot use keyword names");
         }
     }
 
     fn check_label(&self, ident: Ident) {
-        if token::is_reserved_ident(ident.without_first_quote()) {
+        if ident.without_first_quote().is_reserved() {
             self.err_handler()
                 .span_err(ident.span, &format!("invalid label name `{}`", ident.name));
         }
@@ -114,7 +112,7 @@ impl<'a> AstValidator<'a> {
         }
     }
 
-    /// matches '-' lit | lit (cf. parser::Parser::parse_pat_literal_maybe_minus),
+    /// matches '-' lit | lit (cf. parser::Parser::parse_literal_maybe_minus),
     /// or path for ranges.
     ///
     /// FIXME: do we want to allow expr -> pattern conversion to create path expressions?
@@ -441,6 +439,13 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
             }
         }
         visit::walk_generics(self, g)
+    }
+
+    fn visit_generic_param(&mut self, param: &'a GenericParam) {
+        if let GenericParam::Lifetime(ref ld) = *param {
+            self.check_lifetime(ld.lifetime.ident);
+        }
+        visit::walk_generic_param(self, param);
     }
 
     fn visit_pat(&mut self, pat: &'a Pat) {

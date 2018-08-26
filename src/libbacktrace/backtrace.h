@@ -1,5 +1,5 @@
 /* backtrace.h -- Public header file for stack backtrace library.
-   Copyright (C) 2012-2016 Free Software Foundation, Inc.
+   Copyright (C) 2012-2018 Free Software Foundation, Inc.
    Written by Ian Lance Taylor, Google.
 
 Redistribution and use in source and binary forms, with or without
@@ -7,13 +7,13 @@ modification, are permitted provided that the following conditions are
 met:
 
     (1) Redistributions of source code must retain the above copyright
-    notice, this list of conditions and the following disclaimer. 
+    notice, this list of conditions and the following disclaimer.
 
     (2) Redistributions in binary form must reproduce the above copyright
     notice, this list of conditions and the following disclaimer in
     the documentation and/or other materials provided with the
-    distribution.  
-    
+    distribution.
+
     (3) The name of the author may not be used to
     endorse or promote products derived from this software without
     specific prior written permission.
@@ -34,25 +34,8 @@ POSSIBILITY OF SUCH DAMAGE.  */
 #define BACKTRACE_H
 
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
-
-/* We want to get a definition for uintptr_t, but we still care about
-   systems that don't have <stdint.h>.  */
-#if defined(__GLIBC__) && __GLIBC__ >= 2
-
-#include <stdint.h>
-
-#elif defined(HAVE_STDINT_H)
-
-#include <stdint.h>
-
-#else
-
-/* Systems that don't have <stdint.h> must provide gstdint.h, e.g.,
-   from GCC_HEADER_STDINT in configure.ac.  */
-#include "gstdint.h"
-
-#endif
 
 #ifdef __cplusplus
 extern "C" {

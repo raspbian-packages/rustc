@@ -12,7 +12,7 @@
 
 [package]
 name = "backtrace-sys"
-version = "0.1.16"
+version = "0.1.22"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 build = "build.rs"
 description = "Bindings to the libbacktrace gcc library\n"
@@ -24,3 +24,6 @@ repository = "https://github.com/alexcrichton/backtrace-rs"
 version = "0.2"
 [build-dependencies.cc]
 version = "1.0"
+
+[build-dependencies.pkg-config]
+version = "0.3"

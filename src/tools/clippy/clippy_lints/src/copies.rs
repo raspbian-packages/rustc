@@ -151,7 +151,7 @@ fn lint_same_then_else(cx: &LateContext, blocks: &[&Block]) {
 /// Implementation of `IFS_SAME_COND`.
 fn lint_same_cond(cx: &LateContext, conds: &[&Expr]) {
     let hash: &Fn(&&Expr) -> u64 = &|expr| -> u64 {
-        let mut h = SpanlessHash::new(cx);
+        let mut h = SpanlessHash::new(cx, cx.tables);
         h.hash_expr(expr);
         h.finish()
     };
@@ -170,11 +170,11 @@ fn lint_same_cond(cx: &LateContext, conds: &[&Expr]) {
     }
 }
 
-/// Implementation if `MATCH_SAME_ARMS`.
+/// Implementation of `MATCH_SAME_ARMS`.
 fn lint_match_arms(cx: &LateContext, expr: &Expr) {
     if let ExprMatch(_, ref arms, MatchSource::Normal) = expr.node {
         let hash = |&(_, arm): &(usize, &Arm)| -> u64 {
-            let mut h = SpanlessHash::new(cx);
+            let mut h = SpanlessHash::new(cx, cx.tables);
             h.hash_expr(&arm.body);
             h.finish()
         };
@@ -238,7 +238,7 @@ fn if_sequence(mut expr: &Expr) -> (SmallVector<&Expr>, SmallVector<&Block>) {
 
     while let ExprIf(ref cond, ref then_expr, ref else_expr) = expr.node {
         conds.push(&**cond);
-        if let ExprBlock(ref block) = then_expr.node {
+        if let ExprBlock(ref block, _) = then_expr.node {
             blocks.push(block);
         } else {
             panic!("ExprIf node is not an ExprBlock");
@@ -253,7 +253,7 @@ fn if_sequence(mut expr: &Expr) -> (SmallVector<&Expr>, SmallVector<&Block>) {
 
     // final `else {..}`
     if !blocks.is_empty() {
-        if let ExprBlock(ref block) = expr.node {
+        if let ExprBlock(ref block, _) = expr.node {
             blocks.push(&**block);
         }
     }

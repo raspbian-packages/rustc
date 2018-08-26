@@ -5,13 +5,13 @@ version=4
 
 opts="\
 pgpsigurlmangle=s/$/.asc/,\
-uversionmangle=s/OLDVER/NEWVER~beta/,\
+uversionmangle=s/.*/NEWVER~beta.999/,\
 dversionmangle=s/\+dfsg\d*$//,\
-downloadurlmangle=s/-OLDVER-(.*)\.[gx]z/-beta-$1.xz/,\
-filenamemangle=s/.*\/(.*)-OLDVER-(.*)\.[gx]z(\..*)?/$1-NEWVER-beta-$2.xz$3/,\
+downloadurlmangle=s/rustc-.*-(.*)\.[gx]z/rustc-beta-$1.xz/,\
+filenamemangle=s/.*\/(.*)-[^-]*-(.*)\.[gx]z(\..*)?/$1-NEWVER-beta.999-$2.xz$3/,\
 repack,\
 repacksuffix=+dfsg1,\
 compression=xz,\
 " \
  https://www.rust-lang.org/en-US/other-installers.html \
- (?:.*/)rustc?-(OLDVER)-src\.tar\.[gx]z
+ (?:.*/)rustc?-(.*)-src\.tar\.[gx]z

@@ -16,15 +16,15 @@
 //! other phases of the compiler, which are generally required to hold in order
 //! to compile the program at all.
 //!
-//! Most lints can be written as `LintPass` instances. These run just before
-//! translation to LLVM bytecode. The `LintPass`es built into rustc are defined
+//! Most lints can be written as `LintPass` instances. These run after
+//! all other analyses. The `LintPass`es built into rustc are defined
 //! within `builtin.rs`, which has further comments on how to add such a lint.
 //! rustc can also load user-defined lint plugins via the plugin mechanism.
 //!
 //! Some of rustc's lints are defined elsewhere in the compiler and work by
 //! calling `add_lint()` on the overall `Session` object. This works when
 //! it happens before the main lint pass, which emits the lints stored by
-//! `add_lint()`. To emit lints after the main lint pass (from trans, for
+//! `add_lint()`. To emit lints after the main lint pass (from codegen, for
 //! example) requires more effort. See `emit_lint` and `GatherNodeLevels`
 //! in `context.rs`.
 
@@ -47,7 +47,7 @@ use syntax::symbol::Symbol;
 use syntax::visit as ast_visit;
 use syntax_pos::Span;
 use ty::TyCtxt;
-use ty::maps::Providers;
+use ty::query::Providers;
 use util::nodemap::NodeMap;
 
 pub use lint::context::{LateContext, EarlyContext, LintContext, LintStore,
@@ -77,8 +77,9 @@ pub struct Lint {
     /// e.g. "imports that are never used"
     pub desc: &'static str,
 
-    /// Deny lint after this edition
-    pub edition_deny: Option<Edition>,
+    /// Starting at the given edition, default to the given lint level. If this is `None`, then use
+    /// `default_level`.
+    pub edition_lint_opts: Option<(Edition, Level)>,
 }
 
 impl Lint {
@@ -88,32 +89,32 @@ impl Lint {
     }
 
     pub fn default_level(&self, session: &Session) -> Level {
-        if let Some(edition_deny) = self.edition_deny {
-            if session.edition() >= edition_deny {
-                return Level::Deny
-            }
-        }
-        self.default_level
+        self.edition_lint_opts
+            .filter(|(e, _)| *e <= session.edition())
+            .map(|(_, l)| l)
+            .unwrap_or(self.default_level)
     }
 }
 
 /// Declare a static item of type `&'static Lint`.
 #[macro_export]
 macro_rules! declare_lint {
-    ($vis: vis $NAME: ident, $Level: ident, $desc: expr, $edition: expr) => (
-        $vis static $NAME: &$crate::lint::Lint = &$crate::lint::Lint {
-            name: stringify!($NAME),
-            default_level: $crate::lint::$Level,
-            desc: $desc,
-            edition_deny: Some($edition)
-        };
-    );
     ($vis: vis $NAME: ident, $Level: ident, $desc: expr) => (
         $vis static $NAME: &$crate::lint::Lint = &$crate::lint::Lint {
             name: stringify!($NAME),
             default_level: $crate::lint::$Level,
             desc: $desc,
-            edition_deny: None,
+            edition_lint_opts: None,
+        };
+    );
+    ($vis: vis $NAME: ident, $Level: ident, $desc: expr,
+     $lint_edition: expr => $edition_level: ident $(,)?
+    ) => (
+        $vis static $NAME: &$crate::lint::Lint = &$crate::lint::Lint {
+            name: stringify!($NAME),
+            default_level: $crate::lint::$Level,
+            desc: $desc,
+            edition_lint_opts: Some(($lint_edition, $crate::lint::Level::$edition_level)),
         };
     );
 }
@@ -121,8 +122,7 @@ macro_rules! declare_lint {
 /// Declare a static `LintArray` and return it as an expression.
 #[macro_export]
 macro_rules! lint_array {
-    ($( $lint:expr ),*,) => { lint_array!( $( $lint ),* ) };
-    ($( $lint:expr ),*) => {{
+    ($( $lint:expr ),* $(,)?) => {{
          static ARRAY: LintArray = &[ $( &$lint ),* ];
          ARRAY
     }}

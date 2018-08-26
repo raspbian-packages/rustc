@@ -29,17 +29,6 @@ export DEB_HOST_RUST_TYPE
 # Uncomment this to turn on verbose mode.
 #export DH_VERBOSE=1
 
-# src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
-# gcc-6.  See bug #811573.
-CFLAGS += -Wno-misleading-indentation
-
-# Release type (one of beta, stable or nightly)
-RELEASE_CHANNEL := stable
-# See also ./build-preview-dsc.sh for a script that builds a beta/nightly .dsc
-# out of this packaging. Furthermore, if the build breaks after importing a new
-# upstream stable release, check the do_temporary_fixup function in that file
-# to see if we already know what fix to make.
-
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 # Use system LLVM (comment out to use vendored LLVM)
@@ -53,7 +42,7 @@ export LD_LIBRARY_PATH
 endif
 
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
-RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
+RUSTBUILD_FLAGS = --config debian/config.toml -vv --on-fail env
 # TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
 # an insane blow up in the time it takes to run tests. See upstream #37477 for
 # details. Upstream worked around it in #38984 but in Debian we can't take
@@ -150,11 +139,14 @@ override_dh_clean:
 	# Upstream contains a lot of these
 	dh_clean -XCargo.toml.orig
 
-debian/config.toml: debian/config.toml.in
+debian/config.toml: debian/config.toml.in debian/rules
+	u="$(DEB_VERSION_UPSTREAM)"; \
+	if [ "$$u" != "$${u%~beta.*+dfsg*}" ]; then channel="beta"; \
+	else channel="stable"; fi; echo $$channel; \
 	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
-		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DRELEASE_CHANNEL="$$channel" \
 		-DBUILD_DOCS="$(BUILD_DOCS)" \
 		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
 		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
@@ -175,7 +167,7 @@ override_dh_auto_configure: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
 	# fail the build if our version contains ~exp and we are not releasing to experimental
-	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental"
+	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental" -o "$(DEB_DISTRIBUTION)" = "UNRELEASED"
 	$(PRECONFIGURE_CHECK)
 	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
 	# work around #842634
@@ -221,7 +213,7 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
   FAILURES_ALLOWED = 36
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 44
+  FAILURES_ALLOWED = 50
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 160
@@ -378,10 +370,24 @@ source_orig-stage0:
 	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
 	rm -rf .pc
 
-debian/watch-beta: debian/watch-beta.in debian/rules
-	oldver=$(shell echo $(RUST_LONG_VERSION) | sed -e 's/\./\\./g'); \
+get_beta_version = \
+	u="$(DEB_VERSION_UPSTREAM)"; \
+	if [ "$$u" != "$${u%~beta.*+dfsg*}" ]; then \
+	newver=$(shell echo $(RUST_VERSION) | perl -lpe 's/(\d+)\.(\d+)/$$1 . "." . ($$2)/e'); \
+	else \
 	newver=$(shell echo $(RUST_VERSION) | perl -lpe 's/(\d+)\.(\d+)/$$1 . "." . ($$2+1)/e'); \
+	fi
+
+debian/watch-beta: debian/watch-beta.in debian/rules
+	set -e; $(get_beta_version); \
 	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
 
 source_orig-beta: debian/watch-beta
-	uscan $(USCAN_OPTS) --watchfile "$<"
+	uscan $(USCAN_OPTS) --verbose --watchfile "$<"
+	set -e; $(get_beta_version); \
+	tar xf ../rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
+	bv="$$(sed -re 's/[0-9]+.[0-9]+.[0-9]+-beta.([0-9]+) \(.*\)/\1/g' rustc-beta-src/version)"; \
+	bash -c 'shopt -s nullglob; for i in ../rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'
+	rm -f rustc-beta-src/version
+	rmdir -p rustc-beta-src
+	echo "prepared rustc $$newver.0~beta.$$bv"

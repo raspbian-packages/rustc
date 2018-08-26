@@ -13,10 +13,11 @@
 //! `[1]` Matthew Flatt, Ryan Culpepper, David Darais, and Robert Bruce Findler. 2012.
 //! *Macros that work together: Compile-time bindings, partial expansion,
 //! and definition contexts*. J. Funct. Program. 22, 2 (March 2012), 181-216.
-//! DOI=10.1017/S0956796812000093 <http://dx.doi.org/10.1017/S0956796812000093>
+//! DOI=10.1017/S0956796812000093 <https://doi.org/10.1017/S0956796812000093>
 
 use GLOBALS;
 use Span;
+use edition::Edition;
 use symbol::{Ident, Symbol};
 
 use serialize::{Encodable, Decodable, Encoder, Decoder};
@@ -151,6 +152,7 @@ pub struct HygieneData {
     syntax_contexts: Vec<SyntaxContextData>,
     markings: HashMap<(SyntaxContext, Mark), SyntaxContext>,
     gensym_to_ctxt: HashMap<Symbol, Span>,
+    default_edition: Edition,
 }
 
 impl HygieneData {
@@ -168,12 +170,21 @@ impl HygieneData {
             }],
             markings: HashMap::new(),
             gensym_to_ctxt: HashMap::new(),
+            default_edition: Edition::Edition2015,
         }
     }
 
     fn with<T, F: FnOnce(&mut HygieneData) -> T>(f: F) -> T {
         GLOBALS.with(|globals| f(&mut *globals.hygiene_data.borrow_mut()))
     }
+}
+
+pub fn default_edition() -> Edition {
+    HygieneData::with(|data| data.default_edition)
+}
+
+pub fn set_default_edition(edition: Edition) {
+    HygieneData::with(|data| data.default_edition = edition);
 }
 
 pub fn clear_markings() {
@@ -443,6 +454,8 @@ pub struct NameAndSpan {
     /// Whether the macro is allowed to use `unsafe` internally
     /// even if the user crate has `#![forbid(unsafe_code)]`.
     pub allow_internal_unsafe: bool,
+    /// Edition of the crate in which the macro is defined.
+    pub edition: Edition,
     /// The span of the macro definition itself. The macro may not
     /// have a sensible definition span (e.g. something defined
     /// completely inside libsyntax) in which case this is None.
@@ -476,6 +489,10 @@ pub enum CompilerDesugaringKind {
     DotFill,
     QuestionMark,
     Catch,
+    /// Desugaring of an `impl Trait` in return type position
+    /// to an `existential type Foo: Trait;` + replacing the
+    /// `impl Trait` with `Foo`.
+    ExistentialReturnType,
 }
 
 impl CompilerDesugaringKind {
@@ -485,6 +502,7 @@ impl CompilerDesugaringKind {
             DotFill => "...",
             QuestionMark => "?",
             Catch => "do catch",
+            ExistentialReturnType => "existental type",
         };
         Symbol::intern(s)
     }

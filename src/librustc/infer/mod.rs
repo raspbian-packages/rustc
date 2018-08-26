@@ -21,16 +21,16 @@ use hir::def_id::DefId;
 use middle::free_region::RegionRelations;
 use middle::region;
 use middle::lang_items;
-use ty::subst::Substs;
+use ty::subst::{Kind, Substs};
 use ty::{TyVid, IntVid, FloatVid};
-use ty::{self, Ty, TyCtxt};
+use ty::{self, Ty, TyCtxt, GenericParamDefKind};
 use ty::error::{ExpectedFound, TypeError, UnconstrainedNumeric};
 use ty::fold::TypeFoldable;
 use ty::relate::RelateResult;
 use traits::{self, ObligationCause, PredicateObligations};
-use rustc_data_structures::lazy_btree_map::LazyBTreeMap;
 use rustc_data_structures::unify as ut;
 use std::cell::{Cell, RefCell, Ref, RefMut};
+use std::collections::BTreeMap;
 use std::fmt;
 use syntax::ast;
 use errors::DiagnosticBuilder;
@@ -198,7 +198,7 @@ pub struct InferCtxt<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
 /// A map returned by `skolemize_late_bound_regions()` indicating the skolemized
 /// region that each late-bound region was replaced with.
-pub type SkolemizationMap<'tcx> = LazyBTreeMap<ty::BoundRegion, ty::Region<'tcx>>;
+pub type SkolemizationMap<'tcx> = BTreeMap<ty::BoundRegion, ty::Region<'tcx>>;
 
 /// See `error_reporting` module for more details
 #[derive(Clone, Debug)]
@@ -905,34 +905,35 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.next_region_var(RegionVariableOrigin::NLL(origin))
     }
 
-    /// Create a region inference variable for the given
-    /// region parameter definition.
-    pub fn region_var_for_def(&self,
-                              span: Span,
-                              def: &ty::RegionParameterDef)
-                              -> ty::Region<'tcx> {
-        self.next_region_var(EarlyBoundRegion(span, def.name))
-    }
+    pub fn var_for_def(&self,
+                       span: Span,
+                       param: &ty::GenericParamDef)
+                       -> Kind<'tcx> {
+        match param.kind {
+            GenericParamDefKind::Lifetime => {
+                // Create a region inference variable for the given
+                // region parameter definition.
+                self.next_region_var(EarlyBoundRegion(span, param.name)).into()
+            }
+            GenericParamDefKind::Type {..} => {
+                // Create a type inference variable for the given
+                // type parameter definition. The substitutions are
+                // for actual parameters that may be referred to by
+                // the default of this type parameter, if it exists.
+                // E.g. `struct Foo<A, B, C = (A, B)>(...);` when
+                // used in a path such as `Foo::<T, U>::new()` will
+                // use an inference variable for `C` with `[T, U]`
+                // as the substitutions for the default, `(T, U)`.
+                let ty_var_id =
+                    self.type_variables
+                        .borrow_mut()
+                        .new_var(self.universe(),
+                                    false,
+                                    TypeVariableOrigin::TypeParameterDefinition(span, param.name));
 
-    /// Create a type inference variable for the given
-    /// type parameter definition. The substitutions are
-    /// for actual parameters that may be referred to by
-    /// the default of this type parameter, if it exists.
-    /// E.g. `struct Foo<A, B, C = (A, B)>(...);` when
-    /// used in a path such as `Foo::<T, U>::new()` will
-    /// use an inference variable for `C` with `[T, U]`
-    /// as the substitutions for the default, `(T, U)`.
-    pub fn type_var_for_def(&self,
-                            span: Span,
-                            def: &ty::TypeParameterDef)
-                            -> Ty<'tcx> {
-        let ty_var_id = self.type_variables
-                            .borrow_mut()
-                            .new_var(self.universe(),
-                                     false,
-                                     TypeVariableOrigin::TypeParameterDefinition(span, def.name));
-
-        self.tcx.mk_var(ty_var_id)
+                self.tcx.mk_var(ty_var_id).into()
+            }
+        }
     }
 
     /// Given a set of generics defined on a type or impl, returns a substitution mapping each
@@ -941,10 +942,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                                  span: Span,
                                  def_id: DefId)
                                  -> &'tcx Substs<'tcx> {
-        Substs::for_item(self.tcx, def_id, |def, _| {
-            self.region_var_for_def(span, def)
-        }, |def, _| {
-            self.type_var_for_def(span, def)
+        Substs::for_item(self.tcx, def_id, |param, _| {
+            self.var_for_def(span, param)
         })
     }
 
@@ -1236,7 +1235,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         span: Span,
         lbrct: LateBoundRegionConversionTime,
         value: &ty::Binder<T>)
-        -> (T, LazyBTreeMap<ty::BoundRegion, ty::Region<'tcx>>)
+        -> (T, BTreeMap<ty::BoundRegion, ty::Region<'tcx>>)
         where T : TypeFoldable<'tcx>
     {
         self.tcx.replace_late_bound_regions(

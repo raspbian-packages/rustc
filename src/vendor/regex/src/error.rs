@@ -11,8 +11,6 @@
 use std::fmt;
 use std::iter::repeat;
 
-use syntax;
-
 /// An error that occurred during parsing or compiling a regular expression.
 #[derive(Clone, PartialEq)]
 pub enum Error {
@@ -66,11 +64,11 @@ impl fmt::Debug for Error {
         match *self {
             Error::Syntax(ref err) => {
                 let hr: String = repeat('~').take(79).collect();
-                try!(writeln!(f, "Syntax("));
-                try!(writeln!(f, "{}", hr));
-                try!(writeln!(f, "{}", err));
-                try!(writeln!(f, "{}", hr));
-                try!(write!(f, ")"));
+                writeln!(f, "Syntax(")?;
+                writeln!(f, "{}", hr)?;
+                writeln!(f, "{}", err)?;
+                writeln!(f, "{}", hr)?;
+                write!(f, ")")?;
                 Ok(())
             }
             Error::CompiledTooBig(limit) => {
@@ -82,11 +80,5 @@ impl fmt::Debug for Error {
                 f.debug_tuple("__Nonexhaustive").finish()
             }
         }
-    }
-}
-
-impl From<syntax::Error> for Error {
-    fn from(err: syntax::Error) -> Error {
-        Error::Syntax(err.to_string())
     }
 }

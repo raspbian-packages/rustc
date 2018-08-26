@@ -12,8 +12,8 @@ Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
                cargo:native (>= 0.19.0)      <!pkg.rustc.dlstage0>,
-               rustc:native (>= 1.26.0+dfsg) <!pkg.rustc.dlstage0>,
-               rustc:native (<= 1.27.2++)    <!pkg.rustc.dlstage0>,
+               rustc:native (>= 1.27.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc:native (<= 1.28.0++)    <!pkg.rustc.dlstage0>,
                llvm-6.0-dev:native,
                llvm-6.0-tools:native,
                libllvm6.0,
@@ -38,7 +38,7 @@ Build-Depends: debhelper (>= 9),
                ca-certificates <pkg.rustc.dlstage0>,
 Build-Conflicts: gdb-minimal <!nocheck>
 # ^ That version of rustc is broken
-Standards-Version: 4.1.4
+Standards-Version: 4.2.0
 Homepage: http://www.rust-lang.org/
 Vcs-Git: https://salsa.debian.org/rust-team/rust.git
 Vcs-Browser: https://salsa.debian.org/rust-team/rust
@@ -49,7 +49,7 @@ Multi-Arch: allowed
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, binutils (>= 2.26)
-Recommends: cargo (= 0.28), rust-gdb | rust-lldb
+Recommends: cargo (>= 0.29.0~~), cargo (<< 0.30.0~~), rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
 Replaces: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
 Breaks: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
@@ -66,7 +66,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.27
+Package: libstd-rust-1.28
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -91,7 +91,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.27 (= ${binary:Version})
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.28 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

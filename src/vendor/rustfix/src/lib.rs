@@ -1,11 +1,22 @@
 #[macro_use]
+extern crate log;
+#[macro_use]
+extern crate failure;
+#[cfg(test)]
+#[macro_use]
+extern crate proptest;
+#[macro_use]
 extern crate serde_derive;
 extern crate serde_json;
 
 use std::collections::HashSet;
+use std::ops::Range;
+
+use failure::Error;
 
 pub mod diagnostics;
 use diagnostics::{Diagnostic, DiagnosticSpan};
+mod replace;
 
 pub fn get_suggestions_from_json<S: ::std::hash::BuildHasher>(
     input: &str,
@@ -61,6 +72,7 @@ pub struct Solution {
 pub struct Snippet {
     pub file_name: String,
     pub line_range: LineRange,
+    pub range: Range<usize>,
     /// leading surrounding text, text to replace, trailing surrounding text
     ///
     /// This split is useful for higlighting the part that gets replaced
@@ -75,13 +87,17 @@ pub struct Replacement {
 
 fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
     // unindent the snippet
-    let indent = span.text.iter().map(|line| {
-        let indent = line.text
-            .chars()
-            .take_while(|&c| char::is_whitespace(c))
-            .count();
-        std::cmp::min(indent, line.highlight_start)
-    }).min().expect("text to replace is empty");
+    let indent = span.text
+        .iter()
+        .map(|line| {
+            let indent = line.text
+                .chars()
+                .take_while(|&c| char::is_whitespace(c))
+                .count();
+            std::cmp::min(indent, line.highlight_start)
+        })
+        .min()
+        .expect("text to replace is empty");
     let start = span.text[0].highlight_start - 1;
     let end = span.text[0].highlight_end - 1;
     let lead = span.text[0].text[indent..start].to_string();
@@ -109,18 +125,24 @@ fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
                 column: span.column_end,
             },
         },
+        range: (span.byte_start as usize)..(span.byte_end as usize),
         text: (lead, body, tail),
     }
 }
 
 fn collect_span(span: &DiagnosticSpan) -> Option<Replacement> {
-    span.suggested_replacement.clone().map(|replacement| Replacement {
-        snippet: parse_snippet(span),
-        replacement,
-    })
+    span.suggested_replacement
+        .clone()
+        .map(|replacement| Replacement {
+            snippet: parse_snippet(span),
+            replacement,
+        })
 }
 
-pub fn collect_suggestions<S: ::std::hash::BuildHasher>(diagnostic: &Diagnostic, only: &HashSet<String, S>) -> Option<Suggestion> {
+pub fn collect_suggestions<S: ::std::hash::BuildHasher>(
+    diagnostic: &Diagnostic,
+    only: &HashSet<String, S>,
+) -> Option<Suggestion> {
     if !only.is_empty() {
         if let Some(ref code) = diagnostic.code {
             if !only.contains(&code.code) {
@@ -133,27 +155,27 @@ pub fn collect_suggestions<S: ::std::hash::BuildHasher>(diagnostic: &Diagnostic,
         }
     }
 
-    let snippets = diagnostic.spans
+    let snippets = diagnostic
+        .spans
         .iter()
         .map(|span| parse_snippet(span))
         .collect();
 
-    let solutions: Vec<_> = diagnostic.children
+    let solutions: Vec<_> = diagnostic
+        .children
         .iter()
         .filter_map(|child| {
-        let replacements: Vec<_> = child.spans
-            .iter()
-            .filter_map(collect_span)
-            .collect();
-        if replacements.is_empty() {
-            None
-        } else {
-            Some(Solution {
-                message: child.message.clone(),
-                replacements,
-            })
-        }
-    }).collect();
+            let replacements: Vec<_> = child.spans.iter().filter_map(collect_span).collect();
+            if replacements.len() == 1 {
+                Some(Solution {
+                    message: child.message.clone(),
+                    replacements,
+                })
+            } else {
+                None
+            }
+        })
+        .collect();
 
     if solutions.is_empty() {
         None
@@ -166,58 +188,22 @@ pub fn collect_suggestions<S: ::std::hash::BuildHasher>(diagnostic: &Diagnostic,
     }
 }
 
-pub fn apply_suggestion(file_content: &mut String, suggestion: &Replacement) -> String {
-    use std::cmp::max;
+pub fn apply_suggestions(code: &str, suggestions: &[Suggestion]) -> Result<String, Error> {
+    use replace::Data;
 
-    let mut new_content = String::new();
-
-    // Add the lines before the section we want to replace
-    new_content.push_str(&file_content.lines()
-        .take(max(suggestion.snippet.line_range.start.line - 1, 0) as usize)
-        .collect::<Vec<_>>()
-        .join("\n"));
-    new_content.push_str("\n");
-
-    // Parts of line before replacement
-    new_content.push_str(&file_content.lines()
-        .nth(suggestion.snippet.line_range.start.line - 1)
-        .unwrap_or("")
-        .chars()
-        .take(suggestion.snippet.line_range.start.column - 1)
-        .collect::<String>());
-
-    // Insert new content! Finally!
-    new_content.push_str(&suggestion.replacement);
-
-    // Parts of line after replacement
-    new_content.push_str(&file_content.lines()
-        .nth(suggestion.snippet.line_range.end.line - 1)
-        .unwrap_or("")
-        .chars()
-        .skip(suggestion.snippet.line_range.end.column - 1)
-        .collect::<String>());
-
-    // Add the lines after the section we want to replace
-    new_content.push_str("\n");
-    new_content.push_str(&file_content.lines()
-        .skip(suggestion.snippet.line_range.end.line as usize)
-        .collect::<Vec<_>>()
-        .join("\n"));
-    new_content.push_str("\n");
-
-    new_content
-}
-
-pub fn apply_suggestions(code: &str, suggestions: &[Suggestion]) -> String {
-    let mut fixed = code.to_string();
+    let mut fixed = Data::new(code.as_bytes());
 
     for sug in suggestions.iter().rev() {
         for sol in &sug.solutions {
             for r in &sol.replacements {
-                fixed = apply_suggestion(&mut fixed, r);
+                fixed.replace_range(
+                    r.snippet.range.start,
+                    r.snippet.range.end.saturating_sub(1),
+                    r.replacement.as_bytes(),
+                )?;
             }
         }
     }
 
-    fixed
+    Ok(String::from_utf8(fixed.to_vec())?)
 }

@@ -21,7 +21,6 @@
       html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(collections_range)]
-#![feature(nonzero)]
 #![feature(unboxed_closures)]
 #![feature(fn_traits)]
 #![feature(unsize)]
@@ -44,6 +43,9 @@ extern crate parking_lot;
 #[macro_use]
 extern crate cfg_if;
 extern crate stable_deref_trait;
+extern crate rustc_rayon as rayon;
+extern crate rustc_rayon_core as rayon_core;
+extern crate rustc_hash;
 
 // See librustc_cratesio_shim/Cargo.toml for a comment explaining this.
 #[allow(unused_extern_crates)]
@@ -60,7 +62,6 @@ pub mod bitvec;
 pub mod graph;
 pub mod indexed_set;
 pub mod indexed_vec;
-pub mod lazy_btree_map;
 pub mod obligation_forest;
 pub mod sip128;
 pub mod snapshot_map;
@@ -74,8 +75,18 @@ pub mod control_flow_graph;
 pub mod flock;
 pub mod sync;
 pub mod owning_ref;
+pub mod tiny_list;
+pub mod sorted_map;
 
 pub struct OnDrop<F: Fn()>(pub F);
+
+impl<F: Fn()> OnDrop<F> {
+      /// Forgets the function which prevents it from running.
+      /// Ensure that the function owns no memory, otherwise it will be leaked.
+      pub fn disable(self) {
+            std::mem::forget(self);
+      }
+}
 
 impl<F: Fn()> Drop for OnDrop<F> {
       fn drop(&mut self) {

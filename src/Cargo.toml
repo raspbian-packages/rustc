@@ -4,7 +4,7 @@ members = [
   "rustc",
   "libstd",
   "libtest",
-  "librustc_trans",
+  "librustc_codegen_llvm",
   "tools/cargotest",
   "tools/clippy",
   "tools/compiletest",
@@ -20,6 +20,13 @@ members = [
   "tools/rustdoc",
   "tools/rustdoc-themes",
 ]
+
+# Curiously, libtest will segfault if compiled with opt-level=3
+# with some versions of XCode: https://github.com/rust-lang/rust/issues/50867
+[profile.release]
+opt-level = 2
+[profile.bench]
+opt-level = 2
 
 # These options are controlled from our rustc wrapper script, so turn them off
 # here and have them controlled elsewhere.

@@ -10,6 +10,13 @@ fn main() {
         return;
     }
 
+    // OpenBSD provides compiler_rt by default, use it instead of rebuilding it from source
+    if target.contains("openbsd") {
+        println!("cargo:rustc-link-search=native=/usr/lib");
+        println!("cargo:rustc-link-lib=static=compiler_rt");
+        return;
+    }
+
     // Forcibly enable memory intrinsics on wasm32 as we don't have a libc to
     // provide them.
     if target.contains("wasm32") {
@@ -174,8 +181,6 @@ mod c {
                 "divsc3.c",
                 "divxc3.c",
                 "extendhfsf2.c",
-                "floatdisf.c",
-                "floatundisf.c",
                 "int_util.c",
                 "muldc3.c",
                 "mulsc3.c",

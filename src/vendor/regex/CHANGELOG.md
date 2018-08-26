@@ -1,3 +1,77 @@
+1.0.0 (2018-05-01)
+==================
+This release marks the 1.0 release of regex.
+
+While this release includes some breaking changes, most users of older versions
+of the regex library should be able to migrate to 1.0 by simply bumping the
+version number. The important changes are as follows:
+
+* We adopt Rust 1.20 as the new minimum supported version of Rust for regex.
+  We also tentativley adopt a policy that permits bumping the minimum supported
+  version of Rust in minor version releases of regex, but no patch releases.
+  That is, with respect to semver, we do not strictly consider bumping the
+  minimum version of Rust to be a breaking change, but adopt a conservative
+  stance as a compromise.
+* Octal syntax in regular expressions has been disabled by default. This
+  permits better error messages that inform users that backreferences aren't
+  available. Octal syntax can be re-enabled via the corresponding option on
+  `RegexBuilder`.
+* `(?-u:\B)` is no longer allowed in Unicode regexes since it can match at
+  invalid UTF-8 code unit boundaries. `(?-u:\b)` is still allowed in Unicode
+  regexes.
+* The `From<regex_syntax::Error>` impl has been removed. This formally removes
+  the public dependency on `regex-syntax`.
+* A new feature, `use_std`, has been added and enabled by default. Disabling
+  the feature will result in a compilation error. In the future, this may
+  permit us to support `no_std` environments (w/ `alloc`) in a backwards
+  compatible way.
+
+For more information and discussion, please see
+[1.0 release tracking issue](https://github.com/rust-lang/regex/issues/457).
+
+
+0.2.11 (2018-05-01)
+===================
+This release primarily contains bug fixes. Some of them resolve bugs where
+the parser could panic.
+
+New features:
+
+* [FEATURE #459](https://github.com/rust-lang/regex/pull/459):
+  Include C++'s standard regex library and Boost's regex library in the
+  benchmark harness. We now include D/libphobos, C++/std, C++/boost, Oniguruma,
+  PCRE1, PCRE2, RE2 and Tcl in the harness.
+
+Bug fixes:
+
+* [BUG #445](https://github.com/rust-lang/regex/issues/445):
+  Clarify order of indices returned by RegexSet match iterator.
+* [BUG #461](https://github.com/rust-lang/regex/issues/461):
+  Improve error messages for invalid regexes like `[\d-a]`.
+* [BUG #464](https://github.com/rust-lang/regex/issues/464):
+  Fix a bug in the error message pretty printer that could cause a panic when
+  a regex contained a literal `\n` character.
+* [BUG #465](https://github.com/rust-lang/regex/issues/465):
+  Fix a panic in the parser that was caused by applying a repetition operator
+  to `(?flags)`.
+* [BUG #466](https://github.com/rust-lang/regex/issues/466):
+  Fix a bug where `\pC` was not recognized as an alias for `\p{Other}`.
+* [BUG #470](https://github.com/rust-lang/regex/pull/470):
+  Fix a bug where literal searches did more work than necessary for anchored
+  regexes.
+
+
+0.2.10 (2018-03-16)
+===================
+This release primarily updates the regex crate to changes made in `std::arch`
+on nightly Rust.
+
+New features:
+
+* [FEATURE #458](https://github.com/rust-lang/regex/pull/458):
+  The `Hir` type in `regex-syntax` now has a printer.
+
+
 0.2.9 (2018-03-12)
 ==================
 This release introduces a new nightly only feature, `unstable`, which enables
@@ -12,7 +86,7 @@ New features:
   The regex crate now includes AVX2 optimizations in addition to the extant
   SSSE3 optimization.
 
-Bug gixes:
+Bug fixes:
 
 * [BUG #455](https://github.com/rust-lang/regex/pull/455):
   Fix a bug where `(?x)[ / - ]` failed to parse.

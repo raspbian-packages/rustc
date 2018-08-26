@@ -14,6 +14,7 @@
 // ignore-powerpc64
 // ignore-powerpc64le
 // ignore-sparc
+// ignore-sparc64
 // ignore-mips
 // ignore-mips64
 

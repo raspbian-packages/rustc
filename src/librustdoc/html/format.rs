@@ -117,11 +117,11 @@ impl<'a> fmt::Display for TyParamBounds<'a> {
     }
 }
 
-impl fmt::Display for clean::GenericParam {
+impl fmt::Display for clean::GenericParamDef {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            clean::GenericParam::Lifetime(ref lp) => write!(f, "{}", lp),
-            clean::GenericParam::Type(ref tp) => {
+            clean::GenericParamDef::Lifetime(ref lp) => write!(f, "{}", lp),
+            clean::GenericParamDef::Type(ref tp) => {
                 f.write_str(&tp.name)?;
 
                 if !tp.bounds.is_empty() {
@@ -927,8 +927,19 @@ impl<'a> fmt::Display for Method<'a> {
 impl<'a> fmt::Display for VisSpace<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.get() {
-            Some(clean::Public) => write!(f, "pub "),
-            Some(clean::Inherited) | None => Ok(())
+            Some(clean::Public) => f.write_str("pub "),
+            Some(clean::Inherited) | None => Ok(()),
+            Some(clean::Visibility::Crate) => write!(f, "pub(crate) "),
+            Some(clean::Visibility::Restricted(did, ref path)) => {
+                f.write_str("pub(")?;
+                if path.segments.len() != 1
+                    || (path.segments[0].name != "self" && path.segments[0].name != "super")
+                {
+                    f.write_str("in ")?;
+                }
+                resolved_path(f, did, path, true, false)?;
+                f.write_str(") ")
+            }
         }
     }
 }

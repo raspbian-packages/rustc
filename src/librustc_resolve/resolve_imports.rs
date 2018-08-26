@@ -10,7 +10,7 @@
 
 use self::ImportDirectiveSubclass::*;
 
-use {AmbiguityError, Module, PerNS};
+use {AmbiguityError, CrateLint, Module, PerNS};
 use Namespace::{self, TypeNS, MacroNS};
 use {NameBinding, NameBindingKind, ToNameBinding, PathResult, PrivacyError};
 use Resolver;
@@ -18,16 +18,16 @@ use {names_to_string, module_to_string};
 use {resolve_error, ResolutionError};
 
 use rustc::ty;
-use rustc::lint::builtin::PUB_USE_OF_PRIVATE_EXTERN_CRATE;
+use rustc::lint::builtin::BuiltinLintDiagnostics;
+use rustc::lint::builtin::{DUPLICATE_MACRO_EXPORTS, PUB_USE_OF_PRIVATE_EXTERN_CRATE};
 use rustc::hir::def_id::{CRATE_DEF_INDEX, DefId};
 use rustc::hir::def::*;
 use rustc::session::DiagnosticMessageId;
 use rustc::util::nodemap::{FxHashMap, FxHashSet};
 
-use syntax::ast::{Ident, Name, NodeId};
+use syntax::ast::{Ident, Name, NodeId, CRATE_NODE_ID};
 use syntax::ext::base::Determinacy::{self, Determined, Undetermined};
 use syntax::ext::hygiene::Mark;
-use syntax::parse::token;
 use syntax::symbol::keywords;
 use syntax::util::lev_distance::find_best_match_for_name;
 use syntax_pos::Span;
@@ -56,12 +56,36 @@ pub enum ImportDirectiveSubclass<'a> {
 /// One import directive.
 #[derive(Debug,Clone)]
 pub struct ImportDirective<'a> {
+    /// The id of the `extern crate`, `UseTree` etc that imported this `ImportDirective`.
+    ///
+    /// In the case where the `ImportDirective` was expanded from a "nested" use tree,
+    /// this id is the id of the leaf tree. For example:
+    ///
+    /// ```ignore (pacify the mercilous tidy)
+    /// use foo::bar::{a, b}
+    /// ```
+    ///
+    /// If this is the import directive for `foo::bar::a`, we would have the id of the `UseTree`
+    /// for `a` in this field.
     pub id: NodeId,
+
+    /// The `id` of the "root" use-kind -- this is always the same as
+    /// `id` except in the case of "nested" use trees, in which case
+    /// it will be the `id` of the root use tree. e.g., in the example
+    /// from `id`, this would be the id of the `use foo::bar`
+    /// `UseTree` node.
+    pub root_id: NodeId,
+
+    /// Span of this use tree.
+    pub span: Span,
+
+    /// Span of the *root* use tree (see `root_id`).
+    pub root_span: Span,
+
     pub parent: Module<'a>,
     pub module_path: Vec<Ident>,
     pub imported_module: Cell<Option<Module<'a>>>, // the resolution of `module_path`
     pub subclass: ImportDirectiveSubclass<'a>,
-    pub span: Span,
     pub vis: Cell<ty::Visibility>,
     pub expansion: Mark,
     pub used: Cell<bool>,
@@ -70,6 +94,10 @@ pub struct ImportDirective<'a> {
 impl<'a> ImportDirective<'a> {
     pub fn is_glob(&self) -> bool {
         match self.subclass { ImportDirectiveSubclass::GlobImport { .. } => true, _ => false }
+    }
+
+    crate fn crate_lint(&self) -> CrateLint {
+        CrateLint::UsePath { root_id: self.root_id, root_span: self.root_span }
     }
 }
 
@@ -179,7 +207,6 @@ impl<'a> Resolver<'a> {
                             lexical: false,
                             b1: binding,
                             b2: shadowed_glob,
-                            legacy: false,
                         });
                     }
                 }
@@ -297,6 +324,8 @@ impl<'a> Resolver<'a> {
                                 subclass: ImportDirectiveSubclass<'a>,
                                 span: Span,
                                 id: NodeId,
+                                root_span: Span,
+                                root_id: NodeId,
                                 vis: ty::Visibility,
                                 expansion: Mark) {
         let current_module = self.current_module;
@@ -307,6 +336,8 @@ impl<'a> Resolver<'a> {
             subclass,
             span,
             id,
+            root_span,
+            root_id,
             vis: Cell::new(vis),
             expansion,
             used: Cell::new(false),
@@ -314,8 +345,8 @@ impl<'a> Resolver<'a> {
 
         self.indeterminate_imports.push(directive);
         match directive.subclass {
-            SingleImport { target, .. } => {
-                self.per_ns(|this, ns| {
+            SingleImport { target, type_ns_only, .. } => {
+                self.per_ns(|this, ns| if !type_ns_only || ns == TypeNS {
                     let mut resolution = this.resolution(current_module, target, ns).borrow_mut();
                     resolution.single_imports.add_directive(directive, this.use_extern_macros);
                 });
@@ -351,7 +382,6 @@ impl<'a> Resolver<'a> {
                 binding,
                 directive,
                 used: Cell::new(false),
-                legacy_self_import: false,
             },
             span: directive.span,
             vis,
@@ -400,7 +430,7 @@ impl<'a> Resolver<'a> {
     pub fn ambiguity(&self, b1: &'a NameBinding<'a>, b2: &'a NameBinding<'a>)
                      -> &'a NameBinding<'a> {
         self.arenas.alloc_name_binding(NameBinding {
-            kind: NameBindingKind::Ambiguity { b1: b1, b2: b2, legacy: false },
+            kind: NameBindingKind::Ambiguity { b1, b2 },
             vis: if b1.vis.is_at_least(b2.vis, self) { b1.vis } else { b2.vis },
             span: b1.span,
             expansion: Mark::root(),
@@ -572,7 +602,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
             // while resolving its module path.
             directive.vis.set(ty::Visibility::Invisible);
             let result = self.resolve_path(&directive.module_path[..], None, false,
-                                           directive.span, Some(directive.id));
+                                           directive.span, directive.crate_lint());
             directive.vis.set(vis);
 
             match result {
@@ -640,6 +670,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
     fn finalize_import(&mut self, directive: &'b ImportDirective<'b>) -> Option<(Span, String)> {
         self.current_module = directive.parent;
         let ImportDirective { ref module_path, span, .. } = *directive;
+        let mut warn_if_binding_comes_from_local_crate = false;
 
         // FIXME: Last path segment is treated specially in import resolution, so extern crate
         // mode for absolute paths needs some special support for single-segment imports.
@@ -653,6 +684,12 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                     return Some((directive.span,
                                  "cannot glob-import all possible crates".to_string()));
                 }
+                GlobImport { .. } if self.session.features_untracked().extern_absolute_paths => {
+                    self.lint_path_starts_with_module(
+                        directive.root_id,
+                        directive.root_span,
+                    );
+                }
                 SingleImport { source, target, .. } => {
                     let crate_root = if source.name == keywords::Crate.name() &&
                                         module_path[0].name != keywords::Extern.name() {
@@ -663,7 +700,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         } else {
                             Some(self.resolve_crate_root(source.span.ctxt().modern(), false))
                         }
-                    } else if is_extern && !token::is_path_segment_keyword(source) {
+                    } else if is_extern && !source.is_path_segment_keyword() {
                         let crate_id =
                             self.resolver.crate_loader.process_use_extern(
                                 source.name,
@@ -676,6 +713,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         self.populate_module_if_necessary(crate_root);
                         Some(crate_root)
                     } else {
+                        warn_if_binding_comes_from_local_crate = true;
                         None
                     };
 
@@ -687,7 +725,6 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                                 binding,
                                 directive,
                                 used: Cell::new(false),
-                                legacy_self_import: false,
                             },
                             vis: directive.vis.get(),
                             span: directive.span,
@@ -701,7 +738,13 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
             }
         }
 
-        let module_result = self.resolve_path(&module_path, None, true, span, Some(directive.id));
+        let module_result = self.resolve_path(
+            &module_path,
+            None,
+            true,
+            span,
+            directive.crate_lint(),
+        );
         let module = match module_result {
             PathResult::Module(module) => module,
             PathResult::Failed(span, msg, false) => {
@@ -710,13 +753,13 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
             }
             PathResult::Failed(span, msg, true) => {
                 let (mut self_path, mut self_result) = (module_path.clone(), None);
-                let is_special = |ident| token::is_path_segment_keyword(ident) &&
-                                         ident.name != keywords::CrateRoot.name();
+                let is_special = |ident: Ident| ident.is_path_segment_keyword() &&
+                                                ident.name != keywords::CrateRoot.name();
                 if !self_path.is_empty() && !is_special(self_path[0]) &&
                    !(self_path.len() > 1 && is_special(self_path[1])) {
                     self_path[0].name = keywords::SelfValue.name();
                     self_result = Some(self.resolve_path(&self_path, None, false,
-                                                         span, None));
+                                                         span, CrateLint::No));
                 }
                 return if let Some(PathResult::Module(..)) = self_result {
                     Some((span, format!("Did you mean `{}`?", names_to_string(&self_path[..]))))
@@ -747,7 +790,6 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         };
 
         let mut all_ns_err = true;
-        let mut legacy_self_import = None;
         self.per_ns(|this, ns| if !type_ns_only || ns == TypeNS {
             if let Ok(binding) = result[ns].get() {
                 all_ns_err = false;
@@ -756,30 +798,9 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         Some(this.dummy_binding);
                 }
             }
-        } else if let Ok(binding) = this.resolve_ident_in_module(module,
-                                                                 ident,
-                                                                 ns,
-                                                                 false,
-                                                                 false,
-                                                                 directive.span) {
-            legacy_self_import = Some(directive);
-            let binding = this.arenas.alloc_name_binding(NameBinding {
-                kind: NameBindingKind::Import {
-                    binding,
-                    directive,
-                    used: Cell::new(false),
-                    legacy_self_import: true,
-                },
-                ..*binding
-            });
-            let _ = this.try_define(directive.parent, ident, ns, binding);
         });
 
         if all_ns_err {
-            if let Some(directive) = legacy_self_import {
-                self.warn_legacy_self_import(directive);
-                return None;
-            }
             let mut all_ns_failed = true;
             self.per_ns(|this, ns| if !type_ns_only || ns == TypeNS {
                 match this.resolve_ident_in_module(module, ident, ns, false, true, span) {
@@ -811,7 +832,7 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                     }
                 });
                 let lev_suggestion =
-                    match find_best_match_for_name(names, &ident.name.as_str(), None) {
+                    match find_best_match_for_name(names, &ident.as_str(), None) {
                         Some(name) => format!(". Did you mean to use `{}`?", name),
                         None => "".to_owned(),
                     };
@@ -870,11 +891,35 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
             }
         }
 
+        if warn_if_binding_comes_from_local_crate {
+            let mut warned = false;
+            self.per_ns(|this, ns| {
+                let binding = match result[ns].get().ok() {
+                    Some(b) => b,
+                    None => return
+                };
+                if let NameBindingKind::Import { directive: d, .. } = binding.kind {
+                    if let ImportDirectiveSubclass::ExternCrate(..) = d.subclass {
+                        return
+                    }
+                }
+                if warned {
+                    return
+                }
+                warned = true;
+                this.lint_path_starts_with_module(
+                    directive.root_id,
+                    directive.root_span,
+                );
+            });
+        }
+
         // Record what this import resolves to for later uses in documentation,
         // this may resolve to either a value or a type, but for documentation
         // purposes it's good enough to just favor one over the other.
         self.per_ns(|this, ns| if let Some(binding) = result[ns].get().ok() {
-            this.def_map.entry(directive.id).or_insert(PathResolution::new(binding.def()));
+            let mut import = this.import_map.entry(directive.id).or_default();
+            import[ns] = Some(PathResolution::new(binding.def()));
         });
 
         debug!("(resolving single import) successfully resolved import");
@@ -931,7 +976,16 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
         if module as *const _ == self.graph_root as *const _ {
             let macro_exports = mem::replace(&mut self.macro_exports, Vec::new());
             for export in macro_exports.into_iter().rev() {
-                if exported_macro_names.insert(export.ident.modern(), export.span).is_none() {
+                if let Some(later_span) = exported_macro_names.insert(export.ident.modern(),
+                                                                      export.span) {
+                    self.session.buffer_lint_with_diagnostic(
+                        DUPLICATE_MACRO_EXPORTS,
+                        CRATE_NODE_ID,
+                        later_span,
+                        &format!("a macro named `{}` has already been exported", export.ident),
+                        BuiltinLintDiagnostics::DuplicatedMacroExports(
+                            export.ident, export.span, later_span));
+                } else {
                     reexports.push(export);
                 }
             }
@@ -965,7 +1019,6 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                         def: def,
                         span: binding.span,
                         vis: binding.vis,
-                        is_import: true,
                     });
                 }
             }
@@ -1025,23 +1078,6 @@ impl<'a, 'b:'a> ImportResolver<'a, 'b> {
                                                            suggestion);
                             err.emit();
                     }
-                }
-                NameBindingKind::Ambiguity { b1, b2, .. }
-                        if b1.is_glob_import() && b2.is_glob_import() => {
-                    let (orig_b1, orig_b2) = match (&b1.kind, &b2.kind) {
-                        (&NameBindingKind::Import { binding: b1, .. },
-                         &NameBindingKind::Import { binding: b2, .. }) => (b1, b2),
-                        _ => continue,
-                    };
-                    let (b1, b2) = match (orig_b1.vis, orig_b2.vis) {
-                        (ty::Visibility::Public, ty::Visibility::Public) => continue,
-                        (ty::Visibility::Public, _) => (b1, b2),
-                        (_, ty::Visibility::Public) => (b2, b1),
-                        _ => continue,
-                    };
-                    resolution.binding = Some(self.arenas.alloc_name_binding(NameBinding {
-                        kind: NameBindingKind::Ambiguity { b1: b1, b2: b2, legacy: true }, ..*b1
-                    }));
                 }
                 _ => {}
             }

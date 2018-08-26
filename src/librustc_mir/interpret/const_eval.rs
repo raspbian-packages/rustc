@@ -1,16 +1,20 @@
 use rustc::hir;
-use rustc::middle::const_val::{ConstEvalErr, ConstVal, ErrKind};
+use rustc::middle::const_val::{ConstEvalErr, ErrKind};
 use rustc::middle::const_val::ErrKind::{TypeckError, CheckMatchError};
 use rustc::mir;
 use rustc::ty::{self, TyCtxt, Ty, Instance};
-use rustc::ty::layout::{self, LayoutOf};
+use rustc::ty::layout::{self, LayoutOf, Primitive};
 use rustc::ty::subst::Subst;
 
 use syntax::ast::Mutability;
 use syntax::codemap::Span;
+use syntax::codemap::DUMMY_SP;
 
-use rustc::mir::interpret::{EvalResult, EvalError, EvalErrorKind, GlobalId, Value, MemoryPointer, Pointer, PrimVal, AllocId};
-use super::{Place, EvalContext, StackPopCleanup, ValTy, PlaceExtra, Memory};
+use rustc::mir::interpret::{
+    EvalResult, EvalError, EvalErrorKind, GlobalId,
+    Value, Scalar, AllocId, Allocation, ConstValue,
+};
+use super::{Place, EvalContext, StackPopCleanup, ValTy, PlaceExtra, Memory, MemoryKind};
 
 use std::fmt;
 use std::error::Error;
@@ -57,32 +61,58 @@ pub fn mk_eval_cx<'a, 'tcx>(
 }
 
 pub fn eval_promoted<'a, 'mir, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    ecx: &mut EvalContext<'a, 'mir, 'tcx, CompileTimeEvaluator>,
     cid: GlobalId<'tcx>,
     mir: &'mir mir::Mir<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
-) -> Option<(Value, Pointer, Ty<'tcx>)> {
-    let (res, ecx) = eval_body_and_ecx(tcx, cid, Some(mir), param_env);
-    match res {
-        Ok(val) => Some(val),
-        Err(mut err) => {
-            ecx.report(&mut err, false, None);
-            None
-        }
-    }
+) -> EvalResult<'tcx, (Value, Scalar, Ty<'tcx>)> {
+    ecx.with_fresh_body(|ecx| {
+        eval_body_using_ecx(ecx, cid, Some(mir), param_env)
+    })
 }
 
-pub fn eval_body<'a, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    cid: GlobalId<'tcx>,
-    param_env: ty::ParamEnv<'tcx>,
-) -> Option<(Value, Pointer, Ty<'tcx>)> {
-    let (res, ecx) = eval_body_and_ecx(tcx, cid, None, param_env);
-    match res {
-        Ok(val) => Some(val),
-        Err(mut err) => {
-            ecx.report(&mut err, true, None);
-            None
+pub fn value_to_const_value<'tcx>(
+    ecx: &EvalContext<'_, '_, 'tcx, CompileTimeEvaluator>,
+    val: Value,
+    ty: Ty<'tcx>,
+) -> &'tcx ty::Const<'tcx> {
+    let layout = ecx.layout_of(ty).unwrap();
+    match (val, &layout.abi) {
+        (Value::Scalar(Scalar::Bits { defined: 0, ..}), _) if layout.is_zst() => {},
+        (Value::ByRef(..), _) |
+        (Value::Scalar(_), &layout::Abi::Scalar(_)) |
+        (Value::ScalarPair(..), &layout::Abi::ScalarPair(..)) => {},
+        _ => bug!("bad value/layout combo: {:#?}, {:#?}", val, layout),
+    }
+    let val = (|| {
+        match val {
+            Value::Scalar(val) => Ok(ConstValue::Scalar(val)),
+            Value::ScalarPair(a, b) => Ok(ConstValue::ScalarPair(a, b)),
+            Value::ByRef(ptr, align) => {
+                let ptr = ptr.to_ptr().unwrap();
+                let alloc = ecx.memory.get(ptr.alloc_id)?;
+                assert!(alloc.align.abi() >= align.abi());
+                assert!(alloc.bytes.len() as u64 - ptr.offset.bytes() >= layout.size.bytes());
+                let mut alloc = alloc.clone();
+                alloc.align = align;
+                let alloc = ecx.tcx.intern_const_alloc(alloc);
+                Ok(ConstValue::ByRef(alloc, ptr.offset))
+            }
+        }
+    })();
+    match val {
+        Ok(val) => ty::Const::from_const_value(ecx.tcx.tcx, val, ty),
+        Err(err) => {
+            let (frames, span) = ecx.generate_stacktrace(None);
+            let err = ConstEvalErr {
+                span,
+                kind: ErrKind::Miri(err, frames).into(),
+            };
+            err.report_as_error(
+                ecx.tcx,
+                "failed to convert Value to ConstValue, this is a bug",
+            );
+            span_bug!(span, "miri error occured when converting Value to ConstValue")
         }
     }
 }
@@ -92,61 +122,68 @@ fn eval_body_and_ecx<'a, 'mir, 'tcx>(
     cid: GlobalId<'tcx>,
     mir: Option<&'mir mir::Mir<'tcx>>,
     param_env: ty::ParamEnv<'tcx>,
-) -> (EvalResult<'tcx, (Value, Pointer, Ty<'tcx>)>, EvalContext<'a, 'mir, 'tcx, CompileTimeEvaluator>) {
-    debug!("eval_body: {:?}, {:?}", cid, param_env);
+) -> (EvalResult<'tcx, (Value, Scalar, Ty<'tcx>)>, EvalContext<'a, 'mir, 'tcx, CompileTimeEvaluator>) {
+    debug!("eval_body_and_ecx: {:?}, {:?}", cid, param_env);
     // we start out with the best span we have
     // and try improving it down the road when more information is available
     let span = tcx.def_span(cid.instance.def_id());
-    let mut span = mir.map(|mir| mir.span).unwrap_or(span);
+    let span = mir.map(|mir| mir.span).unwrap_or(span);
     let mut ecx = EvalContext::new(tcx.at(span), param_env, CompileTimeEvaluator, ());
-    let res = (|| {
-        let mut mir = match mir {
-            Some(mir) => mir,
-            None => ecx.load_mir(cid.instance.def)?,
-        };
-        if let Some(index) = cid.promoted {
-            mir = &mir.promoted[index];
-        }
-        span = mir.span;
-        let layout = ecx.layout_of(mir.return_ty().subst(tcx, cid.instance.substs))?;
-        assert!(!layout.is_unsized());
-        let ptr = ecx.memory.allocate(
-            layout.size.bytes(),
-            layout.align,
-            None,
-        )?;
-        let internally_mutable = !layout.ty.is_freeze(tcx, param_env, mir.span);
-        let mutability = tcx.is_static(cid.instance.def_id());
-        let mutability = if mutability == Some(hir::Mutability::MutMutable) || internally_mutable {
-            Mutability::Mutable
-        } else {
-            Mutability::Immutable
-        };
-        let cleanup = StackPopCleanup::MarkStatic(mutability);
-        let name = ty::tls::with(|tcx| tcx.item_path_str(cid.instance.def_id()));
-        let prom = cid.promoted.map_or(String::new(), |p| format!("::promoted[{:?}]", p));
-        trace!("const_eval: pushing stack frame for global: {}{}", name, prom);
-        assert!(mir.arg_count == 0);
-        ecx.push_stack_frame(
-            cid.instance,
-            mir.span,
-            mir,
-            Place::from_ptr(ptr, layout.align),
-            cleanup,
-        )?;
+    let r = eval_body_using_ecx(&mut ecx, cid, mir, param_env);
+    (r, ecx)
+}
 
-        while ecx.step()? {}
-        let ptr = ptr.into();
-        // always try to read the value and report errors
-        let value = match ecx.try_read_value(ptr, layout.align, layout.ty)? {
-            // if it's a constant (so it needs no address, directly compute its value)
-            Some(val) if tcx.is_static(cid.instance.def_id()).is_none() => val,
-            // point at the allocation
-            _ => Value::ByRef(ptr, layout.align),
-        };
-        Ok((value, ptr, layout.ty))
-    })();
-    (res, ecx)
+fn eval_body_using_ecx<'a, 'mir, 'tcx>(
+    ecx: &mut EvalContext<'a, 'mir, 'tcx, CompileTimeEvaluator>,
+    cid: GlobalId<'tcx>,
+    mir: Option<&'mir mir::Mir<'tcx>>,
+    param_env: ty::ParamEnv<'tcx>,
+) -> EvalResult<'tcx, (Value, Scalar, Ty<'tcx>)> {
+    debug!("eval_body: {:?}, {:?}", cid, param_env);
+    let tcx = ecx.tcx.tcx;
+    let mut mir = match mir {
+        Some(mir) => mir,
+        None => ecx.load_mir(cid.instance.def)?,
+    };
+    if let Some(index) = cid.promoted {
+        mir = &mir.promoted[index];
+    }
+    let layout = ecx.layout_of(mir.return_ty().subst(tcx, cid.instance.substs))?;
+    assert!(!layout.is_unsized());
+    let ptr = ecx.memory.allocate(
+        layout.size,
+        layout.align,
+        None,
+    )?;
+    let internally_mutable = !layout.ty.is_freeze(tcx, param_env, mir.span);
+    let is_static = tcx.is_static(cid.instance.def_id());
+    let mutability = if is_static == Some(hir::Mutability::MutMutable) || internally_mutable {
+        Mutability::Mutable
+    } else {
+        Mutability::Immutable
+    };
+    let cleanup = StackPopCleanup::MarkStatic(mutability);
+    let name = ty::tls::with(|tcx| tcx.item_path_str(cid.instance.def_id()));
+    let prom = cid.promoted.map_or(String::new(), |p| format!("::promoted[{:?}]", p));
+    trace!("const_eval: pushing stack frame for global: {}{}", name, prom);
+    assert!(mir.arg_count == 0);
+    ecx.push_stack_frame(
+        cid.instance,
+        mir.span,
+        mir,
+        Place::from_ptr(ptr, layout.align),
+        cleanup,
+    )?;
+
+    while ecx.step()? {}
+    let ptr = ptr.into();
+    // always try to read the value and report errors
+    let value = match ecx.try_read_value(ptr, layout.align, layout.ty)? {
+        Some(val) if is_static.is_none() => val,
+        // point at the allocation
+        _ => Value::ByRef(ptr, layout.align),
+    };
+    Ok((value, ptr, layout.ty))
 }
 
 pub struct CompileTimeEvaluator;
@@ -256,7 +293,7 @@ impl<'mir, 'tcx> super::Machine<'mir, 'tcx> for CompileTimeEvaluator {
     fn call_intrinsic<'a>(
         ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
         instance: ty::Instance<'tcx>,
-        _args: &[ValTy<'tcx>],
+        args: &[ValTy<'tcx>],
         dest: Place,
         dest_layout: layout::TyLayout<'tcx>,
         target: mir::BasicBlock,
@@ -268,23 +305,54 @@ impl<'mir, 'tcx> super::Machine<'mir, 'tcx> for CompileTimeEvaluator {
             "min_align_of" => {
                 let elem_ty = substs.type_at(0);
                 let elem_align = ecx.layout_of(elem_ty)?.align.abi();
-                let align_val = PrimVal::from_u128(elem_align as u128);
-                ecx.write_primval(dest, align_val, dest_layout.ty)?;
+                let align_val = Scalar::Bits {
+                    bits: elem_align as u128,
+                    defined: dest_layout.size.bits() as u8,
+                };
+                ecx.write_scalar(dest, align_val, dest_layout.ty)?;
             }
 
             "size_of" => {
                 let ty = substs.type_at(0);
                 let size = ecx.layout_of(ty)?.size.bytes() as u128;
-                ecx.write_primval(dest, PrimVal::from_u128(size), dest_layout.ty)?;
+                let size_val = Scalar::Bits {
+                    bits: size,
+                    defined: dest_layout.size.bits() as u8,
+                };
+                ecx.write_scalar(dest, size_val, dest_layout.ty)?;
             }
 
             "type_id" => {
                 let ty = substs.type_at(0);
                 let type_id = ecx.tcx.type_id_hash(ty) as u128;
-                ecx.write_primval(dest, PrimVal::from_u128(type_id), dest_layout.ty)?;
+                let id_val = Scalar::Bits {
+                    bits: type_id,
+                    defined: dest_layout.size.bits() as u8,
+                };
+                ecx.write_scalar(dest, id_val, dest_layout.ty)?;
+            }
+            "ctpop" | "cttz" | "cttz_nonzero" | "ctlz" | "ctlz_nonzero" | "bswap" => {
+                let ty = substs.type_at(0);
+                let layout_of = ecx.layout_of(ty)?;
+                let bits = ecx.value_to_scalar(args[0])?.to_bits(layout_of.size)?;
+                let kind = match layout_of.abi {
+                    ty::layout::Abi::Scalar(ref scalar) => scalar.value,
+                    _ => Err(::rustc::mir::interpret::EvalErrorKind::TypeNotPrimitive(ty))?,
+                };
+                let out_val = if intrinsic_name.ends_with("_nonzero") {
+                    if bits == 0 {
+                        return err!(Intrinsic(format!("{} called on 0", intrinsic_name)));
+                    }
+                    numeric_intrinsic(intrinsic_name.trim_right_matches("_nonzero"), bits, kind)?
+                } else {
+                    numeric_intrinsic(intrinsic_name, bits, kind)?
+                };
+                ecx.write_scalar(dest, out_val, ty)?;
             }
 
-            name => return Err(ConstEvalError::NeedsRfc(format!("calling intrinsic `{}`", name)).into()),
+            name => return Err(
+                ConstEvalError::NeedsRfc(format!("calling intrinsic `{}`", name)).into()
+            ),
         }
 
         ecx.goto_block(target);
@@ -298,12 +366,12 @@ impl<'mir, 'tcx> super::Machine<'mir, 'tcx> for CompileTimeEvaluator {
     fn try_ptr_op<'a>(
         _ecx: &EvalContext<'a, 'mir, 'tcx, Self>,
         _bin_op: mir::BinOp,
-        left: PrimVal,
+        left: Scalar,
         _left_ty: Ty<'tcx>,
-        right: PrimVal,
+        right: Scalar,
         _right_ty: Ty<'tcx>,
-    ) -> EvalResult<'tcx, Option<(PrimVal, bool)>> {
-        if left.is_bytes() && right.is_bytes() {
+    ) -> EvalResult<'tcx, Option<(Scalar, bool)>> {
+        if left.is_bits() && right.is_bits() {
             Ok(None)
         } else {
             Err(
@@ -326,8 +394,9 @@ impl<'mir, 'tcx> super::Machine<'mir, 'tcx> for CompileTimeEvaluator {
     ) -> EvalResult<'tcx, AllocId> {
         Ok(ecx
             .tcx
-            .interpret_interner
-            .cache_static(cid.instance.def_id()))
+            .alloc_map
+            .lock()
+            .intern_static(cid.instance.def_id()))
     }
 
     fn box_alloc<'a>(
@@ -357,71 +426,103 @@ pub fn const_val_field<'a, 'tcx>(
     instance: ty::Instance<'tcx>,
     variant: Option<usize>,
     field: mir::Field,
-    value: Value,
+    value: ConstValue<'tcx>,
     ty: Ty<'tcx>,
 ) -> ::rustc::middle::const_val::EvalResult<'tcx> {
     trace!("const_val_field: {:?}, {:?}, {:?}, {:?}", instance, field, value, ty);
     let mut ecx = mk_eval_cx(tcx, instance, param_env).unwrap();
     let result = (|| {
-        let (mut field, ty) = match value {
-            Value::ByValPair(..) | Value::ByVal(_) => ecx.read_field(value, variant, field, ty)?.expect("const_val_field on non-field"),
-            Value::ByRef(ptr, align) => {
-                let place = Place::Ptr {
-                    ptr,
-                    align,
-                    extra: variant.map_or(PlaceExtra::None, PlaceExtra::DowncastVariant),
-                };
-                let layout = ecx.layout_of(ty)?;
-                let (place, layout) = ecx.place_field(place, field, layout)?;
-                let (ptr, align) = place.to_ptr_align();
-                (Value::ByRef(ptr, align), layout.ty)
-            }
+        let value = ecx.const_value_to_value(value, ty)?;
+        let layout = ecx.layout_of(ty)?;
+        let (ptr, align) = match value {
+            Value::ByRef(ptr, align) => (ptr, align),
+            Value::ScalarPair(..) | Value::Scalar(_) => {
+                let ptr = ecx.alloc_ptr(ty)?.into();
+                ecx.write_value_to_ptr(value, ptr, layout.align, ty)?;
+                (ptr, layout.align)
+            },
         };
-        if let Value::ByRef(ptr, align) = field {
-            if let Some(val) = ecx.try_read_value(ptr, align, ty)? {
-                field = val;
-            }
+        let place = Place::Ptr {
+            ptr,
+            align,
+            extra: variant.map_or(PlaceExtra::None, PlaceExtra::DowncastVariant),
+        };
+        let (place, layout) = ecx.place_field(place, field, layout)?;
+        let (ptr, align) = place.to_ptr_align();
+        let mut new_value = Value::ByRef(ptr, align);
+        new_value = ecx.try_read_by_ref(new_value, layout.ty)?;
+        use rustc_data_structures::indexed_vec::Idx;
+        match (value, new_value) {
+            (Value::Scalar(_), Value::ByRef(..)) |
+            (Value::ScalarPair(..), Value::ByRef(..)) |
+            (Value::Scalar(_), Value::ScalarPair(..)) => bug!(
+                "field {} of {:?} yielded {:?}",
+                field.index(),
+                value,
+                new_value,
+            ),
+            _ => {},
         }
-        Ok((field, ty))
+        Ok(value_to_const_value(&ecx, new_value, layout.ty))
     })();
-    match result {
-        Ok((field, ty)) => Ok(tcx.mk_const(ty::Const {
-            val: ConstVal::Value(field),
-            ty,
-        })),
-        Err(err) => {
-            let (trace, span) = ecx.generate_stacktrace(None);
-            let err = ErrKind::Miri(err, trace);
-            Err(ConstEvalErr {
-                kind: err.into(),
-                span,
-            })
-        },
-    }
+    result.map_err(|err| {
+        let (trace, span) = ecx.generate_stacktrace(None);
+        let err = ErrKind::Miri(err, trace);
+        ConstEvalErr {
+            kind: err.into(),
+            span,
+        }
+    })
 }
 
 pub fn const_variant_index<'a, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
     instance: ty::Instance<'tcx>,
-    value: Value,
+    val: ConstValue<'tcx>,
     ty: Ty<'tcx>,
 ) -> EvalResult<'tcx, usize> {
-    trace!("const_variant_index: {:?}, {:?}, {:?}", instance, value, ty);
+    trace!("const_variant_index: {:?}, {:?}, {:?}", instance, val, ty);
     let mut ecx = mk_eval_cx(tcx, instance, param_env).unwrap();
+    let value = ecx.const_value_to_value(val, ty)?;
     let (ptr, align) = match value {
-        Value::ByValPair(..) | Value::ByVal(_) => {
+        Value::ScalarPair(..) | Value::Scalar(_) => {
             let layout = ecx.layout_of(ty)?;
-            use super::MemoryKind;
-            let ptr = ecx.memory.allocate(layout.size.bytes(), layout.align, Some(MemoryKind::Stack))?;
-            let ptr: Pointer = ptr.into();
+            let ptr = ecx.memory.allocate(layout.size, layout.align, Some(MemoryKind::Stack))?.into();
             ecx.write_value_to_ptr(value, ptr, layout.align, ty)?;
             (ptr, layout.align)
         },
         Value::ByRef(ptr, align) => (ptr, align),
     };
-    let place = Place::from_primval_ptr(ptr, align);
+    let place = Place::from_scalar_ptr(ptr, align);
     ecx.read_discriminant_as_variant_index(place, ty)
+}
+
+pub fn const_value_to_allocation_provider<'a, 'tcx>(
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    (val, ty): (ConstValue<'tcx>, Ty<'tcx>),
+) -> &'tcx Allocation {
+    match val {
+        ConstValue::ByRef(alloc, offset) => {
+            assert_eq!(offset.bytes(), 0);
+            return alloc;
+        },
+        _ => ()
+    }
+    let result = || -> EvalResult<'tcx, &'tcx Allocation> {
+        let mut ecx = EvalContext::new(
+            tcx.at(DUMMY_SP),
+            ty::ParamEnv::reveal_all(),
+            CompileTimeEvaluator,
+            ());
+        let value = ecx.const_value_to_value(val, ty)?;
+        let layout = ecx.layout_of(ty)?;
+        let ptr = ecx.memory.allocate(layout.size, layout.align, Some(MemoryKind::Stack))?;
+        ecx.write_value_to_ptr(value, ptr.into(), layout.align, ty)?;
+        let alloc = ecx.memory.get(ptr.alloc_id)?;
+        Ok(tcx.intern_const_alloc(alloc.clone()))
+    };
+    result().expect("unable to convert ConstVal to Allocation")
 }
 
 pub fn const_eval_provider<'a, 'tcx>(
@@ -431,17 +532,6 @@ pub fn const_eval_provider<'a, 'tcx>(
     trace!("const eval: {:?}", key);
     let cid = key.value;
     let def_id = cid.instance.def.def_id();
-
-    if tcx.is_foreign_item(def_id) {
-        let id = tcx.interpret_interner.cache_static(def_id);
-        let ty = tcx.type_of(def_id);
-        let layout = tcx.layout_of(key.param_env.and(ty)).unwrap();
-        let ptr = MemoryPointer::new(id, 0);
-        return Ok(tcx.mk_const(ty::Const {
-            val: ConstVal::Value(Value::ByRef(ptr.into(), layout.align)),
-            ty,
-        }))
-    }
 
     if let Some(id) = tcx.hir.as_local_node_id(def_id) {
         let tables = tcx.typeck_tables_of(def_id);
@@ -469,20 +559,41 @@ pub fn const_eval_provider<'a, 'tcx>(
     };
 
     let (res, ecx) = eval_body_and_ecx(tcx, cid, None, key.param_env);
-    res.map(|(miri_value, _, miri_ty)| {
-        tcx.mk_const(ty::Const {
-            val: ConstVal::Value(miri_value),
-            ty: miri_ty,
-        })
-    }).map_err(|mut err| {
-        if tcx.is_static(def_id).is_some() {
-            ecx.report(&mut err, true, None);
+    res.and_then(|(mut val, _, miri_ty)| {
+        if tcx.is_static(def_id).is_none() {
+            val = ecx.try_read_by_ref(val, miri_ty)?;
         }
+        Ok(value_to_const_value(&ecx, val, miri_ty))
+    }).map_err(|err| {
         let (trace, span) = ecx.generate_stacktrace(None);
         let err = ErrKind::Miri(err, trace);
-        ConstEvalErr {
+        let err = ConstEvalErr {
             kind: err.into(),
             span,
+        };
+        if tcx.is_static(def_id).is_some() {
+            err.report_as_error(ecx.tcx, "could not evaluate static initializer");
         }
+        err
     })
+}
+
+fn numeric_intrinsic<'tcx>(
+    name: &str,
+    bits: u128,
+    kind: Primitive,
+) -> EvalResult<'tcx, Scalar> {
+    let defined = match kind {
+        Primitive::Int(integer, _) => integer.size().bits() as u8,
+        _ => bug!("invalid `{}` argument: {:?}", name, bits),
+    };
+    let extra = 128 - defined as u128;
+    let bits_out = match name {
+        "ctpop" => bits.count_ones() as u128,
+        "ctlz" => bits.leading_zeros() as u128 - extra,
+        "cttz" => (bits << extra).trailing_zeros() as u128 - extra,
+        "bswap" => (bits << extra).swap_bytes(),
+        _ => bug!("not a numeric intrinsic: {}", name),
+    };
+    Ok(Scalar::Bits { bits: bits_out, defined })
 }

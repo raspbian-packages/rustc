@@ -515,7 +515,7 @@ pub enum ModuleBuffer {}
 // dllimport/dllexport are applied and need to be correct for everything to
 // link successfully. The #[link] annotation here says "these symbols are
 // included statically" which means that they're all exported with dllexport
-// and from the rustc_llvm dynamic library. Otherwise the rustc_trans dynamic
+// and from the rustc_llvm dynamic library. Otherwise the rustc_codegen_llvm dynamic
 // library would not be able to access these symbols.
 #[link(name = "rustllvm", kind = "static")]
 extern "C" {
@@ -1651,6 +1651,7 @@ extern "C" {
                                                MergeFunctions: bool,
                                                SLPVectorize: bool,
                                                LoopVectorize: bool,
+                                               PrepareForThinLTO: bool,
                                                PGOGenPath: *const c_char,
                                                PGOUsePath: *const c_char);
     pub fn LLVMRustAddLibraryInfo(PM: PassManagerRef,

@@ -14,7 +14,7 @@ use rustc::traits::{FulfillmentContext, Normalized, ObligationCause};
 use rustc::traits::query::{CanonicalTyGoal, NoSolution};
 use rustc::traits::query::dropck_outlives::{DtorckConstraint, DropckOutlivesResult};
 use rustc::ty::{self, ParamEnvAnd, Ty, TyCtxt};
-use rustc::ty::subst::Subst;
+use rustc::ty::subst::{Subst, Substs};
 use rustc::util::nodemap::FxHashSet;
 use rustc_data_structures::sync::Lrc;
 use syntax::codemap::{Span, DUMMY_SP};
@@ -193,7 +193,7 @@ fn dtorck_constraint_for_ty<'a, 'gcx, 'tcx>(
             .map(|ty| dtorck_constraint_for_ty(tcx, span, for_ty, depth + 1, ty))
             .collect(),
 
-        ty::TyGenerator(def_id, substs, _interior) => {
+        ty::TyGenerator(def_id, substs, _movability) => {
             // rust-lang/rust#49918: types can be constructed, stored
             // in the interior, and sit idle when generator yields
             // (and is subsequently dropped).
@@ -278,9 +278,13 @@ crate fn adt_dtorck_constraint<'a, 'tcx>(
     debug!("dtorck_constraint: {:?}", def);
 
     if def.is_phantom_data() {
+        // The first generic parameter here is guaranteed to be a type because it's
+        // `PhantomData`.
+        let substs = Substs::identity_for_item(tcx, def_id);
+        assert_eq!(substs.len(), 1);
         let result = DtorckConstraint {
             outlives: vec![],
-            dtorck_types: vec![tcx.mk_param_from_def(&tcx.generics_of(def_id).types[0])],
+            dtorck_types: vec![substs.type_at(0)],
             overflows: vec![],
         };
         debug!("dtorck_constraint: {:?} => {:?}", def, result);

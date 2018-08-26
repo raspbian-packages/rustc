@@ -50,13 +50,14 @@ value.
 
 <span class="caption">Table 3-1: Integer Types in Rust</span>
 
-| Length | Signed  | Unsigned |
-|--------|---------|----------|
-| 8-bit  | `i8`    | `u8`     |
-| 16-bit | `i16`   | `u16`    |
-| 32-bit | `i32`   | `u32`    |
-| 64-bit | `i64`   | `u64`    |
-| arch   | `isize` | `usize`  |
+| Length  | Signed  | Unsigned |
+|---------|---------|----------|
+| 8-bit   | `i8`    | `u8`     |
+| 16-bit  | `i16`   | `u16`    |
+| 32-bit  | `i32`   | `u32`    |
+| 64-bit  | `i64`   | `u64`    |
+| 128-bit | `i128`  | `u128`   |
+| arch    | `isize` | `usize`  |
 
 Each variant can be either signed or unsigned and has an explicit size.
 *Signed* and *unsigned* refer to whether it’s possible for the number to be
@@ -97,6 +98,21 @@ So how do you know which type of integer to use? If you’re unsure, Rust’s
 defaults are generally good choices, and integer types default to `i32`: this
 type is generally the fastest, even on 64-bit systems. The primary situation in
 which you’d use `isize` or `usize` is when indexing some sort of collection.
+
+##### Integer Overflow
+
+Let's say that you have a `u8`, which can hold values between zero and `255`.
+What happens if you try to change it to `256`? This is called "integer
+overflow", and Rust has some interesting rules around this behavior. When
+compiling in debug mode, Rust checks for this kind of issue and will cause
+your program to *panic*, which is the term Rust uses when a program exits
+with an error. We'll discuss panics more in Chapter 9.
+
+In release builds, Rust does not check for overflow, and instead will
+do something called "two's compliment wrapping." In short, `256` becomes
+`0`, `257` becomes `1`, etc. Relying on overflow is considered an error,
+even if this behavior happens. If you want this behavior explicitly, the
+standard library has a type, `Wrapping`, that provides it explicitly.
 
 #### Floating-Point Types
 
@@ -172,12 +188,14 @@ The main way to consume Boolean values is through conditionals, such as an `if`
 expression. We’ll cover how `if` expressions work in Rust in the “Control Flow”
 section.
 
+Booleans are one byte in size.
+
 #### The Character Type
 
 So far we’ve worked only with numbers, but Rust supports letters too. Rust’s
 `char` type is the language’s most primitive alphabetic type, and the following
-code shows one way to use it. (Note that the `char` type is specified with
-single quotes, as opposed to strings, which use double quotes.)
+code shows one way to use it. (Note that the `char` literal is specified with
+single quotes, as opposed to string literals, which use double quotes.)
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -204,8 +222,9 @@ primitive compound types: tuples and arrays.
 
 #### The Tuple Type
 
-A tuple is a general way of grouping together some number of other values with
-a variety of types into one compound type.
+A tuple is a general way of grouping together some number of other values
+with a variety of types into one compound type. Tuples have a fixed length:
+once declared, they cannot grow or shrink in size.
 
 We create a tuple by writing a comma-separated list of values inside
 parentheses. Each position in the tuple has a type, and the types of the
@@ -269,7 +288,7 @@ index in a tuple is 0.
 Another way to have a collection of multiple values is with an *array*. Unlike
 a tuple, every element of an array must have the same type. Arrays in Rust are
 different from arrays in some other languages because arrays in Rust have a
-fixed length: once declared, they cannot grow or shrink in size.
+fixed length, like tuples.
 
 In Rust, the values going into an array are written as a comma-separated list
 inside square brackets:
@@ -299,6 +318,21 @@ an array because you know it will always contain 12 items:
 let months = ["January", "February", "March", "April", "May", "June", "July",
               "August", "September", "October", "November", "December"];
 ```
+
+Arrays have an interesting type; it looks like this: `[type; number]`. For
+example:
+
+```rust
+let a: [i32; 5] = [1, 2, 3, 4, 5];
+```
+
+First, there's square brackets; they look like the syntax for creating an
+array. Inside, there's two pieces of information, separated by a semicolon.
+The first is the type of each element of the array. Since all elements have
+the same type, we only need to list it once. After the semicolon, there's
+a number that indicates the length of the array. Since an array has a fixed size,
+this number is always the same, even if the array's elements are modified, it
+cannot grow or shrink.
 
 ##### Accessing Array Elements
 
@@ -355,7 +389,7 @@ The compilation didn’t produce any errors, but the program resulted in a
 *runtime* error and didn’t exit successfully. When you attempt to access an
 element using indexing, Rust will check that the index you’ve specified is less
 than the array length. If the index is greater than the length, Rust will
-*panic*, which is the term Rust uses when a program exits with an error.
+panic.
 
 This is the first example of Rust’s safety principles in action. In many
 low-level languages, this kind of check is not done, and when you provide an

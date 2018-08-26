@@ -43,6 +43,7 @@ use std::collections::HashSet;
 
 use syntax::ast;
 use syntax::attr;
+use syntax::edition::Edition;
 use syntax::feature_gate::{AttributeGate, AttributeType, Stability, deprecated_attributes};
 use syntax_pos::{BytePos, Span, SyntaxContext};
 use syntax::symbol::keywords;
@@ -228,7 +229,7 @@ impl UnsafeCode {
 
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnsafeCode {
     fn check_expr(&mut self, cx: &LateContext, e: &hir::Expr) {
-        if let hir::ExprBlock(ref blk) = e.node {
+        if let hir::ExprBlock(ref blk, _) = e.node {
             // Don't warn about generated blocks, that'll just pollute the output.
             if blk.rules == hir::UnsafeBlock(hir::UserProvided) {
                 self.report_unsafe(cx, blk.span, "usage of an `unsafe` block");
@@ -282,7 +283,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnsafeCode {
 }
 
 declare_lint! {
-    MISSING_DOCS,
+    pub MISSING_DOCS,
     Allow,
     "detects missing documentation for public members"
 }
@@ -541,7 +542,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingCopyImplementations {
         if !ty.moves_by_default(cx.tcx, param_env, item.span) {
             return;
         }
-        if param_env.can_type_implement_copy(cx.tcx, ty, item.span).is_ok() {
+        if param_env.can_type_implement_copy(cx.tcx, ty).is_ok() {
             cx.span_lint(MISSING_COPY_IMPLEMENTATIONS,
                          item.span,
                          "type could implement `Copy`; consider adding `impl \
@@ -616,7 +617,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDebugImplementations {
 declare_lint! {
     pub ANONYMOUS_PARAMETERS,
     Allow,
-    "detects anonymous parameters"
+    "detects anonymous parameters",
+    Edition::Edition2018 => Warn,
 }
 
 /// Checks for use of anonymous parameters (RFC 1685)
@@ -637,9 +639,29 @@ impl EarlyLintPass for AnonymousParameters {
                     match arg.pat.node {
                         ast::PatKind::Ident(_, ident, None) => {
                             if ident.name == keywords::Invalid.name() {
-                                cx.span_lint(ANONYMOUS_PARAMETERS,
-                                             arg.pat.span,
-                                             "use of deprecated anonymous parameter");
+                                let ty_snip = cx
+                                    .sess
+                                    .codemap()
+                                    .span_to_snippet(arg.ty.span);
+
+                                let (ty_snip, appl) = if let Ok(snip) = ty_snip {
+                                    (snip, Applicability::MachineApplicable)
+                                } else {
+                                    ("<type>".to_owned(), Applicability::HasPlaceholders)
+                                };
+
+                                cx.struct_span_lint(
+                                    ANONYMOUS_PARAMETERS,
+                                    arg.pat.span,
+                                    "anonymous parameters are deprecated and will be \
+                                     removed in the next edition."
+                                ).span_suggestion_with_applicability(
+                                    arg.pat.span,
+                                    "Try naming the parameter or explicitly \
+                                    ignoring it",
+                                    format!("_: {}", ty_snip),
+                                    appl
+                                ).emit();
                             }
                         }
                         _ => (),
@@ -647,6 +669,79 @@ impl EarlyLintPass for AnonymousParameters {
                 }
             },
             _ => (),
+        }
+    }
+}
+
+/// Checks for incorrect use use of `repr` attributes.
+#[derive(Clone)]
+pub struct BadRepr;
+
+impl LintPass for BadRepr {
+    fn get_lints(&self) -> LintArray {
+        lint_array!()
+    }
+}
+
+impl EarlyLintPass for BadRepr {
+    fn check_attribute(&mut self, cx: &EarlyContext, attr: &ast::Attribute) {
+        if attr.name() == "repr" {
+            let list = attr.meta_item_list();
+
+            let repr_str = |lit: &str| { format!("#[repr({})]", lit) };
+
+            // Emit warnings with `repr` either has a literal assignment (`#[repr = "C"]`) or
+            // no hints (``#[repr]`)
+            let has_hints = list.as_ref().map(|ref list| !list.is_empty()).unwrap_or(false);
+            if !has_hints {
+                let mut suggested = false;
+                let mut warn = if let Some(ref lit) = attr.value_str() {
+                    // avoid warning about empty `repr` on `#[repr = "foo"]`
+                    let mut warn = cx.struct_span_lint(
+                        BAD_REPR,
+                        attr.span,
+                        "`repr` attribute isn't configurable with a literal",
+                    );
+                    match format!("{}", lit).as_ref() {
+                        | "C" | "packed" | "rust" | "transparent"
+                        | "u8" | "u16" | "u32" | "u64" | "u128" | "usize"
+                        | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => {
+                            // if the literal could have been a valid `repr` arg,
+                            // suggest the correct syntax
+                            warn.span_suggestion(
+                                attr.span,
+                                "give `repr` a hint",
+                                repr_str(&lit.as_str()),
+                            );
+                            suggested = true;
+                        }
+                        _ => {  // the literal wasn't a valid `repr` arg
+                            warn.span_label(attr.span, "needs a hint");
+                        }
+                    };
+                    warn
+                } else {
+                    let mut warn = cx.struct_span_lint(
+                        BAD_REPR,
+                        attr.span,
+                        "`repr` attribute must have a hint",
+                    );
+                    warn.span_label(attr.span, "needs a hint");
+                    warn
+                };
+                if !suggested {
+                    warn.help(&format!(
+                        "valid hints include `{}`, `{}`, `{}` and `{}`",
+                        repr_str("C"),
+                        repr_str("packed"),
+                        repr_str("rust"),
+                        repr_str("transparent"),
+                    ));
+                    warn.note("for more information, visit \
+                               <https://doc.rust-lang.org/reference/type-layout.html>");
+                }
+                warn.emit();
+            }
         }
     }
 }
@@ -1173,9 +1268,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutableTransmutes {
         let msg = "mutating transmuted &mut T from &T may cause undefined behavior, \
                    consider instead using an UnsafeCell";
         match get_transmute_from_to(cx, expr) {
-            Some((&ty::TyRef(_, from_mt), &ty::TyRef(_, to_mt))) => {
-                if to_mt.mutbl == hir::Mutability::MutMutable &&
-                   from_mt.mutbl == hir::Mutability::MutImmutable {
+            Some((&ty::TyRef(_, _, from_mt), &ty::TyRef(_, _, to_mt))) => {
+                if to_mt == hir::Mutability::MutMutable &&
+                   from_mt == hir::Mutability::MutImmutable {
                     cx.span_lint(MUTABLE_TRANSMUTES, expr.span, msg);
                 }
             }
@@ -1287,32 +1382,27 @@ impl LintPass for UnreachablePub {
 
 impl UnreachablePub {
     fn perform_lint(&self, cx: &LateContext, what: &str, id: ast::NodeId,
-                    vis: &hir::Visibility, span: Span, exportable: bool) {
+                    vis: &hir::Visibility, span: Span, exportable: bool,
+                    mut applicability: Applicability) {
         if !cx.access_levels.is_reachable(id) && *vis == hir::Visibility::Public {
+            if span.ctxt().outer().expn_info().is_some() {
+                applicability = Applicability::MaybeIncorrect;
+            }
             let def_span = cx.tcx.sess.codemap().def_span(span);
             let mut err = cx.struct_span_lint(UNREACHABLE_PUB, def_span,
                                               &format!("unreachable `pub` {}", what));
-            // visibility is token at start of declaration (can be macro
-            // variable rather than literal `pub`)
+            // We are presuming that visibility is token at start of
+            // declaration (can be macro variable rather than literal `pub`)
             let pub_span = cx.tcx.sess.codemap().span_until_char(def_span, ' ');
             let replacement = if cx.tcx.features().crate_visibility_modifier {
                 "crate"
             } else {
                 "pub(crate)"
             }.to_owned();
-            let app = if span.ctxt().outer().expn_info().is_none() {
-                // even if macros aren't involved the suggestion
-                // may be incorrect -- the user may have mistakenly
-                // hidden it behind a private module and this lint is
-                // a helpful way to catch that. However, we're trying
-                // not to change the nature of the code with this lint
-                // so it's marked as machine applicable.
-                Applicability::MachineApplicable
-            } else {
-                Applicability::MaybeIncorrect
-            };
-            err.span_suggestion_with_applicability(pub_span, "consider restricting its visibility",
-                                                   replacement, app);
+            err.span_suggestion_with_applicability(pub_span,
+                                                   "consider restricting its visibility",
+                                                   replacement,
+                                                   applicability);
             if exportable {
                 err.help("or consider exporting it for use by other crates");
             }
@@ -1321,21 +1411,31 @@ impl UnreachablePub {
     }
 }
 
+
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnreachablePub {
     fn check_item(&mut self, cx: &LateContext, item: &hir::Item) {
-        self.perform_lint(cx, "item", item.id, &item.vis, item.span, true);
+        let applicability = match item.node {
+            // suggestion span-manipulation is inadequate for `pub use
+            // module::{item}` (Issue #50455)
+            hir::ItemUse(..) => Applicability::MaybeIncorrect,
+            _ => Applicability::MachineApplicable,
+        };
+        self.perform_lint(cx, "item", item.id, &item.vis, item.span, true, applicability);
     }
 
     fn check_foreign_item(&mut self, cx: &LateContext, foreign_item: &hir::ForeignItem) {
-        self.perform_lint(cx, "item", foreign_item.id, &foreign_item.vis, foreign_item.span, true);
+        self.perform_lint(cx, "item", foreign_item.id, &foreign_item.vis,
+                          foreign_item.span, true, Applicability::MachineApplicable);
     }
 
     fn check_struct_field(&mut self, cx: &LateContext, field: &hir::StructField) {
-        self.perform_lint(cx, "field", field.id, &field.vis, field.span, false);
+        self.perform_lint(cx, "field", field.id, &field.vis, field.span, false,
+                          Applicability::MachineApplicable);
     }
 
     fn check_impl_item(&mut self, cx: &LateContext, impl_item: &hir::ImplItem) {
-        self.perform_lint(cx, "item", impl_item.id, &impl_item.vis, impl_item.span, false);
+        self.perform_lint(cx, "item", impl_item.id, &impl_item.vis, impl_item.span, false,
+                          Applicability::MachineApplicable);
     }
 }
 
@@ -1474,24 +1574,11 @@ fn check_const(cx: &LateContext, body_id: hir::BodyId, what: &str) {
     };
     if let Err(err) = cx.tcx.const_eval(param_env.and(cid)) {
         let span = cx.tcx.def_span(def_id);
-        let mut diag = cx.struct_span_lint(
-            CONST_ERR,
-            span,
+        err.report_as_lint(
+            cx.tcx.at(span),
             &format!("this {} cannot be used", what),
+            cx.current_lint_root(),
         );
-        use rustc::middle::const_val::ConstEvalErrDescription;
-        match err.description() {
-            ConstEvalErrDescription::Simple(message) => {
-                diag.span_label(span, message);
-            }
-            ConstEvalErrDescription::Backtrace(miri, frames) => {
-                diag.span_label(span, format!("{}", miri));
-                for frame in frames {
-                    diag.span_label(frame.span, format!("inside call to `{}`", frame.location));
-                }
-            }
-        }
-        diag.emit()
     }
 }
 
@@ -1518,5 +1605,96 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnusedBrokenConst {
             ),
             _ => {},
         }
+    }
+}
+
+/// Lint for trait and lifetime bounds that don't depend on type parameters
+/// which either do nothing, or stop the item from being used.
+pub struct TrivialConstraints;
+
+declare_lint! {
+    TRIVIAL_BOUNDS,
+    Warn,
+    "these bounds don't depend on an type parameters"
+}
+
+impl LintPass for TrivialConstraints {
+    fn get_lints(&self) -> LintArray {
+        lint_array!(TRIVIAL_BOUNDS)
+    }
+}
+
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TrivialConstraints {
+    fn check_item(
+        &mut self,
+        cx: &LateContext<'a, 'tcx>,
+        item: &'tcx hir::Item,
+    ) {
+        use rustc::ty::fold::TypeFoldable;
+        use rustc::ty::Predicate::*;
+
+
+        if cx.tcx.features().trivial_bounds {
+            let def_id = cx.tcx.hir.local_def_id(item.id);
+            let predicates = cx.tcx.predicates_of(def_id);
+            for predicate in &predicates.predicates {
+                let predicate_kind_name = match *predicate {
+                    Trait(..) => "Trait",
+                    TypeOutlives(..) |
+                    RegionOutlives(..) => "Lifetime",
+
+                    // Ignore projections, as they can only be global
+                    // if the trait bound is global
+                    Projection(..) |
+                    // Ignore bounds that a user can't type
+                    WellFormed(..) |
+                    ObjectSafe(..) |
+                    ClosureKind(..) |
+                    Subtype(..) |
+                    ConstEvaluatable(..) => continue,
+                };
+                if predicate.is_global() {
+                    cx.span_lint(
+                        TRIVIAL_BOUNDS,
+                        item.span,
+                        &format!("{} bound {} does not depend on any type \
+                                or lifetime parameters", predicate_kind_name, predicate),
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Does nothing as a lint pass, but registers some `Lint`s
+/// which are used by other parts of the compiler.
+#[derive(Copy, Clone)]
+pub struct SoftLints;
+
+impl LintPass for SoftLints {
+    fn get_lints(&self) -> LintArray {
+        lint_array!(
+            WHILE_TRUE,
+            BOX_POINTERS,
+            NON_SHORTHAND_FIELD_PATTERNS,
+            UNSAFE_CODE,
+            MISSING_DOCS,
+            MISSING_COPY_IMPLEMENTATIONS,
+            MISSING_DEBUG_IMPLEMENTATIONS,
+            ANONYMOUS_PARAMETERS,
+            UNUSED_DOC_COMMENTS,
+            UNCONDITIONAL_RECURSION,
+            PLUGIN_AS_LIBRARY,
+            PRIVATE_NO_MANGLE_FNS,
+            PRIVATE_NO_MANGLE_STATICS,
+            NO_MANGLE_CONST_ITEMS,
+            NO_MANGLE_GENERIC_ITEMS,
+            MUTABLE_TRANSMUTES,
+            UNSTABLE_FEATURES,
+            UNIONS_WITH_DROP_FIELDS,
+            UNREACHABLE_PUB,
+            TYPE_ALIAS_BOUNDS,
+            TRIVIAL_BOUNDS,
+        )
     }
 }

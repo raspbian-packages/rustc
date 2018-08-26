@@ -13,9 +13,7 @@
 
 use build::Builder;
 
-use rustc::middle::const_val::ConstVal;
 use rustc::ty::{self, Ty};
-use rustc::mir::interpret::{Value, PrimVal};
 
 use rustc::mir::*;
 use syntax_pos::{Span, DUMMY_SP};
@@ -54,20 +52,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     // Returns a zero literal operand for the appropriate type, works for
     // bool, char and integers.
     pub fn zero_literal(&mut self, span: Span, ty: Ty<'tcx>) -> Operand<'tcx> {
-        match ty.sty {
-            ty::TyBool |
-            ty::TyChar |
-            ty::TyUint(_) |
-            ty::TyInt(_) => {}
-            _ => {
-                span_bug!(span, "Invalid type for zero_literal: `{:?}`", ty)
-            }
-        }
         let literal = Literal::Value {
-            value: self.hir.tcx().mk_const(ty::Const {
-                val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(0))),
-                ty
-            })
+            value: ty::Const::from_bits(self.hir.tcx(), 0, ty::ParamEnv::empty().and(ty))
         };
 
         self.literal_operand(span, ty, literal)

@@ -23,6 +23,7 @@ use symbol::Symbol;
 use tokenstream::{TokenStream, TokenTree};
 use diagnostics::plugin::ErrorMap;
 
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::iter;
 use std::path::{Path, PathBuf};
@@ -37,7 +38,6 @@ pub mod lexer;
 pub mod token;
 pub mod attr;
 
-pub mod common;
 pub mod classify;
 
 /// Info about a parsing session.
@@ -50,7 +50,7 @@ pub struct ParseSess {
     /// raw identifiers
     pub raw_identifier_spans: Lock<Vec<Span>>,
     /// The registered diagnostics codes
-    pub registered_diagnostics: Lock<ErrorMap>,
+    crate registered_diagnostics: Lock<ErrorMap>,
     // Spans where a `mod foo;` statement was included in a non-mod.rs file.
     // These are used to issue errors if the non_modrs_mods feature is not enabled.
     pub non_modrs_mods: Lock<Vec<(ast::Ident, Span)>>,
@@ -89,8 +89,8 @@ impl ParseSess {
 }
 
 #[derive(Clone)]
-pub struct Directory {
-    pub path: PathBuf,
+pub struct Directory<'a> {
+    pub path: Cow<'a, Path>,
     pub ownership: DirectoryOwnership,
 }
 
@@ -130,7 +130,7 @@ pub fn parse_crate_attrs_from_source_str(name: FileName, source: String, sess: &
     new_parser_from_source_str(sess, name, source).parse_inner_attributes()
 }
 
-pub fn parse_expr_from_source_str(name: FileName, source: String, sess: &ParseSess)
+crate fn parse_expr_from_source_str(name: FileName, source: String, sess: &ParseSess)
                                       -> PResult<P<ast::Expr>> {
     new_parser_from_source_str(sess, name, source).parse_expr()
 }
@@ -139,17 +139,12 @@ pub fn parse_expr_from_source_str(name: FileName, source: String, sess: &ParseSe
 ///
 /// Returns `Ok(Some(item))` when successful, `Ok(None)` when no item was found, and `Err`
 /// when a syntax error occurred.
-pub fn parse_item_from_source_str(name: FileName, source: String, sess: &ParseSess)
+crate fn parse_item_from_source_str(name: FileName, source: String, sess: &ParseSess)
                                       -> PResult<Option<P<ast::Item>>> {
     new_parser_from_source_str(sess, name, source).parse_item()
 }
 
-pub fn parse_meta_from_source_str(name: FileName, source: String, sess: &ParseSess)
-                                      -> PResult<ast::MetaItem> {
-    new_parser_from_source_str(sess, name, source).parse_meta_item()
-}
-
-pub fn parse_stmt_from_source_str(name: FileName, source: String, sess: &ParseSess)
+crate fn parse_stmt_from_source_str(name: FileName, source: String, sess: &ParseSess)
                                       -> PResult<Option<ast::Stmt>> {
     new_parser_from_source_str(sess, name, source).parse_stmt()
 }
@@ -177,7 +172,7 @@ pub fn new_parser_from_file<'a>(sess: &'a ParseSess, path: &Path) -> Parser<'a> 
 /// Given a session, a crate config, a path, and a span, add
 /// the file at the given path to the codemap, and return a parser.
 /// On an error, use the given span as the source of the problem.
-pub fn new_sub_parser_from_file<'a>(sess: &'a ParseSess,
+crate fn new_sub_parser_from_file<'a>(sess: &'a ParseSess,
                                     path: &Path,
                                     directory_ownership: DirectoryOwnership,
                                     module_name: Option<String>,
@@ -189,7 +184,7 @@ pub fn new_sub_parser_from_file<'a>(sess: &'a ParseSess,
 }
 
 /// Given a filemap and config, return a parser
-pub fn filemap_to_parser(sess: & ParseSess, filemap: Lrc<FileMap>) -> Parser {
+fn filemap_to_parser(sess: & ParseSess, filemap: Lrc<FileMap>) -> Parser {
     let end_pos = filemap.end_pos;
     let mut parser = stream_to_parser(sess, filemap_to_stream(sess, filemap, None));
 
@@ -228,8 +223,7 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
 /// Given a filemap, produce a sequence of token-trees
 pub fn filemap_to_stream(sess: &ParseSess, filemap: Lrc<FileMap>, override_span: Option<Span>)
                          -> TokenStream {
-    let mut srdr = lexer::StringReader::new(sess, filemap);
-    srdr.override_span = override_span;
+    let mut srdr = lexer::StringReader::new(sess, filemap, override_span);
     srdr.real_token();
     panictry!(srdr.parse_all_token_trees())
 }
@@ -243,7 +237,7 @@ pub fn stream_to_parser(sess: &ParseSess, stream: TokenStream) -> Parser {
 /// Rather than just accepting/rejecting a given literal, unescapes it as
 /// well. Can take any slice prefixed by a character escape. Returns the
 /// character and the number of characters consumed.
-pub fn char_lit(lit: &str, diag: Option<(Span, &Handler)>) -> (char, isize) {
+fn char_lit(lit: &str, diag: Option<(Span, &Handler)>) -> (char, isize) {
     use std::char;
 
     // Handle non-escaped chars first.
@@ -300,7 +294,7 @@ pub fn char_lit(lit: &str, diag: Option<(Span, &Handler)>) -> (char, isize) {
 
 /// Parse a string representing a string literal into its final form. Does
 /// unescaping.
-pub fn str_lit(lit: &str, diag: Option<(Span, &Handler)>) -> String {
+fn str_lit(lit: &str, diag: Option<(Span, &Handler)>) -> String {
     debug!("str_lit: given {}", lit.escape_default());
     let mut res = String::with_capacity(lit.len());
 
@@ -369,7 +363,7 @@ pub fn str_lit(lit: &str, diag: Option<(Span, &Handler)>) -> String {
 
 /// Parse a string representing a raw string literal into its final form. The
 /// only operation this does is convert embedded CRLF into a single LF.
-pub fn raw_str_lit(lit: &str) -> String {
+fn raw_str_lit(lit: &str) -> String {
     debug!("raw_str_lit: given {}", lit.escape_default());
     let mut res = String::with_capacity(lit.len());
 
@@ -406,7 +400,7 @@ macro_rules! err {
     }
 }
 
-pub fn lit_token(lit: token::Lit, suf: Option<Symbol>, diag: Option<(Span, &Handler)>)
+crate fn lit_token(lit: token::Lit, suf: Option<Symbol>, diag: Option<(Span, &Handler)>)
                  -> (bool /* suffix illegal? */, Option<ast::LitKind>) {
     use ast::LitKind;
 
@@ -419,13 +413,24 @@ pub fn lit_token(lit: token::Lit, suf: Option<Symbol>, diag: Option<(Span, &Hand
         token::Integer(s) => (false, integer_lit(&s.as_str(), suf, diag)),
         token::Float(s) => (false, float_lit(&s.as_str(), suf, diag)),
 
-        token::Str_(s) => {
-            let s = Symbol::intern(&str_lit(&s.as_str(), diag));
-            (true, Some(LitKind::Str(s, ast::StrStyle::Cooked)))
+        token::Str_(mut sym) => {
+            // If there are no characters requiring special treatment we can
+            // reuse the symbol from the Token. Otherwise, we must generate a
+            // new symbol because the string in the LitKind is different to the
+            // string in the Token.
+            let s = &sym.as_str();
+            if s.as_bytes().iter().any(|&c| c == b'\\' || c == b'\r') {
+                sym = Symbol::intern(&str_lit(s, diag));
+            }
+            (true, Some(LitKind::Str(sym, ast::StrStyle::Cooked)))
         }
-        token::StrRaw(s, n) => {
-            let s = Symbol::intern(&raw_str_lit(&s.as_str()));
-            (true, Some(LitKind::Str(s, ast::StrStyle::Raw(n))))
+        token::StrRaw(mut sym, n) => {
+            // Ditto.
+            let s = &sym.as_str();
+            if s.contains('\r') {
+                sym = Symbol::intern(&raw_str_lit(s));
+            }
+            (true, Some(LitKind::Str(sym, ast::StrStyle::Raw(n))))
         }
         token::ByteStr(i) => {
             (true, Some(LitKind::ByteStr(byte_str_lit(&i.as_str()))))
@@ -465,7 +470,7 @@ fn filtered_float_lit(data: Symbol, suffix: Option<Symbol>, diag: Option<(Span, 
         }
     })
 }
-pub fn float_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
+fn float_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
                  -> Option<ast::LitKind> {
     debug!("float_lit: {:?}, {:?}", s, suffix);
     // FIXME #2252: bounds checking float literals is deferred until trans
@@ -474,7 +479,7 @@ pub fn float_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>
 }
 
 /// Parse a string representing a byte literal into its final form. Similar to `char_lit`
-pub fn byte_lit(lit: &str) -> (u8, usize) {
+fn byte_lit(lit: &str) -> (u8, usize) {
     let err = |i| format!("lexer accepted invalid byte literal {} step {}", lit, i);
 
     if lit.len() == 1 {
@@ -505,7 +510,7 @@ pub fn byte_lit(lit: &str) -> (u8, usize) {
     }
 }
 
-pub fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
+fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
     let mut res = Vec::with_capacity(lit.len());
 
     let error = |i| format!("lexer should have rejected {} at {}", lit, i);
@@ -564,7 +569,7 @@ pub fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
     Lrc::new(res)
 }
 
-pub fn integer_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
+fn integer_lit(s: &str, suffix: Option<Symbol>, diag: Option<(Span, &Handler)>)
                    -> Option<ast::LitKind> {
     // s can only be ascii, byte indexing is fine
 
@@ -1123,5 +1128,28 @@ mod tests {
                 panic!();
             }
         });
+    }
+}
+
+/// `SeqSep` : a sequence separator (token)
+/// and whether a trailing separator is allowed.
+pub struct SeqSep {
+    pub sep: Option<token::Token>,
+    pub trailing_sep_allowed: bool,
+}
+
+impl SeqSep {
+    pub fn trailing_allowed(t: token::Token) -> SeqSep {
+        SeqSep {
+            sep: Some(t),
+            trailing_sep_allowed: true,
+        }
+    }
+
+    pub fn none() -> SeqSep {
+        SeqSep {
+            sep: None,
+            trailing_sep_allowed: false,
+        }
     }
 }

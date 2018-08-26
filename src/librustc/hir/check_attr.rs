@@ -58,7 +58,7 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
     /// Check any attribute.
     fn check_attributes(&self, item: &hir::Item, target: Target) {
         if target == Target::Fn {
-            self.tcx.trans_fn_attrs(self.tcx.hir.local_def_id(item.id));
+            self.tcx.codegen_fn_attrs(self.tcx.hir.local_def_id(item.id));
         } else if let Some(a) = item.attrs.iter().find(|a| a.check_name("target_feature")) {
             self.tcx.sess.struct_span_err(a.span, "attribute should be applied to a function")
                 .span_label(item.span, "not a function")
@@ -126,7 +126,7 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
             _ => {
                 struct_span_err!(self.tcx.sess,
                                  attr.span,
-                                 E0910,
+                                 E0701,
                                  "attribute can only be applied to a struct or enum")
                     .span_label(item.span, "not a struct or enum")
                     .emit();
@@ -137,7 +137,7 @@ impl<'a, 'tcx> CheckAttrVisitor<'a, 'tcx> {
         if attr.meta_item_list().is_some() || attr.value_str().is_some() {
             struct_span_err!(self.tcx.sess,
                              attr.span,
-                             E0911,
+                             E0702,
                              "attribute should be empty")
                 .span_label(item.span, "not empty")
                 .emit();

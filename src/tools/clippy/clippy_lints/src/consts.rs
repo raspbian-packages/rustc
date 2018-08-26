@@ -163,10 +163,10 @@ pub fn lit_to_constant<'tcx>(lit: &LitKind, ty: Ty<'tcx>) -> Constant {
     }
 }
 
-pub fn constant(lcx: &LateContext, e: &Expr) -> Option<(Constant, bool)> {
+pub fn constant<'c, 'cc>(lcx: &LateContext<'c, 'cc>, tables: &'c ty::TypeckTables<'cc>, e: &Expr) -> Option<(Constant, bool)> {
     let mut cx = ConstEvalLateContext {
         tcx: lcx.tcx,
-        tables: lcx.tables,
+        tables,
         param_env: lcx.param_env,
         needed_resolution: false,
         substs: lcx.tcx.intern_substs(&[]),
@@ -174,12 +174,12 @@ pub fn constant(lcx: &LateContext, e: &Expr) -> Option<(Constant, bool)> {
     cx.expr(e).map(|cst| (cst, cx.needed_resolution))
 }
 
-pub fn constant_simple(lcx: &LateContext, e: &Expr) -> Option<Constant> {
-    constant(lcx, e).and_then(|(cst, res)| if res { None } else { Some(cst) })
+pub fn constant_simple<'c, 'cc>(lcx: &LateContext<'c, 'cc>, tables: &'c ty::TypeckTables<'cc>, e: &Expr) -> Option<Constant> {
+    constant(lcx, tables, e).and_then(|(cst, res)| if res { None } else { Some(cst) })
 }
 
 /// Creates a `ConstEvalLateContext` from the given `LateContext` and `TypeckTables`
-pub fn constant_context<'c, 'cc>(lcx: &LateContext<'c, 'cc>, tables: &'cc ty::TypeckTables<'cc>) -> ConstEvalLateContext<'c, 'cc> {
+pub fn constant_context<'c, 'cc>(lcx: &LateContext<'c, 'cc>, tables: &'c ty::TypeckTables<'cc>) -> ConstEvalLateContext<'c, 'cc> {
     ConstEvalLateContext {
         tcx: lcx.tcx,
         tables,
@@ -202,14 +202,14 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
     pub fn expr(&mut self, e: &Expr) -> Option<Constant> {
         match e.node {
             ExprPath(ref qpath) => self.fetch_path(qpath, e.hir_id),
-            ExprBlock(ref block) => self.block(block),
+            ExprBlock(ref block, _) => self.block(block),
             ExprIf(ref cond, ref then, ref otherwise) => self.ifthenelse(cond, then, otherwise),
             ExprLit(ref lit) => Some(lit_to_constant(&lit.node, self.tables.expr_ty(e))),
             ExprArray(ref vec) => self.multi(vec).map(Constant::Vec),
             ExprTup(ref tup) => self.multi(tup).map(Constant::Tuple),
             ExprRepeat(ref value, _) => {
                 let n = match self.tables.expr_ty(e).sty {
-                    ty::TyArray(_, n) => n.val.to_raw_bits().expect("array length"),
+                    ty::TyArray(_, n) => n.assert_usize(self.tcx).expect("array length"),
                     _ => span_bug!(e.span, "typeck error"),
                 };
                 self.expr(value).map(|v| Constant::Repeat(Box::new(v), n as u64))
@@ -415,9 +415,9 @@ impl<'c, 'cc> ConstEvalLateContext<'c, 'cc> {
 }
 
 pub fn miri_to_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, result: &ty::Const<'tcx>) -> Option<Constant> {
-    use rustc::mir::interpret::{Value, PrimVal};
+    use rustc::mir::interpret::{PrimVal, ConstValue};
     match result.val {
-        ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))) => match result.ty.sty {
+        ConstVal::Value(ConstValue::ByVal(PrimVal::Bytes(b))) => match result.ty.sty {
             ty::TyBool => Some(Constant::Bool(b == 1)),
             ty::TyUint(_) | ty::TyInt(_) => Some(Constant::Int(b)),
             ty::TyFloat(FloatTy::F32) => Some(Constant::F32(f32::from_bits(b as u32))),
@@ -425,8 +425,8 @@ pub fn miri_to_const<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, result: &ty::Const<'
             // FIXME: implement other conversion
             _ => None,
         },
-        ConstVal::Value(Value::ByValPair(PrimVal::Ptr(ptr), PrimVal::Bytes(n))) => match result.ty.sty {
-            ty::TyRef(_, tam) => match tam.ty.sty {
+        ConstVal::Value(ConstValue::ByValPair(PrimVal::Ptr(ptr), PrimVal::Bytes(n))) => match result.ty.sty {
+            ty::TyRef(_, tam, _) => match tam.sty {
                 ty::TyStr => {
                     let alloc = tcx
                         .interpret_interner

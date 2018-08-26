@@ -210,31 +210,9 @@ impl DefKey {
         } = self.disambiguated_data;
 
         ::std::mem::discriminant(data).hash(&mut hasher);
-        match *data {
-            DefPathData::TypeNs(name) |
-            DefPathData::Trait(name) |
-            DefPathData::AssocTypeInTrait(name) |
-            DefPathData::AssocTypeInImpl(name) |
-            DefPathData::ValueNs(name) |
-            DefPathData::Module(name) |
-            DefPathData::MacroDef(name) |
-            DefPathData::TypeParam(name) |
-            DefPathData::LifetimeDef(name) |
-            DefPathData::EnumVariant(name) |
-            DefPathData::Field(name) |
-            DefPathData::GlobalMetaData(name) => {
-                name.hash(&mut hasher);
-            }
-
-            DefPathData::Impl |
-            DefPathData::CrateRoot |
-            DefPathData::Misc |
-            DefPathData::ClosureExpr |
-            DefPathData::StructCtor |
-            DefPathData::Initializer |
-            DefPathData::ImplTrait |
-            DefPathData::Typeof => {}
-        };
+        if let Some(name) = data.get_opt_name() {
+            name.hash(&mut hasher);
+        }
 
         disambiguator.hash(&mut hasher);
 
@@ -389,12 +367,12 @@ pub enum DefPathData {
     Field(InternedString),
     /// Implicit ctor for a tuple-like struct
     StructCtor,
-    /// Initializer for a const
-    Initializer,
-    /// An `impl Trait` type node.
-    ImplTrait,
-    /// A `typeof` type node.
-    Typeof,
+    /// A constant expression (see {ast,hir}::AnonConst).
+    AnonConst,
+    /// An `impl Trait` type node in argument position.
+    UniversalImplTrait,
+    /// An `impl Trait` type node in return position.
+    ExistentialImplTrait,
 
     /// GlobalMetaData identifies a piece of crate metadata that is global to
     /// a whole crate (as opposed to just one item). GlobalMetaData components
@@ -488,14 +466,6 @@ impl Definitions {
     #[inline]
     pub fn node_to_hir_id(&self, node_id: ast::NodeId) -> hir::HirId {
         self.node_to_hir_id[node_id]
-    }
-
-    pub fn find_node_for_hir_id(&self, hir_id: hir::HirId) -> ast::NodeId {
-        self.node_to_hir_id
-            .iter()
-            .position(|x| *x == hir_id)
-            .map(|idx| ast::NodeId::new(idx))
-            .unwrap()
     }
 
     #[inline]
@@ -665,9 +635,9 @@ impl DefPathData {
             Misc |
             ClosureExpr |
             StructCtor |
-            Initializer |
-            ImplTrait |
-            Typeof => None
+            AnonConst |
+            ExistentialImplTrait |
+            UniversalImplTrait => None
         }
     }
 
@@ -696,9 +666,9 @@ impl DefPathData {
             Misc => "{{?}}",
             ClosureExpr => "{{closure}}",
             StructCtor => "{{constructor}}",
-            Initializer => "{{initializer}}",
-            ImplTrait => "{{impl-Trait}}",
-            Typeof => "{{typeof}}",
+            AnonConst => "{{constant}}",
+            ExistentialImplTrait => "{{exist-impl-Trait}}",
+            UniversalImplTrait => "{{univ-impl-Trait}}",
         };
 
         Symbol::intern(s).as_interned_str()

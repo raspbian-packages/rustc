@@ -18,8 +18,8 @@ Description: Set DT_SONAME when building dylibs
 Author: Angus Lees <gus@debian.org>
 Forwarded: no
 
---- a/src/librustc_trans/back/link.rs
-+++ b/src/librustc_trans/back/link.rs
+--- a/src/librustc_codegen_llvm/back/link.rs
++++ b/src/librustc_codegen_llvm/back/link.rs
 @@ -1034,6 +1034,13 @@
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }

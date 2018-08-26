@@ -29,6 +29,7 @@
 #![feature(macro_vis_matcher)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
+#![feature(macro_at_most_once_rep)]
 
 extern crate syntax;
 #[macro_use]
@@ -50,7 +51,7 @@ use lint::LintId;
 use lint::FutureIncompatibleInfo;
 
 mod bad_style;
-mod builtin;
+pub mod builtin;
 mod types;
 mod unused;
 
@@ -58,6 +59,9 @@ use bad_style::*;
 use builtin::*;
 use types::*;
 use unused::*;
+
+/// Useful for other parts of the compiler.
+pub use builtin::SoftLints;
 
 /// Tell the `LintStore` about all the built-in lints (the ones
 /// defined in this crate and the ones defined in
@@ -106,6 +110,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                        UnusedImportBraces,
                        AnonymousParameters,
                        UnusedDocComment,
+                       BadRepr,
                        );
 
     add_early_builtin_with_new!(sess,
@@ -137,6 +142,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                  UnreachablePub,
                  TypeAliasBounds,
                  UnusedBrokenConst,
+                 TrivialConstraints,
                  );
 
     add_builtin_with_new!(sess,
@@ -175,12 +181,14 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
                     UNUSED_DOC_COMMENTS,
                     UNUSED_EXTERN_CRATES,
                     UNUSED_FEATURES,
+                    UNUSED_LABELS,
                     UNUSED_PARENS);
 
     add_lint_group!(sess,
-                    "rust_2018_migration",
+                    "rust_2018_idioms",
                     BARE_TRAIT_OBJECTS,
-                    UNREACHABLE_PUB);
+                    UNREACHABLE_PUB,
+                    UNUSED_EXTERN_CRATES);
 
     // Guidelines for creating a future incompatibility lint:
     //
@@ -208,6 +216,11 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             edition: None,
         },
         FutureIncompatibleInfo {
+            id: LintId::of(DUPLICATE_MACRO_EXPORTS),
+            reference: "issue #35896 <https://github.com/rust-lang/rust/issues/35896>",
+            edition: Some(Edition::Edition2018),
+        },
+        FutureIncompatibleInfo {
             id: LintId::of(SAFE_EXTERN_STATICS),
             reference: "issue #36247 <https://github.com/rust-lang/rust/issues/36247>",
             edition: None,
@@ -220,11 +233,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(LEGACY_DIRECTORY_OWNERSHIP),
             reference: "issue #37872 <https://github.com/rust-lang/rust/issues/37872>",
-            edition: None,
-        },
-        FutureIncompatibleInfo {
-            id: LintId::of(LEGACY_IMPORTS),
-            reference: "issue #38260 <https://github.com/rust-lang/rust/issues/38260>",
             edition: None,
         },
         FutureIncompatibleInfo {
@@ -284,6 +292,11 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             reference: "issue TBD",
             edition: Some(Edition::Edition2018),
         },
+        FutureIncompatibleInfo {
+            id: LintId::of(DUPLICATE_ASSOCIATED_TYPE_BINDINGS),
+            reference: "issue #50589 <https://github.com/rust-lang/rust/issues/50589>",
+            edition: None,
+        },
         ]);
 
     // Register renamed and removed lints
@@ -320,6 +333,8 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         "converted into hard error, see https://github.com/rust-lang/rust/issues/36892");
     store.register_removed("extra_requirement_in_impl",
         "converted into hard error, see https://github.com/rust-lang/rust/issues/37166");
+    store.register_removed("legacy_imports",
+        "converted into hard error, see https://github.com/rust-lang/rust/issues/38260");
     store.register_removed("coerce_never",
         "converted into hard error, see https://github.com/rust-lang/rust/issues/48950");
     store.register_removed("resolve_trait_on_defaulted_unit",

@@ -36,7 +36,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         self.in_opt_scope(opt_destruction_scope.map(|de|(de, source_info)), block, move |this| {
             this.in_scope((region_scope, source_info), LintLevel::Inherited, block, move |this| {
                 if targeted_by_break {
-                    // This is a `break`-able block (currently only `catch { ... }`)
+                    // This is a `break`-able block
                     let exit_block = this.cfg.start_new_block();
                     let block_exit = this.in_breakable_scope(
                         None, exit_block, destination.clone(), |this| {
@@ -81,10 +81,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         //
         // First we build all the statements in the block.
         let mut let_scope_stack = Vec::with_capacity(8);
-        let outer_visibility_scope = this.visibility_scope;
+        let outer_source_scope = this.source_scope;
         let outer_push_unsafe_count = this.push_unsafe_count;
         let outer_unpushed_unsafe = this.unpushed_unsafe;
-        this.update_visibility_scope_for_safety_mode(span, safety_mode);
+        this.update_source_scope_for_safety_mode(span, safety_mode);
 
         let source_info = this.source_info(span);
         for stmt in stmts {
@@ -112,7 +112,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     this.push_scope((remainder_scope, source_info));
                     let_scope_stack.push(remainder_scope);
 
-                    // Declare the bindings, which may create a visibility scope.
+                    // Declare the bindings, which may create a source scope.
                     let remainder_span = remainder_scope.span(this.hir.tcx(),
                                                               &this.hir.region_scope_tree);
                     let scope = this.declare_bindings(None, remainder_span, lint_level, &pattern,
@@ -137,15 +137,15 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                             }
                         }
 
-                        this.visit_bindings(&pattern, &mut |this, _, _, node, span, _| {
+                        this.visit_bindings(&pattern, &mut |this, _, _, _, node, span, _| {
                             this.storage_live_binding(block, node, span, OutsideGuard);
                             this.schedule_drop_for_binding(node, span, OutsideGuard);
                         })
                     }
 
-                    // Enter the visibility scope, after evaluating the initializer.
-                    if let Some(visibility_scope) = scope {
-                        this.visibility_scope = visibility_scope;
+                    // Enter the source scope, after evaluating the initializer.
+                    if let Some(source_scope) = scope {
+                        this.source_scope = source_scope;
                     }
                 }
             }
@@ -172,19 +172,19 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         for scope in let_scope_stack.into_iter().rev() {
             unpack!(block = this.pop_scope((scope, source_info), block));
         }
-        // Restore the original visibility scope.
-        this.visibility_scope = outer_visibility_scope;
+        // Restore the original source scope.
+        this.source_scope = outer_source_scope;
         this.push_unsafe_count = outer_push_unsafe_count;
         this.unpushed_unsafe = outer_unpushed_unsafe;
         block.unit()
     }
 
-    /// If we are changing the safety mode, create a new visibility scope
-    fn update_visibility_scope_for_safety_mode(&mut self,
+    /// If we are changing the safety mode, create a new source scope
+    fn update_source_scope_for_safety_mode(&mut self,
                                                span: Span,
                                                safety_mode: BlockSafety)
     {
-        debug!("update_visibility_scope_for({:?}, {:?})", span, safety_mode);
+        debug!("update_source_scope_for({:?}, {:?})", span, safety_mode);
         let new_unsafety = match safety_mode {
             BlockSafety::Safe => None,
             BlockSafety::ExplicitUnsafe(node_id) => {
@@ -214,7 +214,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         };
 
         if let Some(unsafety) = new_unsafety {
-            self.visibility_scope = self.new_visibility_scope(
+            self.source_scope = self.new_source_scope(
                 span, LintLevel::Inherited, Some(unsafety));
         }
     }

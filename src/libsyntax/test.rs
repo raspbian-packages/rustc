@@ -29,7 +29,7 @@ use entry::{self, EntryPointType};
 use ext::base::{ExtCtxt, Resolver};
 use ext::build::AstBuilder;
 use ext::expand::ExpansionConfig;
-use ext::hygiene::{Mark, SyntaxContext};
+use ext::hygiene::{self, Mark, SyntaxContext};
 use fold::Folder;
 use feature_gate::Features;
 use util::move_map::MoveMap;
@@ -300,6 +300,7 @@ fn generate_test_harness(sess: &ParseSess,
             span: None,
             allow_internal_unstable: true,
             allow_internal_unsafe: false,
+            edition: hygiene::default_edition(),
         }
     });
 
@@ -334,7 +335,7 @@ enum BadTestSignature {
 fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
     let has_test_attr = attr::contains_name(&i.attrs, "test");
 
-    fn has_test_signature(cx: &TestCtxt, i: &ast::Item) -> HasTestSignature {
+    fn has_test_signature(_cx: &TestCtxt, i: &ast::Item) -> HasTestSignature {
         let has_should_panic_attr = attr::contains_name(&i.attrs, "should_panic");
         match i.node {
             ast::ItemKind::Fn(ref decl, _, _, _, ref generics, _) => {
@@ -350,15 +351,14 @@ fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
                     return No(BadTestSignature::NoArgumentsAllowed);
                 }
 
-                match (has_output, cx.features.termination_trait_test, has_should_panic_attr) {
-                    (true, true, true) => No(BadTestSignature::ShouldPanicOnlyWithNoArgs),
-                    (true, true, false) => if generics.is_parameterized() {
+                match (has_output, has_should_panic_attr) {
+                    (true, true) => No(BadTestSignature::ShouldPanicOnlyWithNoArgs),
+                    (true, false) => if generics.is_parameterized() {
                         No(BadTestSignature::WrongTypeSignature)
                     } else {
                         Yes
                     },
-                    (true, false, _) => No(BadTestSignature::WrongTypeSignature),
-                    (false, _, _) => Yes
+                    (false, _) => Yes
                 }
             }
             _ => No(BadTestSignature::NotEvenAFunction),
@@ -394,31 +394,12 @@ fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
 fn is_bench_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
     let has_bench_attr = attr::contains_name(&i.attrs, "bench");
 
-    fn has_bench_signature(cx: &TestCtxt, i: &ast::Item) -> bool {
+    fn has_bench_signature(_cx: &TestCtxt, i: &ast::Item) -> bool {
         match i.node {
-            ast::ItemKind::Fn(ref decl, _, _, _, ref generics, _) => {
-                let input_cnt = decl.inputs.len();
-
-                // If the termination trait is active, the compiler will check that the output
-                // type implements the `Termination` trait as `libtest` enforces that.
-                let output_matches = if cx.features.termination_trait_test {
-                    true
-                } else {
-                    let no_output = match decl.output {
-                        ast::FunctionRetTy::Default(..) => true,
-                        ast::FunctionRetTy::Ty(ref t) if t.node == ast::TyKind::Tup(vec![]) => true,
-                        _ => false
-                    };
-                    let tparm_cnt = generics.params.iter()
-                        .filter(|param| param.is_type_param())
-                        .count();
-
-                    no_output && tparm_cnt == 0
-                };
-
+            ast::ItemKind::Fn(ref decl, _, _, _, _, _) => {
                 // NB: inadequate check, but we're running
                 // well before resolve, can't get too deep.
-                input_cnt == 1 && output_matches
+                decl.inputs.len() == 1
             }
             _ => false
         }
@@ -429,13 +410,8 @@ fn is_bench_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
     if has_bench_attr && !has_bench_signature {
         let diag = cx.span_diagnostic;
 
-        if cx.features.termination_trait_test {
-            diag.span_err(i.span, "functions used as benches must have signature \
+        diag.span_err(i.span, "functions used as benches must have signature \
                                    `fn(&mut Bencher) -> impl Termination`");
-        } else {
-            diag.span_err(i.span, "functions used as benches must have signature \
-                                   `fn(&mut Bencher) -> ()`");
-        }
     }
 
     has_bench_attr && has_bench_signature
@@ -516,7 +492,7 @@ fn mk_std(cx: &TestCtxt) -> P<ast::Item> {
         (ast::ItemKind::Use(P(ast::UseTree {
             span: DUMMY_SP,
             prefix: path_node(vec![id_test]),
-            kind: ast::UseTreeKind::Simple(None),
+            kind: ast::UseTreeKind::Simple(None, ast::DUMMY_NODE_ID, ast::DUMMY_NODE_ID),
         })),
          ast::VisibilityKind::Public, keywords::Invalid.ident())
     } else {
@@ -612,7 +588,7 @@ fn mk_test_module(cx: &mut TestCtxt) -> (P<ast::Item>, Option<P<ast::Item>>) {
         let use_path = ast::UseTree {
             span: DUMMY_SP,
             prefix: path_node(vec![mod_ident, Ident::from_str("main")]),
-            kind: ast::UseTreeKind::Simple(Some(rename)),
+            kind: ast::UseTreeKind::Simple(Some(rename), ast::DUMMY_NODE_ID, ast::DUMMY_NODE_ID),
         };
 
         expander.fold_item(P(ast::Item {
@@ -646,7 +622,7 @@ fn path_name_i(idents: &[Ident]) -> String {
     let mut path_name = "".to_string();
     let mut idents_iter = idents.iter().peekable();
     while let Some(ident) = idents_iter.next() {
-        path_name.push_str(&ident.name.as_str());
+        path_name.push_str(&ident.as_str());
         if let Some(_) = idents_iter.peek() {
             path_name.push_str("::")
         }

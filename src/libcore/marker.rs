@@ -294,7 +294,7 @@ pub trait Copy : Clone {
 /// This trait is automatically implemented when the compiler determines
 /// it's appropriate.
 ///
-/// The precise definition is: a type `T` is `Sync` if `&T` is
+/// The precise definition is: a type `T` is `Sync` if and only if `&T` is
 /// [`Send`][send]. In other words, if there is no possibility of
 /// [undefined behavior][ub] (including data races) when passing
 /// `&T` references between threads.
@@ -595,23 +595,32 @@ unsafe impl<T: ?Sized> Freeze for *mut T {}
 unsafe impl<'a, T: ?Sized> Freeze for &'a T {}
 unsafe impl<'a, T: ?Sized> Freeze for &'a mut T {}
 
-/// Types which can be moved out of a `Pin`.
+/// Types which can be moved out of a `PinMut`.
 ///
-/// The `Unpin` trait is used to control the behavior of the [`Pin`] type. If a
+/// The `Unpin` trait is used to control the behavior of the [`PinMut`] type. If a
 /// type implements `Unpin`, it is safe to move a value of that type out of the
-/// `Pin` pointer.
+/// `PinMut` pointer.
 ///
 /// This trait is automatically implemented for almost every type.
 ///
-/// [`Pin`]: ../mem/struct.Pin.html
+/// [`PinMut`]: ../mem/struct.PinMut.html
 #[unstable(feature = "pin", issue = "49150")]
-pub unsafe auto trait Unpin {}
+pub auto trait Unpin {}
+
+/// A type which does not implement `Unpin`.
+///
+/// If a type contains a `Pinned`, it will not implement `Unpin` by default.
+#[unstable(feature = "pin", issue = "49150")]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub struct Pinned;
+
+#[unstable(feature = "pin", issue = "49150")]
+impl !Unpin for Pinned {}
 
 /// Implementations of `Copy` for primitive types.
 ///
 /// Implementations that cannot be described in Rust
 /// are implemented in `SelectionContext::copy_clone_conditions()` in librustc.
-#[cfg(not(stage0))]
 mod copy_impls {
 
     use super::Copy;

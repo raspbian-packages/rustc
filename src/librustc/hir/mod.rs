@@ -35,7 +35,7 @@ use mir::mono::Linkage;
 use syntax_pos::{Span, DUMMY_SP};
 use syntax::codemap::{self, Spanned};
 use rustc_target::spec::abi::Abi;
-use syntax::ast::{self, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
+use syntax::ast::{self, CrateSugar, Ident, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, MetaItem};
 use syntax::attr::InlineAttr;
 use syntax::ext::hygiene::SyntaxContext;
@@ -45,9 +45,10 @@ use syntax::tokenstream::TokenStream;
 use syntax::util::ThinVec;
 use syntax::util::parser::ExprPrecedence;
 use ty::AdtKind;
-use ty::maps::Providers;
+use ty::query::Providers;
 
 use rustc_data_structures::indexed_vec;
+use rustc_data_structures::sync::{ParallelIterator, par_iter, Send, Sync, scope};
 
 use serialize::{self, Encoder, Encodable, Decoder, Decodable};
 use std::collections::BTreeMap;
@@ -597,6 +598,18 @@ pub struct WhereClause {
     pub predicates: HirVec<WherePredicate>,
 }
 
+impl WhereClause {
+    pub fn span(&self) -> Option<Span> {
+        self.predicates.iter().map(|predicate| predicate.span())
+            .fold(None, |acc, i| match (acc, i) {
+                (None, i) => Some(i),
+                (Some(acc), i) => {
+                    Some(acc.to(i))
+                }
+            })
+    }
+}
+
 /// A single predicate in a `where` clause
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum WherePredicate {
@@ -720,6 +733,31 @@ impl Crate {
         }
     }
 
+    /// A parallel version of visit_all_item_likes
+    pub fn par_visit_all_item_likes<'hir, V>(&'hir self, visitor: &V)
+        where V: itemlikevisit::ParItemLikeVisitor<'hir> + Sync + Send
+    {
+        scope(|s| {
+            s.spawn(|_| {
+                par_iter(&self.items).for_each(|(_, item)| {
+                    visitor.visit_item(item);
+                });
+            });
+
+            s.spawn(|_| {
+                par_iter(&self.trait_items).for_each(|(_, trait_item)| {
+                    visitor.visit_trait_item(trait_item);
+                });
+            });
+
+            s.spawn(|_| {
+                par_iter(&self.impl_items).for_each(|(_, impl_item)| {
+                    visitor.visit_impl_item(impl_item);
+                });
+            });
+        });
+    }
+
     pub fn body(&self, id: BodyId) -> &Body {
         &self.bodies[&id]
     }
@@ -752,9 +790,8 @@ pub struct Block {
     pub rules: BlockCheckMode,
     pub span: Span,
     /// If true, then there may exist `break 'a` values that aim to
-    /// break out of this block early. As of this writing, this is not
-    /// currently permitted in Rust itself, but it is generated as
-    /// part of `catch` statements.
+    /// break out of this block early.
+    /// Used by `'label: {}` blocks and by `catch` statements.
     pub targeted_by_break: bool,
     /// If true, don't emit return value type errors as the parser had
     /// to recover from a parse error so this block will not have an
@@ -829,7 +866,7 @@ impl Pat {
 pub struct FieldPat {
     pub id: NodeId,
     /// The identifier for the field
-    pub name: Name,
+    pub ident: Ident,
     /// The pattern the field is destructured to
     pub pat: P<Pat>,
     pub is_shorthand: bool,
@@ -905,7 +942,7 @@ pub enum PatKind {
     Slice(HirVec<P<Pat>>, Option<P<Pat>>, HirVec<P<Pat>>),
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum Mutability {
     MutMutable,
     MutImmutable,
@@ -1174,7 +1211,7 @@ pub struct Arm {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct Field {
     pub id: NodeId,
-    pub name: Spanned<Name>,
+    pub ident: Ident,
     pub expr: P<Expr>,
     pub span: Span,
     pub is_shorthand: bool,
@@ -1245,6 +1282,18 @@ pub enum BodyOwnerKind {
 
     /// Initializer of a `static` item.
     Static(Mutability),
+}
+
+/// A constant (expression) that's not an item or associated item,
+/// but needs its own `DefId` for type-checking, const-eval, etc.
+/// These are usually found nested inside types (e.g. array lengths)
+/// or expressions (e.g. repeat counts), and also used to define
+/// explicit discriminant values for enum variants.
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub struct AnonConst {
+    pub id: NodeId,
+    pub hir_id: HirId,
+    pub body: BodyId,
 }
 
 /// An expression
@@ -1355,8 +1404,8 @@ pub enum Expr_ {
     /// This may also be a generator literal, indicated by the final boolean,
     /// in that case there is an GeneratorClause.
     ExprClosure(CaptureClause, P<FnDecl>, BodyId, Span, Option<GeneratorMovability>),
-    /// A block (`{ ... }`)
-    ExprBlock(P<Block>),
+    /// A block (`'label: { ... }`)
+    ExprBlock(P<Block>, Option<Label>),
 
     /// An assignment (`a = foo()`)
     ExprAssign(P<Expr>, P<Expr>),
@@ -1365,7 +1414,7 @@ pub enum Expr_ {
     /// For example, `a += 1`.
     ExprAssignOp(BinOp, P<Expr>, P<Expr>),
     /// Access of a named (`obj.foo`) or unnamed (`obj.0`) struct or tuple field
-    ExprField(P<Expr>, Spanned<Name>),
+    ExprField(P<Expr>, Ident),
     /// An indexing operation (`foo[2]`)
     ExprIndex(P<Expr>, P<Expr>),
 
@@ -1394,7 +1443,7 @@ pub enum Expr_ {
     ///
     /// For example, `[1; 5]`. The first expression is the element
     /// to be repeated; the second is the number of times to repeat it.
-    ExprRepeat(P<Expr>, BodyId),
+    ExprRepeat(P<Expr>, AnonConst),
 
     /// A suspension point for generators. This is `yield <expr>` in Rust.
     ExprYield(P<Expr>),
@@ -1476,46 +1525,6 @@ impl fmt::Display for LoopIdError {
     }
 }
 
-// FIXME(cramertj) this should use `Result` once master compiles w/ a vesion of Rust where
-// `Result` implements `Encodable`/`Decodable`
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum LoopIdResult {
-    Ok(NodeId),
-    Err(LoopIdError),
-}
-impl Into<Result<NodeId, LoopIdError>> for LoopIdResult {
-    fn into(self) -> Result<NodeId, LoopIdError> {
-        match self {
-            LoopIdResult::Ok(ok) => Ok(ok),
-            LoopIdResult::Err(err) => Err(err),
-        }
-    }
-}
-impl From<Result<NodeId, LoopIdError>> for LoopIdResult {
-    fn from(res: Result<NodeId, LoopIdError>) -> Self {
-        match res {
-            Ok(ok) => LoopIdResult::Ok(ok),
-            Err(err) => LoopIdResult::Err(err),
-        }
-    }
-}
-
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
-pub enum ScopeTarget {
-    Block(NodeId),
-    Loop(LoopIdResult),
-}
-
-impl ScopeTarget {
-    pub fn opt_id(self) -> Option<NodeId> {
-        match self {
-            ScopeTarget::Block(node_id) |
-            ScopeTarget::Loop(LoopIdResult::Ok(node_id)) => Some(node_id),
-            ScopeTarget::Loop(LoopIdResult::Err(_)) => None,
-        }
-    }
-}
-
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub struct Destination {
     // This is `Some(_)` iff there is an explicit user-specified `label
@@ -1523,10 +1532,10 @@ pub struct Destination {
 
     // These errors are caught and then reported during the diagnostics pass in
     // librustc_passes/loops.rs
-    pub target_id: ScopeTarget,
+    pub target_id: Result<NodeId, LoopIdError>,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum GeneratorMovability {
     Static,
     Movable,
@@ -1684,6 +1693,7 @@ pub struct BareFnTy {
 pub struct ExistTy {
     pub generics: Generics,
     pub bounds: TyParamBounds,
+    pub impl_trait_fn: Option<DefId>,
 }
 
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
@@ -1692,7 +1702,7 @@ pub enum Ty_ {
     /// A variable length slice (`[T]`)
     TySlice(P<Ty>),
     /// A fixed length array (`[T; n]`)
-    TyArray(P<Ty>, BodyId),
+    TyArray(P<Ty>, AnonConst),
     /// A raw pointer (`*const T` or `*mut T`)
     TyPtr(MutTy),
     /// A reference (`&'a T` or `&'a mut T`)
@@ -1714,17 +1724,17 @@ pub enum Ty_ {
     /// An existentially quantified (there exists a type satisfying) `impl
     /// Bound1 + Bound2 + Bound3` type where `Bound` is a trait or a lifetime.
     ///
-    /// The `ExistTy` structure emulates an
-    /// `abstract type Foo<'a, 'b>: MyTrait<'a, 'b>;`.
+    /// The `Item` is the generated
+    /// `existential type Foo<'a, 'b>: MyTrait<'a, 'b>;`.
     ///
     /// The `HirVec<Lifetime>` is the list of lifetimes applied as parameters
     /// to the `abstract type`, e.g. the `'c` and `'d` in `-> Foo<'c, 'd>`.
     /// This list is only a list of lifetimes and not type parameters
     /// because all in-scope type parameters are captured by `impl Trait`,
     /// so they are resolved directly through the parent `Generics`.
-    TyImplTraitExistential(ExistTy, HirVec<Lifetime>),
+    TyImplTraitExistential(ItemId, DefId, HirVec<Lifetime>),
     /// Unused for now
-    TyTypeof(BodyId),
+    TyTypeof(AnonConst),
     /// TyInfer means the type should be inferred instead of it having been
     /// specified. This can appear anywhere in a type.
     TyInfer,
@@ -1778,7 +1788,7 @@ pub enum IsAuto {
     No
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+#[derive(Copy, Clone, PartialEq, Eq,PartialOrd, Ord, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Unsafety {
     Unsafe,
     Normal,
@@ -1897,7 +1907,7 @@ pub struct Variant_ {
     pub attrs: HirVec<Attribute>,
     pub data: VariantData,
     /// Explicit discriminant, eg `Foo = 1`
-    pub disr_expr: Option<BodyId>,
+    pub disr_expr: Option<AnonConst>,
 }
 
 pub type Variant = Spanned<Variant_>;
@@ -1944,7 +1954,7 @@ pub struct PolyTraitRef {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Visibility {
     Public,
-    Crate,
+    Crate(CrateSugar),
     Restricted { path: P<Path>, id: NodeId },
     Inherited,
 }
@@ -1955,7 +1965,7 @@ impl Visibility {
         match self {
             &Public |
             &Inherited => false,
-            &Crate |
+            &Crate(_) |
             &Restricted { .. } => true,
         }
     }
@@ -1964,7 +1974,7 @@ impl Visibility {
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub struct StructField {
     pub span: Span,
-    pub name: Name,
+    pub ident: Ident,
     pub vis: Visibility,
     pub id: NodeId,
     pub ty: P<Ty>,
@@ -1974,7 +1984,7 @@ pub struct StructField {
 impl StructField {
     // Still necessary in couple of places
     pub fn is_positional(&self) -> bool {
-        let first = self.name.as_str().as_bytes()[0];
+        let first = self.ident.as_str().as_bytes()[0];
         first >= b'0' && first <= b'9'
     }
 }
@@ -2082,6 +2092,8 @@ pub enum Item_ {
     ItemGlobalAsm(P<GlobalAsm>),
     /// A type alias, e.g. `type Foo = Bar<u8>`
     ItemTy(P<Ty>, Generics),
+    /// A type alias, e.g. `type Foo = Bar<u8>`
+    ItemExistential(ExistTy),
     /// An enum definition, e.g. `enum Foo<A, B> {C<A>, D<B>}`
     ItemEnum(EnumDef, Generics),
     /// A struct definition, e.g. `struct Foo<A> {x: A}`
@@ -2115,6 +2127,7 @@ impl Item_ {
             ItemForeignMod(..) => "foreign module",
             ItemGlobalAsm(..) => "global asm",
             ItemTy(..) => "type alias",
+            ItemExistential(..) => "existential type",
             ItemEnum(..) => "enum",
             ItemStruct(..) => "struct",
             ItemUnion(..) => "union",
@@ -2259,8 +2272,8 @@ pub fn provide(providers: &mut Providers) {
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Hash)]
-pub struct TransFnAttrs {
-    pub flags: TransFnAttrFlags,
+pub struct CodegenFnAttrs {
+    pub flags: CodegenFnAttrFlags,
     pub inline: InlineAttr,
     pub export_name: Option<Symbol>,
     pub target_features: Vec<Symbol>,
@@ -2269,7 +2282,7 @@ pub struct TransFnAttrs {
 
 bitflags! {
     #[derive(RustcEncodable, RustcDecodable)]
-    pub struct TransFnAttrFlags: u8 {
+    pub struct CodegenFnAttrFlags: u8 {
         const COLD                      = 0b0000_0001;
         const ALLOCATOR                 = 0b0000_0010;
         const UNWIND                    = 0b0000_0100;
@@ -2281,10 +2294,10 @@ bitflags! {
     }
 }
 
-impl TransFnAttrs {
-    pub fn new() -> TransFnAttrs {
-        TransFnAttrs {
-            flags: TransFnAttrFlags::empty(),
+impl CodegenFnAttrs {
+    pub fn new() -> CodegenFnAttrs {
+        CodegenFnAttrs {
+            flags: CodegenFnAttrFlags::empty(),
             inline: InlineAttr::None,
             export_name: None,
             target_features: vec![],
@@ -2302,7 +2315,6 @@ impl TransFnAttrs {
 
     /// True if `#[no_mangle]` or `#[export_name(...)]` is present.
     pub fn contains_extern_indicator(&self) -> bool {
-        self.flags.contains(TransFnAttrFlags::NO_MANGLE) || self.export_name.is_some()
+        self.flags.contains(CodegenFnAttrFlags::NO_MANGLE) || self.export_name.is_some()
     }
 }
-

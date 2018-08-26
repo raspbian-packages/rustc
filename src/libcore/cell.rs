@@ -570,11 +570,20 @@ impl Display for BorrowMutError {
     }
 }
 
-// Values [1, MAX-1] represent the number of `Ref` active
-// (will not outgrow its range since `usize` is the size of the address space)
+// Values [1, MIN_WRITING-1] represent the number of `Ref` active. Values in
+// [MIN_WRITING, MAX-1] represent the number of `RefMut` active. Multiple
+// `RefMut`s can only be active at a time if they refer to distinct,
+// nonoverlapping components of a `RefCell` (e.g., different ranges of a slice).
+//
+// `Ref` and `RefMut` are both two words in size, and so there will likely never
+// be enough `Ref`s or `RefMut`s in existence to overflow half of the `usize`
+// range. Thus, a `BorrowFlag` will probably never overflow. However, this is
+// not a guarantee, as a pathological program could repeatedly create and then
+// mem::forget `Ref`s or `RefMut`s. Thus, all code must explicitly check for
+// overflow in order to avoid unsafety.
 type BorrowFlag = usize;
 const UNUSED: BorrowFlag = 0;
-const WRITING: BorrowFlag = !0;
+const MIN_WRITING: BorrowFlag = (!0)/2 + 1; // 0b1000...
 
 impl<T> RefCell<T> {
     /// Creates a new `RefCell` containing `value`.
@@ -775,8 +784,9 @@ impl<T: ?Sized> RefCell<T> {
 
     /// Mutably borrows the wrapped value.
     ///
-    /// The borrow lasts until the returned `RefMut` exits scope. The value
-    /// cannot be borrowed while this borrow is active.
+    /// The borrow lasts until the returned `RefMut` or all `RefMut`s derived
+    /// from it exit scope. The value cannot be borrowed while this borrow is
+    /// active.
     ///
     /// # Panics
     ///
@@ -818,8 +828,9 @@ impl<T: ?Sized> RefCell<T> {
 
     /// Mutably borrows the wrapped value, returning an error if the value is currently borrowed.
     ///
-    /// The borrow lasts until the returned `RefMut` exits scope. The value cannot be borrowed
-    /// while this borrow is active.
+    /// The borrow lasts until the returned `RefMut` or all `RefMut`s derived
+    /// from it exit scope. The value cannot be borrowed while this borrow is
+    /// active.
     ///
     /// This is the non-panicking variant of [`borrow_mut`](#method.borrow_mut).
     ///
@@ -1010,12 +1021,15 @@ struct BorrowRef<'b> {
 impl<'b> BorrowRef<'b> {
     #[inline]
     fn new(borrow: &'b Cell<BorrowFlag>) -> Option<BorrowRef<'b>> {
-        match borrow.get() {
-            WRITING => None,
-            b => {
-                borrow.set(b + 1);
-                Some(BorrowRef { borrow: borrow })
-            },
+        let b = borrow.get();
+        if b >= MIN_WRITING {
+            None
+        } else {
+            // Prevent the borrow counter from overflowing into
+            // a writing borrow.
+            assert!(b < MIN_WRITING - 1);
+            borrow.set(b + 1);
+            Some(BorrowRef { borrow })
         }
     }
 }
@@ -1024,7 +1038,7 @@ impl<'b> Drop for BorrowRef<'b> {
     #[inline]
     fn drop(&mut self) {
         let borrow = self.borrow.get();
-        debug_assert!(borrow != WRITING && borrow != UNUSED);
+        debug_assert!(borrow < MIN_WRITING && borrow != UNUSED);
         self.borrow.set(borrow - 1);
     }
 }
@@ -1036,8 +1050,9 @@ impl<'b> Clone for BorrowRef<'b> {
         // is not set to WRITING.
         let borrow = self.borrow.get();
         debug_assert!(borrow != UNUSED);
-        // Prevent the borrow counter from overflowing.
-        assert!(borrow != WRITING);
+        // Prevent the borrow counter from overflowing into
+        // a writing borrow.
+        assert!(borrow < MIN_WRITING - 1);
         self.borrow.set(borrow + 1);
         BorrowRef { borrow: self.borrow }
     }
@@ -1109,6 +1124,37 @@ impl<'b, T: ?Sized> Ref<'b, T> {
             borrow: orig.borrow,
         }
     }
+
+    /// Split a `Ref` into multiple `Ref`s for different components of the
+    /// borrowed data.
+    ///
+    /// The `RefCell` is already immutably borrowed, so this cannot fail.
+    ///
+    /// This is an associated function that needs to be used as
+    /// `Ref::map_split(...)`. A method would interfere with methods of the same
+    /// name on the contents of a `RefCell` used through `Deref`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(refcell_map_split)]
+    /// use std::cell::{Ref, RefCell};
+    ///
+    /// let cell = RefCell::new([1, 2, 3, 4]);
+    /// let borrow = cell.borrow();
+    /// let (begin, end) = Ref::map_split(borrow, |slice| slice.split_at(2));
+    /// assert_eq!(*begin, [1, 2]);
+    /// assert_eq!(*end, [3, 4]);
+    /// ```
+    #[unstable(feature = "refcell_map_split", issue = "51476")]
+    #[inline]
+    pub fn map_split<U: ?Sized, V: ?Sized, F>(orig: Ref<'b, T>, f: F) -> (Ref<'b, U>, Ref<'b, V>)
+        where F: FnOnce(&T) -> (&U, &V)
+    {
+        let (a, b) = f(orig.value);
+        let borrow = orig.borrow.clone();
+        (Ref { value: a, borrow }, Ref { value: b, borrow: orig.borrow })
+    }
 }
 
 #[unstable(feature = "coerce_unsized", issue = "27732")]
@@ -1157,6 +1203,44 @@ impl<'b, T: ?Sized> RefMut<'b, T> {
             borrow: borrow,
         }
     }
+
+    /// Split a `RefMut` into multiple `RefMut`s for different components of the
+    /// borrowed data.
+    ///
+    /// The underlying `RefCell` will remain mutably borrowed until both
+    /// returned `RefMut`s go out of scope.
+    ///
+    /// The `RefCell` is already mutably borrowed, so this cannot fail.
+    ///
+    /// This is an associated function that needs to be used as
+    /// `RefMut::map_split(...)`. A method would interfere with methods of the
+    /// same name on the contents of a `RefCell` used through `Deref`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(refcell_map_split)]
+    /// use std::cell::{RefCell, RefMut};
+    ///
+    /// let cell = RefCell::new([1, 2, 3, 4]);
+    /// let borrow = cell.borrow_mut();
+    /// let (mut begin, mut end) = RefMut::map_split(borrow, |slice| slice.split_at_mut(2));
+    /// assert_eq!(*begin, [1, 2]);
+    /// assert_eq!(*end, [3, 4]);
+    /// begin.copy_from_slice(&[4, 3]);
+    /// end.copy_from_slice(&[2, 1]);
+    /// ```
+    #[unstable(feature = "refcell_map_split", issue = "51476")]
+    #[inline]
+    pub fn map_split<U: ?Sized, V: ?Sized, F>(
+        orig: RefMut<'b, T>, f: F
+    ) -> (RefMut<'b, U>, RefMut<'b, V>)
+        where F: FnOnce(&mut T) -> (&mut U, &mut V)
+    {
+        let (a, b) = f(orig.value);
+        let borrow = orig.borrow.clone();
+        (RefMut { value: a, borrow }, RefMut { value: b, borrow: orig.borrow })
+    }
 }
 
 struct BorrowRefMut<'b> {
@@ -1167,21 +1251,44 @@ impl<'b> Drop for BorrowRefMut<'b> {
     #[inline]
     fn drop(&mut self) {
         let borrow = self.borrow.get();
-        debug_assert!(borrow == WRITING);
-        self.borrow.set(UNUSED);
+        debug_assert!(borrow >= MIN_WRITING);
+        self.borrow.set(if borrow == MIN_WRITING {
+            UNUSED
+        } else {
+            borrow - 1
+        });
     }
 }
 
 impl<'b> BorrowRefMut<'b> {
     #[inline]
     fn new(borrow: &'b Cell<BorrowFlag>) -> Option<BorrowRefMut<'b>> {
+        // NOTE: Unlike BorrowRefMut::clone, new is called to create the initial
+        // mutable reference, and so there must currently be no existing
+        // references. Thus, while clone increments the mutable refcount, here
+        // we simply go directly from UNUSED to MIN_WRITING.
         match borrow.get() {
             UNUSED => {
-                borrow.set(WRITING);
+                borrow.set(MIN_WRITING);
                 Some(BorrowRefMut { borrow: borrow })
             },
             _ => None,
         }
+    }
+
+    // Clone a `BorrowRefMut`.
+    //
+    // This is only valid if each `BorrowRefMut` is used to track a mutable
+    // reference to a distinct, nonoverlapping range of the original object.
+    // This isn't in a Clone impl so that code doesn't call this implicitly.
+    #[inline]
+    fn clone(&self) -> BorrowRefMut<'b> {
+        let borrow = self.borrow.get();
+        debug_assert!(borrow >= MIN_WRITING);
+        // Prevent the borrow counter from overflowing.
+        assert!(borrow != !0);
+        self.borrow.set(borrow + 1);
+        BorrowRefMut { borrow: self.borrow }
     }
 }
 
@@ -1231,38 +1338,39 @@ impl<'a, T: ?Sized + fmt::Display> fmt::Display for RefMut<'a, T> {
 ///
 /// If you have a reference `&SomeStruct`, then normally in Rust all fields of `SomeStruct` are
 /// immutable. The compiler makes optimizations based on the knowledge that `&T` is not mutably
-/// aliased or mutated, and that `&mut T` is unique. `UnsafeCel<T>` is the only core language
+/// aliased or mutated, and that `&mut T` is unique. `UnsafeCell<T>` is the only core language
 /// feature to work around this restriction. All other types that allow internal mutability, such as
-/// `Cell<T>` and `RefCell<T>` use `UnsafeCell` to wrap their internal data.
+/// `Cell<T>` and `RefCell<T>`, use `UnsafeCell` to wrap their internal data.
 ///
 /// The `UnsafeCell` API itself is technically very simple: it gives you a raw pointer `*mut T` to
 /// its contents. It is up to _you_ as the abstraction designer to use that raw pointer correctly.
 ///
 /// The precise Rust aliasing rules are somewhat in flux, but the main points are not contentious:
 ///
-/// - If you create a safe reference with lifetime `'a` (either a `&T` or `&mut T` reference) that
-/// is accessible by safe code (for example, because you returned it), then you must not access
-/// the data in any way that contradicts that reference for the remainder of `'a`. For example, that
-/// means that if you take the `*mut T` from an `UnsafeCell<T>` and case it to an `&T`, then until
-/// that reference's lifetime expires, the data in `T` must remain immutable (modulo any
-/// `UnsafeCell` data found within `T`, of course). Similarly, if you create an `&mut T` reference
-/// that is released to safe code, then you must not access the data within the `UnsafeCell` until
-/// that reference expires.
+/// - If you create a safe reference with lifetime `'a` (either a `&T` or `&mut T`
+/// reference) that is accessible by safe code (for example, because you returned it),
+/// then you must not access the data in any way that contradicts that reference for the
+/// remainder of `'a`. For example, this means that if you take the `*mut T` from an
+/// `UnsafeCell<T>` and cast it to an `&T`, then the data in `T` must remain immutable
+/// (modulo any `UnsafeCell` data found within `T`, of course) until that reference's
+/// lifetime expires. Similarly, if you create a `&mut T` reference that is released to
+/// safe code, then you must not access the data within the `UnsafeCell` until that
+/// reference expires.
 ///
-/// - At all times, you must avoid data races, meaning that if multiple threads have access to
+/// - At all times, you must avoid data races. If multiple threads have access to
 /// the same `UnsafeCell`, then any writes must have a proper happens-before relation to all other
 /// accesses (or use atomics).
 ///
 /// To assist with proper design, the following scenarios are explicitly declared legal
 /// for single-threaded code:
 ///
-/// 1. A `&T` reference can be released to safe code and there it can co-exit with other `&T`
+/// 1. A `&T` reference can be released to safe code and there it can co-exist with other `&T`
 /// references, but not with a `&mut T`
 ///
-/// 2. A `&mut T` reference may be released to safe code, provided neither other `&mut T` nor `&T`
+/// 2. A `&mut T` reference may be released to safe code provided neither other `&mut T` nor `&T`
 /// co-exist with it. A `&mut T` must always be unique.
 ///
-/// Note that while mutating or mutably aliasing the contents of an `& UnsafeCell<T>` is
+/// Note that while mutating or mutably aliasing the contents of an `&UnsafeCell<T>` is
 /// okay (provided you enforce the invariants some other way), it is still undefined behavior
 /// to have multiple `&mut UnsafeCell<T>` aliases.
 ///

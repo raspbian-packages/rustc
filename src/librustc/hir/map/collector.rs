@@ -202,6 +202,7 @@ impl<'a, 'hir> NodeCollector<'a, 'hir> {
             NodeImplItem(n) => EntryImplItem(parent, dep_node_index, n),
             NodeVariant(n) => EntryVariant(parent, dep_node_index, n),
             NodeField(n) => EntryField(parent, dep_node_index, n),
+            NodeAnonConst(n) => EntryAnonConst(parent, dep_node_index, n),
             NodeExpr(n) => EntryExpr(parent, dep_node_index, n),
             NodeStmt(n) => EntryStmt(parent, dep_node_index, n),
             NodeTy(n) => EntryTy(parent, dep_node_index, n),
@@ -345,12 +346,16 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
         });
     }
 
-    fn visit_generics(&mut self, generics: &'hir Generics) {
-        for ty_param in generics.ty_params() {
-            self.insert(ty_param.id, NodeTyParam(ty_param));
+    fn visit_generic_param(&mut self, param: &'hir GenericParam) {
+        match *param {
+            GenericParam::Lifetime(ref ld) => {
+                self.insert(ld.lifetime.id, NodeLifetime(&ld.lifetime));
+            }
+            GenericParam::Type(ref ty_param) => {
+                self.insert(ty_param.id, NodeTyParam(ty_param));
+            }
         }
-
-        intravisit::walk_generics(self, generics);
+        intravisit::walk_generic_param(self, param);
     }
 
     fn visit_trait_item(&mut self, ti: &'hir TraitItem) {
@@ -387,6 +392,14 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
 
         self.with_parent(pat.id, |this| {
             intravisit::walk_pat(this, pat);
+        });
+    }
+
+    fn visit_anon_const(&mut self, constant: &'hir AnonConst) {
+        self.insert(constant.id, NodeAnonConst(constant));
+
+        self.with_parent(constant.id, |this| {
+            intravisit::walk_anon_const(this, constant);
         });
     }
 
@@ -450,7 +463,7 @@ impl<'a, 'hir> Visitor<'hir> for NodeCollector<'a, 'hir> {
     fn visit_vis(&mut self, visibility: &'hir Visibility) {
         match *visibility {
             Visibility::Public |
-            Visibility::Crate |
+            Visibility::Crate(_) |
             Visibility::Inherited => {}
             Visibility::Restricted { id, .. } => {
                 self.insert(id, NodeVisibility(visibility));

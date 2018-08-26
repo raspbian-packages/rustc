@@ -46,9 +46,9 @@
 //!
 //! ## By-reference upvars
 //!
-//! One part of the translation which may be non-obvious is that we translate
+//! One part of the codegen which may be non-obvious is that we translate
 //! closure upvars into the dereference of a borrowed pointer; this more closely
-//! resembles the runtime translation. So, for example, if we had:
+//! resembles the runtime codegen. So, for example, if we had:
 //!
 //!     let mut x = 3;
 //!     let y = 5;
@@ -485,7 +485,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
             // FIXME
             None if self.is_tainted_by_errors() => Err(()),
             None => {
-                let id = self.tcx.hir.definitions().find_node_for_hir_id(id);
+                let id = self.tcx.hir.hir_to_node_id(id);
                 bug!("no type for node {}: {} in mem_categorization",
                      id, self.tcx.hir.node_to_string(id));
             }
@@ -644,14 +644,14 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
             }
           }
 
-          hir::ExprField(ref base, f_name) => {
+          hir::ExprField(ref base, f_ident) => {
             let base_cmt = Rc::new(self.cat_expr(&base)?);
             debug!("cat_expr(cat_field): id={} expr={:?} base={:?}",
                    expr.id,
                    expr,
                    base_cmt);
             let f_index = self.tcx.field_index(expr.id, self.tables);
-            Ok(self.cat_field(expr, base_cmt, f_index, f_name.node, expr_ty))
+            Ok(self.cat_field(expr, base_cmt, f_index, f_ident, expr_ty))
           }
 
           hir::ExprIndex(ref base, _) => {
@@ -936,15 +936,31 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
                            span: Span,
                            expr_ty: Ty<'tcx>)
                            -> cmt_<'tcx> {
+        debug!(
+            "cat_rvalue_node(id={:?}, span={:?}, expr_ty={:?})",
+            id,
+            span,
+            expr_ty,
+        );
         let hir_id = self.tcx.hir.node_to_hir_id(id);
         let promotable = self.rvalue_promotable_map.as_ref().map(|m| m.contains(&hir_id.local_id))
                                                             .unwrap_or(false);
 
+        debug!(
+            "cat_rvalue_node: promotable = {:?}",
+            promotable,
+        );
+
         // Always promote `[T; 0]` (even when e.g. borrowed mutably).
         let promotable = match expr_ty.sty {
-            ty::TyArray(_, len) if len.val.to_raw_bits() == Some(0) => true,
+            ty::TyArray(_, len) if len.assert_usize(self.tcx) == Some(0) => true,
             _ => promotable,
         };
+
+        debug!(
+            "cat_rvalue_node: promotable = {:?} (2)",
+            promotable,
+        );
 
         // Compute maximum lifetime of this rvalue. This is 'static if
         // we can promote to a constant, otherwise equal to enclosing temp
@@ -980,14 +996,15 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
                                  node: &N,
                                  base_cmt: cmt<'tcx>,
                                  f_index: usize,
-                                 f_name: Name,
+                                 f_ident: ast::Ident,
                                  f_ty: Ty<'tcx>)
                                  -> cmt_<'tcx> {
         let ret = cmt_ {
             id: node.id(),
             span: node.span(),
             mutbl: base_cmt.mutbl.inherit(),
-            cat: Categorization::Interior(base_cmt, InteriorField(FieldIndex(f_index, f_name))),
+            cat: Categorization::Interior(base_cmt,
+                                          InteriorField(FieldIndex(f_index, f_ident.name))),
             ty: f_ty,
             note: NoteNone
         };
@@ -1015,7 +1032,7 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
         let base_ty = self.expr_ty_adjusted(base)?;
 
         let (region, mutbl) = match base_ty.sty {
-            ty::TyRef(region, mt) => (region, mt.mutbl),
+            ty::TyRef(region, _, mutbl) => (region, mutbl),
             _ => {
                 span_bug!(expr.span, "cat_overloaded_place: base is not a reference")
             }
@@ -1050,8 +1067,8 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
         let ptr = match base_cmt.ty.sty {
             ty::TyAdt(def, ..) if def.is_box() => Unique,
             ty::TyRawPtr(ref mt) => UnsafePtr(mt.mutbl),
-            ty::TyRef(r, mt) => {
-                let bk = ty::BorrowKind::from_mutbl(mt.mutbl);
+            ty::TyRef(r, _, mutbl) => {
+                let bk = ty::BorrowKind::from_mutbl(mutbl);
                 BorrowedPtr(bk, r)
             }
             ref ty => bug!("unexpected type in cat_deref: {:?}", ty)
@@ -1308,8 +1325,8 @@ impl<'a, 'gcx, 'tcx> MemCategorizationContext<'a, 'gcx, 'tcx> {
             for fp in field_pats {
                 let field_ty = self.pat_ty_adjusted(&fp.node.pat)?; // see (*2)
                 let f_index = self.tcx.field_index(fp.node.id, self.tables);
-                let cmt_field =
-                    Rc::new(self.cat_field(pat, cmt.clone(), f_index, fp.node.name, field_ty));
+                let cmt_field = Rc::new(self.cat_field(pat, cmt.clone(), f_index,
+                                                       fp.node.ident, field_ty));
                 self.cat_pattern_(cmt_field, &fp.node.pat, op)?;
             }
           }

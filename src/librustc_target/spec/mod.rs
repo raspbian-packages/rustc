@@ -313,9 +313,12 @@ supported_targets! {
 
     ("x86_64-unknown-bitrig", x86_64_unknown_bitrig),
 
+    ("aarch64-unknown-openbsd", aarch64_unknown_openbsd),
     ("i686-unknown-openbsd", i686_unknown_openbsd),
     ("x86_64-unknown-openbsd", x86_64_unknown_openbsd),
 
+    ("armv6-unknown-netbsd-eabihf", armv6_unknown_netbsd_eabihf),
+    ("armv7-unknown-netbsd-eabihf", armv7_unknown_netbsd_eabihf),
     ("i686-unknown-netbsd", i686_unknown_netbsd),
     ("powerpc-unknown-netbsd", powerpc_unknown_netbsd),
     ("sparc64-unknown-netbsd", sparc64_unknown_netbsd),
@@ -340,6 +343,8 @@ supported_targets! {
     ("aarch64-apple-ios", aarch64_apple_ios),
     ("armv7-apple-ios", armv7_apple_ios),
     ("armv7s-apple-ios", armv7s_apple_ios),
+
+    ("armebv7r-none-eabihf", armebv7r_none_eabihf),
 
     ("x86_64-sun-solaris", x86_64_sun_solaris),
     ("sparcv9-sun-solaris", sparcv9_sun_solaris),
@@ -421,12 +426,13 @@ pub struct TargetOptions {
     /// Linker to invoke
     pub linker: Option<String>,
 
-    /// Linker arguments that are unconditionally passed *before* any
-    /// user-defined libraries.
-    pub pre_link_args: LinkArgs,
+    /// Linker arguments that are passed *before* any user-defined libraries.
+    pub pre_link_args: LinkArgs, // ... unconditionally
+    pub pre_link_args_crt: LinkArgs, // ... when linking with a bundled crt
     /// Objects to link before all others, always found within the
     /// sysroot folder.
-    pub pre_link_objects_exe: Vec<String>, // ... when linking an executable
+    pub pre_link_objects_exe: Vec<String>, // ... when linking an executable, unconditionally
+    pub pre_link_objects_exe_crt: Vec<String>, // ... when linking an executable with a bundled crt
     pub pre_link_objects_dll: Vec<String>, // ... when linking a dylib
     /// Linker arguments that are unconditionally passed after any
     /// user-defined but before post_link_objects.  Standard platform
@@ -434,7 +440,8 @@ pub struct TargetOptions {
     pub late_link_args: LinkArgs,
     /// Objects to link after all others, always found within the
     /// sysroot folder.
-    pub post_link_objects: Vec<String>,
+    pub post_link_objects: Vec<String>, // ... unconditionally
+    pub post_link_objects_crt: Vec<String>, // ... when linking with a bundled crt
     /// Linker arguments that are unconditionally passed *after* any
     /// user-defined libraries.
     pub post_link_args: LinkArgs,
@@ -634,6 +641,7 @@ impl Default for TargetOptions {
             is_builtin: false,
             linker: option_env!("CFG_DEFAULT_LINKER").map(|s| s.to_string()),
             pre_link_args: LinkArgs::new(),
+            pre_link_args_crt: LinkArgs::new(),
             post_link_args: LinkArgs::new(),
             asm_args: Vec::new(),
             cpu: "generic".to_string(),
@@ -667,8 +675,10 @@ impl Default for TargetOptions {
             position_independent_executables: false,
             relro_level: RelroLevel::None,
             pre_link_objects_exe: Vec::new(),
+            pre_link_objects_exe_crt: Vec::new(),
             pre_link_objects_dll: Vec::new(),
             post_link_objects: Vec::new(),
+            post_link_objects_crt: Vec::new(),
             late_link_args: LinkArgs::new(),
             link_env: Vec::new(),
             archive_format: "gnu".to_string(),
@@ -887,10 +897,13 @@ impl Target {
         key!(is_builtin, bool);
         key!(linker, optional);
         key!(pre_link_args, link_args);
+        key!(pre_link_args_crt, link_args);
         key!(pre_link_objects_exe, list);
+        key!(pre_link_objects_exe_crt, list);
         key!(pre_link_objects_dll, list);
         key!(late_link_args, link_args);
         key!(post_link_objects, list);
+        key!(post_link_objects_crt, list);
         key!(post_link_args, link_args);
         key!(link_env, env);
         key!(asm_args, list);
@@ -1092,10 +1105,13 @@ impl ToJson for Target {
         target_option_val!(is_builtin);
         target_option_val!(linker);
         target_option_val!(link_args - pre_link_args);
+        target_option_val!(link_args - pre_link_args_crt);
         target_option_val!(pre_link_objects_exe);
+        target_option_val!(pre_link_objects_exe_crt);
         target_option_val!(pre_link_objects_dll);
         target_option_val!(link_args - late_link_args);
         target_option_val!(post_link_objects);
+        target_option_val!(post_link_objects_crt);
         target_option_val!(link_args - post_link_args);
         target_option_val!(env - link_env);
         target_option_val!(asm_args);

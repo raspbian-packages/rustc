@@ -1,6 +1,6 @@
 [package]
 name = "regex"
-version = "0.2.10"  #:version
+version = "1.0.0"  #:version
 authors = ["The Rust Project Developers"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
@@ -30,7 +30,7 @@ memchr = "2.0.0"
 # For managing regex caches quickly across multiple threads.
 thread_local = "0.3.2"
 # For parsing regular expressions.
-regex-syntax = { path = "regex-syntax", version = "0.5.1" }
+regex-syntax = { path = "regex-syntax", version = "0.6.0" }
 # For compiling UTF-8 decoding into automata.
 utf8-ranges = "1.0.0"
 
@@ -43,10 +43,13 @@ quickcheck = { version = "0.6", default-features = false }
 rand = "0.4"
 
 [features]
-# We don't enable any features by default currently, but if the compiler
-# supports a specific type of feature, then regex's build.rs might enable
-# some default features.
-default = []
+default = ["use_std"]
+# The 'use_std' feature permits the regex crate to use the standard library.
+# This is intended to support future use cases where the regex crate may be
+# able to compile without std, and instead just rely on 'core' and 'alloc'
+# (for example). Currently, this isn't supported, and removing the 'use_std'
+# feature will prevent regex from compiling.
+use_std = []
 # A blanket feature that governs whether unstable features are enabled or not.
 # Unstable features are disabled by default, and typically rely on unstable
 # features in rustc itself.
@@ -54,9 +57,6 @@ unstable = ["pattern"]
 # Enable to use the unstable pattern traits defined in std. This is enabled
 # by default if the unstable feature is enabled.
 pattern = []
-# Enable to use simd acceleration.
-# Note that this is deprecated and is a no-op.
-simd-accel = []
 
 [lib]
 # There are no benchmarks in the library code itself

@@ -179,7 +179,7 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
 
     fn expr(&mut self, expr: &hir::Expr, pred: CFGIndex) -> CFGIndex {
         match expr.node {
-            hir::ExprBlock(ref blk) => {
+            hir::ExprBlock(ref blk, _) => {
                 let blk_exit = self.block(&blk, pred);
                 self.add_ast_node(expr.hir_id.local_id, &[blk_exit])
             }
@@ -452,13 +452,13 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
         // The CFG for match expression is quite complex, so no ASCII
         // art for it (yet).
         //
-        // The CFG generated below matches roughly what trans puts
-        // out. Each pattern and guard is visited in parallel, with
+        // The CFG generated below matches roughly what MIR contains.
+        // Each pattern and guard is visited in parallel, with
         // arms containing multiple patterns generating multiple nodes
         // for the same guard expression. The guard expressions chain
         // into each other from top to bottom, with a specific
         // exception to allow some additional valid programs
-        // (explained below). Trans differs slightly in that the
+        // (explained below). MIR differs slightly in that the
         // pattern matching may continue after a guard but the visible
         // behaviour should be the same.
         //
@@ -582,19 +582,16 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                   scope_cf_kind: ScopeCfKind) -> (region::Scope, CFGIndex) {
 
         match destination.target_id {
-            hir::ScopeTarget::Block(block_expr_id) => {
+            Ok(loop_id) => {
                 for b in &self.breakable_block_scopes {
-                    if b.block_expr_id == self.tcx.hir.node_to_hir_id(block_expr_id).local_id {
-                        let scope_id = self.tcx.hir.node_to_hir_id(block_expr_id).local_id;
+                    if b.block_expr_id == self.tcx.hir.node_to_hir_id(loop_id).local_id {
+                        let scope_id = self.tcx.hir.node_to_hir_id(loop_id).local_id;
                         return (region::Scope::Node(scope_id), match scope_cf_kind {
                             ScopeCfKind::Break => b.break_index,
                             ScopeCfKind::Continue => bug!("can't continue to block"),
                         });
                     }
                 }
-                span_bug!(expr.span, "no block expr for id {}", block_expr_id);
-            }
-            hir::ScopeTarget::Loop(hir::LoopIdResult::Ok(loop_id)) => {
                 for l in &self.loop_scopes {
                     if l.loop_id == self.tcx.hir.node_to_hir_id(loop_id).local_id {
                         let scope_id = self.tcx.hir.node_to_hir_id(loop_id).local_id;
@@ -604,10 +601,9 @@ impl<'a, 'tcx> CFGBuilder<'a, 'tcx> {
                         });
                     }
                 }
-                span_bug!(expr.span, "no loop scope for id {}", loop_id);
+                span_bug!(expr.span, "no scope for id {}", loop_id);
             }
-            hir::ScopeTarget::Loop(hir::LoopIdResult::Err(err)) =>
-                span_bug!(expr.span, "loop scope error: {}",  err),
+            Err(err) => span_bug!(expr.span, "scope error: {}",  err),
         }
     }
 }

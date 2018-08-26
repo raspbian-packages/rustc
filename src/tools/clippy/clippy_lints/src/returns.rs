@@ -69,7 +69,7 @@ impl ReturnPass {
                 }
             },
             // a whole block? check it!
-            ast::ExprKind::Block(ref block) => {
+            ast::ExprKind::Block(ref block, _) => {
                 self.check_block_return(cx, block);
             },
             // an if/if let expr, check both exprs
@@ -149,5 +149,5 @@ impl EarlyLintPass for ReturnPass {
 }
 
 fn attr_is_cfg(attr: &ast::Attribute) -> bool {
-    attr.meta_item_list().is_some() && attr.name().map_or(false, |n| n == "cfg")
+    attr.meta_item_list().is_some() && attr.name() == "cfg"
 }

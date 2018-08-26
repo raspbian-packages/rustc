@@ -22,13 +22,12 @@ use ty;
 
 use std::fmt;
 use std::mem;
-use rustc_data_structures::small_vec::SmallVec;
 use rustc_data_structures::sync::Lrc;
 use syntax::codemap;
 use syntax::ast;
 use syntax_pos::{Span, DUMMY_SP};
 use ty::TyCtxt;
-use ty::maps::Providers;
+use ty::query::Providers;
 
 use hir;
 use hir::def_id::DefId;
@@ -280,6 +279,8 @@ impl Scope {
     }
 }
 
+pub type ScopeDepth = u32;
+
 /// The region scope tree encodes information about region relationships.
 #[derive(Default, Debug)]
 pub struct ScopeTree {
@@ -297,7 +298,7 @@ pub struct ScopeTree {
     /// conditional expression or repeating block. (Note that the
     /// enclosing scope id for the block associated with a closure is
     /// the closure itself.)
-    parent_map: FxHashMap<Scope, Scope>,
+    parent_map: FxHashMap<Scope, (Scope, ScopeDepth)>,
 
     /// `var_map` maps from a variable or binding id to the block in
     /// which that variable is declared.
@@ -415,11 +416,12 @@ pub struct Context {
     /// details.
     root_id: Option<hir::ItemLocalId>,
 
-    /// the scope that contains any new variables declared
-    var_parent: Option<Scope>,
+    /// The scope that contains any new variables declared, plus its depth in
+    /// the scope tree.
+    var_parent: Option<(Scope, ScopeDepth)>,
 
-    /// region parent of expressions etc
-    parent: Option<Scope>,
+    /// Region parent of expressions, etc., plus its depth in the scope tree.
+    parent: Option<(Scope, ScopeDepth)>,
 }
 
 struct RegionResolutionVisitor<'a, 'tcx: 'a> {
@@ -499,7 +501,7 @@ impl<'tcx> Visitor<'tcx> for ExprLocatorVisitor {
 }
 
 impl<'tcx> ScopeTree {
-    pub fn record_scope_parent(&mut self, child: Scope, parent: Option<Scope>) {
+    pub fn record_scope_parent(&mut self, child: Scope, parent: Option<(Scope, ScopeDepth)>) {
         debug!("{:?}.parent = {:?}", child, parent);
 
         if let Some(p) = parent {
@@ -515,7 +517,7 @@ impl<'tcx> ScopeTree {
 
     pub fn each_encl_scope<E>(&self, mut e:E) where E: FnMut(Scope, Scope) {
         for (&child, &parent) in &self.parent_map {
-            e(child, parent)
+            e(child, parent.0)
         }
     }
 
@@ -542,18 +544,6 @@ impl<'tcx> ScopeTree {
         assert!(previous.is_none());
     }
 
-    fn closure_is_enclosed_by(&self,
-                              mut sub_closure: hir::ItemLocalId,
-                              sup_closure: hir::ItemLocalId) -> bool {
-        loop {
-            if sub_closure == sup_closure { return true; }
-            match self.closure_tree.get(&sub_closure) {
-                Some(&s) => { sub_closure = s; }
-                None => { return false; }
-            }
-        }
-    }
-
     fn record_var_scope(&mut self, var: hir::ItemLocalId, lifetime: Scope) {
         debug!("record_var_scope(sub={:?}, sup={:?})", var, lifetime);
         assert!(var != lifetime.item_local_id());
@@ -570,7 +560,7 @@ impl<'tcx> ScopeTree {
 
     pub fn opt_encl_scope(&self, id: Scope) -> Option<Scope> {
         //! Returns the narrowest scope that encloses `id`, if any.
-        self.parent_map.get(&id).cloned()
+        self.parent_map.get(&id).cloned().map(|(p, _)| p)
     }
 
     #[allow(dead_code)] // used in cfg
@@ -602,7 +592,7 @@ impl<'tcx> ScopeTree {
         // returned.
         let mut id = Scope::Node(expr_id);
 
-        while let Some(&p) = self.parent_map.get(&id) {
+        while let Some(&(p, _)) = self.parent_map.get(&id) {
             match p.data() {
                 ScopeData::Destruction(..) => {
                     debug!("temporary_scope({:?}) = {:?} [enclosing]",
@@ -670,85 +660,61 @@ impl<'tcx> ScopeTree {
         }
     }
 
-    /// Finds the nearest common ancestor (if any) of two scopes.  That is, finds the smallest
-    /// scope which is greater than or equal to both `scope_a` and `scope_b`.
-    pub fn nearest_common_ancestor(&self,
-                                   scope_a: Scope,
-                                   scope_b: Scope)
-                                   -> Scope {
+    /// Finds the nearest common ancestor of two scopes.  That is, finds the
+    /// smallest scope which is greater than or equal to both `scope_a` and
+    /// `scope_b`.
+    pub fn nearest_common_ancestor(&self, scope_a: Scope, scope_b: Scope) -> Scope {
         if scope_a == scope_b { return scope_a; }
 
-        // Process the lists in tandem from the innermost scope, recording the
-        // scopes seen so far. The first scope that comes up for a second time
-        // is the nearest common ancestor.
-        //
-        // Note: another way to compute the nearest common ancestor is to get
-        // the full scope chain for both scopes and then compare the chains to
-        // find the first scope in a common tail. But getting a parent scope
-        // requires a hash table lookup, and we often have very long scope
-        // chains (10s or 100s of scopes) that only differ by a few elements at
-        // the start. So this algorithm is faster.
-        let mut ma = Some(scope_a);
-        let mut mb = Some(scope_b);
-        let mut seen_a: SmallVec<[Scope; 32]> = SmallVec::new();
-        let mut seen_b: SmallVec<[Scope; 32]> = SmallVec::new();
-        loop {
-            if let Some(a) = ma {
-                if seen_b.iter().position(|s| *s == a).is_some() {
-                    return a;
-                }
-                seen_a.push(a);
-                ma = self.parent_map.get(&a).map(|s| *s);
-            }
+        let mut a = scope_a;
+        let mut b = scope_b;
 
-            if let Some(b) = mb {
-                if seen_a.iter().position(|s| *s == b).is_some() {
-                    return b;
-                }
-                seen_b.push(b);
-                mb = self.parent_map.get(&b).map(|s| *s);
-            }
-
-            if ma.is_none() && mb.is_none() {
-                break;
-            }
+        // Get the depth of each scope's parent. If either scope has no parent,
+        // it must be the root, which means we can stop immediately because the
+        // root must be the nearest common ancestor. (In practice, this is
+        // moderately common.)
+        let (parent_a, parent_a_depth) = match self.parent_map.get(&a) {
+            Some(pd) => *pd,
+            None => return a,
+        };
+        let (parent_b, parent_b_depth) = match self.parent_map.get(&b) {
+            Some(pd) => *pd,
+            None => return b,
         };
 
-        fn outermost_scope(parent_map: &FxHashMap<Scope, Scope>, scope: Scope) -> Scope {
-            let mut scope = scope;
-            loop {
-               match parent_map.get(&scope) {
-                   Some(&superscope) => scope = superscope,
-                   None => break scope,
-               }
+        if parent_a_depth > parent_b_depth {
+            // `a` is lower than `b`. Move `a` up until it's at the same depth
+            // as `b`. The first move up is trivial because we already found
+            // `parent_a` above; the loop does the remaining N-1 moves.
+            a = parent_a;
+            for _ in 0..(parent_a_depth - parent_b_depth - 1) {
+                a = self.parent_map.get(&a).unwrap().0;
             }
+        } else if parent_b_depth > parent_a_depth {
+            // `b` is lower than `a`.
+            b = parent_b;
+            for _ in 0..(parent_b_depth - parent_a_depth - 1) {
+                b = self.parent_map.get(&b).unwrap().0;
+            }
+        } else {
+            // Both scopes are at the same depth, and we know they're not equal
+            // because that case was tested for at the top of this function. So
+            // we can trivially move them both up one level now.
+            assert!(parent_a_depth != 0);
+            a = parent_a;
+            b = parent_b;
         }
 
-        // In this (rare) case, the two regions belong to completely different
-        // functions. Compare those fn for lexical nesting. The reasoning
-        // behind this is subtle. See the "Modeling closures" section of the
-        // README in infer::region_constraints for more details.
-        let a_root_scope = outermost_scope(&self.parent_map, scope_a);
-        let b_root_scope = outermost_scope(&self.parent_map, scope_b);
-        match (a_root_scope.data(), b_root_scope.data()) {
-            (ScopeData::Destruction(a_root_id),
-             ScopeData::Destruction(b_root_id)) => {
-                if self.closure_is_enclosed_by(a_root_id, b_root_id) {
-                    // `a` is enclosed by `b`, hence `b` is the ancestor of everything in `a`
-                    scope_b
-                } else if self.closure_is_enclosed_by(b_root_id, a_root_id) {
-                    // `b` is enclosed by `a`, hence `a` is the ancestor of everything in `b`
-                    scope_a
-                } else {
-                    // neither fn encloses the other
-                    bug!()
-                }
-            }
-            _ => {
-                // root ids are always Node right now
-                bug!()
-            }
-        }
+        // Now both scopes are at the same level. We move upwards in lockstep
+        // until they match. In practice, this loop is almost always executed
+        // zero times because `a` is almost always a direct ancestor of `b` or
+        // vice versa.
+        while a != b {
+            a = self.parent_map.get(&a).unwrap().0;
+            b = self.parent_map.get(&b).unwrap().0;
+        };
+
+        a
     }
 
     /// Assuming that the provided region was defined within this `ScopeTree`,
@@ -847,7 +813,7 @@ fn record_var_lifetime(visitor: &mut RegionResolutionVisitor,
             //
             // extern fn isalnum(c: c_int) -> c_int
         }
-        Some(parent_scope) =>
+        Some((parent_scope, _)) =>
             visitor.scope_tree.record_var_scope(var_id, parent_scope),
     }
 }
@@ -1059,7 +1025,7 @@ fn resolve_expr<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>, expr:
             // Keep traversing up while we can.
             match visitor.scope_tree.parent_map.get(&scope) {
                 // Don't cross from closure bodies to their parent.
-                Some(&superscope) => match superscope.data() {
+                Some(&(superscope, _)) => match superscope.data() {
                     ScopeData::CallSite(_) => break,
                     _ => scope = superscope
                 },
@@ -1076,7 +1042,7 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
                            init: Option<&'tcx hir::Expr>) {
     debug!("resolve_local(pat={:?}, init={:?})", pat, init);
 
-    let blk_scope = visitor.cx.var_parent;
+    let blk_scope = visitor.cx.var_parent.map(|(p, _)| p);
 
     // As an exception to the normal rules governing temporary
     // lifetimes, initializers in a let have a temporary lifetime
@@ -1247,7 +1213,7 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
             hir::ExprCast(ref subexpr, _) => {
                 record_rvalue_scope_if_borrow_expr(visitor, &subexpr, blk_id)
             }
-            hir::ExprBlock(ref block) => {
+            hir::ExprBlock(ref block, _) => {
                 if let Some(ref subexpr) = block.expr {
                     record_rvalue_scope_if_borrow_expr(
                         visitor, &subexpr, blk_id);
@@ -1279,7 +1245,7 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
         loop {
             // Note: give all the expressions matching `ET` with the
             // extended temporary lifetime, not just the innermost rvalue,
-            // because in trans if we must compile e.g. `*rvalue()`
+            // because in codegen if we must compile e.g. `*rvalue()`
             // into a temporary, we request the temporary scope of the
             // outer expression.
             visitor.scope_tree.record_rvalue_scope(expr.hir_id.local_id, blk_scope);
@@ -1301,16 +1267,20 @@ fn resolve_local<'a, 'tcx>(visitor: &mut RegionResolutionVisitor<'a, 'tcx>,
 
 impl<'a, 'tcx> RegionResolutionVisitor<'a, 'tcx> {
     /// Records the current parent (if any) as the parent of `child_scope`.
-    fn record_child_scope(&mut self, child_scope: Scope) {
+    /// Returns the depth of `child_scope`.
+    fn record_child_scope(&mut self, child_scope: Scope) -> ScopeDepth {
         let parent = self.cx.parent;
         self.scope_tree.record_scope_parent(child_scope, parent);
+        // If `child_scope` has no parent, it must be the root node, and so has
+        // a depth of 1. Otherwise, its depth is one more than its parent's.
+        parent.map_or(1, |(_p, d)| d + 1)
     }
 
     /// Records the current parent (if any) as the parent of `child_scope`,
     /// and sets `child_scope` as the new current parent.
     fn enter_scope(&mut self, child_scope: Scope) {
-        self.record_child_scope(child_scope);
-        self.cx.parent = Some(child_scope);
+        let child_depth = self.record_child_scope(child_scope);
+        self.cx.parent = Some((child_scope, child_depth));
     }
 
     fn enter_node_scope_with_dtor(&mut self, id: hir::ItemLocalId) {

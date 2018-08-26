@@ -284,7 +284,7 @@ impl<'a, 'tcx> Visitor<'tcx> for MarkSymbolVisitor<'a, 'tcx> {
 fn has_allow_dead_code_or_lang_attr(tcx: TyCtxt,
                                     id: ast::NodeId,
                                     attrs: &[ast::Attribute]) -> bool {
-    if attr::contains_name(attrs, "lang") {
+    if attr::contains_name(attrs, "lang") || attr::contains_name(attrs, "panic_implementation") {
         return true;
     }
 
@@ -588,7 +588,7 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
 
     fn visit_struct_field(&mut self, field: &'tcx hir::StructField) {
         if self.should_warn_about_field(&field) {
-            self.warn_dead_code(field.id, field.span, field.name, "field", "used");
+            self.warn_dead_code(field.id, field.span, field.ident.name, "field", "used");
         }
         intravisit::walk_struct_field(self, field);
     }

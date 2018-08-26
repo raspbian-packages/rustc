@@ -33,7 +33,7 @@ impl<'cx, 'gcx, 'tcx> At<'cx, 'gcx, 'tcx> {
     /// normalized. If you don't care about regions, you should prefer
     /// `normalize_erasing_regions`, which is more efficient.
     ///
-    /// If the normalization succeeds and is unambigious, returns back
+    /// If the normalization succeeds and is unambiguous, returns back
     /// the normalized value along with various outlives relations (in
     /// the form of obligations that must be discharged).
     ///
@@ -104,7 +104,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
         match ty.sty {
             ty::TyAnon(def_id, substs) if !substs.has_escaping_regions() => {
                 // (*)
-                // Only normalize `impl Trait` after type-checking, usually in trans.
+                // Only normalize `impl Trait` after type-checking, usually in codegen.
                 match self.param_env.reveal {
                     Reveal::UserFacing => ty,
 
@@ -123,6 +123,11 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
                         let generic_ty = self.tcx().type_of(def_id);
                         let concrete_ty = generic_ty.subst(self.tcx(), substs);
                         self.anon_depth += 1;
+                        if concrete_ty == ty {
+                            println!("generic_ty: {:#?}", generic_ty);
+                            println!("substs {:#?}", substs);
+                        }
+                        assert_ne!(concrete_ty, ty, "infinite recursion");
                         let folded_ty = self.fold_ty(concrete_ty);
                         self.anon_depth -= 1;
                         folded_ty

@@ -16,6 +16,7 @@
 //!
 //! [arc]: struct.Arc.html
 
+use core::any::Any;
 use core::sync::atomic;
 use core::sync::atomic::Ordering::{Acquire, Relaxed, Release, SeqCst};
 use core::borrow;
@@ -31,7 +32,7 @@ use core::hash::{Hash, Hasher};
 use core::{isize, usize};
 use core::convert::From;
 
-use alloc::{Global, Alloc, Layout, box_free, oom};
+use alloc::{Global, Alloc, Layout, box_free, handle_alloc_error};
 use boxed::Box;
 use string::String;
 use vec::Vec;
@@ -518,7 +519,7 @@ impl<T: ?Sized> Arc<T> {
 
         if self.inner().weak.fetch_sub(1, Release) == 1 {
             atomic::fence(Acquire);
-            Global.dealloc(self.ptr.as_opaque(), Layout::for_value(self.ptr.as_ref()))
+            Global.dealloc(self.ptr.cast(), Layout::for_value(self.ptr.as_ref()))
         }
     }
 
@@ -553,7 +554,7 @@ impl<T: ?Sized> Arc<T> {
         let layout = Layout::for_value(&*fake_ptr);
 
         let mem = Global.alloc(layout)
-            .unwrap_or_else(|_| oom());
+            .unwrap_or_else(|_| handle_alloc_error(layout));
 
         // Initialize the real ArcInner
         let inner = set_data_ptr(ptr as *mut T, mem.as_ptr() as *mut u8) as *mut ArcInner<T>;
@@ -638,7 +639,7 @@ impl<T: Clone> ArcFromSlice<T> for Arc<[T]> {
                     let slice = from_raw_parts_mut(self.elems, self.n_elems);
                     ptr::drop_in_place(slice);
 
-                    Global.dealloc(self.mem.as_opaque(), self.layout.clone());
+                    Global.dealloc(self.mem.cast(), self.layout.clone());
                 }
             }
         }
@@ -971,6 +972,44 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
     }
 }
 
+impl Arc<Any + Send + Sync> {
+    #[inline]
+    #[unstable(feature = "rc_downcast", issue = "44608")]
+    /// Attempt to downcast the `Arc<Any + Send + Sync>` to a concrete type.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// #![feature(rc_downcast)]
+    /// use std::any::Any;
+    /// use std::sync::Arc;
+    ///
+    /// fn print_if_string(value: Arc<Any + Send + Sync>) {
+    ///     if let Ok(string) = value.downcast::<String>() {
+    ///         println!("String ({}): {}", string.len(), string);
+    ///     }
+    /// }
+    ///
+    /// fn main() {
+    ///     let my_string = "Hello World".to_string();
+    ///     print_if_string(Arc::new(my_string));
+    ///     print_if_string(Arc::new(0i8));
+    /// }
+    /// ```
+    pub fn downcast<T>(self) -> Result<Arc<T>, Self>
+    where
+        T: Any + Send + Sync + 'static,
+    {
+        if (*self).is::<T>() {
+            let ptr = self.ptr.cast::<ArcInner<T>>();
+            mem::forget(self);
+            Ok(Arc { ptr, phantom: PhantomData })
+        } else {
+            Err(self)
+        }
+    }
+}
+
 impl<T> Weak<T> {
     /// Constructs a new `Weak<T>`, allocating memory for `T` without initializing
     /// it. Calling [`upgrade`] on the return value always gives [`None`].
@@ -1157,7 +1196,7 @@ impl<T: ?Sized> Drop for Weak<T> {
         if self.inner().weak.fetch_sub(1, Release) == 1 {
             atomic::fence(Acquire);
             unsafe {
-                Global.dealloc(self.ptr.as_opaque(), Layout::for_value(self.ptr.as_ref()))
+                Global.dealloc(self.ptr.cast(), Layout::for_value(self.ptr.as_ref()))
             }
         }
     }
@@ -1843,6 +1882,26 @@ mod tests {
         let r: Arc<[u32]> = Arc::from(v);
 
         assert_eq!(&r[..], [1, 2, 3]);
+    }
+
+    #[test]
+    fn test_downcast() {
+        use std::any::Any;
+
+        let r1: Arc<Any + Send + Sync> = Arc::new(i32::max_value());
+        let r2: Arc<Any + Send + Sync> = Arc::new("abc");
+
+        assert!(r1.clone().downcast::<u32>().is_err());
+
+        let r1i32 = r1.downcast::<i32>();
+        assert!(r1i32.is_ok());
+        assert_eq!(r1i32.unwrap(), Arc::new(i32::max_value()));
+
+        assert!(r2.clone().downcast::<i32>().is_err());
+
+        let r2str = r2.downcast::<&'static str>();
+        assert!(r2str.is_ok());
+        assert_eq!(r2str.unwrap(), Arc::new("abc"));
     }
 }
 

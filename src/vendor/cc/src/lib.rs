@@ -117,6 +117,7 @@ pub struct Build {
     static_flag: Option<bool>,
     warnings_into_errors: bool,
     warnings: bool,
+    extra_warnings: bool,
 }
 
 /// Represents the types of errors that may occur while using cc-rs.
@@ -189,14 +190,14 @@ enum ToolFamily {
     /// and its cross-compilation approach is different.
     Clang,
     /// Tool is the MSVC cl.exe.
-    Msvc,
+    Msvc { clang_cl: bool },
 }
 
 impl ToolFamily {
     /// What the flag to request debug info for this family of tools look like
     fn debug_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => "/Z7",
+            ToolFamily::Msvc { .. } => "/Z7",
             ToolFamily::Gnu | ToolFamily::Clang => "-g",
         }
     }
@@ -204,7 +205,7 @@ impl ToolFamily {
     /// What the flag to include directories into header search path looks like
     fn include_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => "/I",
+            ToolFamily::Msvc { .. } => "/I",
             ToolFamily::Gnu | ToolFamily::Clang => "-I",
         }
     }
@@ -212,26 +213,31 @@ impl ToolFamily {
     /// What the flag to request macro-expanded source output looks like
     fn expand_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => "/E",
+            ToolFamily::Msvc { .. } => "/E",
             ToolFamily::Gnu | ToolFamily::Clang => "-E",
         }
     }
 
     /// What the flags to enable all warnings
-    fn warnings_flags(&self) -> &'static [&'static str] {
-        static MSVC_FLAGS: &'static [&'static str] = &["/W4"];
-        static GNU_CLANG_FLAGS: &'static [&'static str] = &["-Wall", "-Wextra"];
-
+    fn warnings_flags(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => &MSVC_FLAGS,
-            ToolFamily::Gnu | ToolFamily::Clang => &GNU_CLANG_FLAGS,
+            ToolFamily::Msvc { .. } => "/W4",
+            ToolFamily::Gnu | ToolFamily::Clang => "-Wall",
+        }
+    }
+
+    /// What the flags to enable extra warnings
+    fn extra_warnings_flags(&self) -> Option<&'static str> {
+        match *self {
+            ToolFamily::Msvc { .. } => None,
+            ToolFamily::Gnu | ToolFamily::Clang => Some("-Wextra"),
         }
     }
 
     /// What the flag to turn warning into errors
     fn warnings_to_errors_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => "/WX",
+            ToolFamily::Msvc { .. } => "/WX",
             ToolFamily::Gnu | ToolFamily::Clang => "-Werror",
         }
     }
@@ -240,7 +246,7 @@ impl ToolFamily {
     /// debug info flag passed to the C++ compiler.
     fn nvcc_debug_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => unimplemented!(),
+            ToolFamily::Msvc { .. } => unimplemented!(),
             ToolFamily::Gnu | ToolFamily::Clang => "-G",
         }
     }
@@ -249,7 +255,7 @@ impl ToolFamily {
     /// compiler.
     fn nvcc_redirect_flag(&self) -> &'static str {
         match *self {
-            ToolFamily::Msvc => unimplemented!(),
+            ToolFamily::Msvc { .. } => unimplemented!(),
             ToolFamily::Gnu | ToolFamily::Clang => "-Xcompiler",
         }
     }
@@ -304,6 +310,7 @@ impl Build {
             pic: None,
             static_crt: None,
             warnings: true,
+            extra_warnings: true,
             warnings_into_errors: false,
         }
     }
@@ -573,6 +580,29 @@ impl Build {
     /// ```
     pub fn warnings(&mut self, warnings: bool) -> &mut Build {
         self.warnings = warnings;
+        self.extra_warnings = warnings;
+        self
+    }
+
+    /// Set extra warnings flags.
+    ///
+    /// Adds some flags:
+    /// - nothing for MSVC.
+    /// - "-Wextra" for GNU and Clang.
+    ///
+    /// Enabled by default.
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// // Disables -Wextra, -Wall remains enabled:
+    /// cc::Build::new()
+    ///     .file("src/foo.c")
+    ///     .extra_warnings(false)
+    ///     .compile("libfoo.a");
+    /// ```
+    pub fn extra_warnings(&mut self, warnings: bool) -> &mut Build {
+        self.extra_warnings = warnings;
         self
     }
 
@@ -1029,7 +1059,7 @@ impl Build {
         // Non-target flags
         // If the flag is not conditioned on target variable, it belongs here :)
         match cmd.family {
-            ToolFamily::Msvc => {
+            ToolFamily::Msvc { .. } => {
                 assert!(!self.cuda,
                     "CUDA C++ compilation not supported for MSVC, yet... but you are welcome to implement it :)");
 
@@ -1094,9 +1124,20 @@ impl Build {
             ToolFamily::Clang => {
                 cmd.args.push(format!("--target={}", target).into());
             }
-            ToolFamily::Msvc => {
-                if target.contains("i586") {
-                    cmd.args.push("/ARCH:IA32".into());
+            ToolFamily::Msvc { clang_cl } => {
+                if clang_cl {
+                    if target.contains("x86_64") {
+                        cmd.args.push("-m64".into());
+                    } else if target.contains("i586") {
+                        cmd.args.push("-m32".into());
+                        cmd.args.push("/arch:IA32".into());
+                    } else {
+                        cmd.args.push("-m32".into());
+                    }
+                } else {
+                    if target.contains("i586") {
+                        cmd.args.push("/ARCH:IA32".into());
+                    }
                 }
             }
             ToolFamily::Gnu => {
@@ -1233,8 +1274,13 @@ impl Build {
         }
 
         if self.warnings {
-            for flag in cmd.family.warnings_flags().iter() {
-                cmd.push_cc_arg(flag.into());
+            let wflags = cmd.family.warnings_flags().into();
+            cmd.push_cc_arg(wflags);
+        }
+
+        if self.extra_warnings {
+            if let Some(wflags) = cmd.family.extra_warnings_flags() {
+                cmd.push_cc_arg(wflags.into());
             }
         }
 
@@ -1249,7 +1295,7 @@ impl Build {
         }
 
         for &(ref key, ref value) in self.definitions.iter() {
-            let lead = if let ToolFamily::Msvc = cmd.family {
+            let lead = if let ToolFamily::Msvc { .. } = cmd.family {
                 "/"
             } else {
                 "-"
@@ -1495,6 +1541,8 @@ impl Build {
             traditional
         };
 
+        let cl_exe = windows_registry::find_tool(&target, "cl.exe");
+
         let tool_opt: Option<Tool> = self.env_tool(env)
             .map(|(tool, cc, args)| {
                 // chop off leading/trailing whitespace to work around
@@ -1526,7 +1574,7 @@ impl Build {
                     None
                 }
             })
-            .or_else(|| windows_registry::find_tool(&target, "cl.exe"));
+            .or_else(|| cl_exe.clone());
 
         let tool = match tool_opt {
             Some(t) => t,
@@ -1599,7 +1647,7 @@ impl Build {
             }
         };
 
-        let tool = if self.cuda {
+        let mut tool = if self.cuda {
             assert!(
                 tool.args.is_empty(),
                 "CUDA compilation currently assumes empty pre-existing args"
@@ -1616,6 +1664,27 @@ impl Build {
         } else {
             tool
         };
+
+        // If we found `cl.exe` in our environment, the tool we're returning is
+        // an MSVC-like tool, *and* no env vars were set then set env vars for
+        // the tool that we're returning.
+        //
+        // Env vars are needed for things like `link.exe` being put into PATH as
+        // well as header include paths sometimes. These paths are automatically
+        // included by default but if the `CC` or `CXX` env vars are set these
+        // won't be used. This'll ensure that when the env vars are used to
+        // configure for invocations like `clang-cl` we still get a "works out
+        // of the box" experience.
+        if let Some(cl_exe) = cl_exe {
+            if tool.family == (ToolFamily::Msvc { clang_cl: true }) &&
+                tool.env.len() == 0 &&
+                target.contains("msvc")
+            {
+                for &(ref k, ref v) in cl_exe.env.iter() {
+                    tool.env.push((k.to_owned(), v.to_owned()));
+                }
+            }
+        }
 
         Ok(tool)
     }
@@ -1844,12 +1913,15 @@ impl Tool {
     fn with_features(path: PathBuf, cuda: bool) -> Tool {
         // Try to detect family of the tool from its name, falling back to Gnu.
         let family = if let Some(fname) = path.file_name().and_then(|p| p.to_str()) {
-            if fname.contains("clang") {
+            if fname.contains("clang-cl") {
+                ToolFamily::Msvc { clang_cl: true }
+            } else if fname.contains("cl") &&
+                !fname.contains("cloudabi") &&
+                !fname.contains("uclibc") &&
+                !fname.contains("clang") {
+                ToolFamily::Msvc { clang_cl: false }
+            } else if fname.contains("clang") {
                 ToolFamily::Clang
-            } else if fname.contains("cl") && !fname.contains("cloudabi")
-                && !fname.contains("uclibc")
-            {
-                ToolFamily::Msvc
             } else {
                 ToolFamily::Gnu
             }
@@ -1969,7 +2041,10 @@ impl Tool {
 
     /// Whether the tool is MSVC-like.
     pub fn is_like_msvc(&self) -> bool {
-        self.family == ToolFamily::Msvc
+        match self.family {
+            ToolFamily::Msvc { .. } => true,
+            _ => false,
+        }
     }
 }
 

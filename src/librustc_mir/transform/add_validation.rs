@@ -44,14 +44,14 @@ fn place_context<'a, 'tcx, D>(
                     // A Deref projection may restrict the context, this depends on the type
                     // being deref'd.
                     let context = match ty.sty {
-                        ty::TyRef(re, tam) => {
+                        ty::TyRef(re, _, mutbl) => {
                             let re = match re {
                                 &RegionKind::ReScope(ce) => Some(ce),
                                 &RegionKind::ReErased =>
                                     bug!("AddValidation pass must be run before erasing lifetimes"),
                                 _ => None
                             };
-                            (re, tam.mutbl)
+                            (re, mutbl)
                         }
                         ty::TyRawPtr(_) =>
                             // There is no guarantee behind even a mutable raw pointer,
@@ -141,7 +141,7 @@ fn fn_contains_unsafe<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, src: MirSource) -> 
             }
             // Check if this is an unsafe block, or an item
             match node {
-                Node::NodeExpr(&hir::Expr { node: hir::ExprBlock(ref block), ..}) => {
+                Node::NodeExpr(&hir::Expr { node: hir::ExprBlock(ref block, _), ..}) => {
                     if block_is_unsafe(&*block) {
                         // Found an unsafe block, we can bail out here.
                         return true;
@@ -231,7 +231,7 @@ impl MirPass for AddValidation {
         // Add an AcquireValid at the beginning of the start block.
         {
             let source_info = SourceInfo {
-                scope: ARGUMENT_VISIBILITY_SCOPE,
+                scope: OUTERMOST_SOURCE_SCOPE,
                 span: mir.span, // FIXME: Consider using just the span covering the function
                                 // argument declaration.
             };

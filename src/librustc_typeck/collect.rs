@@ -33,7 +33,7 @@ use rustc::mir::mono::Linkage;
 use rustc::ty::subst::Substs;
 use rustc::ty::{ToPredicate, ReprOptions};
 use rustc::ty::{self, AdtKind, ToPolyTraitRef, Ty, TyCtxt};
-use rustc::ty::maps::Providers;
+use rustc::ty::query::Providers;
 use rustc::ty::util::IntTypeExt;
 use rustc::ty::util::Discr;
 use rustc::util::captures::Captures;
@@ -48,7 +48,7 @@ use syntax::symbol::{Symbol, keywords};
 use syntax::feature_gate;
 use syntax_pos::{Span, DUMMY_SP};
 
-use rustc::hir::{self, map as hir_map, TransFnAttrs, TransFnAttrFlags, Unsafety};
+use rustc::hir::{self, map as hir_map, CodegenFnAttrs, CodegenFnAttrFlags, Unsafety};
 use rustc::hir::intravisit::{self, Visitor, NestedVisitorMap};
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
@@ -75,7 +75,7 @@ pub fn provide(providers: &mut Providers) {
         impl_trait_ref,
         impl_polarity,
         is_foreign_item,
-        trans_fn_attrs,
+        codegen_fn_attrs,
         ..*providers
     };
 }
@@ -131,15 +131,6 @@ impl<'a, 'tcx> Visitor<'tcx> for CollectItemTypesVisitor<'a, 'tcx> {
         intravisit::walk_expr(self, expr);
     }
 
-    fn visit_ty(&mut self, ty: &'tcx hir::Ty) {
-        if let hir::TyImplTraitExistential(..) = ty.node {
-            let def_id = self.tcx.hir.local_def_id(ty.id);
-            self.tcx.generics_of(def_id);
-            self.tcx.predicates_of(def_id);
-        }
-        intravisit::walk_ty(self, ty);
-    }
-
     fn visit_trait_item(&mut self, trait_item: &'tcx hir::TraitItem) {
         convert_trait_item(self.tcx, trait_item.id);
         intravisit::walk_trait_item(self, trait_item);
@@ -181,7 +172,7 @@ impl<'a, 'tcx> AstConv<'tcx, 'tcx> for ItemCtxt<'a, 'tcx> {
         self.tcx.at(span).type_param_predicates((self.item_def_id, def_id))
     }
 
-    fn re_infer(&self, _span: Span, _def: Option<&ty::RegionParameterDef>)
+    fn re_infer(&self, _span: Span, _def: Option<&ty::GenericParamDef>)
                 -> Option<ty::Region<'tcx>> {
         None
     }
@@ -243,8 +234,8 @@ fn type_param_predicates<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let param_owner = tcx.hir.ty_param_owner(param_id);
     let param_owner_def_id = tcx.hir.local_def_id(param_owner);
     let generics = tcx.generics_of(param_owner_def_id);
-    let index = generics.type_param_to_index[&def_id];
-    let ty = tcx.mk_param(index, tcx.hir.ty_param_name(param_id).as_interned_str());
+    let index = generics.param_def_id_to_index[&def_id];
+    let ty = tcx.mk_ty_param(index, tcx.hir.ty_param_name(param_id).as_interned_str());
 
     // Don't look for bounds where the type parameter isn't in scope.
     let parent = if item_def_id == param_owner_def_id {
@@ -420,6 +411,7 @@ fn convert_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_id: ast::NodeId) {
                 convert_variant_ctor(tcx, struct_def.id());
             }
         },
+        hir::ItemExistential(..) |
         hir::ItemTy(..) | hir::ItemStatic(..) | hir::ItemConst(..) | hir::ItemFn(..) => {
             tcx.generics_of(def_id);
             tcx.type_of(def_id);
@@ -481,8 +473,8 @@ fn convert_enum_variant_types<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // fill the discriminant values and field types
     for variant in variants {
         let wrapped_discr = prev_discr.map_or(initial, |d| d.wrap_incr(tcx));
-        prev_discr = Some(if let Some(e) = variant.node.disr_expr {
-            let expr_did = tcx.hir.local_def_id(e.node_id);
+        prev_discr = Some(if let Some(ref e) = variant.node.disr_expr {
+            let expr_did = tcx.hir.local_def_id(e.id);
             def.eval_explicit_discr(tcx, expr_did)
         } else if let Some(discr) = repr_type.disr_incr(tcx, prev_discr) {
             Some(discr)
@@ -520,21 +512,21 @@ fn convert_struct_variant<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let node_id = tcx.hir.as_local_node_id(did).unwrap();
     let fields = def.fields().iter().map(|f| {
         let fid = tcx.hir.local_def_id(f.id);
-        let dup_span = seen_fields.get(&f.name.to_ident()).cloned();
+        let dup_span = seen_fields.get(&f.ident.modern()).cloned();
         if let Some(prev_span) = dup_span {
             struct_span_err!(tcx.sess, f.span, E0124,
                              "field `{}` is already declared",
-                             f.name)
+                             f.ident)
                 .span_label(f.span, "field already declared")
-                .span_label(prev_span, format!("`{}` first declared here", f.name))
+                .span_label(prev_span, format!("`{}` first declared here", f.ident))
                 .emit();
         } else {
-            seen_fields.insert(f.name.to_ident(), f.span);
+            seen_fields.insert(f.ident.modern(), f.span);
         }
 
         ty::FieldDef {
             did: fid,
-            name: f.name,
+            ident: f.ident,
             vis: ty::Visibility::from_hir(&f.vis, node_id, tcx)
         }
     }).collect();
@@ -565,9 +557,9 @@ fn adt_def<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let mut distance_from_explicit = 0;
             (AdtKind::Enum, def.variants.iter().map(|v| {
                 let did = tcx.hir.local_def_id(v.node.data.id());
-                let discr = if let Some(e) = v.node.disr_expr {
+                let discr = if let Some(ref e) = v.node.disr_expr {
                     distance_from_explicit = 0;
-                    ty::VariantDiscr::Explicit(tcx.hir.local_def_id(e.node_id))
+                    ty::VariantDiscr::Explicit(tcx.hir.local_def_id(e.id))
                 } else {
                     ty::VariantDiscr::Relative(distance_from_explicit)
                 };
@@ -689,7 +681,7 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                     -> Option<Span> {
     struct LateBoundRegionsDetector<'a, 'tcx: 'a> {
         tcx: TyCtxt<'a, 'tcx, 'tcx>,
-        binder_depth: u32,
+        outer_index: ty::DebruijnIndex,
         has_late_bound_regions: Option<Span>,
     }
 
@@ -702,9 +694,9 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             if self.has_late_bound_regions.is_some() { return }
             match ty.node {
                 hir::TyBareFn(..) => {
-                    self.binder_depth += 1;
+                    self.outer_index.shift_in(1);
                     intravisit::walk_ty(self, ty);
-                    self.binder_depth -= 1;
+                    self.outer_index.shift_out(1);
                 }
                 _ => intravisit::walk_ty(self, ty)
             }
@@ -714,9 +706,9 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                 tr: &'tcx hir::PolyTraitRef,
                                 m: hir::TraitBoundModifier) {
             if self.has_late_bound_regions.is_some() { return }
-            self.binder_depth += 1;
+            self.outer_index.shift_in(1);
             intravisit::walk_poly_trait_ref(self, tr, m);
-            self.binder_depth -= 1;
+            self.outer_index.shift_out(1);
         }
 
         fn visit_lifetime(&mut self, lt: &'tcx hir::Lifetime) {
@@ -727,8 +719,13 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 Some(rl::Region::Static) | Some(rl::Region::EarlyBound(..)) => {}
                 Some(rl::Region::LateBound(debruijn, _, _)) |
                 Some(rl::Region::LateBoundAnon(debruijn, _))
-                    if debruijn.depth < self.binder_depth => {}
-                _ => self.has_late_bound_regions = Some(lt.span),
+                    if debruijn < self.outer_index => {}
+                Some(rl::Region::LateBound(..)) |
+                Some(rl::Region::LateBoundAnon(..)) |
+                Some(rl::Region::Free(..)) |
+                None => {
+                    self.has_late_bound_regions = Some(lt.span);
+                }
             }
         }
     }
@@ -738,7 +735,9 @@ fn has_late_bound_regions<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                         decl: &'tcx hir::FnDecl)
                                         -> Option<Span> {
         let mut visitor = LateBoundRegionsDetector {
-            tcx, binder_depth: 1, has_late_bound_regions: None
+            tcx,
+            outer_index: ty::INNERMOST,
+            has_late_bound_regions: None,
         };
         for lifetime in generics.lifetimes() {
             let hir_id = tcx.hir.node_to_hir_id(lifetime.lifetime.id);
@@ -796,18 +795,12 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         NodeExpr(&hir::Expr { node: hir::ExprClosure(..), .. }) => {
             Some(tcx.closure_base_def_id(def_id))
         }
-        NodeTy(&hir::Ty { node: hir::TyImplTraitExistential(..), .. }) => {
-            let mut parent_id = node_id;
-            loop {
-                match tcx.hir.get(parent_id) {
-                    NodeItem(_) | NodeImplItem(_) | NodeTraitItem(_) => break,
-                    _ => {
-                        parent_id = tcx.hir.get_parent_node(parent_id);
-                    }
-                }
+        NodeItem(item) => {
+            match item.node {
+                ItemExistential(hir::ExistTy { impl_trait_fn, .. }) => impl_trait_fn,
+                _ => None,
             }
-            Some(tcx.hir.local_def_id(parent_id))
-        }
+        },
         _ => None
     };
 
@@ -828,6 +821,7 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 ItemTy(_, ref generics) |
                 ItemEnum(_, ref generics) |
                 ItemStruct(_, ref generics) |
+                ItemExistential(hir::ExistTy { ref generics, .. }) |
                 ItemUnion(_, ref generics) => {
                     allow_defaults = true;
                     generics
@@ -840,14 +834,16 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     // the node id for the Self type parameter.
                     let param_id = item.id;
 
-                    opt_self = Some(ty::TypeParameterDef {
+                    opt_self = Some(ty::GenericParamDef {
                         index: 0,
                         name: keywords::SelfType.name().as_interned_str(),
                         def_id: tcx.hir.local_def_id(param_id),
-                        has_default: false,
-                        object_lifetime_default: rl::Set1::Empty,
                         pure_wrt_drop: false,
-                        synthetic: None,
+                        kind: ty::GenericParamDefKind::Type {
+                            has_default: false,
+                            object_lifetime_default: rl::Set1::Empty,
+                            synthetic: None,
+                        },
                     });
 
                     allow_defaults = true;
@@ -866,8 +862,8 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             }
         }
 
-        NodeTy(&hir::Ty { node: hir::TyImplTraitExistential(ref exist_ty, _), .. }) => {
-            &exist_ty.generics
+        NodeTy(&hir::Ty { node: hir::TyImplTraitExistential(..), .. }) => {
+            bug!("impl Trait is desugared to existential type items");
         }
 
         _ => &no_generics,
@@ -876,31 +872,33 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let has_self = opt_self.is_some();
     let mut parent_has_self = false;
     let mut own_start = has_self as u32;
-    let (parent_regions, parent_types) = parent_def_id.map_or((0, 0), |def_id| {
+    let parent_count = parent_def_id.map_or(0, |def_id| {
         let generics = tcx.generics_of(def_id);
         assert_eq!(has_self, false);
         parent_has_self = generics.has_self;
         own_start = generics.count() as u32;
-        (generics.parent_regions + generics.regions.len() as u32,
-            generics.parent_types + generics.types.len() as u32)
+        generics.parent_count + generics.params.len()
     });
 
+    let mut params: Vec<_> = opt_self.into_iter().collect();
+
     let early_lifetimes = early_bound_lifetimes_from_generics(tcx, ast_generics);
-    let regions = early_lifetimes.enumerate().map(|(i, l)| {
-        ty::RegionParameterDef {
+    params.extend(early_lifetimes.enumerate().map(|(i, l)| {
+        ty::GenericParamDef {
             name: l.lifetime.name.name().as_interned_str(),
             index: own_start + i as u32,
             def_id: tcx.hir.local_def_id(l.lifetime.id),
             pure_wrt_drop: l.pure_wrt_drop,
+            kind: ty::GenericParamDefKind::Lifetime,
         }
-    }).collect::<Vec<_>>();
+    }));
 
     let hir_id = tcx.hir.node_to_hir_id(node_id);
     let object_lifetime_defaults = tcx.object_lifetime_defaults(hir_id);
 
     // Now create the real type parameters.
-    let type_start = own_start + regions.len() as u32;
-    let types = ast_generics.ty_params().enumerate().map(|(i, p)| {
+    let type_start = own_start - has_self as u32 + params.len() as u32;
+    params.extend(ast_generics.ty_params().enumerate().map(|(i, p)| {
         if p.name == keywords::SelfType.name() {
             span_bug!(p.span, "`Self` should not be the name of a regular parameter");
         }
@@ -916,70 +914,70 @@ fn generics_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             }
         }
 
-        ty::TypeParameterDef {
+        ty::GenericParamDef {
             index: type_start + i as u32,
             name: p.name.as_interned_str(),
             def_id: tcx.hir.local_def_id(p.id),
-            has_default: p.default.is_some(),
-            object_lifetime_default:
-                object_lifetime_defaults.as_ref().map_or(rl::Set1::Empty, |o| o[i]),
             pure_wrt_drop: p.pure_wrt_drop,
-            synthetic: p.synthetic,
+            kind: ty::GenericParamDefKind::Type {
+                has_default: p.default.is_some(),
+                object_lifetime_default:
+                    object_lifetime_defaults.as_ref().map_or(rl::Set1::Empty, |o| o[i]),
+                synthetic: p.synthetic,
+            },
         }
-    });
-
-    let mut types: Vec<_> = opt_self.into_iter().chain(types).collect();
+    }));
 
     // provide junk type parameter defs - the only place that
     // cares about anything but the length is instantiation,
     // and we don't do that for closures.
-    if let NodeExpr(&hir::Expr { node: hir::ExprClosure(..), .. }) = node {
-        // add a dummy parameter for the closure kind
-        types.push(ty::TypeParameterDef {
-            index: type_start,
-            name: Symbol::intern("<closure_kind>").as_interned_str(),
-            def_id,
-            has_default: false,
-            object_lifetime_default: rl::Set1::Empty,
-            pure_wrt_drop: false,
-            synthetic: None,
-        });
+    if let NodeExpr(&hir::Expr { node: hir::ExprClosure(.., gen), .. }) = node {
+        let dummy_args = if gen.is_some() {
+            &["<yield_ty>", "<return_ty>", "<witness>"][..]
+        } else {
+            &["<closure_kind>", "<closure_signature>"][..]
+        };
 
-        // add a dummy parameter for the closure signature
-        types.push(ty::TypeParameterDef {
-            index: type_start + 1,
-            name: Symbol::intern("<closure_signature>").as_interned_str(),
-            def_id,
-            has_default: false,
-            object_lifetime_default: rl::Set1::Empty,
-            pure_wrt_drop: false,
-            synthetic: None,
-        });
+        for (i, &arg) in dummy_args.iter().enumerate() {
+            params.push(ty::GenericParamDef {
+                index: type_start + i as u32,
+                name: Symbol::intern(arg).as_interned_str(),
+                def_id,
+                pure_wrt_drop: false,
+                kind: ty::GenericParamDefKind::Type {
+                    has_default: false,
+                    object_lifetime_default: rl::Set1::Empty,
+                    synthetic: None,
+                },
+            });
+        }
 
         tcx.with_freevars(node_id, |fv| {
-            types.extend(fv.iter().zip(2..).map(|(_, i)| ty::TypeParameterDef {
-                index: type_start + i,
-                name: Symbol::intern("<upvar>").as_interned_str(),
-                def_id,
-                has_default: false,
-                object_lifetime_default: rl::Set1::Empty,
-                pure_wrt_drop: false,
-                synthetic: None,
+            params.extend(fv.iter().zip((dummy_args.len() as u32)..).map(|(_, i)| {
+                ty::GenericParamDef {
+                    index: type_start + i,
+                    name: Symbol::intern("<upvar>").as_interned_str(),
+                    def_id,
+                    pure_wrt_drop: false,
+                    kind: ty::GenericParamDefKind::Type {
+                        has_default: false,
+                        object_lifetime_default: rl::Set1::Empty,
+                        synthetic: None,
+                    },
+                }
             }));
         });
     }
 
-    let type_param_to_index = types.iter()
-                                   .map(|param| (param.def_id, param.index))
-                                   .collect();
+    let param_def_id_to_index = params.iter()
+                                      .map(|param| (param.def_id, param.index))
+                                      .collect();
 
     tcx.alloc_generics(ty::Generics {
         parent: parent_def_id,
-        parent_regions,
-        parent_types,
-        regions,
-        types,
-        type_param_to_index,
+        parent_count,
+        params,
+        param_def_id_to_index,
         has_self: has_self || parent_has_self,
         has_late_bound_regions: has_late_bound_regions(tcx, node),
     })
@@ -1045,6 +1043,12 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     let substs = Substs::identity_for_item(tcx, def_id);
                     tcx.mk_adt(def, substs)
                 }
+                // this is only reachable once we have named existential types
+                ItemExistential(hir::ExistTy { impl_trait_fn: None, .. }) => unimplemented!(),
+                // existential types desugared from impl Trait
+                ItemExistential(hir::ExistTy { impl_trait_fn: Some(owner), .. }) => {
+                    tcx.typeck_tables_of(owner).concrete_existential_types[&def_id]
+                },
                 ItemTrait(..) | ItemTraitAlias(..) |
                 ItemMod(..) |
                 ItemForeignMod(..) |
@@ -1092,45 +1096,31 @@ fn type_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             }
 
             let substs = ty::ClosureSubsts {
-                substs: Substs::for_item(
-                    tcx,
-                    def_id,
-                    |def, _| {
-                        let region = def.to_early_bound_region_data();
-                        tcx.mk_region(ty::ReEarlyBound(region))
-                    },
-                    |def, _| tcx.mk_param_from_def(def)
-                )
+                substs: Substs::identity_for_item(tcx, def_id),
             };
 
             tcx.mk_closure(def_id, substs)
         }
 
-        NodeExpr(_) => match tcx.hir.get(tcx.hir.get_parent_node(node_id)) {
-            NodeTy(&hir::Ty { node: TyArray(_, body), .. }) |
-            NodeTy(&hir::Ty { node: TyTypeof(body), .. }) |
-            NodeExpr(&hir::Expr { node: ExprRepeat(_, body), .. })
-                if body.node_id == node_id => tcx.types.usize,
+        NodeAnonConst(_) => match tcx.hir.get(tcx.hir.get_parent_node(node_id)) {
+            NodeTy(&hir::Ty { node: TyArray(_, ref constant), .. }) |
+            NodeTy(&hir::Ty { node: TyTypeof(ref constant), .. }) |
+            NodeExpr(&hir::Expr { node: ExprRepeat(_, ref constant), .. })
+                if constant.id == node_id => tcx.types.usize,
 
-            NodeVariant(&Spanned { node: Variant_ { disr_expr: Some(e), .. }, .. })
-                if e.node_id == node_id => {
+            NodeVariant(&Spanned { node: Variant_ { disr_expr: Some(ref e), .. }, .. })
+                if e.id == node_id => {
                     tcx.adt_def(tcx.hir.get_parent_did(node_id))
                         .repr.discr_type().to_ty(tcx)
                 }
 
             x => {
-                bug!("unexpected expr parent in type_of_def_id(): {:?}", x);
+                bug!("unexpected const parent in type_of_def_id(): {:?}", x);
             }
         },
 
         NodeTyParam(&hir::TyParam { default: Some(ref ty), .. }) => {
             icx.to_ty(ty)
-        }
-
-        NodeTy(&hir::Ty { node: TyImplTraitExistential(..), .. }) => {
-            let owner = tcx.hir.get_parent_did(node_id);
-            let hir_id = tcx.hir.node_to_hir_id(node_id);
-            tcx.typeck_tables_of(owner).node_id_to_type(hir_id)
         }
 
         x => {
@@ -1350,6 +1340,24 @@ pub fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                     }, items));
                     generics
                 }
+                ItemExistential(ref exist_ty) => {
+                    let substs = Substs::identity_for_item(tcx, def_id);
+                    let anon_ty = tcx.mk_anon(def_id, substs);
+
+                    // Collect the bounds, i.e. the `A+B+'c` in `impl A+B+'c`.
+                    let bounds = compute_bounds(&icx,
+                                                anon_ty,
+                                                &exist_ty.bounds,
+                                                SizedByDefault::Yes,
+                                                tcx.def_span(def_id));
+
+                    let predicates = bounds.predicates(tcx, anon_ty);
+
+                    return ty::GenericPredicates {
+                        parent: None,
+                        predicates: predicates
+                    };
+                }
 
                 _ => &no_generics,
             }
@@ -1363,36 +1371,11 @@ pub fn explicit_predicates_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             }
         }
 
-        NodeTy(&Ty { node: TyImplTraitExistential(ref exist_ty, _), span, .. }) => {
-            let substs = Substs::identity_for_item(tcx, def_id);
-            let anon_ty = tcx.mk_anon(def_id, substs);
-
-            debug!("explicit_predicates_of: anon_ty={:?}", anon_ty);
-
-            // Collect the bounds, i.e. the `A+B+'c` in `impl A+B+'c`.
-            let bounds = compute_bounds(&icx,
-                                        anon_ty,
-                                        &exist_ty.bounds,
-                                        SizedByDefault::Yes,
-                                        span);
-
-            debug!("explicit_predicates_of: bounds={:?}", bounds);
-
-            let predicates = bounds.predicates(tcx, anon_ty);
-
-            debug!("explicit_predicates_of: predicates={:?}", predicates);
-
-            return ty::GenericPredicates {
-                parent: None,
-                predicates: predicates
-            };
-        }
-
         _ => &no_generics,
     };
 
     let generics = tcx.generics_of(def_id);
-    let parent_count = generics.parent_count() as u32;
+    let parent_count = generics.parent_count as u32;
     let has_own_self = generics.has_self && parent_count == 0;
 
     let mut predicates = vec![];
@@ -1804,33 +1787,33 @@ fn linkage_by_name<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId, name: &
     }
 }
 
-fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAttrs {
+fn codegen_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> CodegenFnAttrs {
     let attrs = tcx.get_attrs(id);
 
-    let mut trans_fn_attrs = TransFnAttrs::new();
+    let mut codegen_fn_attrs = CodegenFnAttrs::new();
 
     let whitelist = tcx.target_features_whitelist(LOCAL_CRATE);
 
     let mut inline_span = None;
     for attr in attrs.iter() {
         if attr.check_name("cold") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::COLD;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::COLD;
         } else if attr.check_name("allocator") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::ALLOCATOR;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::ALLOCATOR;
         } else if attr.check_name("unwind") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::UNWIND;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::UNWIND;
         } else if attr.check_name("rustc_allocator_nounwind") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::RUSTC_ALLOCATOR_NOUNWIND;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::RUSTC_ALLOCATOR_NOUNWIND;
         } else if attr.check_name("naked") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::NAKED;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::NAKED;
         } else if attr.check_name("no_mangle") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::NO_MANGLE;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::NO_MANGLE;
         } else if attr.check_name("rustc_std_internal_symbol") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::RUSTC_STD_INTERNAL_SYMBOL;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::RUSTC_STD_INTERNAL_SYMBOL;
         } else if attr.check_name("no_debug") {
-            trans_fn_attrs.flags |= TransFnAttrFlags::NO_DEBUG;
+            codegen_fn_attrs.flags |= CodegenFnAttrFlags::NO_DEBUG;
         } else if attr.check_name("inline") {
-            trans_fn_attrs.inline = attrs.iter().fold(InlineAttr::None, |ia, attr| {
+            codegen_fn_attrs.inline = attrs.iter().fold(InlineAttr::None, |ia, attr| {
                 if attr.path != "inline" {
                     return ia;
                 }
@@ -1866,7 +1849,7 @@ fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAt
             });
         } else if attr.check_name("export_name") {
             if let s @ Some(_) = attr.value_str() {
-                trans_fn_attrs.export_name = s;
+                codegen_fn_attrs.export_name = s;
             } else {
                 struct_span_err!(tcx.sess, attr.span, E0558,
                                     "export_name attribute has invalid format")
@@ -1879,10 +1862,10 @@ fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAt
                            `unsafe` function";
                 tcx.sess.span_err(attr.span, msg);
             }
-            from_target_feature(tcx, id, attr, &whitelist, &mut trans_fn_attrs.target_features);
+            from_target_feature(tcx, id, attr, &whitelist, &mut codegen_fn_attrs.target_features);
         } else if attr.check_name("linkage") {
             if let Some(val) = attr.value_str() {
-                trans_fn_attrs.linkage = Some(linkage_by_name(tcx, id, &val.as_str()));
+                codegen_fn_attrs.linkage = Some(linkage_by_name(tcx, id, &val.as_str()));
             }
         }
     }
@@ -1891,8 +1874,8 @@ fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAt
     // purpose functions as they wouldn't have the right target features
     // enabled. For that reason we also forbid #[inline(always)] as it can't be
     // respected.
-    if trans_fn_attrs.target_features.len() > 0 {
-        if trans_fn_attrs.inline == InlineAttr::Always {
+    if codegen_fn_attrs.target_features.len() > 0 {
+        if codegen_fn_attrs.inline == InlineAttr::Always {
             if let Some(span) = inline_span {
                 tcx.sess.span_err(span, "cannot use #[inline(always)] with \
                                          #[target_feature]");
@@ -1900,5 +1883,5 @@ fn trans_fn_attrs<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, id: DefId) -> TransFnAt
         }
     }
 
-    trans_fn_attrs
+    codegen_fn_attrs
 }

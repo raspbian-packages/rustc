@@ -226,7 +226,7 @@ fn main() {
 }
 ```
 
-When we try to run this code, we’ll get an error. The `if` and `else` arms have
+When we try to compile this code, we’ll get an error. The `if` and `else` arms have
 value types that are incompatible, and Rust indicates exactly where to find the
 problem in the program:
 
@@ -308,6 +308,30 @@ You can place the `break` keyword within the loop to tell the program when to
 stop executing the loop. Recall that we did this in the guessing game in the
 “Quitting After a Correct Guess” section of Chapter 2 to exit the
 program when the user won the game by guessing the correct number.
+
+
+#### Returning from loops
+
+One of the uses of a `loop` is to retry an operation you know can fail, such as
+checking if a thread completed its job. However, you might need to pass the
+result of that operation to the rest of your code. If you add it to the `break`
+expression you use to stop the loop, it will be returned by the broken loop:
+
+```rust
+fn main() {
+    let mut counter = 0;
+
+    let result = loop {
+        counter += 1;
+
+        if counter == 10 {
+            break counter * 2;
+        }
+    };
+
+    assert_eq!(result, 20);
+}
+```
 
 #### Conditional Loops with `while`
 

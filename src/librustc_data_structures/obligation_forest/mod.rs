@@ -41,7 +41,7 @@ pub trait ObligationProcessor {
 
     fn process_obligation(&mut self,
                           obligation: &mut Self::Obligation)
-                          -> Result<Option<Vec<Self::Obligation>>, Self::Error>;
+                          -> ProcessResult<Self::Obligation, Self::Error>;
 
     /// As we do the cycle check, we invoke this callback when we
     /// encounter an actual cycle. `cycle` is an iterator that starts
@@ -55,6 +55,14 @@ pub trait ObligationProcessor {
                                cycle: I,
                                _marker: PhantomData<&'c Self::Obligation>)
         where I: Clone + Iterator<Item=&'c Self::Obligation>;
+}
+
+/// The result type used by `process_obligation`.
+#[derive(Debug)]
+pub enum ProcessResult<O, E> {
+    Unchanged,
+    Changed(Vec<O>),
+    Error(E),
 }
 
 pub struct ObligationForest<O: ForestObligation> {
@@ -75,9 +83,6 @@ pub struct ObligationForest<O: ForestObligation> {
     done_cache: FxHashSet<O::Predicate>,
     /// An cache of the nodes in `nodes`, indexed by predicate.
     waiting_cache: FxHashMap<O::Predicate, NodeIndex>,
-    /// A list of the obligations added in snapshots, to allow
-    /// for their removal.
-    cache_list: Vec<O::Predicate>,
     scratch: Option<Vec<usize>>,
 }
 
@@ -139,8 +144,8 @@ pub struct Outcome<O, E> {
 
     /// If true, then we saw no successful obligations, which means
     /// there is no point in further iteration. This is based on the
-    /// assumption that when trait matching returns `Err` or
-    /// `Ok(None)`, those results do not affect environmental
+    /// assumption that when trait matching returns `Error` or
+    /// `Unchanged`, those results do not affect environmental
     /// inference state. (Note that if we invoke `process_obligations`
     /// with no pending obligations, stalled will be true.)
     pub stalled: bool,
@@ -158,7 +163,6 @@ impl<O: ForestObligation> ObligationForest<O> {
             nodes: vec![],
             done_cache: FxHashSet(),
             waiting_cache: FxHashMap(),
-            cache_list: vec![],
             scratch: Some(vec![]),
         }
     }
@@ -207,7 +211,6 @@ impl<O: ForestObligation> ObligationForest<O> {
                 debug!("register_obligation_at({:?}, {:?}) - ok, new index is {}",
                        obligation, parent, self.nodes.len());
                 v.insert(NodeIndex::new(self.nodes.len()));
-                self.cache_list.push(obligation.as_predicate().clone());
                 self.nodes.push(Node::new(parent, obligation));
                 Ok(())
             }
@@ -234,13 +237,13 @@ impl<O: ForestObligation> ObligationForest<O> {
     }
 
     /// Returns the set of obligations that are in a pending state.
-    pub fn pending_obligations(&self) -> Vec<O>
-        where O: Clone
+    pub fn map_pending_obligations<P, F>(&self, f: F) -> Vec<P>
+        where F: Fn(&O) -> P
     {
         self.nodes
             .iter()
             .filter(|n| n.state.get() == NodeState::Pending)
-            .map(|n| n.obligation.clone())
+            .map(|n| f(&n.obligation))
             .collect()
     }
 
@@ -275,11 +278,11 @@ impl<O: ForestObligation> ObligationForest<O> {
                    result);
 
             match result {
-                Ok(None) => {
-                    // no change in state
+                ProcessResult::Unchanged => {
+                    // No change in state.
                 }
-                Ok(Some(children)) => {
-                    // if we saw a Some(_) result, we are not (yet) stalled
+                ProcessResult::Changed(children) => {
+                    // We are not (yet) stalled.
                     stalled = false;
                     self.nodes[index].state.set(NodeState::Success);
 
@@ -295,7 +298,7 @@ impl<O: ForestObligation> ObligationForest<O> {
                         }
                     }
                 }
-                Err(err) => {
+                ProcessResult::Error(err) => {
                     stalled = false;
                     let backtrace = self.error_at(index);
                     errors.push(Error {

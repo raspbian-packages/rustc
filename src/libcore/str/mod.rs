@@ -376,37 +376,6 @@ pub fn from_utf8_mut(v: &mut [u8]) -> Result<&mut str, Utf8Error> {
     Ok(unsafe { from_utf8_unchecked_mut(v) })
 }
 
-/// Forms a str from a pointer and a length.
-///
-/// The `len` argument is the number of bytes in the string.
-///
-/// # Safety
-///
-/// This function is unsafe as there is no guarantee that the given pointer is
-/// valid for `len` bytes, nor whether the lifetime inferred is a suitable
-/// lifetime for the returned str.
-///
-/// The data must be valid UTF-8
-///
-/// `p` must be non-null, even for zero-length strs, because non-zero bits
-/// are required to distinguish between a zero-length str within `Some()`
-/// from `None`. `p` can be a bogus non-dereferencable pointer, such as `0x1`,
-/// for zero-length strs, though.
-///
-/// # Caveat
-///
-/// The lifetime for the returned str is inferred from its usage. To
-/// prevent accidental misuse, it's suggested to tie the lifetime to whichever
-/// source lifetime is safe in the context, such as by providing a helper
-/// function taking the lifetime of a host value for the str, or by explicit
-/// annotation.
-/// Performs the same functionality as `from_raw_parts`, except that a mutable
-/// str is returned.
-///
-unsafe fn from_raw_parts_mut<'a>(p: *mut u8, len: usize) -> &'a mut str {
-    from_utf8_unchecked_mut(slice::from_raw_parts_mut(p, len))
-}
-
 /// Converts a slice of bytes to a string slice without checking
 /// that the string contains valid UTF-8.
 ///
@@ -1849,6 +1818,12 @@ mod traits {
         }
     }
 
+    #[inline(never)]
+    #[cold]
+    fn str_index_overflow_fail() -> ! {
+        panic!("attempted to index str up to maximum usize");
+    }
+
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     impl SliceIndex<str> for ops::RangeFull {
         type Output = str;
@@ -2029,19 +2004,13 @@ mod traits {
         type Output = str;
         #[inline]
         fn get(self, slice: &str) -> Option<&Self::Output> {
-            if let Some(end) = self.end.checked_add(1) {
-                (self.start..end).get(slice)
-            } else {
-                None
-            }
+            if self.end == usize::max_value() { None }
+            else { (self.start..self.end+1).get(slice) }
         }
         #[inline]
         fn get_mut(self, slice: &mut str) -> Option<&mut Self::Output> {
-            if let Some(end) = self.end.checked_add(1) {
-                (self.start..end).get_mut(slice)
-            } else {
-                None
-            }
+            if self.end == usize::max_value() { None }
+            else { (self.start..self.end+1).get_mut(slice) }
         }
         #[inline]
         unsafe fn get_unchecked(self, slice: &str) -> &Self::Output {
@@ -2053,14 +2022,12 @@ mod traits {
         }
         #[inline]
         fn index(self, slice: &str) -> &Self::Output {
-            assert!(self.end != usize::max_value(),
-                "attempted to index str up to maximum usize");
+            if self.end == usize::max_value() { str_index_overflow_fail(); }
             (self.start..self.end+1).index(slice)
         }
         #[inline]
         fn index_mut(self, slice: &mut str) -> &mut Self::Output {
-            assert!(self.end != usize::max_value(),
-                "attempted to index str up to maximum usize");
+            if self.end == usize::max_value() { str_index_overflow_fail(); }
             (self.start..self.end+1).index_mut(slice)
         }
     }
@@ -2072,156 +2039,34 @@ mod traits {
         type Output = str;
         #[inline]
         fn get(self, slice: &str) -> Option<&Self::Output> {
-            if self.end < usize::max_value() && slice.is_char_boundary(self.end + 1) {
-                Some(unsafe { self.get_unchecked(slice) })
-            } else {
-                None
-            }
+            if self.end == usize::max_value() { None }
+            else { (..self.end+1).get(slice) }
         }
         #[inline]
         fn get_mut(self, slice: &mut str) -> Option<&mut Self::Output> {
-            if self.end < usize::max_value() && slice.is_char_boundary(self.end + 1) {
-                Some(unsafe { self.get_unchecked_mut(slice) })
-            } else {
-                None
-            }
+            if self.end == usize::max_value() { None }
+            else { (..self.end+1).get_mut(slice) }
         }
         #[inline]
         unsafe fn get_unchecked(self, slice: &str) -> &Self::Output {
-            let ptr = slice.as_ptr();
-            super::from_utf8_unchecked(slice::from_raw_parts(ptr, self.end + 1))
+            (..self.end+1).get_unchecked(slice)
         }
         #[inline]
         unsafe fn get_unchecked_mut(self, slice: &mut str) -> &mut Self::Output {
-            let ptr = slice.as_ptr();
-            super::from_utf8_unchecked_mut(slice::from_raw_parts_mut(ptr as *mut u8, self.end + 1))
+            (..self.end+1).get_unchecked_mut(slice)
         }
         #[inline]
         fn index(self, slice: &str) -> &Self::Output {
-            assert!(self.end != usize::max_value(),
-                "attempted to index str up to maximum usize");
+            if self.end == usize::max_value() { str_index_overflow_fail(); }
             (..self.end+1).index(slice)
         }
         #[inline]
         fn index_mut(self, slice: &mut str) -> &mut Self::Output {
-            assert!(self.end != usize::max_value(),
-                "attempted to index str up to maximum usize");
+            if self.end == usize::max_value() { str_index_overflow_fail(); }
             (..self.end+1).index_mut(slice)
         }
     }
-
 }
-
-public_in_stage0! {
-{
-/// Methods for string slices
-#[allow(missing_docs)]
-#[doc(hidden)]
-#[unstable(feature = "core_str_ext",
-           reason = "stable interface provided by `impl str` in later crates",
-           issue = "32110")]
-}
-trait StrExt {
-    // NB there are no docs here are they're all located on the StrExt trait in
-    // liballoc, not here.
-
-    #[stable(feature = "core", since = "1.6.0")]
-    fn contains<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn chars(&self) -> Chars;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn bytes(&self) -> Bytes;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn char_indices(&self) -> CharIndices;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn split<'a, P: Pattern<'a>>(&'a self, pat: P) -> Split<'a, P>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rsplit<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplit<'a, P>
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn splitn<'a, P: Pattern<'a>>(&'a self, count: usize, pat: P) -> SplitN<'a, P>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rsplitn<'a, P: Pattern<'a>>(&'a self, count: usize, pat: P) -> RSplitN<'a, P>
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn split_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> SplitTerminator<'a, P>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rsplit_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplitTerminator<'a, P>
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> Matches<'a, P>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rmatches<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatches<'a, P>
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn match_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> MatchIndices<'a, P>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rmatch_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatchIndices<'a, P>
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn lines(&self) -> Lines;
-    #[stable(feature = "core", since = "1.6.0")]
-    #[rustc_deprecated(since = "1.6.0", reason = "use lines() instead now")]
-    #[allow(deprecated)]
-    fn lines_any(&self) -> LinesAny;
-    #[stable(feature = "str_checked_slicing", since = "1.20.0")]
-    fn get<I: SliceIndex<str>>(&self, i: I) -> Option<&I::Output>;
-    #[stable(feature = "str_checked_slicing", since = "1.20.0")]
-    fn get_mut<I: SliceIndex<str>>(&mut self, i: I) -> Option<&mut I::Output>;
-    #[stable(feature = "str_checked_slicing", since = "1.20.0")]
-    unsafe fn get_unchecked<I: SliceIndex<str>>(&self, i: I) -> &I::Output;
-    #[stable(feature = "str_checked_slicing", since = "1.20.0")]
-    unsafe fn get_unchecked_mut<I: SliceIndex<str>>(&mut self, i: I) -> &mut I::Output;
-    #[stable(feature = "core", since = "1.6.0")]
-    unsafe fn slice_unchecked(&self, begin: usize, end: usize) -> &str;
-    #[stable(feature = "core", since = "1.6.0")]
-    unsafe fn slice_mut_unchecked(&mut self, begin: usize, end: usize) -> &mut str;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn starts_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn ends_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn trim_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
-        where P::Searcher: DoubleEndedSearcher<'a>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn trim_left_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn trim_right_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
-        where P::Searcher: ReverseSearcher<'a>;
-    #[stable(feature = "is_char_boundary", since = "1.9.0")]
-    fn is_char_boundary(&self, index: usize) -> bool;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn as_bytes(&self) -> &[u8];
-    #[stable(feature = "str_mut_extras", since = "1.20.0")]
-    unsafe fn as_bytes_mut(&mut self) -> &mut [u8];
-    #[stable(feature = "core", since = "1.6.0")]
-    fn find<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn rfind<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>
-        where P::Searcher: ReverseSearcher<'a>;
-    fn find_str<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn split_at(&self, mid: usize) -> (&str, &str);
-    #[stable(feature = "core", since = "1.6.0")]
-    fn split_at_mut(&mut self, mid: usize) -> (&mut str, &mut str);
-    #[stable(feature = "core", since = "1.6.0")]
-    fn as_ptr(&self) -> *const u8;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn len(&self) -> usize;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn is_empty(&self) -> bool;
-    #[stable(feature = "core", since = "1.6.0")]
-    fn parse<T: FromStr>(&self) -> Result<T, T::Err>;
-    #[stable(feature = "split_whitespace", since = "1.1.0")]
-    fn split_whitespace<'a>(&'a self) -> SplitWhitespace<'a>;
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn trim(&self) -> &str;
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn trim_left(&self) -> &str;
-    #[stable(feature = "rust1", since = "1.0.0")]
-    fn trim_right(&self) -> &str;
-}}
 
 // truncate `&str` to length at most equal to `max`
 // return `true` if it were truncated, and the new str.
@@ -2267,307 +2112,9 @@ fn slice_error_fail(s: &str, begin: usize, end: usize) -> ! {
            index, ch, char_range, s_trunc, ellipsis);
 }
 
-#[stable(feature = "core", since = "1.6.0")]
-impl StrExt for str {
-    #[inline]
-    fn contains<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool {
-        pat.is_contained_in(self)
-    }
-
-    #[inline]
-    fn chars(&self) -> Chars {
-        Chars{iter: self.as_bytes().iter()}
-    }
-
-    #[inline]
-    fn bytes(&self) -> Bytes {
-        Bytes(self.as_bytes().iter().cloned())
-    }
-
-    #[inline]
-    fn char_indices(&self) -> CharIndices {
-        CharIndices { front_offset: 0, iter: self.chars() }
-    }
-
-    #[inline]
-    fn split<'a, P: Pattern<'a>>(&'a self, pat: P) -> Split<'a, P> {
-        Split(SplitInternal {
-            start: 0,
-            end: self.len(),
-            matcher: pat.into_searcher(self),
-            allow_trailing_empty: true,
-            finished: false,
-        })
-    }
-
-    #[inline]
-    fn rsplit<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplit<'a, P>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        RSplit(self.split(pat).0)
-    }
-
-    #[inline]
-    fn splitn<'a, P: Pattern<'a>>(&'a self, count: usize, pat: P) -> SplitN<'a, P> {
-        SplitN(SplitNInternal {
-            iter: self.split(pat).0,
-            count,
-        })
-    }
-
-    #[inline]
-    fn rsplitn<'a, P: Pattern<'a>>(&'a self, count: usize, pat: P) -> RSplitN<'a, P>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        RSplitN(self.splitn(count, pat).0)
-    }
-
-    #[inline]
-    fn split_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> SplitTerminator<'a, P> {
-        SplitTerminator(SplitInternal {
-            allow_trailing_empty: false,
-            ..self.split(pat).0
-        })
-    }
-
-    #[inline]
-    fn rsplit_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplitTerminator<'a, P>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        RSplitTerminator(self.split_terminator(pat).0)
-    }
-
-    #[inline]
-    fn matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> Matches<'a, P> {
-        Matches(MatchesInternal(pat.into_searcher(self)))
-    }
-
-    #[inline]
-    fn rmatches<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatches<'a, P>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        RMatches(self.matches(pat).0)
-    }
-
-    #[inline]
-    fn match_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> MatchIndices<'a, P> {
-        MatchIndices(MatchIndicesInternal(pat.into_searcher(self)))
-    }
-
-    #[inline]
-    fn rmatch_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatchIndices<'a, P>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        RMatchIndices(self.match_indices(pat).0)
-    }
-    #[inline]
-    fn lines(&self) -> Lines {
-        Lines(self.split_terminator('\n').map(LinesAnyMap))
-    }
-
-    #[inline]
-    #[allow(deprecated)]
-    fn lines_any(&self) -> LinesAny {
-        LinesAny(self.lines())
-    }
-
-    #[inline]
-    fn get<I: SliceIndex<str>>(&self, i: I) -> Option<&I::Output> {
-        i.get(self)
-    }
-
-    #[inline]
-    fn get_mut<I: SliceIndex<str>>(&mut self, i: I) -> Option<&mut I::Output> {
-        i.get_mut(self)
-    }
-
-    #[inline]
-    unsafe fn get_unchecked<I: SliceIndex<str>>(&self, i: I) -> &I::Output {
-        i.get_unchecked(self)
-    }
-
-    #[inline]
-    unsafe fn get_unchecked_mut<I: SliceIndex<str>>(&mut self, i: I) -> &mut I::Output {
-        i.get_unchecked_mut(self)
-    }
-
-    #[inline]
-    unsafe fn slice_unchecked(&self, begin: usize, end: usize) -> &str {
-        (begin..end).get_unchecked(self)
-    }
-
-    #[inline]
-    unsafe fn slice_mut_unchecked(&mut self, begin: usize, end: usize) -> &mut str {
-        (begin..end).get_unchecked_mut(self)
-    }
-
-    #[inline]
-    fn starts_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool {
-        pat.is_prefix_of(self)
-    }
-
-    #[inline]
-    fn ends_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        pat.is_suffix_of(self)
-    }
-
-    #[inline]
-    fn trim_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
-        where P::Searcher: DoubleEndedSearcher<'a>
-    {
-        let mut i = 0;
-        let mut j = 0;
-        let mut matcher = pat.into_searcher(self);
-        if let Some((a, b)) = matcher.next_reject() {
-            i = a;
-            j = b; // Remember earliest known match, correct it below if
-                   // last match is different
-        }
-        if let Some((_, b)) = matcher.next_reject_back() {
-            j = b;
-        }
-        unsafe {
-            // Searcher is known to return valid indices
-            self.slice_unchecked(i, j)
-        }
-    }
-
-    #[inline]
-    fn trim_left_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str {
-        let mut i = self.len();
-        let mut matcher = pat.into_searcher(self);
-        if let Some((a, _)) = matcher.next_reject() {
-            i = a;
-        }
-        unsafe {
-            // Searcher is known to return valid indices
-            self.slice_unchecked(i, self.len())
-        }
-    }
-
-    #[inline]
-    fn trim_right_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        let mut j = 0;
-        let mut matcher = pat.into_searcher(self);
-        if let Some((_, b)) = matcher.next_reject_back() {
-            j = b;
-        }
-        unsafe {
-            // Searcher is known to return valid indices
-            self.slice_unchecked(0, j)
-        }
-    }
-
-    #[inline]
-    fn is_char_boundary(&self, index: usize) -> bool {
-        // 0 and len are always ok.
-        // Test for 0 explicitly so that it can optimize out the check
-        // easily and skip reading string data for that case.
-        if index == 0 || index == self.len() { return true; }
-        match self.as_bytes().get(index) {
-            None => false,
-            // This is bit magic equivalent to: b < 128 || b >= 192
-            Some(&b) => (b as i8) >= -0x40,
-        }
-    }
-
-    #[inline]
-    fn as_bytes(&self) -> &[u8] {
-        unsafe { &*(self as *const str as *const [u8]) }
-    }
-
-    #[inline]
-    unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
-        &mut *(self as *mut str as *mut [u8])
-    }
-
-    fn find<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize> {
-        pat.into_searcher(self).next_match().map(|(i, _)| i)
-    }
-
-    fn rfind<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>
-        where P::Searcher: ReverseSearcher<'a>
-    {
-        pat.into_searcher(self).next_match_back().map(|(i, _)| i)
-    }
-
-    fn find_str<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize> {
-        self.find(pat)
-    }
-
-    #[inline]
-    fn split_at(&self, mid: usize) -> (&str, &str) {
-        // is_char_boundary checks that the index is in [0, .len()]
-        if self.is_char_boundary(mid) {
-            unsafe {
-                (self.slice_unchecked(0, mid),
-                 self.slice_unchecked(mid, self.len()))
-            }
-        } else {
-            slice_error_fail(self, 0, mid)
-        }
-    }
-
-    fn split_at_mut(&mut self, mid: usize) -> (&mut str, &mut str) {
-        // is_char_boundary checks that the index is in [0, .len()]
-        if self.is_char_boundary(mid) {
-            let len = self.len();
-            let ptr = self.as_ptr() as *mut u8;
-            unsafe {
-                (from_raw_parts_mut(ptr, mid),
-                 from_raw_parts_mut(ptr.offset(mid as isize), len - mid))
-            }
-        } else {
-            slice_error_fail(self, 0, mid)
-        }
-    }
-
-    #[inline]
-    fn as_ptr(&self) -> *const u8 {
-        self as *const str as *const u8
-    }
-
-    #[inline]
-    fn len(&self) -> usize {
-        self.as_bytes().len()
-    }
-
-    #[inline]
-    fn is_empty(&self) -> bool { self.len() == 0 }
-
-    #[inline]
-    fn parse<T: FromStr>(&self) -> Result<T, T::Err> { FromStr::from_str(self) }
-
-    #[inline]
-    fn split_whitespace(&self) -> SplitWhitespace {
-        SplitWhitespace { inner: self.split(IsWhitespace).filter(IsNotEmpty) }
-    }
-
-    #[inline]
-    fn trim(&self) -> &str {
-        self.trim_matches(|c: char| c.is_whitespace())
-    }
-
-    #[inline]
-    fn trim_left(&self) -> &str {
-        self.trim_left_matches(|c: char| c.is_whitespace())
-    }
-
-    #[inline]
-    fn trim_right(&self) -> &str {
-        self.trim_right_matches(|c: char| c.is_whitespace())
-    }
-}
-
-// FIXME: remove (inline) this macro and the SliceExt trait
-// when updating to a bootstrap compiler that has the new lang items.
-#[cfg_attr(stage0, macro_export)]
-#[unstable(feature = "core_str_ext", issue = "32110")]
-macro_rules! str_core_methods { () => {
+#[lang = "str"]
+#[cfg(not(test))]
+impl str {
     /// Returns the length of `self`.
     ///
     /// This length is in bytes, not [`char`]s or graphemes. In other words,
@@ -2588,8 +2135,9 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn len(&self) -> usize {
-        StrExt::len(self)
+    #[rustc_const_unstable(feature = "const_str_len")]
+    pub const fn len(&self) -> usize {
+        self.as_bytes().len()
     }
 
     /// Returns `true` if `self` has a length of zero bytes.
@@ -2607,8 +2155,9 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
-    pub fn is_empty(&self) -> bool {
-        StrExt::is_empty(self)
+    #[rustc_const_unstable(feature = "const_str_len")]
+    pub const fn is_empty(&self) -> bool {
+        self.len() == 0
     }
 
     /// Checks that `index`-th byte lies at the start and/or end of a
@@ -2638,7 +2187,15 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "is_char_boundary", since = "1.9.0")]
     #[inline]
     pub fn is_char_boundary(&self, index: usize) -> bool {
-        StrExt::is_char_boundary(self, index)
+        // 0 and len are always ok.
+        // Test for 0 explicitly so that it can optimize out the check
+        // easily and skip reading string data for that case.
+        if index == 0 || index == self.len() { return true; }
+        match self.as_bytes().get(index) {
+            None => false,
+            // This is bit magic equivalent to: b < 128 || b >= 192
+            Some(&b) => (b as i8) >= -0x40,
+        }
     }
 
     /// Converts a string slice to a byte slice. To convert the byte slice back
@@ -2656,8 +2213,13 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline(always)]
-    pub fn as_bytes(&self) -> &[u8] {
-        StrExt::as_bytes(self)
+    #[rustc_const_unstable(feature="const_str_as_bytes")]
+    pub const fn as_bytes(&self) -> &[u8] {
+        union Slices<'a> {
+            str: &'a str,
+            slice: &'a [u8],
+        }
+        unsafe { Slices { str: self }.slice }
     }
 
     /// Converts a mutable string slice to a mutable byte slice. To convert the
@@ -2696,7 +2258,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_mut_extras", since = "1.20.0")]
     #[inline(always)]
     pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
-        StrExt::as_bytes_mut(self)
+        &mut *(self as *mut str as *mut [u8])
     }
 
     /// Converts a string slice to a raw pointer.
@@ -2717,8 +2279,9 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
-    pub fn as_ptr(&self) -> *const u8 {
-        StrExt::as_ptr(self)
+    #[rustc_const_unstable(feature = "const_str_as_ptr")]
+    pub const fn as_ptr(&self) -> *const u8 {
+        self as *const str as *const u8
     }
 
     /// Returns a subslice of `str`.
@@ -2745,7 +2308,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[inline]
     pub fn get<I: SliceIndex<str>>(&self, i: I) -> Option<&I::Output> {
-        StrExt::get(self, i)
+        i.get(self)
     }
 
     /// Returns a mutable subslice of `str`.
@@ -2779,7 +2342,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[inline]
     pub fn get_mut<I: SliceIndex<str>>(&mut self, i: I) -> Option<&mut I::Output> {
-        StrExt::get_mut(self, i)
+        i.get_mut(self)
     }
 
     /// Returns a unchecked subslice of `str`.
@@ -2811,7 +2374,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[inline]
     pub unsafe fn get_unchecked<I: SliceIndex<str>>(&self, i: I) -> &I::Output {
-        StrExt::get_unchecked(self, i)
+        i.get_unchecked(self)
     }
 
     /// Returns a mutable, unchecked subslice of `str`.
@@ -2843,7 +2406,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_checked_slicing", since = "1.20.0")]
     #[inline]
     pub unsafe fn get_unchecked_mut<I: SliceIndex<str>>(&mut self, i: I) -> &mut I::Output {
-        StrExt::get_unchecked_mut(self, i)
+        i.get_unchecked_mut(self)
     }
 
     /// Creates a string slice from another string slice, bypassing safety
@@ -2892,7 +2455,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub unsafe fn slice_unchecked(&self, begin: usize, end: usize) -> &str {
-        StrExt::slice_unchecked(self, begin, end)
+        (begin..end).get_unchecked(self)
     }
 
     /// Creates a string slice from another string slice, bypassing safety
@@ -2922,7 +2485,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_slice_mut", since = "1.5.0")]
     #[inline]
     pub unsafe fn slice_mut_unchecked(&mut self, begin: usize, end: usize) -> &mut str {
-        StrExt::slice_mut_unchecked(self, begin, end)
+        (begin..end).get_unchecked_mut(self)
     }
 
     /// Divide one string slice into two at an index.
@@ -2958,7 +2521,15 @@ macro_rules! str_core_methods { () => {
     #[inline]
     #[stable(feature = "str_split_at", since = "1.4.0")]
     pub fn split_at(&self, mid: usize) -> (&str, &str) {
-        StrExt::split_at(self, mid)
+        // is_char_boundary checks that the index is in [0, .len()]
+        if self.is_char_boundary(mid) {
+            unsafe {
+                (self.slice_unchecked(0, mid),
+                 self.slice_unchecked(mid, self.len()))
+            }
+        } else {
+            slice_error_fail(self, 0, mid)
+        }
     }
 
     /// Divide one mutable string slice into two at an index.
@@ -2995,7 +2566,20 @@ macro_rules! str_core_methods { () => {
     #[inline]
     #[stable(feature = "str_split_at", since = "1.4.0")]
     pub fn split_at_mut(&mut self, mid: usize) -> (&mut str, &mut str) {
-        StrExt::split_at_mut(self, mid)
+        // is_char_boundary checks that the index is in [0, .len()]
+        if self.is_char_boundary(mid) {
+            let len = self.len();
+            let ptr = self.as_ptr() as *mut u8;
+            unsafe {
+                (from_utf8_unchecked_mut(slice::from_raw_parts_mut(ptr, mid)),
+                 from_utf8_unchecked_mut(slice::from_raw_parts_mut(
+                    ptr.offset(mid as isize),
+                    len - mid
+                 )))
+            }
+        } else {
+            slice_error_fail(self, 0, mid)
+        }
     }
 
     /// Returns an iterator over the [`char`]s of a string slice.
@@ -3047,8 +2631,9 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn chars(&self) -> Chars {
-        StrExt::chars(self)
+        Chars{iter: self.as_bytes().iter()}
     }
+
     /// Returns an iterator over the [`char`]s of a string slice, and their
     /// positions.
     ///
@@ -3103,7 +2688,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn char_indices(&self) -> CharIndices {
-        StrExt::char_indices(self)
+        CharIndices { front_offset: 0, iter: self.chars() }
     }
 
     /// An iterator over the bytes of a string slice.
@@ -3128,7 +2713,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn bytes(&self) -> Bytes {
-        StrExt::bytes(self)
+        Bytes(self.as_bytes().iter().cloned())
     }
 
     /// Split a string slice by whitespace.
@@ -3168,7 +2753,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "split_whitespace", since = "1.1.0")]
     #[inline]
     pub fn split_whitespace(&self) -> SplitWhitespace {
-        StrExt::split_whitespace(self)
+        SplitWhitespace { inner: self.split(IsWhitespace).filter(IsNotEmpty) }
     }
 
     /// An iterator over the lines of a string, as string slices.
@@ -3210,7 +2795,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn lines(&self) -> Lines {
-        StrExt::lines(self)
+        Lines(self.split_terminator('\n').map(LinesAnyMap))
     }
 
     /// An iterator over the lines of a string.
@@ -3219,7 +2804,7 @@ macro_rules! str_core_methods { () => {
     #[inline]
     #[allow(deprecated)]
     pub fn lines_any(&self) -> LinesAny {
-        StrExt::lines_any(self)
+        LinesAny(self.lines())
     }
 
     /// Returns an iterator of `u16` over the string encoded as UTF-16.
@@ -3238,7 +2823,7 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "encode_utf16", since = "1.8.0")]
     pub fn encode_utf16(&self) -> EncodeUtf16 {
-        EncodeUtf16::new(self)
+        EncodeUtf16 { chars: self.chars(), extra: 0 }
     }
 
     /// Returns `true` if the given pattern matches a sub-slice of
@@ -3259,7 +2844,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn contains<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool {
-        StrExt::contains(self, pat)
+        pat.is_contained_in(self)
     }
 
     /// Returns `true` if the given pattern matches a prefix of this
@@ -3279,7 +2864,7 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn starts_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool {
-        StrExt::starts_with(self, pat)
+        pat.is_prefix_of(self)
     }
 
     /// Returns `true` if the given pattern matches a suffix of this
@@ -3301,7 +2886,7 @@ macro_rules! str_core_methods { () => {
     pub fn ends_with<'a, P: Pattern<'a>>(&'a self, pat: P) -> bool
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::ends_with(self, pat)
+        pat.is_suffix_of(self)
     }
 
     /// Returns the byte index of the first character of this string slice that
@@ -3349,7 +2934,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn find<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize> {
-        StrExt::find(self, pat)
+        pat.into_searcher(self).next_match().map(|(i, _)| i)
     }
 
     /// Returns the byte index of the last character of this string slice that
@@ -3396,7 +2981,7 @@ macro_rules! str_core_methods { () => {
     pub fn rfind<'a, P: Pattern<'a>>(&'a self, pat: P) -> Option<usize>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rfind(self, pat)
+        pat.into_searcher(self).next_match_back().map(|(i, _)| i)
     }
 
     /// An iterator over substrings of this string slice, separated by
@@ -3508,7 +3093,13 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn split<'a, P: Pattern<'a>>(&'a self, pat: P) -> Split<'a, P> {
-        StrExt::split(self, pat)
+        Split(SplitInternal {
+            start: 0,
+            end: self.len(),
+            matcher: pat.into_searcher(self),
+            allow_trailing_empty: true,
+            finished: false,
+        })
     }
 
     /// An iterator over substrings of the given string slice, separated by
@@ -3560,7 +3151,7 @@ macro_rules! str_core_methods { () => {
     pub fn rsplit<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplit<'a, P>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rsplit(self, pat)
+        RSplit(self.split(pat).0)
     }
 
     /// An iterator over substrings of the given string slice, separated by
@@ -3605,7 +3196,10 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn split_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> SplitTerminator<'a, P> {
-        StrExt::split_terminator(self, pat)
+        SplitTerminator(SplitInternal {
+            allow_trailing_empty: false,
+            ..self.split(pat).0
+        })
     }
 
     /// An iterator over substrings of `self`, separated by characters
@@ -3651,7 +3245,7 @@ macro_rules! str_core_methods { () => {
     pub fn rsplit_terminator<'a, P: Pattern<'a>>(&'a self, pat: P) -> RSplitTerminator<'a, P>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rsplit_terminator(self, pat)
+        RSplitTerminator(self.split_terminator(pat).0)
     }
 
     /// An iterator over substrings of the given string slice, separated by a
@@ -3702,7 +3296,10 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
     pub fn splitn<'a, P: Pattern<'a>>(&'a self, n: usize, pat: P) -> SplitN<'a, P> {
-        StrExt::splitn(self, n, pat)
+        SplitN(SplitNInternal {
+            iter: self.split(pat).0,
+            count: n,
+        })
     }
 
     /// An iterator over substrings of this string slice, separated by a
@@ -3752,7 +3349,7 @@ macro_rules! str_core_methods { () => {
     pub fn rsplitn<'a, P: Pattern<'a>>(&'a self, n: usize, pat: P) -> RSplitN<'a, P>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rsplitn(self, n, pat)
+        RSplitN(self.splitn(n, pat).0)
     }
 
     /// An iterator over the disjoint matches of a pattern within the given string
@@ -3791,7 +3388,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_matches", since = "1.2.0")]
     #[inline]
     pub fn matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> Matches<'a, P> {
-        StrExt::matches(self, pat)
+        Matches(MatchesInternal(pat.into_searcher(self)))
     }
 
     /// An iterator over the disjoint matches of a pattern within this string slice,
@@ -3830,7 +3427,7 @@ macro_rules! str_core_methods { () => {
     pub fn rmatches<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatches<'a, P>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rmatches(self, pat)
+        RMatches(self.matches(pat).0)
     }
 
     /// An iterator over the disjoint matches of a pattern within this string
@@ -3874,7 +3471,7 @@ macro_rules! str_core_methods { () => {
     #[stable(feature = "str_match_indices", since = "1.5.0")]
     #[inline]
     pub fn match_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> MatchIndices<'a, P> {
-        StrExt::match_indices(self, pat)
+        MatchIndices(MatchIndicesInternal(pat.into_searcher(self)))
     }
 
     /// An iterator over the disjoint matches of a pattern within `self`,
@@ -3919,7 +3516,7 @@ macro_rules! str_core_methods { () => {
     pub fn rmatch_indices<'a, P: Pattern<'a>>(&'a self, pat: P) -> RMatchIndices<'a, P>
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::rmatch_indices(self, pat)
+        RMatchIndices(self.match_indices(pat).0)
     }
 
     /// Returns a string slice with leading and trailing whitespace removed.
@@ -3938,7 +3535,7 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim(&self) -> &str {
-        StrExt::trim(self)
+        self.trim_matches(|c: char| c.is_whitespace())
     }
 
     /// Returns a string slice with leading whitespace removed.
@@ -3974,7 +3571,7 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim_left(&self) -> &str {
-        StrExt::trim_left(self)
+        self.trim_left_matches(|c: char| c.is_whitespace())
     }
 
     /// Returns a string slice with trailing whitespace removed.
@@ -4010,7 +3607,7 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim_right(&self) -> &str {
-        StrExt::trim_right(self)
+        self.trim_right_matches(|c: char| c.is_whitespace())
     }
 
     /// Returns a string slice with all prefixes and suffixes that match a
@@ -4042,7 +3639,21 @@ macro_rules! str_core_methods { () => {
     pub fn trim_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
         where P::Searcher: DoubleEndedSearcher<'a>
     {
-        StrExt::trim_matches(self, pat)
+        let mut i = 0;
+        let mut j = 0;
+        let mut matcher = pat.into_searcher(self);
+        if let Some((a, b)) = matcher.next_reject() {
+            i = a;
+            j = b; // Remember earliest known match, correct it below if
+                   // last match is different
+        }
+        if let Some((_, b)) = matcher.next_reject_back() {
+            j = b;
+        }
+        unsafe {
+            // Searcher is known to return valid indices
+            self.slice_unchecked(i, j)
+        }
     }
 
     /// Returns a string slice with all prefixes that match a pattern
@@ -4073,7 +3684,15 @@ macro_rules! str_core_methods { () => {
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn trim_left_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str {
-        StrExt::trim_left_matches(self, pat)
+        let mut i = self.len();
+        let mut matcher = pat.into_searcher(self);
+        if let Some((a, _)) = matcher.next_reject() {
+            i = a;
+        }
+        unsafe {
+            // Searcher is known to return valid indices
+            self.slice_unchecked(i, self.len())
+        }
     }
 
     /// Returns a string slice with all suffixes that match a pattern
@@ -4112,7 +3731,15 @@ macro_rules! str_core_methods { () => {
     pub fn trim_right_matches<'a, P: Pattern<'a>>(&'a self, pat: P) -> &'a str
         where P::Searcher: ReverseSearcher<'a>
     {
-        StrExt::trim_right_matches(self, pat)
+        let mut j = 0;
+        let mut matcher = pat.into_searcher(self);
+        if let Some((_, b)) = matcher.next_reject_back() {
+            j = b;
+        }
+        unsafe {
+            // Searcher is known to return valid indices
+            self.slice_unchecked(0, j)
+        }
     }
 
     /// Parses this string slice into another type.
@@ -4162,7 +3789,7 @@ macro_rules! str_core_methods { () => {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn parse<F: FromStr>(&self) -> Result<F, F::Err> {
-        StrExt::parse(self)
+        FromStr::from_str(self)
     }
 
     /// Checks if all characters in this string are within the ASCII range.
@@ -4232,15 +3859,7 @@ macro_rules! str_core_methods { () => {
         let me = unsafe { self.as_bytes_mut() };
         me.make_ascii_lowercase()
     }
-}}
-
-#[lang = "str"]
-#[cfg(not(test))]
-#[cfg(not(stage0))]
-impl str {
-    str_core_methods!();
 }
-
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl AsRef<[u8]> for str {
@@ -4254,6 +3873,12 @@ impl AsRef<[u8]> for str {
 impl<'a> Default for &'a str {
     /// Creates an empty str
     fn default() -> &'a str { "" }
+}
+
+#[stable(feature = "default_mut_str", since = "1.28.0")]
+impl<'a> Default for &'a mut str {
+    /// Creates an empty mutable str
+    fn default() -> &'a mut str { unsafe { from_utf8_unchecked_mut(&mut []) } }
 }
 
 /// An iterator over the non-whitespace substrings of a string,
@@ -4342,17 +3967,6 @@ impl<'a> FusedIterator for SplitWhitespace<'a> {}
 pub struct EncodeUtf16<'a> {
     chars: Chars<'a>,
     extra: u16,
-}
-
-// FIXME: remove (inline) this method
-// when updating to a bootstrap compiler that has the new lang items.
-// For grepping purpose: #[cfg(stage0)]
-impl<'a> EncodeUtf16<'a> {
-    #[unstable(feature = "core_str_ext", issue = "32110")]
-    #[doc(hidden)]
-    pub fn new(s: &'a str) -> Self {
-        EncodeUtf16 { chars: s.chars(), extra: 0 }
-    }
 }
 
 #[stable(feature = "collection_debug", since = "1.17.0")]

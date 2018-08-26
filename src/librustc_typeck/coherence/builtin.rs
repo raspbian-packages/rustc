@@ -9,7 +9,7 @@
 // except according to those terms.
 
 //! Check properties that are required by built-in traits and set
-//! up data structures required by type-checking/translation.
+//! up data structures required by type-checking/codegen.
 
 use rustc::infer::outlives::env::OutlivesEnvironment;
 use rustc::middle::region;
@@ -111,9 +111,9 @@ fn visit_implementation_of_copy<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     debug!("visit_implementation_of_copy: self_type={:?} (free)",
            self_type);
 
-    match param_env.can_type_implement_copy(tcx, self_type, span) {
+    match param_env.can_type_implement_copy(tcx, self_type) {
         Ok(()) => {}
-        Err(CopyImplementationError::InfrigingField(field)) => {
+        Err(CopyImplementationError::InfrigingFields(fields)) => {
             let item = tcx.hir.expect_item(impl_node_id);
             let span = if let ItemImpl(.., Some(ref tr), _, _) = item.node {
                 tr.path.span
@@ -121,14 +121,14 @@ fn visit_implementation_of_copy<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 span
             };
 
-            struct_span_err!(tcx.sess,
-                             span,
-                             E0204,
-                             "the trait `Copy` may not be implemented for this type")
-                .span_label(
-                    tcx.def_span(field.did),
-                    "this field does not implement `Copy`")
-                .emit()
+            let mut err = struct_span_err!(tcx.sess,
+                                          span,
+                                          E0204,
+                                          "the trait `Copy` may not be implemented for this type");
+            for span in fields.iter().map(|f| tcx.def_span(f.did)) {
+                    err.span_label(span, "this field does not implement `Copy`");
+            }
+            err.emit()
         }
         Err(CopyImplementationError::NotAnAdt) => {
             let item = tcx.hir.expect_item(impl_node_id);
@@ -223,12 +223,18 @@ pub fn coerce_unsized_info<'a, 'gcx>(gcx: TyCtxt<'a, 'gcx, 'gcx>,
             (mt_a.ty, mt_b.ty, unsize_trait, None)
         };
         let (source, target, trait_def_id, kind) = match (&source.sty, &target.sty) {
-            (&ty::TyRef(r_a, mt_a), &ty::TyRef(r_b, mt_b)) => {
+            (&ty::TyRef(r_a, ty_a, mutbl_a), &ty::TyRef(r_b, ty_b, mutbl_b)) => {
                 infcx.sub_regions(infer::RelateObjectBound(span), r_b, r_a);
+                let mt_a = ty::TypeAndMut { ty: ty_a, mutbl: mutbl_a };
+                let mt_b = ty::TypeAndMut { ty: ty_b, mutbl: mutbl_b };
                 check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ref(r_b, ty))
             }
 
-            (&ty::TyRef(_, mt_a), &ty::TyRawPtr(mt_b)) |
+            (&ty::TyRef(_, ty_a, mutbl_a), &ty::TyRawPtr(mt_b)) => {
+                let mt_a = ty::TypeAndMut { ty: ty_a, mutbl: mutbl_a };
+                check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ptr(ty))
+            }
+
             (&ty::TyRawPtr(mt_a), &ty::TyRawPtr(mt_b)) => {
                 check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ptr(ty))
             }
@@ -348,7 +354,7 @@ pub fn coerce_unsized_info<'a, 'gcx>(gcx: TyCtxt<'a, 'gcx, 'gcx>,
                                       diff_fields.len(),
                                       diff_fields.iter()
                                           .map(|&(i, a, b)| {
-                                              format!("{} ({} to {})", fields[i].name, a, b)
+                                              format!("{} ({} to {})", fields[i].ident, a, b)
                                           })
                                           .collect::<Vec<_>>()
                                           .join(", ")));
@@ -381,7 +387,7 @@ pub fn coerce_unsized_info<'a, 'gcx>(gcx: TyCtxt<'a, 'gcx, 'gcx>,
                                                     trait_def_id,
                                                     0,
                                                     source,
-                                                    &[target]);
+                                                    &[target.into()]);
         fulfill_cx.register_predicate_obligation(&infcx, predicate);
 
         // Check that all transitive obligations are satisfied.

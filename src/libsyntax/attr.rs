@@ -20,7 +20,7 @@ use ast::{MetaItem, MetaItemKind, NestedMetaItem, NestedMetaItemKind};
 use ast::{Lit, LitKind, Expr, ExprKind, Item, Local, Stmt, StmtKind, GenericParam};
 use codemap::{BytePos, Spanned, respan, dummy_spanned};
 use syntax_pos::Span;
-use errors::Handler;
+use errors::{Applicability, Handler};
 use feature_gate::{Features, GatedCfg};
 use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
 use parse::parser::Parser;
@@ -1067,14 +1067,20 @@ pub fn find_repr_attrs(diagnostic: &Handler, attr: &Attribute) -> Vec<ReprAttr> 
                                     "incorrect `repr(align)` attribute format");
                                 match value.node {
                                     ast::LitKind::Int(int, ast::LitIntType::Unsuffixed) => {
-                                        err.span_suggestion(item.span,
-                                                            "use parentheses instead",
-                                                            format!("align({})", int));
+                                        err.span_suggestion_with_applicability(
+                                            item.span,
+                                            "use parentheses instead",
+                                            format!("align({})", int),
+                                            Applicability::MachineApplicable
+                                        );
                                     }
                                     ast::LitKind::Str(s, _) => {
-                                        err.span_suggestion(item.span,
-                                                            "use parentheses instead",
-                                                            format!("align({})", s));
+                                        err.span_suggestion_with_applicability(
+                                            item.span,
+                                            "use parentheses instead",
+                                            format!("align({})", s),
+                                            Applicability::MachineApplicable
+                                        );
                                     }
                                     _ => {}
                                 }
@@ -1348,7 +1354,7 @@ impl LitKind {
             Token::Ident(ident, false) if ident.name == "true" => Some(LitKind::Bool(true)),
             Token::Ident(ident, false) if ident.name == "false" => Some(LitKind::Bool(false)),
             Token::Interpolated(ref nt) => match nt.0 {
-                token::NtExpr(ref v) => match v.node {
+                token::NtExpr(ref v) | token::NtLiteral(ref v) => match v.node {
                     ExprKind::Lit(ref lit) => Some(lit.node.clone()),
                     _ => None,
                 },

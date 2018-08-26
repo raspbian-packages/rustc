@@ -61,10 +61,10 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ArrayIndexing {
             // Array with known size can be checked statically
             let ty = cx.tables.expr_ty(array);
             if let ty::TyArray(_, size) = ty.sty {
-                let size = size.val.to_raw_bits().unwrap();
+                let size = size.assert_usize(cx.tcx).unwrap().into();
 
                 // Index is a constant uint
-                if let Some((Constant::Int(const_index), _)) = constant(cx, index) {
+                if let Some((Constant::Int(const_index), _)) = constant(cx, cx.tables, index) {
                     if size <= const_index {
                         utils::span_lint(cx, OUT_OF_BOUNDS_INDEXING, e.span, "const index is out of bounds");
                     }
@@ -73,7 +73,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ArrayIndexing {
                 }
 
                 // Index is a constant range
-                if let Some(range) = higher::range(index) {
+                if let Some(range) = higher::range(cx, index) {
                     if let Some((start, end)) = to_const_range(cx, range, size) {
                         if start > size || end > size {
                             utils::span_lint(cx, OUT_OF_BOUNDS_INDEXING, e.span, "range is out of bounds");
@@ -83,7 +83,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ArrayIndexing {
                 }
             }
 
-            if let Some(range) = higher::range(index) {
+            if let Some(range) = higher::range(cx, index) {
                 // Full ranges are always valid
                 if range.start.is_none() && range.end.is_none() {
                     return;
@@ -101,14 +101,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ArrayIndexing {
 /// Returns an option containing a tuple with the start and end (exclusive) of
 /// the range.
 fn to_const_range<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, range: Range, array_size: u128) -> Option<(u128, u128)> {
-    let s = range.start.map(|expr| constant(cx, expr).map(|(c, _)| c));
+    let s = range.start.map(|expr| constant(cx, cx.tables, expr).map(|(c, _)| c));
     let start = match s {
         Some(Some(Constant::Int(x))) => x,
         Some(_) => return None,
         None => 0,
     };
 
-    let e = range.end.map(|expr| constant(cx, expr).map(|(c, _)| c));
+    let e = range.end.map(|expr| constant(cx, cx.tables, expr).map(|(c, _)| c));
     let end = match e {
         Some(Some(Constant::Int(x))) => if range.limits == RangeLimits::Closed {
             x + 1

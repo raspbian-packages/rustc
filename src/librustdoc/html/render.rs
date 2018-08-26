@@ -76,6 +76,8 @@ use html::item_type::ItemType;
 use html::markdown::{self, Markdown, MarkdownHtml, MarkdownSummaryLine};
 use html::{highlight, layout};
 
+use minifier;
+
 /// A pair of name and its optional document.
 pub type NameDoc = (String, Option<String>);
 
@@ -413,9 +415,9 @@ impl ToJson for Type {
         match self.name {
             Some(ref name) => {
                 let mut data = BTreeMap::new();
-                data.insert("name".to_owned(), name.to_json());
+                data.insert("n".to_owned(), name.to_json());
                 if let Some(ref generics) = self.generics {
-                    data.insert("generics".to_owned(), generics.to_json());
+                    data.insert("g".to_owned(), generics.to_json());
                 }
                 Json::Object(data)
             },
@@ -438,8 +440,12 @@ impl ToJson for IndexItemFunctionType {
             Json::Null
         } else {
             let mut data = BTreeMap::new();
-            data.insert("inputs".to_owned(), self.inputs.to_json());
-            data.insert("output".to_owned(), self.output.to_json());
+            if !self.inputs.is_empty() {
+                data.insert("i".to_owned(), self.inputs.to_json());
+            }
+            if let Some(ref output) = self.output {
+                data.insert("o".to_owned(), output.to_json());
+            }
             Json::Object(data)
         }
     }
@@ -509,7 +515,8 @@ pub fn run(mut krate: clean::Crate,
            css_file_extension: Option<PathBuf>,
            renderinfo: RenderInfo,
            sort_modules_alphabetically: bool,
-           themes: Vec<PathBuf>) -> Result<(), Error> {
+           themes: Vec<PathBuf>,
+           enable_minification: bool) -> Result<(), Error> {
     let src_root = match krate.src {
         FileName::Real(ref p) => match p.parent() {
             Some(p) => p.to_path_buf(),
@@ -661,7 +668,7 @@ pub fn run(mut krate: clean::Crate,
     CACHE_KEY.with(|v| *v.borrow_mut() = cache.clone());
     CURRENT_LOCATION_KEY.with(|s| s.borrow_mut().clear());
 
-    write_shared(&cx, &krate, &*cache, index)?;
+    write_shared(&cx, &krate, &*cache, index, enable_minification)?;
 
     // And finally render the whole crate's documentation
     cx.krate(krate)
@@ -740,7 +747,8 @@ fn build_index(krate: &clean::Crate, cache: &mut Cache) -> String {
 fn write_shared(cx: &Context,
                 krate: &clean::Crate,
                 cache: &Cache,
-                search_index: String) -> Result<(), Error> {
+                search_index: String,
+                enable_minification: bool) -> Result<(), Error> {
     // Write out the shared files. Note that these are shared among all rustdoc
     // docs placed in the output directory, so this needs to be a synchronized
     // operation with respect to all other rustdocs running around.
@@ -789,7 +797,8 @@ fn write_shared(cx: &Context,
           format!(
 r#"var themes = document.getElementById("theme-choices");
 var themePicker = document.getElementById("theme-picker");
-themePicker.onclick = function() {{
+
+function switchThemeButtonState() {{
     if (themes.style.display === "block") {{
         themes.style.display = "none";
         themePicker.style.borderBottomRightRadius = "3px";
@@ -800,12 +809,29 @@ themePicker.onclick = function() {{
         themePicker.style.borderBottomLeftRadius = "0";
     }}
 }};
+
+function handleThemeButtonsBlur(e) {{
+    var active = document.activeElement;
+    var related = e.relatedTarget;
+
+    if (active.id !== "themePicker" &&
+        (!active.parentNode || active.parentNode.id !== "theme-choices") &&
+        (!related ||
+         (related.id !== "themePicker" &&
+          (!related.parentNode || related.parentNode.id !== "theme-choices")))) {{
+        switchThemeButtonState();
+    }}
+}}
+
+themePicker.onclick = switchThemeButtonState;
+themePicker.onblur = handleThemeButtonsBlur;
 [{}].forEach(function(item) {{
     var but = document.createElement('button');
     but.innerHTML = item;
     but.onclick = function(el) {{
         switchTheme(currentTheme, mainTheme, item);
     }};
+    but.onblur = handleThemeButtonsBlur;
     themes.appendChild(but);
 }});"#,
                  themes.iter()
@@ -814,16 +840,20 @@ themePicker.onclick = function() {{
                        .join(",")).as_bytes(),
     )?;
 
-    write(cx.dst.join(&format!("main{}.js", cx.shared.resource_suffix)),
-                      include_bytes!("static/main.js"))?;
-    write(cx.dst.join(&format!("settings{}.js", cx.shared.resource_suffix)),
-                      include_bytes!("static/settings.js"))?;
+    write_minify(cx.dst.join(&format!("main{}.js", cx.shared.resource_suffix)),
+                 include_str!("static/main.js"),
+                 enable_minification)?;
+    write_minify(cx.dst.join(&format!("settings{}.js", cx.shared.resource_suffix)),
+                 include_str!("static/settings.js"),
+                 enable_minification)?;
 
     {
         let mut data = format!("var resourcesSuffix = \"{}\";\n",
-                               cx.shared.resource_suffix).into_bytes();
-        data.extend_from_slice(include_bytes!("static/storage.js"));
-        write(cx.dst.join(&format!("storage{}.js", cx.shared.resource_suffix)), &data)?;
+                               cx.shared.resource_suffix);
+        data.push_str(include_str!("static/storage.js"));
+        write_minify(cx.dst.join(&format!("storage{}.js", cx.shared.resource_suffix)),
+                     &data,
+                     enable_minification)?;
     }
 
     if let Some(ref css) = cx.shared.css_file_extension {
@@ -879,8 +909,8 @@ themePicker.onclick = function() {{
     }
 
     fn show_item(item: &IndexItem, krate: &str) -> String {
-        format!("{{'crate':'{}','ty':{},'name':'{}','path':'{}'{}}}",
-                krate, item.ty as usize, item.name, item.path,
+        format!("{{'crate':'{}','ty':{},'name':'{}','desc':'{}','p':'{}'{}}}",
+                krate, item.ty as usize, item.name, item.desc.replace("'", "\\'"), item.path,
                 if let Some(p) = item.parent_idx {
                     format!(",'parent':{}", p)
                 } else {
@@ -1018,6 +1048,14 @@ fn render_sources(dst: &Path, scx: &mut SharedContext,
 /// catch any errors.
 fn write(dst: PathBuf, contents: &[u8]) -> Result<(), Error> {
     Ok(try_err!(fs::write(&dst, contents), &dst))
+}
+
+fn write_minify(dst: PathBuf, contents: &str, enable_minification: bool) -> Result<(), Error> {
+    if enable_minification {
+        write(dst, minifier::js::minify(contents).as_bytes())
+    } else {
+        write(dst, contents.as_bytes())
+    }
 }
 
 /// Takes a path to a source file and cleans the path to it. This canonicalizes
@@ -1415,8 +1453,11 @@ impl DocFolder for Cache {
 impl<'a> Cache {
     fn generics(&mut self, generics: &clean::Generics) {
         for param in &generics.params {
-            if let clean::GenericParam::Type(ref typ) = *param {
-                self.typarams.insert(typ.did, typ.name.clone());
+            match *param {
+                clean::GenericParamDef::Type(ref typ) => {
+                    self.typarams.insert(typ.did, typ.name.clone());
+                }
+                clean::GenericParamDef::Lifetime(_) => {}
             }
         }
     }
@@ -1442,7 +1483,7 @@ impl<'a> Cache {
                                 ty: item.type_(),
                                 name: item_name.to_string(),
                                 path: path.clone(),
-                                desc: String::new(),
+                                desc: plain_summary_line(item.doc_value()),
                                 parent: None,
                                 parent_idx: None,
                                 search_type: get_index_search_type(&item),
@@ -1500,6 +1541,7 @@ struct AllTypes {
     typedefs: HashSet<ItemEntry>,
     statics: HashSet<ItemEntry>,
     constants: HashSet<ItemEntry>,
+    keywords: HashSet<ItemEntry>,
 }
 
 impl AllTypes {
@@ -1515,6 +1557,7 @@ impl AllTypes {
             typedefs: HashSet::with_capacity(100),
             statics: HashSet::with_capacity(100),
             constants: HashSet::with_capacity(100),
+            keywords: HashSet::with_capacity(100),
         }
     }
 
@@ -2022,12 +2065,13 @@ impl<'a> fmt::Display for Item<'a> {
             clean::StaticItem(..) | clean::ForeignStaticItem(..) => write!(fmt, "Static ")?,
             clean::ConstantItem(..) => write!(fmt, "Constant ")?,
             clean::ForeignTypeItem => write!(fmt, "Foreign Type ")?,
+            clean::KeywordItem(..) => write!(fmt, "Keyword ")?,
             _ => {
                 // We don't generate pages for any other type.
                 unreachable!();
             }
         }
-        if !self.item.is_primitive() {
+        if !self.item.is_primitive() && !self.item.is_keyword() {
             let cur = &self.cx.current;
             let amt = if self.item.is_mod() { cur.len() - 1 } else { cur.len() };
             for (i, component) in cur.iter().enumerate().take(amt) {
@@ -2085,6 +2129,7 @@ impl<'a> fmt::Display for Item<'a> {
                 item_static(fmt, self.cx, self.item, i),
             clean::ConstantItem(ref c) => item_constant(fmt, self.cx, self.item, c),
             clean::ForeignTypeItem => item_foreign_type(fmt, self.cx, self.item),
+            clean::KeywordItem(ref k) => item_keyword(fmt, self.cx, self.item, k),
             _ => {
                 // We don't generate pages for any other type.
                 unreachable!();
@@ -2312,29 +2357,7 @@ fn item_module(w: &mut fmt::Formatter, cx: &Context,
                 write!(w, "</table>")?;
             }
             curty = myty;
-            let (short, name) = match myty.unwrap() {
-                ItemType::ExternCrate |
-                ItemType::Import          => ("reexports", "Re-exports"),
-                ItemType::Module          => ("modules", "Modules"),
-                ItemType::Struct          => ("structs", "Structs"),
-                ItemType::Union           => ("unions", "Unions"),
-                ItemType::Enum            => ("enums", "Enums"),
-                ItemType::Function        => ("functions", "Functions"),
-                ItemType::Typedef         => ("types", "Type Definitions"),
-                ItemType::Static          => ("statics", "Statics"),
-                ItemType::Constant        => ("constants", "Constants"),
-                ItemType::Trait           => ("traits", "Traits"),
-                ItemType::Impl            => ("impls", "Implementations"),
-                ItemType::TyMethod        => ("tymethods", "Type Methods"),
-                ItemType::Method          => ("methods", "Methods"),
-                ItemType::StructField     => ("fields", "Struct Fields"),
-                ItemType::Variant         => ("variants", "Variants"),
-                ItemType::Macro           => ("macros", "Macros"),
-                ItemType::Primitive       => ("primitives", "Primitive Types"),
-                ItemType::AssociatedType  => ("associated-types", "Associated Types"),
-                ItemType::AssociatedConst => ("associated-consts", "Associated Constants"),
-                ItemType::ForeignType     => ("foreign-types", "Foreign Types"),
-            };
+            let (short, name) = item_ty_to_strs(&myty.unwrap());
             write!(w, "<h2 id='{id}' class='section-header'>\
                        <a href=\"#{id}\">{name}</a></h2>\n<table>",
                    id = derive_id(short.to_owned()), name = name)?;
@@ -2579,7 +2602,7 @@ fn item_function(w: &mut fmt::Formatter, cx: &Context, it: &clean::Item,
 }
 
 fn render_implementor(cx: &Context, implementor: &Impl, w: &mut fmt::Formatter,
-                      implementor_dups: &FxHashMap<&str, (DefId, bool)>) -> Result<(), fmt::Error> {
+                      implementor_dups: &FxHashMap<&str, (DefId, bool)>) -> fmt::Result {
     write!(w, "<li><table class='table-display'><tbody><tr><td><code>")?;
     // If there's already another implementor that has the same abbridged name, use the
     // full path, for example in `std::iter::ExactSizeIterator`
@@ -2612,7 +2635,7 @@ fn render_implementor(cx: &Context, implementor: &Impl, w: &mut fmt::Formatter,
 
 fn render_impls(cx: &Context, w: &mut fmt::Formatter,
                 traits: &[&&Impl],
-                containing_item: &clean::Item) -> Result<(), fmt::Error> {
+                containing_item: &clean::Item) -> fmt::Result {
     for i in traits {
         let did = i.trait_did().unwrap();
         let assoc_link = AssocItemLink::GotoSource(did, &i.inner_impl().provided_trait_methods);
@@ -3014,6 +3037,7 @@ fn render_assoc_item(w: &mut fmt::Formatter,
         } else {
             (0, true)
         };
+        render_attributes(w, meth)?;
         write!(w, "{}{}{}{}fn <a href='{href}' class='fnname'>{name}</a>\
                    {generics}{decl}{where_clause}",
                VisSpace(&meth.visibility),
@@ -4318,6 +4342,33 @@ fn sidebar_enum(fmt: &mut fmt::Formatter, it: &clean::Item,
     Ok(())
 }
 
+fn item_ty_to_strs(ty: &ItemType) -> (&'static str, &'static str) {
+    match *ty {
+        ItemType::ExternCrate |
+        ItemType::Import          => ("reexports", "Re-exports"),
+        ItemType::Module          => ("modules", "Modules"),
+        ItemType::Struct          => ("structs", "Structs"),
+        ItemType::Union           => ("unions", "Unions"),
+        ItemType::Enum            => ("enums", "Enums"),
+        ItemType::Function        => ("functions", "Functions"),
+        ItemType::Typedef         => ("types", "Type Definitions"),
+        ItemType::Static          => ("statics", "Statics"),
+        ItemType::Constant        => ("constants", "Constants"),
+        ItemType::Trait           => ("traits", "Traits"),
+        ItemType::Impl            => ("impls", "Implementations"),
+        ItemType::TyMethod        => ("tymethods", "Type Methods"),
+        ItemType::Method          => ("methods", "Methods"),
+        ItemType::StructField     => ("fields", "Struct Fields"),
+        ItemType::Variant         => ("variants", "Variants"),
+        ItemType::Macro           => ("macros", "Macros"),
+        ItemType::Primitive       => ("primitives", "Primitive Types"),
+        ItemType::AssociatedType  => ("associated-types", "Associated Types"),
+        ItemType::AssociatedConst => ("associated-consts", "Associated Constants"),
+        ItemType::ForeignType     => ("foreign-types", "Foreign Types"),
+        ItemType::Keyword         => ("keywords", "Keywords"),
+    }
+}
+
 fn sidebar_module(fmt: &mut fmt::Formatter, _it: &clean::Item,
                   items: &[clean::Item]) -> fmt::Result {
     let mut sidebar = String::new();
@@ -4337,29 +4388,7 @@ fn sidebar_module(fmt: &mut fmt::Formatter, _it: &clean::Item,
                    ItemType::TyMethod, ItemType::Method, ItemType::StructField, ItemType::Variant,
                    ItemType::AssociatedType, ItemType::AssociatedConst, ItemType::ForeignType] {
         if items.iter().any(|it| !it.is_stripped() && it.type_() == myty) {
-            let (short, name) = match myty {
-                ItemType::ExternCrate |
-                ItemType::Import          => ("reexports", "Re-exports"),
-                ItemType::Module          => ("modules", "Modules"),
-                ItemType::Struct          => ("structs", "Structs"),
-                ItemType::Union           => ("unions", "Unions"),
-                ItemType::Enum            => ("enums", "Enums"),
-                ItemType::Function        => ("functions", "Functions"),
-                ItemType::Typedef         => ("types", "Type Definitions"),
-                ItemType::Static          => ("statics", "Statics"),
-                ItemType::Constant        => ("constants", "Constants"),
-                ItemType::Trait           => ("traits", "Traits"),
-                ItemType::Impl            => ("impls", "Implementations"),
-                ItemType::TyMethod        => ("tymethods", "Type Methods"),
-                ItemType::Method          => ("methods", "Methods"),
-                ItemType::StructField     => ("fields", "Struct Fields"),
-                ItemType::Variant         => ("variants", "Variants"),
-                ItemType::Macro           => ("macros", "Macros"),
-                ItemType::Primitive       => ("primitives", "Primitive Types"),
-                ItemType::AssociatedType  => ("associated-types", "Associated Types"),
-                ItemType::AssociatedConst => ("associated-consts", "Associated Constants"),
-                ItemType::ForeignType     => ("foreign-types", "Foreign Types"),
-            };
+            let (short, name) = item_ty_to_strs(&myty);
             sidebar.push_str(&format!("<li><a href=\"#{id}\">{name}</a></li>",
                                       id = short,
                                       name = name));
@@ -4418,6 +4447,12 @@ fn item_primitive(w: &mut fmt::Formatter, cx: &Context,
                   _p: &clean::PrimitiveType) -> fmt::Result {
     document(w, cx, it)?;
     render_assoc_items(w, cx, it, it.def_id, AssocItemRender::All)
+}
+
+fn item_keyword(w: &mut fmt::Formatter, cx: &Context,
+                it: &clean::Item,
+                _p: &str) -> fmt::Result {
+    document(w, cx, it)
 }
 
 const BASIC_KEYWORDS: &'static str = "rust, rustlang, rust-lang";

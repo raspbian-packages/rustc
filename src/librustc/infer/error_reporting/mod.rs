@@ -70,7 +70,7 @@ use ty::{self, Region, Ty, TyCtxt, TypeFoldable, TypeVariants};
 use ty::error::TypeError;
 use syntax::ast::DUMMY_NODE_ID;
 use syntax_pos::{Pos, Span};
-use errors::{DiagnosticBuilder, DiagnosticStyledString};
+use errors::{Applicability, DiagnosticBuilder, DiagnosticStyledString};
 
 use rustc_data_structures::indexed_vec::Idx;
 
@@ -665,7 +665,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
 
         fn push_ty_ref<'tcx>(
             r: &ty::Region<'tcx>,
-            tnm: &ty::TypeAndMut<'tcx>,
+            ty: Ty<'tcx>,
+            mutbl: hir::Mutability,
             s: &mut DiagnosticStyledString,
         ) {
             let r = &format!("{}", r);
@@ -673,13 +674,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 "&{}{}{}",
                 r,
                 if r == "" { "" } else { " " },
-                if tnm.mutbl == hir::MutMutable {
+                if mutbl == hir::MutMutable {
                     "mut "
                 } else {
                     ""
                 }
             ));
-            s.push_normal(format!("{}", tnm.ty));
+            s.push_normal(format!("{}", ty));
         }
 
         match (&t1.sty, &t2.sty) {
@@ -803,24 +804,25 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
 
             // When finding T != &T, highlight only the borrow
-            (&ty::TyRef(r1, ref tnm1), _) if equals(&tnm1.ty, &t2) => {
+            (&ty::TyRef(r1, ref_ty1, mutbl1), _) if equals(&ref_ty1, &t2) => {
                 let mut values = (DiagnosticStyledString::new(), DiagnosticStyledString::new());
-                push_ty_ref(&r1, tnm1, &mut values.0);
+                push_ty_ref(&r1, ref_ty1, mutbl1, &mut values.0);
                 values.1.push_normal(format!("{}", t2));
                 values
             }
-            (_, &ty::TyRef(r2, ref tnm2)) if equals(&t1, &tnm2.ty) => {
+            (_, &ty::TyRef(r2, ref_ty2, mutbl2)) if equals(&t1, &ref_ty2) => {
                 let mut values = (DiagnosticStyledString::new(), DiagnosticStyledString::new());
                 values.0.push_normal(format!("{}", t1));
-                push_ty_ref(&r2, tnm2, &mut values.1);
+                push_ty_ref(&r2, ref_ty2, mutbl2, &mut values.1);
                 values
             }
 
             // When encountering &T != &mut T, highlight only the borrow
-            (&ty::TyRef(r1, ref tnm1), &ty::TyRef(r2, ref tnm2)) if equals(&tnm1.ty, &tnm2.ty) => {
+            (&ty::TyRef(r1, ref_ty1, mutbl1),
+             &ty::TyRef(r2, ref_ty2, mutbl2)) if equals(&ref_ty1, &ref_ty2) => {
                 let mut values = (DiagnosticStyledString::new(), DiagnosticStyledString::new());
-                push_ty_ref(&r1, tnm1, &mut values.0);
-                push_ty_ref(&r2, tnm2, &mut values.1);
+                push_ty_ref(&r1, ref_ty1, mutbl1, &mut values.0);
+                push_ty_ref(&r2, ref_ty2, mutbl2, &mut values.1);
                 values
             }
 
@@ -1095,7 +1097,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             if let Some((sp, has_lifetimes)) = type_param_span {
                 let tail = if has_lifetimes { " + " } else { "" };
                 let suggestion = format!("{}: {}{}", bound_kind, sub, tail);
-                err.span_suggestion_short(sp, consider, suggestion);
+                err.span_suggestion_short_with_applicability(
+                    sp, consider, suggestion,
+                    Applicability::MaybeIncorrect // Issue #41966
+                );
             } else {
                 err.help(consider);
             }

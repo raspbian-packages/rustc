@@ -82,6 +82,7 @@ pub struct Config {
     pub llvm_version_check: bool,
     pub llvm_static_stdcpp: bool,
     pub llvm_link_shared: bool,
+    pub llvm_clang_cl: Option<String>,
     pub llvm_targets: Option<String>,
     pub llvm_experimental_targets: String,
     pub llvm_link_jobs: Option<u32>,
@@ -124,7 +125,7 @@ pub struct Config {
     // misc
     pub low_priority: bool,
     pub channel: String,
-    pub quiet_tests: bool,
+    pub verbose_tests: bool,
     pub test_miri: bool,
     pub save_toolstates: Option<PathBuf>,
     pub print_step_timings: bool,
@@ -250,6 +251,7 @@ struct Llvm {
     experimental_targets: Option<String>,
     link_jobs: Option<u32>,
     link_shared: Option<bool>,
+    clang_cl: Option<String>
 }
 
 #[derive(Deserialize, Default, Clone)]
@@ -299,8 +301,9 @@ struct Rust {
     ignore_git: Option<bool>,
     debug: Option<bool>,
     dist_src: Option<bool>,
-    quiet_tests: Option<bool>,
+    verbose_tests: Option<bool>,
     test_miri: Option<bool>,
+    incremental: Option<bool>,
     save_toolstates: Option<String>,
     codegen_backends: Option<Vec<String>>,
     codegen_backends_dir: Option<String>,
@@ -504,6 +507,7 @@ impl Config {
             config.llvm_experimental_targets = llvm.experimental_targets.clone()
                 .unwrap_or("WebAssembly".to_string());
             config.llvm_link_jobs = llvm.link_jobs;
+            config.llvm_clang_cl = llvm.clang_cl.clone();
         }
 
         if let Some(ref rust) = toml.rust {
@@ -524,8 +528,12 @@ impl Config {
             set(&mut config.backtrace, rust.backtrace);
             set(&mut config.channel, rust.channel.clone());
             set(&mut config.rust_dist_src, rust.dist_src);
-            set(&mut config.quiet_tests, rust.quiet_tests);
+            set(&mut config.verbose_tests, rust.verbose_tests);
             set(&mut config.test_miri, rust.test_miri);
+            // in the case "false" is set explicitly, do not overwrite the command line args
+            if let Some(true) = rust.incremental {
+                config.incremental = true;
+            }
             set(&mut config.wasm_syscall, rust.wasm_syscall);
             set(&mut config.lld_enabled, rust.lld);
             config.rustc_parallel_queries = rust.experimental_parallel_queries.unwrap_or(false);

@@ -1,11 +1,47 @@
-rustc (1.27.2+dfsg1-1+rpi1) buster-staging; urgency=medium
+rustc (1.28.0+dfsg1-2+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Fri, 24 Aug 2018 06:54:48 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Sun, 26 Aug 2018 13:36:11 +0000
+
+rustc (1.28.0+dfsg1-2) unstable; urgency=medium
+
+  * Switch on verbose-tests to restore the old pre-1.28 behaviour, and restore
+    old failure-counting logic.
+  * Allow 50 test failures on s390x, restored failure-counting logic avoids
+    more double-counts.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 05 Aug 2018 02:18:10 -0700
+
+rustc (1.28.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+  * Add patches from Fedora to fix some test failures.
+  * Ignore a failure testing specific error output, under investigation.
+  * Allow 100 test failures on s390x, should be reducible later with LLVM 7.
+  * Temporary fix for mips64el bootstrap.
+  * Be even more verbose during the build.
+  * Update to latest Standards-Version.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 04 Aug 2018 23:04:41 -0700
+
+rustc (1.28.0~beta.14+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Update test-failure counting logic.
+  * Fix version constraints for Recommends: cargo.
+  * Add patch to fix sparc64 CABI.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 27 Jul 2018 04:26:52 -0700
+
+rustc (1.28.0~beta.14+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Update to latest Standards-Version; no changes required.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 25 Jul 2018 03:11:11 -0700
 
 rustc (1.27.2+dfsg1-1) unstable; urgency=medium
 

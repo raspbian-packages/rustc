@@ -42,46 +42,15 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
 
     // Figure out what primary body this item has.
     let body_id = match tcx.hir.get(id) {
-        hir::map::NodeItem(item) => {
-            match item.node {
-                hir::ItemConst(_, body) |
-                hir::ItemStatic(_, _, body) |
-                hir::ItemFn(.., body) => body,
-                _ => unsupported()
-            }
-        }
-        hir::map::NodeTraitItem(item) => {
-            match item.node {
-                hir::TraitItemKind::Const(_, Some(body)) |
-                hir::TraitItemKind::Method(_,
-                    hir::TraitMethod::Provided(body)) => body,
-                _ => unsupported()
-            }
-        }
-        hir::map::NodeImplItem(item) => {
-            match item.node {
-                hir::ImplItemKind::Const(_, body) |
-                hir::ImplItemKind::Method(_, body) => body,
-                _ => unsupported()
-            }
-        }
-        hir::map::NodeExpr(expr) => {
-            // FIXME(eddyb) Closures should have separate
-            // function definition IDs and expression IDs.
-            // Type-checking should not let closures get
-            // this far in a constant position.
-            // Assume that everything other than closures
-            // is a constant "initializer" expression.
-            match expr.node {
-                hir::ExprClosure(_, _, body, _, _) => body,
-                _ => hir::BodyId { node_id: expr.id },
-            }
-        }
         hir::map::NodeVariant(variant) =>
             return create_constructor_shim(tcx, id, &variant.node.data),
         hir::map::NodeStructCtor(ctor) =>
             return create_constructor_shim(tcx, id, ctor),
-        _ => unsupported(),
+
+        _ => match tcx.hir.maybe_body_owned_by(id) {
+            Some(body) => body,
+            None => unsupported(),
+        },
     };
 
     tcx.infer_ctxt().enter(|infcx| {
@@ -101,11 +70,11 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
                     // HACK(eddyb) Avoid having RustCall on closures,
                     // as it adds unnecessary (and wrong) auto-tupling.
                     abi = Abi::Rust;
-                    Some((liberated_closure_env_ty(tcx, id, body_id), None))
+                    Some(ArgInfo(liberated_closure_env_ty(tcx, id, body_id), None, None, None))
                 }
                 ty::TyGenerator(..) => {
                     let gen_ty = tcx.body_tables(body_id).node_id_to_type(fn_hir_id);
-                    Some((gen_ty, None))
+                    Some(ArgInfo(gen_ty, None, None, None))
                 }
                 _ => None,
             };
@@ -122,7 +91,23 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
                     .iter()
                     .enumerate()
                     .map(|(index, arg)| {
-                        (fn_sig.inputs()[index], Some(&*arg.pat))
+                        let owner_id = tcx.hir.body_owner(body_id);
+                        let opt_ty_info;
+                        let self_arg;
+                        if let Some(ref fn_decl) = tcx.hir.fn_decl(owner_id) {
+                            let ty_hir_id = fn_decl.inputs[index].hir_id;
+                            let ty_span = tcx.hir.span(tcx.hir.hir_to_node_id(ty_hir_id));
+                            opt_ty_info = Some(ty_span);
+                            self_arg = if index == 0 && fn_decl.has_implicit_self {
+                                Some(ImplicitSelfBinding)
+                            } else {
+                                None
+                            };
+                        } else {
+                            opt_ty_info = None;
+                            self_arg = None;
+                        }
+                        ArgInfo(fn_sig.inputs()[index], opt_ty_info, Some(&*arg.pat), self_arg)
                     });
 
             let arguments = implicit_argument.into_iter().chain(explicit_arguments);
@@ -130,7 +115,7 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
             let (yield_ty, return_ty) = if body.is_generator {
                 let gen_sig = match ty.sty {
                     ty::TyGenerator(gen_def_id, gen_substs, ..) =>
-                        gen_substs.generator_sig(gen_def_id, tcx),
+                        gen_substs.sig(gen_def_id, tcx),
                     _ =>
                         span_bug!(tcx.hir.span(id), "generator w/o generator type: {:?}", ty),
                 };
@@ -287,9 +272,9 @@ struct Builder<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
     /// the vector of all scopes that we have created thus far;
     /// we track this for debuginfo later
-    visibility_scopes: IndexVec<VisibilityScope, VisibilityScopeData>,
-    visibility_scope_info: IndexVec<VisibilityScope, VisibilityScopeInfo>,
-    visibility_scope: VisibilityScope,
+    source_scopes: IndexVec<SourceScope, SourceScopeData>,
+    source_scope_local_data: IndexVec<SourceScope, SourceScopeLocalData>,
+    source_scope: SourceScope,
 
     /// the guard-context: each time we build the guard expression for
     /// a match arm, we push onto this stack, and then pop when we
@@ -324,7 +309,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 #[derive(Debug)]
 enum LocalsForNode {
     One(Local),
-    Two { for_guard: Local, for_arm_body: Local },
+    Three { val_for_guard: Local, ref_for_guard: Local, for_arm_body: Local },
 }
 
 #[derive(Debug)]
@@ -356,12 +341,15 @@ struct GuardFrame {
     locals: Vec<GuardFrameLocal>,
 }
 
-/// ForGuard is isomorphic to a boolean flag. It indicates whether we are
-/// talking about the temp for a local binding for a use within a guard expression,
-/// or a temp for use outside of a guard expressions.
+/// ForGuard indicates whether we are talking about:
+///   1. the temp for a local binding used solely within guard expressions,
+///   2. the temp that holds reference to (1.), which is actually what the
+///      guard expressions see, or
+///   3. the temp for use outside of guard expressions.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 enum ForGuard {
-    WithinGuard,
+    ValWithinGuard,
+    RefWithinGuard,
     OutsideGuard,
 }
 
@@ -369,11 +357,13 @@ impl LocalsForNode {
     fn local_id(&self, for_guard: ForGuard) -> Local {
         match (self, for_guard) {
             (&LocalsForNode::One(local_id), ForGuard::OutsideGuard) |
-            (&LocalsForNode::Two { for_guard: local_id, .. }, ForGuard::WithinGuard) |
-            (&LocalsForNode::Two { for_arm_body: local_id, .. }, ForGuard::OutsideGuard) =>
+            (&LocalsForNode::Three { val_for_guard: local_id, .. }, ForGuard::ValWithinGuard) |
+            (&LocalsForNode::Three { ref_for_guard: local_id, .. }, ForGuard::RefWithinGuard) |
+            (&LocalsForNode::Three { for_arm_body: local_id, .. }, ForGuard::OutsideGuard) =>
                 local_id,
 
-            (&LocalsForNode::One(_), ForGuard::WithinGuard) =>
+            (&LocalsForNode::One(_), ForGuard::ValWithinGuard) |
+            (&LocalsForNode::One(_), ForGuard::RefWithinGuard) =>
                 bug!("anything with one local should never be within a guard."),
         }
     }
@@ -459,6 +449,13 @@ fn should_abort_on_panic<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
 ///////////////////////////////////////////////////////////////////////////
 /// the main entry point for building MIR for a function
 
+struct ImplicitSelfBinding;
+
+struct ArgInfo<'gcx>(Ty<'gcx>,
+                     Option<Span>,
+                     Option<&'gcx hir::Pat>,
+                     Option<ImplicitSelfBinding>);
+
 fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                                    fn_id: ast::NodeId,
                                    arguments: A,
@@ -468,7 +465,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                                    yield_ty: Option<Ty<'gcx>>,
                                    body: &'gcx hir::Body)
                                    -> Mir<'tcx>
-    where A: Iterator<Item=(Ty<'gcx>, Option<&'gcx hir::Pat>)>
+    where A: Iterator<Item=ArgInfo<'gcx>>
 {
     let arguments: Vec<_> = arguments.collect();
 
@@ -619,9 +616,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             fn_span: span,
             arg_count,
             scopes: vec![],
-            visibility_scopes: IndexVec::new(),
-            visibility_scope: ARGUMENT_VISIBILITY_SCOPE,
-            visibility_scope_info: IndexVec::new(),
+            source_scopes: IndexVec::new(),
+            source_scope: OUTERMOST_SOURCE_SCOPE,
+            source_scope_local_data: IndexVec::new(),
             guard_context: vec![],
             push_unsafe_count: 0,
             unpushed_unsafe: safety,
@@ -637,9 +634,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         assert_eq!(builder.cfg.start_new_block(), START_BLOCK);
         assert_eq!(
-            builder.new_visibility_scope(span, lint_level, Some(safety)),
-            ARGUMENT_VISIBILITY_SCOPE);
-        builder.visibility_scopes[ARGUMENT_VISIBILITY_SCOPE].parent_scope = None;
+            builder.new_source_scope(span, lint_level, Some(safety)),
+            OUTERMOST_SOURCE_SCOPE);
+        builder.source_scopes[OUTERMOST_SOURCE_SCOPE].parent_scope = None;
 
         builder
     }
@@ -655,8 +652,8 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         }
 
         Mir::new(self.cfg.basic_blocks,
-                 self.visibility_scopes,
-                 ClearCrossCrate::Set(self.visibility_scope_info),
+                 self.source_scopes,
+                 ClearCrossCrate::Set(self.source_scope_local_data),
                  IndexVec::new(),
                  yield_ty,
                  self.local_decls,
@@ -668,13 +665,13 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
     fn args_and_body(&mut self,
                      mut block: BasicBlock,
-                     arguments: &[(Ty<'gcx>, Option<&'gcx hir::Pat>)],
+                     arguments: &[ArgInfo<'gcx>],
                      argument_scope: region::Scope,
                      ast_body: &'gcx hir::Expr)
                      -> BlockAnd<()>
     {
         // Allocate locals for the function arguments
-        for &(ty, pattern) in arguments.iter() {
+        for &ArgInfo(ty, _, pattern, _) in arguments.iter() {
             // If this is a simple binding pattern, give the local a nice name for debuginfo.
             let mut name = None;
             if let Some(pat) = pattern {
@@ -683,26 +680,28 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 }
             }
 
+            let source_info = SourceInfo {
+                scope: OUTERMOST_SOURCE_SCOPE,
+                span: pattern.map_or(self.fn_span, |pat| pat.span)
+            };
             self.local_decls.push(LocalDecl {
                 mutability: Mutability::Mut,
                 ty,
-                source_info: SourceInfo {
-                    scope: ARGUMENT_VISIBILITY_SCOPE,
-                    span: pattern.map_or(self.fn_span, |pat| pat.span)
-                },
-                syntactic_scope: ARGUMENT_VISIBILITY_SCOPE,
+                source_info,
+                visibility_scope: source_info.scope,
                 name,
                 internal: false,
-                is_user_variable: false,
+                is_user_variable: None,
             });
         }
 
         let mut scope = None;
         // Bind the argument patterns
-        for (index, &(ty, pattern)) in arguments.iter().enumerate() {
+        for (index, arg_info) in arguments.iter().enumerate() {
             // Function arguments always get the first Local indices after the return place
             let local = Local::new(index + 1);
             let place = Place::Local(local);
+            let &ArgInfo(ty, opt_ty_info, pattern, ref self_binding) = arg_info;
 
             if let Some(pattern) = pattern {
                 let pattern = self.hir.pattern_from_hir(pattern);
@@ -711,6 +710,14 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     // Don't introduce extra copies for simple bindings
                     PatternKind::Binding { mutability, var, mode: BindingMode::ByValue, .. } => {
                         self.local_decls[local].mutability = mutability;
+                        self.local_decls[local].is_user_variable =
+                            if let Some(ImplicitSelfBinding) = self_binding {
+                                Some(ClearCrossCrate::Set(BindingForm::ImplicitSelf))
+                            } else {
+                                let binding_mode = ty::BindingMode::BindByValue(mutability.into());
+                                Some(ClearCrossCrate::Set(BindingForm::Var(VarBindingForm {
+                                    binding_mode, opt_ty_info })))
+                            };
                         self.var_indices.insert(var, LocalsForNode::One(local));
                     }
                     _ => {
@@ -728,9 +735,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
         }
 
-        // Enter the argument pattern bindings visibility scope, if it exists.
-        if let Some(visibility_scope) = scope {
-            self.visibility_scope = visibility_scope;
+        // Enter the argument pattern bindings source scope, if it exists.
+        if let Some(source_scope) = scope {
+            self.source_scope = source_scope;
         }
 
         let body = self.hir.mirror(ast_body);
@@ -775,7 +782,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
 
 ///////////////////////////////////////////////////////////////////////////
 // Builder methods are broken up into modules, depending on what kind
-// of thing is being translated. Note that they use the `unpack` macro
+// of thing is being lowered. Note that they use the `unpack` macro
 // above extensively.
 
 mod block;

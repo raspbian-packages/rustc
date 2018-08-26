@@ -244,10 +244,10 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
                         def_id,
                         attrs: def.attrs.clone().into(),
                         name: def.ident.name,
-                        whence: def.span,
+                        whence: self.cx.tcx.def_span(def_id),
                         matchers,
-                        stab: self.stability(def.id),
-                        depr: self.deprecation(def.id),
+                        stab: self.cx.tcx.lookup_stability(def_id).cloned(),
+                        depr: self.cx.tcx.lookup_deprecation(def_id),
                         imported_from: Some(imported_from),
                     })
                 }
@@ -412,6 +412,13 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
             hir::ItemUse(ref path, kind) => {
                 let is_glob = kind == hir::UseKind::Glob;
 
+                // struct and variant constructors always show up alongside their definitions, we've
+                // already processed them so just discard these.
+                match path.def {
+                    Def::StructCtor(..) | Def::VariantCtor(..) => return,
+                    _ => {}
+                }
+
                 // If there was a private module in the current path then don't bother inlining
                 // anything as it will probably be stripped anyway.
                 if item.vis == hir::Public && self.inside_public_path {
@@ -559,6 +566,9 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
                     om.impls.push(i);
                 }
             },
+            hir::ItemExistential(_) => {
+                // FIXME(oli-obk): actually generate docs for real existential items
+            }
         }
     }
 

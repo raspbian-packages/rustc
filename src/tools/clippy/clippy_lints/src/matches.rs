@@ -205,7 +205,7 @@ fn check_single_match(cx: &LateContext, ex: &Expr, arms: &[Arm], expr: &Expr) {
         let els = remove_blocks(&arms[1].body);
         let els = if is_unit_expr(els) {
             None
-        } else if let ExprBlock(_) = els.node {
+        } else if let ExprBlock(_, _) = els.node {
             // matches with blocks that contain statements are prettier as `if let + else`
             Some(els)
         } else {
@@ -365,7 +365,7 @@ fn check_wild_err_arm(cx: &LateContext, ex: &Expr, arms: &[Arm]) {
                 if_chain! {
                     if path_str == "Err";
                     if inner.iter().any(|pat| pat.node == PatKind::Wild);
-                    if let ExprBlock(ref block) = arm.body.node;
+                    if let ExprBlock(ref block, _) = arm.body.node;
                     if is_panic_block(block);
                     then {
                         // `Err(_)` arm with `panic!` found
@@ -470,8 +470,8 @@ fn all_ranges<'a, 'tcx>(
                 [].iter()
             }.filter_map(|pat| {
                 if let PatKind::Range(ref lhs, ref rhs, ref range_end) = pat.node {
-                    let lhs = constant(cx, lhs)?.0;
-                    let rhs = constant(cx, rhs)?.0;
+                    let lhs = constant(cx, cx.tables, lhs)?.0;
+                    let rhs = constant(cx, cx.tables, rhs)?.0;
                     let rhs = match *range_end {
                         RangeEnd::Included => Bound::Included(rhs),
                         RangeEnd::Excluded => Bound::Excluded(rhs),
@@ -480,7 +480,7 @@ fn all_ranges<'a, 'tcx>(
                 }
 
                 if let PatKind::Lit(ref value) = pat.node {
-                    let value = constant(cx, value)?.0;
+                    let value = constant(cx, cx.tables, value)?.0;
                     return Some(SpannedRange { span: pat.span, node: (value.clone(), Bound::Included(value)) });
                 }
 
@@ -534,7 +534,7 @@ fn type_ranges(ranges: &[SpannedRange<Constant>]) -> TypedRanges {
 fn is_unit_expr(expr: &Expr) -> bool {
     match expr.node {
         ExprTup(ref v) if v.is_empty() => true,
-        ExprBlock(ref b) if b.stmts.is_empty() && b.expr.is_none() => true,
+        ExprBlock(ref b, _) if b.stmts.is_empty() && b.expr.is_none() => true,
         _ => false,
     }
 }

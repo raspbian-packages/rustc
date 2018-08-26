@@ -9,7 +9,7 @@ use rustc::lint::{LateContext, Level, Lint, LintContext};
 use rustc::session::Session;
 use rustc::traits;
 use rustc::ty::{self, Ty, TyCtxt, layout::{self, IntegerExt}};
-use rustc_errors;
+use rustc_errors::{Applicability, CodeSuggestion, Substitution, SubstitutionPart};
 use std::borrow::Cow;
 use std::env;
 use std::mem;
@@ -301,9 +301,7 @@ pub fn implements_trait<'a, 'tcx>(
     let obligation =
         cx.tcx
             .predicate_for_trait_def(cx.param_env, traits::ObligationCause::dummy(), trait_id, 0, ty, ty_params);
-    cx.tcx.infer_ctxt().enter(|infcx| {
-        traits::SelectionContext::new(&infcx).infcx().predicate_must_hold(&obligation)
-    })
+    cx.tcx.infer_ctxt().enter(|infcx| infcx.predicate_must_hold(&obligation))
 }
 
 /// Check whether this type implements Drop.
@@ -446,7 +444,7 @@ pub fn expr_block<'a, 'b, T: LintContext<'b>>(
 ) -> Cow<'a, str> {
     let code = snippet_block(cx, expr.span, default);
     let string = option.unwrap_or_default();
-    if let ExprBlock(_) = expr.node {
+    if let ExprBlock(_, _) = expr.node {
         Cow::Owned(format!("{}{}", code, string))
     } else if string.is_empty() {
         Cow::Owned(format!("{{ {} }}", code))
@@ -531,7 +529,7 @@ pub fn get_enclosing_block<'a, 'tcx: 'a>(cx: &LateContext<'a, 'tcx>, node: NodeI
                 node: ImplItemKind::Method(_, eid),
                 ..
             }) => match cx.tcx.hir.body(eid).value.node {
-                ExprBlock(ref block) => Some(block),
+                ExprBlock(ref block, _) => Some(block),
                 _ => None,
             },
             _ => None,
@@ -645,12 +643,12 @@ pub fn multispan_sugg<I>(db: &mut DiagnosticBuilder, help_msg: String, sugg: I)
 where
     I: IntoIterator<Item = (Span, String)>,
 {
-    let sugg = rustc_errors::CodeSuggestion {
+    let sugg = CodeSuggestion {
         substitutions: vec![
-            rustc_errors::Substitution {
+            Substitution {
                 parts: sugg.into_iter()
                     .map(|(span, snippet)| {
-                        rustc_errors::SubstitutionPart {
+                        SubstitutionPart {
                             snippet,
                             span,
                         }
@@ -660,7 +658,7 @@ where
         ],
         msg: help_msg,
         show_code_when_inline: true,
-        approximate: false,
+        applicability: Applicability::Unspecified,
     };
     db.suggestions.push(sugg);
 }
@@ -676,7 +674,7 @@ pub fn walk_ptrs_hir_ty(ty: &hir::Ty) -> &hir::Ty {
 /// Return the base type for references and raw pointers.
 pub fn walk_ptrs_ty(ty: Ty) -> Ty {
     match ty.sty {
-        ty::TyRef(_, ref tm) => walk_ptrs_ty(tm.ty),
+        ty::TyRef(_, ty, _) => walk_ptrs_ty(ty),
         _ => ty,
     }
 }
@@ -686,7 +684,7 @@ pub fn walk_ptrs_ty(ty: Ty) -> Ty {
 pub fn walk_ptrs_ty_depth(ty: Ty) -> (Ty, usize) {
     fn inner(ty: Ty, depth: usize) -> (Ty, usize) {
         match ty.sty {
-            ty::TyRef(_, ref tm) => inner(tm.ty, depth + 1),
+            ty::TyRef(_, ty, _) => inner(ty, depth + 1),
             _ => (ty, depth),
         }
     }
@@ -743,7 +741,7 @@ fn parse_attrs<F: FnMut(u64)>(sess: &Session, attrs: &[ast::Attribute], name: &'
             continue;
         }
         if let Some(ref value) = attr.value_str() {
-            if attr.name().map_or(false, |n| n == name) {
+            if attr.name() == name {
                 if let Ok(value) = FromStr::from_str(&value.as_str()) {
                     attr::mark_used(attr);
                     f(value)
@@ -936,7 +934,7 @@ pub fn is_automatically_derived(attrs: &[ast::Attribute]) -> bool {
 /// Ie. `x`, `{ x }` and `{{{{ x }}}}` all give `x`. `{ x; y }` and `{}` return
 /// themselves.
 pub fn remove_blocks(expr: &Expr) -> &Expr {
-    if let ExprBlock(ref block) = expr.node {
+    if let ExprBlock(ref block, _) = expr.node {
         if block.stmts.is_empty() {
             if let Some(ref expr) = block.expr {
                 remove_blocks(expr)

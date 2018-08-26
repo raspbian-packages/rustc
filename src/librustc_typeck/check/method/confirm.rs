@@ -15,7 +15,7 @@ use check::{FnCtxt, PlaceOp, callee, Needs};
 use hir::def_id::DefId;
 use rustc::ty::subst::Substs;
 use rustc::traits;
-use rustc::ty::{self, Ty};
+use rustc::ty::{self, Ty, GenericParamDefKind};
 use rustc::ty::subst::Subst;
 use rustc::ty::adjustment::{Adjustment, Adjust, OverloadedDeref};
 use rustc::ty::adjustment::{AllowTwoPhase, AutoBorrow, AutoBorrowMutability};
@@ -320,30 +320,32 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
 
         // Create subst for early-bound lifetime parameters, combining
         // parameters from the type and those from the method.
-        assert_eq!(method_generics.parent_count(), parent_substs.len());
+        assert_eq!(method_generics.parent_count, parent_substs.len());
         let provided = &segment.parameters;
-        Substs::for_item(self.tcx, pick.item.def_id, |def, _| {
-            let i = def.index as usize;
+        let own_counts = method_generics.own_counts();
+        Substs::for_item(self.tcx, pick.item.def_id, |param, _| {
+            let i = param.index as usize;
             if i < parent_substs.len() {
-                parent_substs.region_at(i)
-            } else if let Some(lifetime)
-                    = provided.as_ref().and_then(|p| p.lifetimes.get(i - parent_substs.len())) {
-                AstConv::ast_region_to_region(self.fcx, lifetime, Some(def))
+                parent_substs[i]
             } else {
-                self.region_var_for_def(self.span, def)
-            }
-        }, |def, _cur_substs| {
-            let i = def.index as usize;
-            if i < parent_substs.len() {
-                parent_substs.type_at(i)
-            } else if let Some(ast_ty)
-                = provided.as_ref().and_then(|p| {
-                    p.types.get(i - parent_substs.len() - method_generics.regions.len())
-                })
-            {
-                self.to_ty(ast_ty)
-            } else {
-                self.type_var_for_def(self.span, def)
+                match param.kind {
+                    GenericParamDefKind::Lifetime => {
+                        if let Some(lifetime) = provided.as_ref().and_then(|p| {
+                            p.lifetimes.get(i - parent_substs.len())
+                        }) {
+                            return AstConv::ast_region_to_region(
+                                self.fcx, lifetime, Some(param)).into();
+                        }
+                    }
+                    GenericParamDefKind::Type {..} => {
+                        if let Some(ast_ty) = provided.as_ref().and_then(|p| {
+                            p.types.get(i - parent_substs.len() - own_counts.lifetimes)
+                        }) {
+                            return self.to_ty(ast_ty).into();
+                        }
+                    }
+                }
+                self.var_for_def(self.span, param)
             }
         })
     }
@@ -468,10 +470,10 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
                     if let Adjust::Deref(Some(ref mut deref)) = adjustment.kind {
                         if let Some(ok) = self.try_overloaded_deref(expr.span, source, needs) {
                             let method = self.register_infer_ok_obligations(ok);
-                            if let ty::TyRef(region, mt) = method.sig.output().sty {
+                            if let ty::TyRef(region, _, mutbl) = method.sig.output().sty {
                                 *deref = OverloadedDeref {
                                     region,
-                                    mutbl: mt.mutbl
+                                    mutbl,
                                 };
                             }
                         }
@@ -527,8 +529,8 @@ impl<'a, 'gcx, 'tcx> ConfirmContext<'a, 'gcx, 'tcx> {
         debug!("convert_place_op_to_mutable: method={:?}", method);
         self.write_method_call(expr.hir_id, method);
 
-        let (region, mutbl) = if let ty::TyRef(r, mt) = method.sig.inputs()[0].sty {
-            (r, mt.mutbl)
+        let (region, mutbl) = if let ty::TyRef(r, _, mutbl) = method.sig.inputs()[0].sty {
+            (r, mutbl)
         } else {
             span_bug!(expr.span, "input to place op is not a ref?");
         };

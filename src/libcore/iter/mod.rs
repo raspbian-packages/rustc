@@ -333,7 +333,7 @@ pub use self::range::Step;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::sources::{Repeat, repeat};
-#[unstable(feature = "iterator_repeat_with", issue = "48169")]
+#[stable(feature = "iterator_repeat_with", since = "1.28.0")]
 pub use self::sources::{RepeatWith, repeat_with};
 #[stable(feature = "iter_empty", since = "1.2.0")]
 pub use self::sources::{Empty, empty};
@@ -353,21 +353,6 @@ mod iterator;
 mod range;
 mod sources;
 mod traits;
-
-/// Transparent newtype used to implement foo methods in terms of try_foo.
-/// Important until #43278 is fixed; might be better as `Result<T, !>` later.
-struct AlwaysOk<T>(pub T);
-
-impl<T> Try for AlwaysOk<T> {
-    type Ok = T;
-    type Error = !;
-    #[inline]
-    fn into_result(self) -> Result<Self::Ok, Self::Error> { Ok(self.0) }
-    #[inline]
-    fn from_error(v: Self::Error) -> Self { v }
-    #[inline]
-    fn from_ok(v: Self::Ok) -> Self { AlwaysOk(v) }
-}
 
 /// Used to make try_fold closures more like normal loops
 #[derive(PartialEq)]
@@ -673,9 +658,7 @@ impl<I> FusedIterator for Cycle<I> where I: Clone + Iterator {}
 /// [`step_by`]: trait.Iterator.html#method.step_by
 /// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-#[unstable(feature = "iterator_step_by",
-           reason = "unstable replacement of Range::step_by",
-           issue = "27741")]
+#[stable(feature = "iterator_step_by", since = "1.28.0")]
 #[derive(Clone, Debug)]
 pub struct StepBy<I> {
     iter: I,
@@ -683,9 +666,7 @@ pub struct StepBy<I> {
     first_take: bool,
 }
 
-#[unstable(feature = "iterator_step_by",
-           reason = "unstable replacement of Range::step_by",
-           issue = "27741")]
+#[stable(feature = "iterator_step_by", since = "1.28.0")]
 impl<I> Iterator for StepBy<I> where I: Iterator {
     type Item = I::Item;
 
@@ -757,9 +738,7 @@ impl<I> Iterator for StepBy<I> where I: Iterator {
 }
 
 // StepBy can only make the iterator shorter, so the len will still fit.
-#[unstable(feature = "iterator_step_by",
-           reason = "unstable replacement of Range::step_by",
-           issue = "27741")]
+#[stable(feature = "iterator_step_by", since = "1.28.0")]
 impl<I> ExactSizeIterator for StepBy<I> where I: ExactSizeIterator {}
 
 /// An iterator that strings two iterators together.

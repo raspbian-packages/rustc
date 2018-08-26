@@ -17,6 +17,8 @@
 // ignore-powerpc64
 // ignore-powerpc64le
 // ignore-s390x
+// ignore-sparc
+// ignore-sparc64
 
 #![feature(target_feature)]
 

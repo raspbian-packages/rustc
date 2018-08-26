@@ -445,7 +445,7 @@ assert_eq!(&cap[0], "abc");
 \n          new line
 \r          carriage return
 \v          vertical tab (\x0B)
-\123        octal character code (up to three digits)
+\123        octal character code (up to three digits) (when enabled)
 \x7F        hex character code (exactly two digits)
 \x{10FFFF}  any hex character code corresponding to a Unicode code point
 \u007F      hex character code (exactly four digits)
@@ -520,9 +520,6 @@ another matching engine with fixed memory requirements.
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 #![cfg_attr(feature = "pattern", feature(pattern))]
-#![cfg_attr(
-    feature = "unstable",
-    feature(cfg_target_feature, target_feature, stdsimd))]
 
 extern crate aho_corasick;
 extern crate memchr;
@@ -533,11 +530,17 @@ extern crate quickcheck;
 extern crate regex_syntax as syntax;
 extern crate utf8_ranges;
 
+#[cfg(feature = "use_std")]
 pub use error::Error;
+#[cfg(feature = "use_std")]
 pub use re_builder::unicode::*;
+#[cfg(feature = "use_std")]
 pub use re_builder::set_unicode::*;
+#[cfg(feature = "use_std")]
 pub use re_set::unicode::*;
+#[cfg(feature = "use_std")]
 pub use re_trait::Locations;
+#[cfg(feature = "use_std")]
 pub use re_unicode::{
     Regex, Match, Captures,
     CaptureNames, Matches, CaptureMatches, SubCaptureMatches,
@@ -622,7 +625,8 @@ determine whether a byte is a word byte or not.
 5. Hexadecimal notation can be used to specify arbitrary bytes instead of
 Unicode codepoints. For example, in ASCII compatible mode, `\xFF` matches the
 literal byte `\xFF`, while in Unicode mode, `\xFF` is a Unicode codepoint that
-matches its UTF-8 encoding of `\xC3\xBF`. Similarly for octal notation.
+matches its UTF-8 encoding of `\xC3\xBF`. Similarly for octal notation when
+enabled.
 6. `.` matches any *byte* except for `\n` instead of any Unicode scalar value.
 When the `s` flag is enabled, `.` matches any byte.
 
@@ -631,6 +635,7 @@ When the `s` flag is enabled, `.` matches any byte.
 In general, one should expect performance on `&[u8]` to be roughly similar to
 performance on `&str`.
 */
+#[cfg(feature = "use_std")]
 pub mod bytes {
     pub use re_builder::bytes::*;
     pub use re_builder::set_bytes::*;
@@ -666,6 +671,7 @@ mod vector;
 /// testing different matching engines and supporting the `regex-debug` CLI
 /// utility.
 #[doc(hidden)]
+#[cfg(feature = "use_std")]
 pub mod internal {
     pub use compile::Compiler;
     pub use exec::{Exec, ExecBuilder};

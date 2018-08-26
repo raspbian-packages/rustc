@@ -55,7 +55,7 @@ declare_clippy_lint! {
 /// **Why is this bad?** Name shadowing can hurt readability, especially in
 /// large code bases, because it is easy to lose track of the active binding at
 /// any place in the code. This can be alleviated by either giving more specific
-/// names to bindings ore introducing more scopes to contain the bindings.
+/// names to bindings or introducing more scopes to contain the bindings.
 ///
 /// **Known problems:** This lint, as the other shadowing related lints,
 /// currently only catches very simple patterns.
@@ -309,7 +309,7 @@ fn check_expr<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx Expr, bindings: 
         ExprUnary(_, ref e) | ExprField(ref e, _) | ExprAddrOf(_, ref e) | ExprBox(ref e) => {
             check_expr(cx, e, bindings)
         },
-        ExprBlock(ref block) | ExprLoop(ref block, _, _) => check_block(cx, block, bindings),
+        ExprBlock(ref block, _) | ExprLoop(ref block, _, _) => check_block(cx, block, bindings),
         // ExprCall
         // ExprMethodCall
         ExprArray(ref v) | ExprTup(ref v) => for e in v {
@@ -364,7 +364,7 @@ fn check_ty<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: &'tcx Ty, bindings: &mut V
 fn is_self_shadow(name: Name, expr: &Expr) -> bool {
     match expr.node {
         ExprBox(ref inner) | ExprAddrOf(_, ref inner) => is_self_shadow(name, inner),
-        ExprBlock(ref block) => {
+        ExprBlock(ref block, _) => {
             block.stmts.is_empty()
                 && block
                     .expr

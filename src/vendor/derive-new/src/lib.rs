@@ -197,7 +197,7 @@ fn new_impl(ast: &syn::DeriveInput,
             format!("Constructs a new `{}::{}`.", name, variant),
         ),
     };
-    new.span = proc_macro2::Span::call_site();
+    new.set_span(proc_macro2::Span::call_site());
     let lint_attrs = collect_parent_lint_attrs(&ast.attrs);
     let lint_attrs = my_quote![#(#lint_attrs),*];
     my_quote! {
@@ -265,15 +265,18 @@ impl FieldAttr {
                 AttrStyle::Outer => {}
                 _ => continue,
             }
+            let last_attr_path = attr.path.segments.iter().last()
+                .expect("Expected at least one segment where #[segment[::segment*](..)]");
+            if (*last_attr_path).ident.as_ref() != "new" {
+                continue
+            }
             let meta = match attr.interpret_meta() {
                 Some(meta) => meta,
                 None => continue,
             };
             let list = match meta {
                 Meta::List(l) => l,
-                _ if meta.name() == "new" => {
-                    panic!("Invalid #[new] attribute, expected #[new(..)]");
-                }
+                _ if meta.name() == "new" => panic!("Invalid #[new] attribute, expected #[new(..)]"),
                 _ => continue,
             };
             if result.is_some() {

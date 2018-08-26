@@ -13,7 +13,7 @@ use build;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::mir::{Mir, Promoted};
 use rustc::ty::TyCtxt;
-use rustc::ty::maps::Providers;
+use rustc::ty::query::Providers;
 use rustc::ty::steal::Steal;
 use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor, NestedVisitorMap};
@@ -277,7 +277,7 @@ fn optimized_mir<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> &'tcx 
         simplify::SimplifyLocals,
 
         add_call_guards::CriticalCallEdges,
-        dump_mir::Marker("PreTrans"),
+        dump_mir::Marker("PreCodegen"),
     ];
     tcx.alloc_mir(mir)
 }

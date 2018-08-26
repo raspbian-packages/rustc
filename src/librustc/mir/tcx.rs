@@ -69,7 +69,7 @@ impl<'a, 'gcx, 'tcx> PlaceTy<'tcx> {
                 PlaceTy::Ty {
                     ty: match ty.sty {
                         ty::TyArray(inner, size) => {
-                            let size = size.val.unwrap_u64();
+                            let size = size.unwrap_usize(tcx);
                             let len = size - (from as u64) - (to as u64);
                             tcx.mk_array(inner, len)
                         }
@@ -184,10 +184,10 @@ impl<'tcx> Rvalue<'tcx> {
                         tcx.type_of(def.did).subst(tcx, substs)
                     }
                     AggregateKind::Closure(did, substs) => {
-                        tcx.mk_closure_from_closure_substs(did, substs)
+                        tcx.mk_closure(did, substs)
                     }
-                    AggregateKind::Generator(did, substs, interior) => {
-                        tcx.mk_generator(did, substs, interior)
+                    AggregateKind::Generator(did, substs, movability) => {
+                        tcx.mk_generator(did, substs, movability)
                     }
                 }
             }

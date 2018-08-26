@@ -218,11 +218,7 @@ impl ExecBuilder {
         for pat in &self.options.pats {
             let mut parser =
                 ParserBuilder::new()
-                    // TODO(burntsushi): Disable octal in regex 1.0. Nobody
-                    // uses it, and we'll get better error messages when
-                    // someone tries to use a backreference. Provide a new
-                    // opt-in toggle for it though.
-                    .octal(true)
+                    .octal(self.options.octal)
                     .case_insensitive(self.options.case_insensitive)
                     .multi_line(self.options.multi_line)
                     .dot_matches_new_line(self.options.dot_matches_new_line)
@@ -232,7 +228,9 @@ impl ExecBuilder {
                     .allow_invalid_utf8(!self.only_utf8)
                     .nest_limit(self.options.nest_limit)
                     .build();
-            let expr = try!(parser.parse(pat));
+            let expr = parser
+                .parse(pat)
+                .map_err(|e| Error::Syntax(e.to_string()))?;
             bytes = bytes || !expr.is_always_utf8();
 
             if !expr.is_anchored_start() && expr.is_any_anchored_start() {
@@ -293,26 +291,26 @@ impl ExecBuilder {
             });
             return Ok(Exec { ro: ro, cache: CachedThreadLocal::new() });
         }
-        let parsed = try!(self.parse());
-        let mut nfa = try!(
+        let parsed = self.parse()?;
+        let mut nfa =
             Compiler::new()
                      .size_limit(self.options.size_limit)
                      .bytes(self.bytes || parsed.bytes)
                      .only_utf8(self.only_utf8)
-                     .compile(&parsed.exprs));
-        let mut dfa = try!(
+                     .compile(&parsed.exprs)?;
+        let mut dfa =
             Compiler::new()
                      .size_limit(self.options.size_limit)
                      .dfa(true)
                      .only_utf8(self.only_utf8)
-                     .compile(&parsed.exprs));
-        let mut dfa_reverse = try!(
+                     .compile(&parsed.exprs)?;
+        let mut dfa_reverse =
             Compiler::new()
                      .size_limit(self.options.size_limit)
                      .dfa(true)
                      .only_utf8(self.only_utf8)
                      .reverse(true)
-                     .compile(&parsed.exprs));
+                     .compile(&parsed.exprs)?;
 
         let prefixes = parsed.prefixes.unambiguous_prefixes();
         let suffixes = parsed.suffixes.unambiguous_suffixes();
@@ -622,8 +620,13 @@ impl<'c> ExecNoSync<'c> {
             }
             AnchoredStart => {
                 let lits = &self.ro.nfa.prefixes;
-                lits.find_start(&text[start..])
-                    .map(|(s, e)| (start + s, start + e))
+                if !self.ro.nfa.is_anchored_start
+                    || (self.ro.nfa.is_anchored_start && start == 0) {
+                    lits.find_start(&text[start..])
+                        .map(|(s, e)| (start + s, start + e))
+                } else {
+                    None
+                }
             }
             AnchoredEnd => {
                 let lits = &self.ro.suffixes;
@@ -1283,6 +1286,65 @@ impl ProgramCacheInner {
             backtrack: backtrack::Cache::new(&ro.nfa),
             dfa: dfa::Cache::new(&ro.dfa),
             dfa_reverse: dfa::Cache::new(&ro.dfa_reverse),
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    #[test]
+    fn uppercut_s_backtracking_bytes_default_bytes_mismatch() {
+        use internal::ExecBuilder;
+
+        let backtrack_bytes_re = ExecBuilder::new("^S")
+            .bounded_backtracking()
+            .only_utf8(false)
+            .build()
+            .map(|exec| exec.into_byte_regex())
+            .map_err(|err| format!("{}", err))
+            .unwrap();
+
+        let default_bytes_re = ExecBuilder::new("^S")
+            .only_utf8(false)
+            .build()
+            .map(|exec| exec.into_byte_regex())
+            .map_err(|err| format!("{}", err))
+            .unwrap();
+
+        let input = vec![83, 83];
+
+        let s1 = backtrack_bytes_re.split(&input);
+        let s2 = default_bytes_re.split(&input);
+        for (chunk1, chunk2) in s1.zip(s2) {
+            assert_eq!(chunk1, chunk2);
+        }
+    }
+
+    #[test]
+    fn unicode_lit_star_backtracking_utf8bytes_default_utf8bytes_mismatch() {
+        use internal::ExecBuilder;
+
+        let backtrack_bytes_re = ExecBuilder::new(r"^(?u:\*)")
+            .bounded_backtracking()
+            .bytes(true)
+            .build()
+            .map(|exec| exec.into_regex())
+            .map_err(|err| format!("{}", err))
+            .unwrap();
+
+        let default_bytes_re = ExecBuilder::new(r"^(?u:\*)")
+            .bytes(true)
+            .build()
+            .map(|exec| exec.into_regex())
+            .map_err(|err| format!("{}", err))
+            .unwrap();
+
+        let input = "**";
+
+        let s1 = backtrack_bytes_re.split(input);
+        let s2 = default_bytes_re.split(input);
+        for (chunk1, chunk2) in s1.zip(s2) {
+            assert_eq!(chunk1, chunk2);
         }
     }
 }

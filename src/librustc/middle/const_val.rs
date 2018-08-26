@@ -9,69 +9,47 @@
 // except according to those terms.
 
 use hir::def_id::DefId;
-use ty::{self, TyCtxt, layout};
+use ty;
 use ty::subst::Substs;
-use mir::interpret::{Value, PrimVal};
+use ty::query::TyCtxtAt;
+use mir::interpret::ConstValue;
 use errors::DiagnosticBuilder;
 
 use graphviz::IntoCow;
 use syntax_pos::Span;
+use syntax::ast;
 
 use std::borrow::Cow;
 use rustc_data_structures::sync::Lrc;
 
 pub type EvalResult<'tcx> = Result<&'tcx ty::Const<'tcx>, ConstEvalErr<'tcx>>;
 
-#[derive(Copy, Clone, Debug, Hash, RustcEncodable, RustcDecodable, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Hash, RustcEncodable, RustcDecodable, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ConstVal<'tcx> {
     Unevaluated(DefId, &'tcx Substs<'tcx>),
-    Value(Value),
+    Value(ConstValue<'tcx>),
 }
 
-impl<'tcx> ConstVal<'tcx> {
-    pub fn to_raw_bits(&self) -> Option<u128> {
-        match *self {
-            ConstVal::Value(Value::ByVal(PrimVal::Bytes(b))) => {
-                Some(b)
-            },
-            _ => None,
-        }
-    }
-    pub fn unwrap_u64(&self) -> u64 {
-        match self.to_raw_bits() {
-            Some(val) => {
-                assert_eq!(val as u64 as u128, val);
-                val as u64
-            },
-            None => bug!("expected constant u64, got {:#?}", self),
-        }
-    }
-}
-
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct ConstEvalErr<'tcx> {
     pub span: Span,
     pub kind: Lrc<ErrKind<'tcx>>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub enum ErrKind<'tcx> {
 
-    NonConstPath,
-    UnimplementedConstVal(&'static str),
-    IndexOutOfBounds { len: u64, index: u64 },
-
-    LayoutError(layout::LayoutError<'tcx>),
-
+    CouldNotResolve,
     TypeckError,
     CheckMatchError,
     Miri(::mir::interpret::EvalError<'tcx>, Vec<FrameInfo>),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct FrameInfo {
     pub span: Span,
     pub location: String,
+    pub lint_root: Option<ast::NodeId>,
 }
 
 #[derive(Clone, Debug)]
@@ -103,16 +81,7 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
         }
 
         match *self.kind {
-            NonConstPath        => simple!("non-constant path in constant expression"),
-            UnimplementedConstVal(what) =>
-                simple!("unimplemented constant expression: {}", what),
-            IndexOutOfBounds { len, index } => {
-                simple!("index out of bounds: the len is {} but the index is {}",
-                        len, index)
-            }
-
-            LayoutError(ref err) => Simple(err.to_string().into_cow()),
-
+            CouldNotResolve => simple!("could not resolve"),
             TypeckError => simple!("type-checking failed"),
             CheckMatchError => simple!("match-checking failed"),
             Miri(ref err, ref trace) => Backtrace(err, trace),
@@ -120,64 +89,90 @@ impl<'a, 'gcx, 'tcx> ConstEvalErr<'tcx> {
     }
 
     pub fn struct_error(&self,
-        tcx: TyCtxt<'a, 'gcx, 'tcx>,
-        primary_span: Span,
-        primary_kind: &str)
-        -> DiagnosticBuilder<'gcx>
+        tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
+        message: &str)
+        -> Option<DiagnosticBuilder<'tcx>>
     {
-        let mut diag = struct_error(tcx, self.span, "constant evaluation error");
-        self.note(tcx, primary_span, primary_kind, &mut diag);
-        diag
+        self.struct_generic(tcx, message, None, true)
     }
 
-    pub fn note(&self,
-        _tcx: TyCtxt<'a, 'gcx, 'tcx>,
-        primary_span: Span,
-        primary_kind: &str,
-        diag: &mut DiagnosticBuilder)
-    {
-        match self.description() {
-            ConstEvalErrDescription::Simple(message) => {
-                diag.span_label(self.span, message);
-            }
-            ConstEvalErrDescription::Backtrace(miri, frames) => {
-                diag.span_label(self.span, format!("{}", miri));
-                for frame in frames {
-                    diag.span_label(frame.span, format!("inside call to `{}`", frame.location));
-                }
-            }
-        }
-
-        if !primary_span.contains(self.span) {
-            diag.span_note(primary_span,
-                        &format!("for {} here", primary_kind));
+    pub fn report_as_error(&self,
+        tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
+        message: &str
+    ) {
+        let err = self.struct_generic(tcx, message, None, true);
+        if let Some(mut err) = err {
+            err.emit();
         }
     }
 
-    pub fn report(&self,
-        tcx: TyCtxt<'a, 'gcx, 'tcx>,
-        primary_span: Span,
-        primary_kind: &str)
-    {
-        match *self.kind {
-            ErrKind::TypeckError | ErrKind::CheckMatchError => return,
-            ErrKind::Miri(ref miri, _) => {
+    pub fn report_as_lint(&self,
+        tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
+        message: &str,
+        lint_root: ast::NodeId,
+    ) {
+        let lint = self.struct_generic(
+            tcx,
+            message,
+            Some(lint_root),
+            false,
+        );
+        if let Some(mut lint) = lint {
+            lint.emit();
+        }
+    }
+
+    fn struct_generic(
+        &self,
+        tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
+        message: &str,
+        lint_root: Option<ast::NodeId>,
+        as_err: bool,
+    ) -> Option<DiagnosticBuilder<'tcx>> {
+        let (msg, frames): (_, &[_]) = match *self.kind {
+            ErrKind::TypeckError | ErrKind::CheckMatchError => return None,
+            ErrKind::Miri(ref miri, ref frames) => {
                 match miri.kind {
                     ::mir::interpret::EvalErrorKind::TypeckError |
-                    ::mir::interpret::EvalErrorKind::Layout(_) => return,
-                    _ => {},
+                    ::mir::interpret::EvalErrorKind::Layout(_) => return None,
+                    ::mir::interpret::EvalErrorKind::ReferencedConstant(ref inner) => {
+                        inner.struct_generic(tcx, "referenced constant", lint_root, as_err)?.emit();
+                        (miri.to_string(), frames)
+                    },
+                    _ => (miri.to_string(), frames),
                 }
             }
-            _ => {}
+            _ => (self.description().into_oneline().to_string(), &[]),
+        };
+        trace!("reporting const eval failure at {:?}", self.span);
+        let mut err = if as_err {
+            struct_error(tcx, message)
+        } else {
+            let node_id = frames
+                .iter()
+                .rev()
+                .filter_map(|frame| frame.lint_root)
+                .next()
+                .or(lint_root)
+                .expect("some part of a failing const eval must be local");
+            tcx.struct_span_lint_node(
+                ::rustc::lint::builtin::CONST_ERR,
+                node_id,
+                tcx.span,
+                message,
+            )
+        };
+        err.span_label(self.span, msg);
+        for FrameInfo { span, location, .. } in frames {
+            err.span_label(*span, format!("inside call to `{}`", location));
         }
-        self.struct_error(tcx, primary_span, primary_kind).emit();
+        Some(err)
     }
 }
 
 pub fn struct_error<'a, 'gcx, 'tcx>(
-    tcx: TyCtxt<'a, 'gcx, 'tcx>,
-    span: Span,
+    tcx: TyCtxtAt<'a, 'gcx, 'tcx>,
     msg: &str,
-) -> DiagnosticBuilder<'gcx> {
-    struct_span_err!(tcx.sess, span, E0080, "{}", msg)
+) -> DiagnosticBuilder<'tcx> {
+    struct_span_err!(tcx.sess, tcx.span, E0080, "{}", msg)
 }

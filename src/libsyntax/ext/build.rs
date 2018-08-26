@@ -373,6 +373,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
 
         (ast::QSelf {
             ty: self_type,
+            path_span: path.span,
             position: path.segments.len() - 1
         }, path)
     }
@@ -668,7 +669,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         self.expr(span, ast::ExprKind::MethodCall(segment, args))
     }
     fn expr_block(&self, b: P<ast::Block>) -> P<ast::Expr> {
-        self.expr(b.span, ast::ExprKind::Block(b))
+        self.expr(b.span, ast::ExprKind::Block(b, None))
     }
     fn field_imm(&self, span: Span, ident: Ident, e: P<ast::Expr>) -> ast::Field {
         ast::Field {
@@ -1174,7 +1175,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
         self.item_use(sp, vis, P(ast::UseTree {
             span: sp,
             prefix: path,
-            kind: ast::UseTreeKind::Simple(rename),
+            kind: ast::UseTreeKind::Simple(rename, ast::DUMMY_NODE_ID, ast::DUMMY_NODE_ID),
         }))
     }
 
@@ -1184,7 +1185,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             (ast::UseTree {
                 span: sp,
                 prefix: self.path(sp, vec![*id]),
-                kind: ast::UseTreeKind::Simple(None),
+                kind: ast::UseTreeKind::Simple(None, ast::DUMMY_NODE_ID, ast::DUMMY_NODE_ID),
             }, ast::DUMMY_NODE_ID)
         }).collect();
 

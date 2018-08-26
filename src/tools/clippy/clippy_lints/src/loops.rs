@@ -10,7 +10,7 @@ use rustc::middle::region;
 // use rustc::middle::region::CodeExtent;
 use rustc::middle::expr_use_visitor::*;
 use rustc::middle::mem_categorization::Categorization;
-use rustc::middle::mem_categorization::cmt;
+use rustc::middle::mem_categorization::cmt_;
 use rustc::ty::{self, Ty};
 use rustc::ty::subst::Subst;
 use std::collections::{HashMap, HashSet};
@@ -638,10 +638,9 @@ fn never_loop_expr(expr: &Expr, main_loop_id: &NodeId) -> NeverLoopResult {
                 combine_seq(e, arms)
             }
         },
-        ExprBlock(ref b) => never_loop_block(b, main_loop_id),
+        ExprBlock(ref b, _) => never_loop_block(b, main_loop_id),
         ExprAgain(d) => {
             let id = d.target_id
-                .opt_id()
                 .expect("target id can only be missing in the presence of compilation errors");
             if id == *main_loop_id {
                 NeverLoopResult::MayContinueMainLoop
@@ -743,7 +742,7 @@ struct FixedOffsetVar {
 
 fn is_slice_like<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, ty: Ty) -> bool {
     let is_slice = match ty.sty {
-        ty::TyRef(_, ref subty) => is_slice_like(cx, subty.ty),
+        ty::TyRef(_, subty, _) => is_slice_like(cx, subty),
         ty::TySlice(..) | ty::TyArray(..) => true,
         _ => false,
     };
@@ -849,7 +848,7 @@ fn get_indexed_assignments<'a, 'tcx>(
         }
     }
 
-    if let Expr_::ExprBlock(ref b) = body.node {
+    if let Expr_::ExprBlock(ref b, _) = body.node {
         let Block {
             ref stmts,
             ref expr,
@@ -888,7 +887,7 @@ fn detect_manual_memcpy<'a, 'tcx>(
         start: Some(start),
         ref end,
         limits,
-    }) = higher::range(arg)
+    }) = higher::range(cx, arg)
     {
         // the var must be a single name
         if let PatKind::Binding(_, canonical_id, _, _) = pat.node {
@@ -982,7 +981,7 @@ fn check_for_loop_range<'a, 'tcx>(
         start: Some(start),
         ref end,
         limits,
-    }) = higher::range(arg)
+    }) = higher::range(cx, arg)
     {
         // the var must be a single name
         if let PatKind::Binding(_, canonical_id, ref ident, _) = pat.node {
@@ -1118,11 +1117,11 @@ fn check_for_loop_reverse_range<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, arg: &'tcx
         start: Some(start),
         end: Some(end),
         limits,
-    }) = higher::range(arg)
+    }) = higher::range(cx, arg)
     {
         // ...and both sides are compile-time constant integers...
-        if let Some((start_idx, _)) = constant(cx, start) {
-            if let Some((end_idx, _)) = constant(cx, end) {
+        if let Some((start_idx, _)) = constant(cx, cx.tables, start) {
+            if let Some((end_idx, _)) = constant(cx, cx.tables, end) {
                 // ...and the start index is greater than the end index,
                 // this loop will never run. This is often confusing for developers
                 // who think that this will iterate from the larger value to the
@@ -1223,7 +1222,7 @@ fn check_for_loop_arg(cx: &LateContext, pat: &Pat, arg: &Expr, expr: &Expr) {
                     match cx.tables.expr_ty(&args[0]).sty {
                         // If the length is greater than 32 no traits are implemented for array and
                         // therefore we cannot use `&`.
-                        ty::TypeVariants::TyArray(_, size) if size.val.to_raw_bits().expect("array size") > 32 => (),
+                        ty::TypeVariants::TyArray(_, size) if size.assert_usize(cx.tcx).expect("array size") > 32 => (),
                         _ => lint_iter_method(cx, args, arg, method_name),
                     };
                 } else {
@@ -1365,9 +1364,9 @@ fn check_for_loop_over_map_kv<'a, 'tcx>(
         if pat.len() == 2 {
             let arg_span = arg.span;
             let (new_pat_span, kind, ty, mutbl) = match cx.tables.expr_ty(arg).sty {
-                ty::TyRef(_, ref tam) => match (&pat[0].node, &pat[1].node) {
-                    (key, _) if pat_is_wild(key, body) => (pat[1].span, "value", tam.ty, tam.mutbl),
-                    (_, value) if pat_is_wild(value, body) => (pat[0].span, "key", tam.ty, MutImmutable),
+                ty::TyRef(_, ty, mutbl) => match (&pat[0].node, &pat[1].node) {
+                    (key, _) if pat_is_wild(key, body) => (pat[1].span, "value", ty, mutbl),
+                    (_, value) if pat_is_wild(value, body) => (pat[0].span, "key", ty, MutImmutable),
                     _ => return,
                 },
                 _ => return,
@@ -1412,13 +1411,13 @@ struct MutatePairDelegate {
 }
 
 impl<'tcx> Delegate<'tcx> for MutatePairDelegate {
-    fn consume(&mut self, _: NodeId, _: Span, _: cmt<'tcx>, _: ConsumeMode) {}
+    fn consume(&mut self, _: NodeId, _: Span, _: &cmt_<'tcx>, _: ConsumeMode) {}
 
-    fn matched_pat(&mut self, _: &Pat, _: cmt<'tcx>, _: MatchMode) {}
+    fn matched_pat(&mut self, _: &Pat, _: &cmt_<'tcx>, _: MatchMode) {}
 
-    fn consume_pat(&mut self, _: &Pat, _: cmt<'tcx>, _: ConsumeMode) {}
+    fn consume_pat(&mut self, _: &Pat, _: &cmt_<'tcx>, _: ConsumeMode) {}
 
-    fn borrow(&mut self, _: NodeId, sp: Span, cmt: cmt<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
+    fn borrow(&mut self, _: NodeId, sp: Span, cmt: &cmt_<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
         if let ty::BorrowKind::MutBorrow = bk {
             if let Categorization::Local(id) = cmt.cat {
                 if Some(id) == self.node_id_low {
@@ -1431,7 +1430,7 @@ impl<'tcx> Delegate<'tcx> for MutatePairDelegate {
         }
     }
 
-    fn mutate(&mut self, _: NodeId, sp: Span, cmt: cmt<'tcx>, _: MutateMode) {
+    fn mutate(&mut self, _: NodeId, sp: Span, cmt: &cmt_<'tcx>, _: MutateMode) {
         if let Categorization::Local(id) = cmt.cat {
             if Some(id) == self.node_id_low {
                 self.span_low = Some(sp)
@@ -1456,7 +1455,7 @@ fn check_for_mut_range_bound(cx: &LateContext, arg: &Expr, body: &Expr) {
         start: Some(start),
         end: Some(end),
         ..
-    }) = higher::range(arg)
+    }) = higher::range(cx, arg)
     {
         let mut_ids = vec![
             check_for_mutability(cx, start),
@@ -1705,8 +1704,8 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
                 for expr in args {
                     let ty = self.cx.tables.expr_ty_adjusted(expr);
                     self.prefer_mutable = false;
-                    if let ty::TyRef(_, mutbl) = ty.sty {
-                        if mutbl.mutbl == MutMutable {
+                    if let ty::TyRef(_, _, mutbl) = ty.sty {
+                        if mutbl == MutMutable {
                             self.prefer_mutable = true;
                         }
                     }
@@ -1717,8 +1716,8 @@ impl<'a, 'tcx> Visitor<'tcx> for VarVisitor<'a, 'tcx> {
                 let def_id = self.cx.tables.type_dependent_defs()[expr.hir_id].def_id();
                 for (ty, expr) in self.cx.tcx.fn_sig(def_id).inputs().skip_binder().iter().zip(args) {
                     self.prefer_mutable = false;
-                    if let ty::TyRef(_, mutbl) = ty.sty {
-                        if mutbl.mutbl == MutMutable {
+                    if let ty::TyRef(_, _, mutbl) = ty.sty {
+                        if mutbl == MutMutable {
                             self.prefer_mutable = true;
                         }
                     }
@@ -1784,7 +1783,7 @@ fn is_ref_iterable_type(cx: &LateContext, e: &Expr) -> bool {
     // no walk_ptrs_ty: calling iter() on a reference can make sense because it
     // will allow further borrows afterwards
     let ty = cx.tables.expr_ty(e);
-    is_iterable_array(ty) ||
+    is_iterable_array(ty, cx) ||
     match_type(cx, ty, &paths::VEC) ||
     match_type(cx, ty, &paths::LINKED_LIST) ||
     match_type(cx, ty, &paths::HASHMAP) ||
@@ -1795,10 +1794,10 @@ fn is_ref_iterable_type(cx: &LateContext, e: &Expr) -> bool {
     match_type(cx, ty, &paths::BTREESET)
 }
 
-fn is_iterable_array(ty: Ty) -> bool {
+fn is_iterable_array(ty: Ty, cx: &LateContext) -> bool {
     // IntoIterator is currently only implemented for array sizes <= 32 in rustc
     match ty.sty {
-        ty::TyArray(_, n) => (0..=32).contains(&n.val.to_raw_bits().expect("array length")),
+        ty::TyArray(_, n) => (0..=32).contains(&n.assert_usize(cx.tcx).expect("array length")),
         _ => false,
     }
 }
@@ -1842,7 +1841,7 @@ fn extract_first_expr(block: &Block) -> Option<&Expr> {
 fn is_simple_break_expr(expr: &Expr) -> bool {
     match expr.node {
         ExprBreak(dest, ref passed_expr) if dest.label.is_none() && passed_expr.is_none() => true,
-        ExprBlock(ref b) => match extract_first_expr(b) {
+        ExprBlock(ref b, _) => match extract_first_expr(b) {
             Some(subexpr) => is_simple_break_expr(subexpr),
             None => false,
         },
@@ -2147,7 +2146,7 @@ fn path_name(e: &Expr) -> Option<Name> {
 }
 
 fn check_infinite_loop<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, cond: &'tcx Expr, block: &'tcx Block, expr: &'tcx Expr) {
-    if constant(cx, cond).is_some() {
+    if constant(cx, cx.tables, cond).is_some() {
         // A pure constant condition (e.g. while false) is not linted.
         return;
     }
@@ -2255,19 +2254,19 @@ impl<'tcx> MutVarsDelegate {
 
 
 impl<'tcx> Delegate<'tcx> for MutVarsDelegate {
-    fn consume(&mut self, _: NodeId, _: Span, _: cmt<'tcx>, _: ConsumeMode) {}
+    fn consume(&mut self, _: NodeId, _: Span, _: &cmt_<'tcx>, _: ConsumeMode) {}
 
-    fn matched_pat(&mut self, _: &Pat, _: cmt<'tcx>, _: MatchMode) {}
+    fn matched_pat(&mut self, _: &Pat, _: &cmt_<'tcx>, _: MatchMode) {}
 
-    fn consume_pat(&mut self, _: &Pat, _: cmt<'tcx>, _: ConsumeMode) {}
+    fn consume_pat(&mut self, _: &Pat, _: &cmt_<'tcx>, _: ConsumeMode) {}
 
-    fn borrow(&mut self, _: NodeId, _: Span, cmt: cmt<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
+    fn borrow(&mut self, _: NodeId, _: Span, cmt: &cmt_<'tcx>, _: ty::Region, bk: ty::BorrowKind, _: LoanCause) {
         if let ty::BorrowKind::MutBorrow = bk {
             self.update(&cmt.cat)
         }
     }
 
-    fn mutate(&mut self, _: NodeId, _: Span, cmt: cmt<'tcx>, _: MutateMode) {
+    fn mutate(&mut self, _: NodeId, _: Span, cmt: &cmt_<'tcx>, _: MutateMode) {
         self.update(&cmt.cat)
     }
 

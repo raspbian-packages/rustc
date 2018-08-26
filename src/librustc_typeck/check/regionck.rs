@@ -383,7 +383,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
 
     fn constrain_bindings_in_pat(&mut self, pat: &hir::Pat) {
         debug!("regionck::visit_pat(pat={:?})", pat);
-        pat.each_binding(|_, id, span, _| {
+        pat.each_binding(|_, hir_id, span, _| {
             // If we have a variable that contains region'd data, that
             // data will be accessible from anywhere that the variable is
             // accessed. We must be wary of loops like this:
@@ -406,8 +406,6 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
             // iteration. The easiest way to guarantee this is to require
             // that the lifetime of any regions that appear in a
             // variable's type enclose at least the variable's scope.
-
-            let hir_id = self.tcx.hir.node_to_hir_id(id);
             let var_scope = self.region_scope_tree.var_scope(hir_id.local_id);
             let var_region = self.tcx.mk_region(ty::ReScope(var_scope));
 
@@ -591,7 +589,7 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for RegionCtxt<'a, 'gcx, 'tcx> {
                 // For overloaded derefs, base_ty is the input to `Deref::deref`,
                 // but it's a reference type uing the same region as the output.
                 let base_ty = self.resolve_expr_type_adjusted(base);
-                if let ty::TyRef(r_ptr, _) = base_ty.sty {
+                if let ty::TyRef(r_ptr, _, _) = base_ty.sty {
                     self.mk_subregion_due_to_dereference(expr.span, expr_region, r_ptr);
                 }
 
@@ -704,11 +702,11 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                from_ty,
                to_ty);
         match (&from_ty.sty, &to_ty.sty) {
-            /*From:*/ (&ty::TyRef(from_r, ref from_mt),
-            /*To:  */  &ty::TyRef(to_r, ref to_mt)) => {
+            /*From:*/ (&ty::TyRef(from_r, from_ty, _),
+            /*To:  */  &ty::TyRef(to_r, to_ty, _)) => {
                 // Target cannot outlive source, naturally.
                 self.sub_regions(infer::Reborrow(cast_expr.span), to_r, from_r);
-                self.walk_cast(cast_expr, from_mt.ty, to_mt.ty);
+                self.walk_cast(cast_expr, from_ty, to_ty);
             }
 
             /*From:*/ (_,
@@ -916,8 +914,8 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                self.ty_to_string(indexed_ty));
 
         let r_index_expr = ty::ReScope(region::Scope::Node(index_expr.hir_id.local_id));
-        if let ty::TyRef(r_ptr, mt) = indexed_ty.sty {
-            match mt.ty.sty {
+        if let ty::TyRef(r_ptr, r_ty, _) = indexed_ty.sty {
+            match r_ty.sty {
                 ty::TySlice(_) | ty::TyStr => {
                     self.sub_regions(infer::IndexSlice(index_expr.span),
                                      self.tcx.mk_region(r_index_expr), r_ptr);
@@ -1089,7 +1087,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                id, mutbl, cmt_borrowed);
 
         let rptr_ty = self.resolve_node_type(id);
-        if let ty::TyRef(r, _) = rptr_ty.sty {
+        if let ty::TyRef(r, _, _) = rptr_ty.sty {
             debug!("rptr_ty={}",  rptr_ty);
             self.link_region(span, r, ty::BorrowKind::from_mutbl(mutbl), cmt_borrowed);
         }

@@ -44,7 +44,7 @@ use syntax::ast::{self, CRATE_NODE_ID};
 use syntax::codemap::Spanned;
 use syntax::attr;
 use syntax::symbol::Symbol;
-use syntax_pos::{self, FileName, FileMap, Span, DUMMY_SP};
+use syntax_pos::{self, hygiene, FileName, FileMap, Span, DUMMY_SP};
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
@@ -483,10 +483,10 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         let index = items.write_index(&mut self.opaque.cursor);
         let index_bytes = self.position() - i;
 
+        let attrs = tcx.hir.krate_attrs();
         let link_meta = self.link_meta;
         let is_proc_macro = tcx.sess.crate_types.borrow().contains(&CrateTypeProcMacro);
-        let has_default_lib_allocator =
-            attr::contains_name(tcx.hir.krate_attrs(), "default_lib_allocator");
+        let has_default_lib_allocator = attr::contains_name(&attrs, "default_lib_allocator");
         let has_global_allocator = *tcx.sess.has_global_allocator.get();
 
         let root = self.lazy(&CrateRoot {
@@ -496,6 +496,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             hash: link_meta.crate_hash,
             disambiguator: tcx.sess.local_crate_disambiguator(),
             panic_strategy: tcx.sess.panic_strategy(),
+            edition: hygiene::default_edition(),
             has_global_allocator: has_global_allocator,
             has_default_lib_allocator: has_default_lib_allocator,
             plugin_registrar_fn: tcx.sess
@@ -508,6 +509,14 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             } else {
                 None
             },
+
+            compiler_builtins: attr::contains_name(&attrs, "compiler_builtins"),
+            needs_allocator: attr::contains_name(&attrs, "needs_allocator"),
+            needs_panic_runtime: attr::contains_name(&attrs, "needs_panic_runtime"),
+            no_builtins: attr::contains_name(&attrs, "no_builtins"),
+            panic_runtime: attr::contains_name(&attrs, "panic_runtime"),
+            profiler_runtime: attr::contains_name(&attrs, "profiler_runtime"),
+            sanitizer_runtime: attr::contains_name(&attrs, "sanitizer_runtime"),
 
             crate_deps,
             dylib_dependency_formats,
@@ -868,7 +877,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
 
     fn metadata_output_only(&self) -> bool {
         // MIR optimisation can be skipped when we're just interested in the metadata.
-        !self.tcx.sess.opts.output_types.should_trans()
+        !self.tcx.sess.opts.output_types.should_codegen()
     }
 
     fn const_qualif(&self, mir: u8, body_id: hir::BodyId) -> ConstQualif {
@@ -929,10 +938,9 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ImplItemKind::Const(..) => true,
                 hir::ImplItemKind::Method(ref sig, _) => {
                     let generics = self.tcx.generics_of(def_id);
-                    let types = generics.parent_types as usize + generics.types.len();
-                    let needs_inline =
-                        (types > 0 || tcx.trans_fn_attrs(def_id).requests_inline())
-                            && !self.metadata_output_only();
+                    let needs_inline = (generics.requires_monomorphization(self.tcx) ||
+                                        tcx.codegen_fn_attrs(def_id).requests_inline()) &&
+                                        !self.metadata_output_only();
                     let is_const_fn = sig.constness == hir::Constness::Const;
                     let always_encode_mir = self.tcx.sess.opts.debugging_opts.always_encode_mir;
                     needs_inline || is_const_fn || always_encode_mir
@@ -1052,6 +1060,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
             hir::ItemForeignMod(_) => EntryKind::ForeignMod,
             hir::ItemGlobalAsm(..) => EntryKind::GlobalAsm,
             hir::ItemTy(..) => EntryKind::Type,
+            hir::ItemExistential(..) => EntryKind::Existential,
             hir::ItemEnum(..) => EntryKind::Enum(get_repr_options(&tcx, def_id)),
             hir::ItemStruct(ref struct_def, _) => {
                 let variant = tcx.adt_def(def_id).non_enum_variant();
@@ -1179,6 +1188,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemConst(..) |
                 hir::ItemFn(..) |
                 hir::ItemTy(..) |
+                hir::ItemExistential(..) |
                 hir::ItemEnum(..) |
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) |
@@ -1202,6 +1212,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) |
                 hir::ItemImpl(..) |
+                hir::ItemExistential(..) |
                 hir::ItemTrait(..) => Some(self.encode_generics(def_id)),
                 _ => None,
             },
@@ -1214,6 +1225,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemStruct(..) |
                 hir::ItemUnion(..) |
                 hir::ItemImpl(..) |
+                hir::ItemExistential(..) |
                 hir::ItemTrait(..) => Some(self.encode_predicates(def_id)),
                 _ => None,
             },
@@ -1225,8 +1237,9 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemConst(..) => self.encode_optimized_mir(def_id),
                 hir::ItemFn(_, _, constness, _, ref generics, _) => {
                     let has_tps = generics.ty_params().next().is_some();
-                    let needs_inline = (has_tps || tcx.trans_fn_attrs(def_id).requests_inline()) &&
-                        !self.metadata_output_only();
+                    let needs_inline =
+                        (has_tps || tcx.codegen_fn_attrs(def_id).requests_inline()) &&
+                            !self.metadata_output_only();
                     let always_encode_mir = self.tcx.sess.opts.debugging_opts.always_encode_mir;
                     if needs_inline || constness == hir::Constness::Const || always_encode_mir {
                         self.encode_optimized_mir(def_id)
@@ -1292,28 +1305,6 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
         }
     }
 
-    fn encode_info_for_anon_ty(&mut self, def_id: DefId) -> Entry<'tcx> {
-        debug!("IsolatedEncoder::encode_info_for_anon_ty({:?})", def_id);
-        let tcx = self.tcx;
-        Entry {
-            kind: EntryKind::Type,
-            visibility: self.lazy(&ty::Visibility::Public),
-            span: self.lazy(&tcx.def_span(def_id)),
-            attributes: LazySeq::empty(),
-            children: LazySeq::empty(),
-            stability: None,
-            deprecation: None,
-
-            ty: Some(self.encode_item_type(def_id)),
-            inherent_impls: LazySeq::empty(),
-            variances: LazySeq::empty(),
-            generics: Some(self.encode_generics(def_id)),
-            predicates: Some(self.encode_predicates(def_id)),
-
-            mir: None,
-        }
-    }
-
     fn encode_info_for_closure(&mut self, def_id: DefId) -> Entry<'tcx> {
         debug!("IsolatedEncoder::encode_info_for_closure({:?})", def_id);
         let tcx = self.tcx;
@@ -1358,8 +1349,8 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
         }
     }
 
-    fn encode_info_for_embedded_const(&mut self, def_id: DefId) -> Entry<'tcx> {
-        debug!("IsolatedEncoder::encode_info_for_embedded_const({:?})", def_id);
+    fn encode_info_for_anon_const(&mut self, def_id: DefId) -> Entry<'tcx> {
+        debug!("IsolatedEncoder::encode_info_for_anon_const({:?})", def_id);
         let tcx = self.tcx;
         let id = tcx.hir.as_local_node_id(def_id).unwrap();
         let body_id = tcx.hir.body_owned_by(id);
@@ -1622,9 +1613,9 @@ impl<'a, 'b, 'tcx> Visitor<'tcx> for EncodeVisitor<'a, 'b, 'tcx> {
                      id: ast::NodeId) {
         intravisit::walk_variant(self, v, g, id);
 
-        if let Some(discr) = v.node.disr_expr {
-            let def_id = self.index.tcx.hir.body_owner_def_id(discr);
-            self.index.record(def_id, IsolatedEncoder::encode_info_for_embedded_const, def_id);
+        if let Some(ref discr) = v.node.disr_expr {
+            let def_id = self.index.tcx.hir.local_def_id(discr.id);
+            self.index.record(def_id, IsolatedEncoder::encode_info_for_anon_const, def_id);
         }
     }
     fn visit_generics(&mut self, generics: &'tcx hir::Generics) {
@@ -1663,13 +1654,9 @@ impl<'a, 'b, 'tcx> IndexBuilder<'a, 'b, 'tcx> {
 
     fn encode_info_for_ty(&mut self, ty: &hir::Ty) {
         match ty.node {
-            hir::TyImplTraitExistential(..) => {
-                let def_id = self.tcx.hir.local_def_id(ty.id);
-                self.record(def_id, IsolatedEncoder::encode_info_for_anon_ty, def_id);
-            }
-            hir::TyArray(_, len) => {
-                let def_id = self.tcx.hir.body_owner_def_id(len);
-                self.record(def_id, IsolatedEncoder::encode_info_for_embedded_const, def_id);
+            hir::TyArray(_, ref length) => {
+                let def_id = self.tcx.hir.local_def_id(length.id);
+                self.record(def_id, IsolatedEncoder::encode_info_for_anon_const, def_id);
             }
             _ => {}
         }
@@ -1701,6 +1688,7 @@ impl<'a, 'b, 'tcx> IndexBuilder<'a, 'b, 'tcx> {
             hir::ItemExternCrate(..) |
             hir::ItemUse(..) |
             hir::ItemTy(..) |
+            hir::ItemExistential(..) |
             hir::ItemTraitAlias(..) => {
                 // no sub-item recording needed in these cases
             }

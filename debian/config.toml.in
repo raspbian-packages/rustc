@@ -50,3 +50,6 @@ debuginfo = true
 debuginfo-lines = true
 debuginfo-only-std = false
 rpath = false
+
+verbose-tests = true
+backtrace-on-ice = true

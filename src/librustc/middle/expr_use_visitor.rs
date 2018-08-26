@@ -457,7 +457,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // make sure that the thing we are pointing out stays valid
                 // for the lifetime `scope_r` of the resulting ptr:
                 let expr_ty = return_if_err!(self.mc.expr_ty(expr));
-                if let ty::TyRef(r, _) = expr_ty.sty {
+                if let ty::TyRef(r, _, _) = expr_ty.sty {
                     let bk = ty::BorrowKind::from_mutbl(m);
                     self.borrow_expr(&base, r, bk, AddrOf);
                 }
@@ -500,7 +500,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 self.consume_expr(&rhs);
             }
 
-            hir::ExprBlock(ref blk) => {
+            hir::ExprBlock(ref blk, _) => {
                 self.walk_block(&blk);
             }
 
@@ -609,9 +609,9 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
     fn walk_local(&mut self, local: &hir::Local) {
         match local.init {
             None => {
-                let delegate = &mut self.delegate;
-                local.pat.each_binding(|_, id, span, _| {
-                    delegate.decl_without_init(id, span);
+                local.pat.each_binding(|_, hir_id, span, _| {
+                    let node_id = self.mc.tcx.hir.hir_to_node_id(hir_id);
+                    self.delegate.decl_without_init(node_id, span);
                 })
             }
 
@@ -670,7 +670,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                             &*with_expr,
                             with_cmt.clone(),
                             f_index,
-                            with_field.name,
+                            with_field.ident,
                             with_field.ty(self.tcx(), substs)
                         );
                         self.delegate_consume(with_expr.id, with_expr.span, &cmt_field);
@@ -867,7 +867,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // It is also a borrow or copy/move of the value being matched.
                 match bm {
                     ty::BindByReference(m) => {
-                        if let ty::TyRef(r, _) = pat_ty.sty {
+                        if let ty::TyRef(r, _, _) = pat_ty.sty {
                             let bk = ty::BorrowKind::from_mutbl(m);
                             delegate.borrow(pat.id, pat.span, &cmt_pat, r, bk, RefBinding);
                         }

@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-//! The MIR is translated from some high-level abstract IR
+//! The MIR is built from some high-level abstract IR
 //! (HAIR). This section defines the HAIR along with a trait for
 //! accessing it. The intention is to allow MIR construction to be
 //! unit-tested and separated from the Rust source and compiler data
@@ -18,7 +18,7 @@ use rustc::mir::{BinOp, BorrowKind, Field, Literal, UnOp};
 use rustc::hir::def_id::DefId;
 use rustc::middle::region;
 use rustc::ty::subst::Substs;
-use rustc::ty::{AdtDef, ClosureSubsts, Region, Ty, GeneratorInterior};
+use rustc::ty::{AdtDef, UpvarSubsts, Region, Ty};
 use rustc::hir;
 use syntax::ast;
 use syntax_pos::Span;
@@ -107,12 +107,12 @@ pub enum StmtKind<'tcx> {
     },
 }
 
-/// The Hair trait implementor translates their expressions (`&'tcx H::Expr`)
-/// into instances of this `Expr` enum. This translation can be done
+/// The Hair trait implementor lowers their expressions (`&'tcx H::Expr`)
+/// into instances of this `Expr` enum. This lowering can be done
 /// basically as lazily or as eagerly as desired: every recursive
 /// reference to an expression in this enum is an `ExprRef<'tcx>`, which
 /// may in turn be another instance of this enum (boxed), or else an
-/// untranslated `&'tcx H::Expr`. Note that instances of `Expr` are very
+/// unlowered `&'tcx H::Expr`. Note that instances of `Expr` are very
 /// shortlived. They are created by `Hair::to_expr`, analyzed and
 /// converted into MIR, and then discarded.
 ///
@@ -266,9 +266,9 @@ pub enum ExprKind<'tcx> {
     },
     Closure {
         closure_id: DefId,
-        substs: ClosureSubsts<'tcx>,
+        substs: UpvarSubsts<'tcx>,
         upvars: Vec<ExprRef<'tcx>>,
-        interior: Option<GeneratorInterior<'tcx>>,
+        movability: Option<hir::GeneratorMovability>,
     },
     Literal {
         literal: Literal<'tcx>,

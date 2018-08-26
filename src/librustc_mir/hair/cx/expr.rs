@@ -14,8 +14,7 @@ use hair::cx::Cx;
 use hair::cx::block;
 use hair::cx::to_ref::ToRef;
 use rustc::hir::def::{Def, CtorKind};
-use rustc::middle::const_val::ConstVal;
-use rustc::mir::interpret::{GlobalId, Value, PrimVal};
+use rustc::mir::interpret::GlobalId;
 use rustc::ty::{self, AdtKind, Ty};
 use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability};
 use rustc::ty::cast::CastKind as TyCastKind;
@@ -283,7 +282,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
 
         hir::ExprAddrOf(mutbl, ref expr) => {
             let region = match expr_ty.sty {
-                ty::TyRef(r, _) => r,
+                ty::TyRef(r, _, _) => r,
                 _ => span_bug!(expr.span, "type of & not region"),
             };
             ExprKind::Borrow {
@@ -293,7 +292,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             }
         }
 
-        hir::ExprBlock(ref blk) => ExprKind::Block { body: &blk },
+        hir::ExprBlock(ref blk, _) => ExprKind::Block { body: &blk },
 
         hir::ExprAssign(ref lhs, ref rhs) => {
             ExprKind::Assign {
@@ -470,9 +469,11 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
 
         hir::ExprClosure(..) => {
             let closure_ty = cx.tables().expr_ty(expr);
-            let (def_id, substs, interior) = match closure_ty.sty {
-                ty::TyClosure(def_id, substs) => (def_id, substs, None),
-                ty::TyGenerator(def_id, substs, interior) => (def_id, substs, Some(interior)),
+            let (def_id, substs, movability) = match closure_ty.sty {
+                ty::TyClosure(def_id, substs) => (def_id, UpvarSubsts::Closure(substs), None),
+                ty::TyGenerator(def_id, substs, movability) => {
+                    (def_id, UpvarSubsts::Generator(substs), Some(movability))
+                }
                 _ => {
                     span_bug!(expr.span, "closure expr w/o closure type: {:?}", closure_ty);
                 }
@@ -487,7 +488,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                 closure_id: def_id,
                 substs,
                 upvars,
-                interior,
+                movability,
             }
         }
 
@@ -505,9 +506,8 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         }
 
         // Now comes the rote stuff:
-        hir::ExprRepeat(ref v, count) => {
-            let c = &cx.tcx.hir.body(count).value;
-            let def_id = cx.tcx.hir.body_owner_def_id(count);
+        hir::ExprRepeat(ref v, ref count) => {
+            let def_id = cx.tcx.hir.local_def_id(count.id);
             let substs = Substs::identity_for_item(cx.tcx.global_tcx(), def_id);
             let instance = ty::Instance::resolve(
                 cx.tcx.global_tcx(),
@@ -519,10 +519,11 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                 instance,
                 promoted: None
             };
-            let count = match cx.tcx.at(c.span).const_eval(cx.param_env.and(global_id)) {
-                Ok(cv) => cv.val.unwrap_u64(),
+            let span = cx.tcx.def_span(def_id);
+            let count = match cx.tcx.at(span).const_eval(cx.param_env.and(global_id)) {
+                Ok(cv) => cv.unwrap_usize(cx.tcx),
                 Err(e) => {
-                    e.report(cx.tcx, cx.tcx.def_span(def_id), "array length");
+                    e.report_as_error(cx.tcx.at(span), "could not evaluate array length");
                     0
                 },
             };
@@ -535,23 +536,19 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         hir::ExprRet(ref v) => ExprKind::Return { value: v.to_ref() },
         hir::ExprBreak(dest, ref value) => {
             match dest.target_id {
-                hir::ScopeTarget::Block(target_id) |
-                hir::ScopeTarget::Loop(hir::LoopIdResult::Ok(target_id)) => ExprKind::Break {
+                Ok(target_id) => ExprKind::Break {
                     label: region::Scope::Node(cx.tcx.hir.node_to_hir_id(target_id).local_id),
                     value: value.to_ref(),
                 },
-                hir::ScopeTarget::Loop(hir::LoopIdResult::Err(err)) =>
-                    bug!("invalid loop id for break: {}", err)
+                Err(err) => bug!("invalid loop id for break: {}", err)
             }
         }
         hir::ExprAgain(dest) => {
             match dest.target_id {
-                hir::ScopeTarget::Block(_) => bug!("cannot continue to blocks"),
-                hir::ScopeTarget::Loop(hir::LoopIdResult::Ok(loop_id)) => ExprKind::Continue {
+                Ok(loop_id) => ExprKind::Continue {
                     label: region::Scope::Node(cx.tcx.hir.node_to_hir_id(loop_id).local_id),
                 },
-                hir::ScopeTarget::Loop(hir::LoopIdResult::Err(err)) =>
-                    bug!("invalid loop id for continue: {}", err)
+                Err(err) => bug!("invalid loop id for continue: {}", err)
             }
         }
         hir::ExprMatch(ref discr, ref arms, _) => {
@@ -617,7 +614,8 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                 let idx = adt_def.variant_index_with_id(variant_id);
                                 let (d, o) = adt_def.discriminant_def_for_variant(idx);
                                 use rustc::ty::util::IntTypeExt;
-                                let ty = adt_def.repr.discr_type().to_ty(cx.tcx());
+                                let ty = adt_def.repr.discr_type();
+                                let ty = ty.to_ty(cx.tcx());
                                 Some((d, o, ty))
                             }
                             _ => None,
@@ -633,22 +631,21 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                         span: expr.span,
                         kind: ExprKind::Literal {
                             literal: Literal::Value {
-                                value: cx.tcx().mk_const(ty::Const {
-                                    val,
-                                    ty,
-                                }),
+                                value: val,
                             },
                         },
                     }.to_ref();
-                    let offset = mk_const(
-                        ConstVal::Value(Value::ByVal(PrimVal::Bytes(offset as u128))),
-                    );
+                    let offset = mk_const(ty::Const::from_bits(
+                        cx.tcx,
+                        offset as u128,
+                        cx.param_env.and(ty),
+                    ));
                     match did {
                         Some(did) => {
                             // in case we are offsetting from a computed discriminant
                             // and not the beginning of discriminants (which is always `0`)
                             let substs = Substs::identity_for_item(cx.tcx(), did);
-                            let lhs = mk_const(ConstVal::Unevaluated(did, substs));
+                            let lhs = mk_const(ty::Const::unevaluated(cx.tcx(), did, substs, ty));
                             let bin = ExprKind::Binary {
                                 op: BinOp::Add,
                                 lhs,
@@ -705,10 +702,7 @@ fn method_callee<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         span: expr.span,
         kind: ExprKind::Literal {
             literal: Literal::Value {
-                value: cx.tcx().mk_const(ty::Const {
-                    val: ConstVal::Value(Value::ByVal(PrimVal::Undef)),
-                    ty
-                }),
+                value: ty::Const::zero_sized(cx.tcx(), ty),
             },
         },
     }
@@ -762,20 +756,20 @@ fn convert_path_expr<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
         Def::StructCtor(_, CtorKind::Fn) |
         Def::VariantCtor(_, CtorKind::Fn) => ExprKind::Literal {
             literal: Literal::Value {
-                value: cx.tcx.mk_const(ty::Const {
-                    val: ConstVal::Value(Value::ByVal(PrimVal::Undef)),
-                    ty: cx.tables().node_id_to_type(expr.hir_id)
-                }),
+                value: ty::Const::zero_sized(
+                    cx.tcx,
+                    cx.tables().node_id_to_type(expr.hir_id)),
             },
         },
 
         Def::Const(def_id) |
         Def::AssociatedConst(def_id) => ExprKind::Literal {
             literal: Literal::Value {
-                value: cx.tcx.mk_const(ty::Const {
-                    val: ConstVal::Unevaluated(def_id, substs),
-                    ty: cx.tables().node_id_to_type(expr.hir_id)
-                }),
+                value: ty::Const::unevaluated(
+                    cx.tcx,
+                    def_id,
+                    substs,
+                    cx.tables().node_id_to_type(expr.hir_id))
             },
         },
 
@@ -985,13 +979,13 @@ fn overloaded_place<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
     // Reconstruct the output assuming it's a reference with the
     // same region and mutability as the receiver. This holds for
     // `Deref(Mut)::Deref(_mut)` and `Index(Mut)::index(_mut)`.
-    let (region, mt) = match recv_ty.sty {
-        ty::TyRef(region, mt) => (region, mt),
+    let (region, mutbl) = match recv_ty.sty {
+        ty::TyRef(region, _, mutbl) => (region, mutbl),
         _ => span_bug!(expr.span, "overloaded_place: receiver is not a reference"),
     };
     let ref_ty = cx.tcx.mk_ref(region, ty::TypeAndMut {
         ty: place_ty,
-        mutbl: mt.mutbl,
+        mutbl,
     });
 
     // construct the complete expression `foo()` for the overloaded call,

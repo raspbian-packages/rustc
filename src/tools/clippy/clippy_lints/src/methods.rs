@@ -749,7 +749,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for Pass {
                 }
 
                 match self_ty.sty {
-                    ty::TyRef(_, ty) if ty.ty.sty == ty::TyStr => for &(method, pos) in &PATTERN_METHODS {
+                    ty::TyRef(_, ty, _) if ty.sty == ty::TyStr => for &(method, pos) in &PATTERN_METHODS {
                         if method_call.name == method && args.len() > pos {
                             lint_single_char_pattern(cx, expr, &args[pos]);
                         }
@@ -967,8 +967,8 @@ fn lint_or_fun_call(cx: &LateContext, expr: &hir::Expr, method_span: Span, name:
 /// Checks for the `CLONE_ON_COPY` lint.
 fn lint_clone_on_copy(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr, arg_ty: Ty) {
     let ty = cx.tables.expr_ty(expr);
-    if let ty::TyRef(_, ty::TypeAndMut { ty: inner, .. }) = arg_ty.sty {
-        if let ty::TyRef(_, ty::TypeAndMut { ty: innermost, .. }) = inner.sty {
+    if let ty::TyRef(_, inner, _) = arg_ty.sty {
+        if let ty::TyRef(_, innermost, _) = inner.sty {
             span_lint_and_then(
                 cx,
                 CLONE_DOUBLE_REF,
@@ -978,7 +978,7 @@ fn lint_clone_on_copy(cx: &LateContext, expr: &hir::Expr, arg: &hir::Expr, arg_t
                 |db| if let Some(snip) = sugg::Sugg::hir_opt(cx, arg) {
                     let mut ty = innermost;
                     let mut n = 0;
-                    while let ty::TyRef(_, ty::TypeAndMut { ty: inner, .. }) = ty.sty {
+                    while let ty::TyRef(_, inner, _) = ty.sty {
                         ty = inner;
                         n += 1;
                     }
@@ -1299,8 +1299,8 @@ fn derefs_to_slice(cx: &LateContext, expr: &hir::Expr, ty: Ty) -> Option<sugg::S
             ty::TySlice(_) => true,
             ty::TyAdt(def, _) if def.is_box() => may_slice(cx, ty.boxed_ty()),
             ty::TyAdt(..) => match_type(cx, ty, &paths::VEC),
-            ty::TyArray(_, size) => size.val.to_raw_bits().expect("array length") < 32,
-            ty::TyRef(_, ty::TypeAndMut { ty: inner, .. }) => may_slice(cx, inner),
+            ty::TyArray(_, size) => size.assert_usize(cx.tcx).expect("array length") < 32,
+            ty::TyRef(_, inner, _) => may_slice(cx, inner),
             _ => false,
         }
     }
@@ -1315,7 +1315,7 @@ fn derefs_to_slice(cx: &LateContext, expr: &hir::Expr, ty: Ty) -> Option<sugg::S
         match ty.sty {
             ty::TySlice(_) => sugg::Sugg::hir_opt(cx, expr),
             ty::TyAdt(def, _) if def.is_box() && may_slice(cx, ty.boxed_ty()) => sugg::Sugg::hir_opt(cx, expr),
-            ty::TyRef(_, ty::TypeAndMut { ty: inner, .. }) => if may_slice(cx, inner) {
+            ty::TyRef(_, inner, _) => if may_slice(cx, inner) {
                 sugg::Sugg::hir_opt(cx, expr)
             } else {
                 None
@@ -1751,7 +1751,7 @@ fn lint_chars_last_cmp_with_unwrap<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, info: &
 
 /// lint for length-1 `str`s for methods in `PATTERN_METHODS`
 fn lint_single_char_pattern<'a, 'tcx>(cx: &LateContext<'a, 'tcx>, expr: &'tcx hir::Expr, arg: &'tcx hir::Expr) {
-    if let Some((Constant::Str(r), _)) = constant(cx, arg) {
+    if let Some((Constant::Str(r), _)) = constant(cx, cx.tables, arg) {
         if r.len() == 1 {
             let c = r.chars().next().unwrap();
             let snip = snippet(cx, expr.span, "..");

@@ -150,7 +150,18 @@ let world = &s[6..11];
 This is similar to taking a reference to the whole `String` but with the extra
 `[0..5]` bit. Rather than a reference to the entire `String`, it’s a reference
 to a portion of the `String`. The `start..end` syntax is a range that begins at
-`start` and continues up to, but not including, `end`.
+`start` and continues up to, but not including, `end`. If we wanted to include
+`end`, we can use `..=` instead of `..`:
+
+```rust
+let s = String::from("hello world");
+
+let hello = &s[0..=4];
+let world = &s[6..=10];
+```
+
+The `=` means that we're including the last number, if that helps you remember
+the difference between `..` and `..=`.
 
 We can create slices using a range within brackets by specifying
 `[starting_index..ending_index]`, where `starting_index` is the first position
@@ -158,7 +169,7 @@ in the slice and `ending_index` is one more than the last position in the
 slice. Internally, the slice data structure stores the starting position and
 the length of the slice, which corresponds to `ending_index` minus
 `starting_index`. So in the case of `let world = &s[6..11];`, `world` would be
-a slice that contains a pointer to the 6th byte of `s` and a length value of 5.
+a slice that contains a pointer to the 7th byte of `s` and a length value of 5.
 
 Figure 4-6 shows this in a diagram.
 

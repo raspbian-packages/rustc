@@ -17,8 +17,6 @@ use dataflow::MoveDataParamEnv;
 use dataflow::{self, do_dataflow, DebugFormatted};
 use rustc::ty::{self, TyCtxt};
 use rustc::mir::*;
-use rustc::middle::const_val::ConstVal;
-use rustc::mir::interpret::{Value, PrimVal};
 use rustc::util::nodemap::FxHashMap;
 use rustc_data_structures::indexed_set::IdxSetBuf;
 use rustc_data_structures::indexed_vec::Idx;
@@ -174,7 +172,7 @@ struct Elaborator<'a, 'b: 'a, 'tcx: 'b> {
 }
 
 impl<'a, 'b, 'tcx> fmt::Debug for Elaborator<'a, 'b, 'tcx> {
-    fn fmt(&self, _f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, _f: &mut fmt::Formatter) -> fmt::Result {
         Ok(())
     }
 }
@@ -444,7 +442,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
     }
 
     /// Elaborate a MIR `replace` terminator. This instruction
-    /// is not directly handled by translation, and therefore
+    /// is not directly handled by codegen, and therefore
     /// must be desugared.
     ///
     /// The desugaring drops the location if needed, and then writes
@@ -533,10 +531,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
             span,
             ty: self.tcx.types.bool,
             literal: Literal::Value {
-                value: self.tcx.mk_const(ty::Const {
-                    val: ConstVal::Value(Value::ByVal(PrimVal::Bytes(val as u128))),
-                    ty: self.tcx.types.bool
-                })
+                value: ty::Const::from_bool(self.tcx, val)
             }
         })))
     }
