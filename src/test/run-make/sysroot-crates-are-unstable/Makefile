@@ -1,2 +1,6 @@
+include ../tools.mk
+
+RUSTC := $(RUSTC_ORIGINAL)
+
 all:
-	python2.7 test.py
+	$(HOST_RPATH_ENV) python2.7 test.py
