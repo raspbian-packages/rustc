@@ -5,7 +5,7 @@ use book::MDBook;
 use book::bookitem::{BookItem, Chapter};
 use config::PlaypenConfig;
 use {utils, theme};
-use theme::{Theme, playpen_editor};
+use theme::{Theme};
 use errors::*;
 use regex::{Regex, Captures};
 
@@ -134,8 +134,6 @@ impl HtmlHandlebars {
         book.write_file("book.js", &theme.js)?;
         book.write_file("book.css", &theme.css)?;
         book.write_file("favicon.png", &theme.favicon)?;
-        book.write_file("jquery.js", &theme.jquery)?;
-        book.write_file("highlight.css", &theme.highlight_css)?;
         book.write_file(
             "tomorrow-night.css",
             &theme.tomorrow_night_css,
@@ -144,50 +142,6 @@ impl HtmlHandlebars {
             "ayu-highlight.css",
             &theme.ayu_highlight_css,
         )?;
-        book.write_file("highlight.js", &theme.highlight_js)?;
-        book.write_file("clipboard.min.js", &theme.clipboard_js)?;
-        book.write_file("store.js", &theme.store_js)?;
-        book.write_file(
-            "_FontAwesome/css/font-awesome.css",
-            theme::FONT_AWESOME,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/fontawesome-webfont.eot",
-            theme::FONT_AWESOME_EOT,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/fontawesome-webfont.svg",
-            theme::FONT_AWESOME_SVG,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/fontawesome-webfont.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/fontawesome-webfont.woff",
-            theme::FONT_AWESOME_WOFF,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/fontawesome-webfont.woff2",
-            theme::FONT_AWESOME_WOFF2,
-        )?;
-        book.write_file(
-            "_FontAwesome/fonts/FontAwesome.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-
-        let playpen_config = book.get_html_config().get_playpen_config();
-
-        // Ace is a very large dependency, so only load it when requested
-        if playpen_config.is_editable() {
-            // Load the editor
-            let editor = playpen_editor::PlaypenEditor::new(playpen_config.get_editor());
-            book.write_file("editor.js", &editor.js)?;
-            book.write_file("ace.js", &editor.ace_js)?;
-            book.write_file("mode-rust.js", &editor.mode_rust_js)?;
-            book.write_file("theme-dawn.js", &editor.theme_dawn_js)?;
-            book.write_file("theme-tomorrow_night.js", &editor.theme_tomorrow_night_js)?;
-        }
 
         Ok(())
     }
