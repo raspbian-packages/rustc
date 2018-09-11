@@ -636,10 +636,7 @@ impl<'a> Builder<'a> {
                 cargo.env("RUSTC_THINLTO", "1");
             }
         }
-        if self.config.locked_deps {
-            cargo.arg("--locked");
-        }
-        if self.config.vendor || self.is_sudo {
+        if self.is_sudo {
             cargo.arg("--frozen");
         }
 
