@@ -1,0 +1,47 @@
+#!/usr/bin/python
+# Copyright: 2015-2017 The Debian Project
+# License: MIT or Apache-2.0
+#
+# Helper to remove removed-files from .cargo-checksum
+# TODO: rewrite to perl and add to dh-cargo, maybe?
+
+from collections import OrderedDict
+import argparse
+import json
+import os
+import sys
+
+def prune_keep(cfile):
+    with open(cfile) as fp:
+        sums = json.load(fp, object_pairs_hook=OrderedDict)
+
+    oldfiles = sums["files"]
+    newfiles = OrderedDict([entry for entry in oldfiles.items() if os.path.exists(entry[0])])
+    sums["files"] = newfiles
+
+    if len(oldfiles) == len(newfiles):
+        return
+
+    with open(cfile, "w") as fp:
+        json.dump(sums, fp, separators=(',', ':'))
+
+def prune(cfile):
+    with open(cfile, "r+") as fp:
+        sums = json.load(fp, object_pairs_hook=OrderedDict)
+        sums["files"] = {}
+        fp.seek(0)
+        json.dump(sums, fp, separators=(',', ':'))
+        fp.truncate()
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-k", "--keep", action="store_true", help="keep "
+        "checksums of files that still exist, and assume they haven't changed.")
+    parser.add_argument('crates', nargs=argparse.REMAINDER,
+        help="crates whose checksums to prune. (default: ./)")
+    args = parser.parse_args(sys.argv[1:])
+    crates = args.crates or ["."]
+    f = prune_keep if args.keep else prune
+    for c in crates:
+        cfile = os.path.join(c, ".cargo-checksum.json") if os.path.isdir(c) else c
+        f(cfile)
