@@ -1,0 +1,11 @@
+Document: rust-reference
+Title: The Rust Reference
+Section: Programming/Rust
+Abstract:
+ This document is the primary reference for the Rust programming
+ language.
+
+Format: HTML
+Index: /usr/share/doc/rust-doc/html/reference/index.html
+Files: /usr/share/doc/rust-doc/html/reference/*.html
+       /usr/share/doc/rust-doc/html/reference/*/*.html
