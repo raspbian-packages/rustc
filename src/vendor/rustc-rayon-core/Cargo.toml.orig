@@ -1,0 +1,30 @@
+[package]
+name = "rustc-rayon-core"
+version = "0.1.1" # reminder to update html_root_url attribute
+authors = ["Niko Matsakis <niko@alum.mit.edu>",
+           "Josh Stone <cuviper@gmail.com>"]
+description = "Core APIs for Rayon - fork for rustc"
+license = "Apache-2.0/MIT"
+repository = "https://github.com/Zoxc/rayon/tree/rustc"
+documentation = "https://docs.rs/rustc-rayon-core/"
+build = "build.rs"
+readme = "README.md"
+keywords = ["parallel", "thread", "concurrency", "join", "performance"]
+categories = ["concurrency"]
+
+[features]
+default = ["tlv"]
+tlv = []
+
+[dependencies]
+rand = ">= 0.3, < 0.5"
+num_cpus = "1.2"
+libc = "0.2.16"
+lazy_static = "1"
+
+# This is deliberately not the latest version, because we want
+# to support older rustc than crossbeam-deque 0.3+ does.
+[dependencies.crossbeam-deque]
+version = "0.2.0"
+
+[dev-dependencies]
