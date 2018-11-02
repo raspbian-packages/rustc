@@ -1,0 +1,40 @@
+From 7e62cd4e886a0e3f08e710e0625a7bed9ccbdf51 Mon Sep 17 00:00:00 2001
+From: John Paul Adrian Glaubitz <glaubitz@physik.fu-berlin.de>
+Date: Tue, 30 Jan 2018 03:00:16 +0100
+Subject: [PATCH] Re-add workaround for LLVM bug 11663
+
+---
+ lib/builtins/int_lib.h | 22 ++++++++++++++++++++++
+ 1 file changed, 22 insertions(+)
+
+--- a/src/libcompiler_builtins/compiler-rt/lib/builtins/int_lib.h
++++ b/src/libcompiler_builtins/compiler-rt/lib/builtins/int_lib.h
+@@ -99,6 +99,28 @@
+ #define	__builtin_ctz __ctzsi2
+ #endif /* sparc64 || mips_n64 || mips_o64 || riscv */
+ 
++/*
++ * Workaround for LLVM bug 11663.  Prevent endless recursion in
++ * __c?zdi2(), where calls to __builtin_c?z() are expanded to
++ * __c?zdi2() instead of __c?zsi2().
++ *
++ * Instead of placing this workaround in c?zdi2.c, put it in this
++ * global header to prevent other C files from making the detour
++ * through __c?zdi2() as well.
++ *
++ * This problem has been observed on FreeBSD for sparc64 and
++ * mips64 with GCC 4.2.1, and for riscv with GCC 5.2.0.
++ * Presumably it's any version of GCC, and targeting an arch that
++ * does not have dedicated bit counting instructions.
++ */
++#if ((defined(__sparc__) && defined(__arch64__)) || defined(__mips_n64) || defined(__mips_o64) || defined(__riscv__) \
++		|| (defined(_MIPS_SIM) && ((_MIPS_SIM == _ABI64) || (_MIPS_SIM == _ABIO64))))
++si_int __clzsi2(si_int);
++si_int __ctzsi2(si_int);
++#define	__builtin_clz __clzsi2
++#define	__builtin_ctz __ctzsi2
++#endif /* sparc64 || mips_n64 || mips_o64 || riscv */
++
+ COMPILER_RT_ABI si_int __paritysi2(si_int a);
+ COMPILER_RT_ABI si_int __paritydi2(di_int a);
+ 
