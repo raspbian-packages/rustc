@@ -1,0 +1,378 @@
+#!/usr/bin/make -f
+# -*- makefile -*-
+
+include /usr/share/dpkg/pkg-info.mk
+include /usr/share/dpkg/vendor.mk
+include /usr/share/dpkg/architecture.mk
+SED_VERSION_SHORT := sed -re 's/([^.]+)\.([^.]+)\..*/\1.\2/'
+RUST_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | $(SED_VERSION_SHORT))
+RUST_LONG_VERSION := $(shell echo '$(DEB_VERSION_UPSTREAM)' | sed -re 's/([^+]+).*/\1/')
+LIBSTD_PKG := libstd-rust-$(RUST_VERSION)
+# Sed expression that matches the "rustc" we have in our Build-Depends field
+SED_RUSTC_BUILDDEP := sed -ne "/^Build-Depends:/,/^[^[:space:]\#]/{/^ *rustc:native .*,/p}" debian/control
+
+include /usr/share/dpkg/buildflags.mk
+# TODO: more correct to use `[build] rustflags = []` list syntax in Cargo.toml
+RUSTFLAGS = $(addprefix -C link-args=,$(LDFLAGS))
+export CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
+# set remap-path-prefix for reproducible builds; TODO: remove "if" after 1.20
+ifeq (0,$(shell dpkg --compare-versions "$$(rustc --version --verbose | sed -ne 's/^release: //p')" '>=' 1.19.0; echo $$?))
+RUSTFLAGS += -Zremap-path-prefix-from=$(CURDIR) -Zremap-path-prefix-to=/usr/src/rustc-$(RUST_LONG_VERSION)
+export RUSTC_BOOTSTRAP = 1
+endif
+
+# Defines DEB_*_RUST_TYPE triples
+include debian/architecture.mk
+export DEB_HOST_RUST_TYPE
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# src/rt/miniz.c (incorrectly) triggers -Wmisleading-indentation with
+# gcc-6.  See bug #811573.
+CFLAGS += -Wno-misleading-indentation
+
+# Release type (one of beta, stable or nightly)
+RELEASE_CHANNEL := stable
+# See also ./build-preview-dsc.sh for a script that builds a beta/nightly .dsc
+# out of this packaging. Furthermore, if the build breaks after importing a new
+# upstream stable release, check the do_temporary_fixup function in that file
+# to see if we already know what fix to make.
+
+DEB_DESTDIR := $(CURDIR)/debian/tmp
+
+# Use system LLVM (comment out to use vendored LLVM)
+LLVM_VERSION = 4.0
+OLD_LLVM_VERSION = 3.9
+# Make it easier to test against a custom LLVM
+ifneq (,$(LLVM_DESTDIR))
+LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
+LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(LLVM_LIBRARY_PATH),$(LLVM_LIBRARY_PATH))
+export LD_LIBRARY_PATH
+endif
+
+RUSTBUILD = RUST_BACKTRACE=1 ./x.py
+RUSTBUILD_FLAGS = --config debian/config.toml -v --on-fail env
+# TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
+# an insane blow up in the time it takes to run tests. See upstream #37477 for
+# details. Upstream worked around it in #38984 but in Debian we can't take
+# advantage of that work-around, because we want as much debuginfo as possible
+# (so we set debuginfo-lines = true, debuginfo-only-std = false) so we have to
+# work around it instead by disabling backtrace when running tests.
+RUSTBUILD_TEST = ./x.py test
+# To run a specific test, run something like:
+#   $ debian/rules override_dh_auto_test-arch \
+#     RUSTBUILD_TEST_FLAGS="src/test/run-make --test-args extern-fn-struct"
+# See src/bootstrap/README.md for more options.
+RUSTBUILD_TEST_FLAGS =
+
+update-version:
+	oldver=$(shell $(SED_RUSTC_BUILDDEP) | sed -ne 's/.*(<= \(.*\)).*/\1/gp' | $(SED_VERSION_SHORT)); \
+	newver=$(RUST_VERSION); \
+	if [ $$oldver != $$newver ]; then debian/update-version.sh $$oldver $$newver; fi
+
+# Below we detect how we're supposed to bootstrap the stage0 compiler. See
+# README.Debian for more details of the cases described below.
+#
+PRECONFIGURE_CHECK = :
+HAVE_BINARY_TARBALL := $(shell ls -1 stage0-full/*/*$(DEB_HOST_RUST_TYPE)* 2>/dev/null | wc -l)
+DOWNLOAD_BOOTSTRAP := false
+ENABLE_LOCAL_RUST := 0
+# allow not using the binary tarball although it exists
+#ifneq (,$(filter $(DEB_HOST_ARCH), amd64 arm64 armhf i386 powerpc ppc64el s390x))
+#  HAVE_BINARY_TARBALL := 0
+#endif
+ifeq (0,$(HAVE_BINARY_TARBALL))
+    # Case A (Building from source): the extracted source tree does not include
+    # a bootstrapping tarball for the current architecture e.g. because the
+    # distro already has a rustc for this arch, or the uploader expects that
+    # this requirement be fulfilled in some other way.
+    #
+    # Case A-1: the builder did not select the "pkg.rustc.dlstage0" build profile.
+    # In this case, we use the distro's rustc - either the previous or current version.
+    ifeq (,$(findstring pkg.rustc.dlstage0,$(DEB_BUILD_PROFILES)))
+        ENABLE_LOCAL_RUST := 1
+        # Make it easier to test against a custom rustc
+        ifneq (,$(RUST_DESTDIR))
+        RUST_LIBRARY_PATH := $(RUST_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(RUST_DESTDIR)/usr/lib
+        LD_LIBRARY_PATH := $(if $(LD_LIBRARY_PATH),$(LD_LIBRARY_PATH):$(RUST_LIBRARY_PATH),$(RUST_LIBRARY_PATH))
+        export LD_LIBRARY_PATH
+        endif
+    #
+    # Case A-2: the builder selected the "dlstage0" build profile.
+    # In this case, the rust build scripts will download a stage0 into stage0/ and use that.
+    # We don't need to do anything specific in this build file, so this case is empty.
+    else
+        DOWNLOAD_BOOTSTRAP := true
+    endif
+else
+    # Case B (Bootstrapping a new distro): the extracted source tree does
+    # include a bootstrapping tarball for the current architecture; see the
+    # `source_orig-stage0` target below on how to build this.
+    #
+    # In this case, we'll bootstrap from the stage0 given in that tarball.
+    # To ensure the uploader of the .dsc didn't make a mistake, we first check
+    # that rustc isn't a Build-Depends for the current architecture.
+    ifneq (,$(shell $(SED_RUSTC_BUILDDEP)))
+    ifeq (,$(shell $(SED_RUSTC_BUILDDEP) | grep '!$(DEB_HOST_ARCH)'))
+        PRECONFIGURE_CHECK = $(error found matches for stage0/*/*$(DEB_HOST_RUST_TYPE)*, \
+          but rustc might be a Build-Depends for $(DEB_HOST_ARCH))
+    endif
+    endif
+endif
+
+BUILD_DOCS := true
+ifneq (,$(findstring nodoc,$(DEB_BUILD_PROFILES)))
+  BUILD_DOCS := false
+endif
+
+MAKE_OPTIMISATIONS := true
+ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
+  MAKE_OPTIMISATIONS := false
+endif
+
+# Build products or non-source files in src/, that shouldn't go in rust-src
+SRC_CLEAN = src/rt/hoedown/src/html_blocks.c \
+	src/bootstrap/bootstrap.pyc \
+	src/etc/__pycache__/
+
+# Workaround for linux #865549
+ifeq (0,$(shell test $$(uname -s) = "Linux" -a $$(getconf PAGESIZE) -gt 4096; echo $$?))
+  SYSTEM_WORKAROUNDS += ulimit -s $$(expr $$(getconf PAGESIZE) / 1024 '*' 256 + 8192);
+endif
+
+%:
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
+
+.PHONY: build
+build:
+	$(SYSTEM_WORKAROUNDS) dh $@ --parallel
+
+override_dh_clean:
+	rm -rf stage0
+
+	# Upstream contains a lot of these
+	dh_clean -XCargo.toml.orig
+
+debian/config.toml: debian/config.toml.in
+	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
+		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
+		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
+		-DRELEASE_CHANNEL="$(RELEASE_CHANNEL)" \
+		-DBUILD_DOCS="$(BUILD_DOCS)" \
+		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
+		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
+		-DLLVM_VERSION="$(LLVM_VERSION)" \
+		-DRUST_DESTDIR="$(RUST_DESTDIR)" \
+		"$<" > "$@"
+	! $(DOWNLOAD_BOOTSTRAP) || sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"
+	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
+	[ $(DEB_BUILD_ARCH) != armhf -a \
+	  $(DEB_BUILD_ARCH) != armel ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
+
+debian/rust-src.%: debian/rust-src.%.in
+	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \
+		"$<" > "$@"
+
+override_dh_auto_configure: debian/config.toml
+	-[ -d stage0-full ] && ln -s stage0-full stage0
+
+	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
+	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
+	$(PRECONFIGURE_CHECK)
+	if [ -d stage0 ]; then mkdir -p build && ln -sfT ../stage0 build/cache; fi
+	# work around #842634
+	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
+	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
+	# We patched mdbook so have to rm the checksums
+	debian/prune-checksums src/vendor/mdbook/.cargo-checksum.json
+	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
+	# compile it again for rust-installer, see #43449
+	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
+	debian/prune-checksums src/vendor/backtrace-sys/.cargo-checksum.json
+	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
+	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
+	debian/prune-checksums src/vendor/lzma-sys/.cargo-checksum.json
+	# We excluded some embedded libraries in d/copyright
+	debian/prune-checksums src/vendor/dbghelp-sys/.cargo-checksum.json
+	# We patched this for sparc64 support
+	debian/prune-checksums src/vendor/cc/.cargo-checksum.json
+	# We don't run ./configure because we use debian/config.toml directly
+	ln -sf debian/config.toml config.toml
+
+override_dh_auto_clean:
+	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
+	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links
+	$(RM) -rf $(SRC_CLEAN) config.toml src/vendor/backtrace-sys/src/libbacktrace
+
+# upstream bundles this in the source, but in Debian we rebuild everything yo
+generate-sources:
+	$(MAKE) -C src/rt/hoedown src/html_blocks.c
+
+override_dh_auto_build-arch: generate-sources
+	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
+
+# note: this is only for buildds that want to do a separate arch:all build;
+# there is no point running this yourself "to save time" since it implicitly
+# depends on build-arch anyways.
+override_dh_auto_build-indep: generate-sources
+ifeq (true,$(BUILD_DOCS))
+# Rust has a weird way of configuring whether to build docs or not
+	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
+	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
+endif
+
+TEST_LOG = debian/rustc-tests.log
+FAILURES_ALLOWED = 5
+ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
+  FAILURES_ALLOWED = 160
+endif
+FAILED_TESTS = grep FAILED $(TEST_LOG) | grep -v '^test result'
+override_dh_auto_test-arch:
+# ensure that rustc_llvm is actually dynamically linked to libLLVM
+	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
+	while read x; do \
+		stat -c '%s %n' "$$x"; \
+		objdump -p "$$x" | grep -q "NEEDED.*LLVM"; \
+		test "$$(stat -c %s "$$x")" -lt 6000000; \
+	done
+ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
+ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS) | tee $(TEST_LOG)
+	test -f $(TEST_LOG)
+	echo "Summary of specific test failures:"; \
+	$(FAILED_TESTS); \
+	num_failures=$$($(FAILED_TESTS) | wc -l); \
+	echo -n "$${num_failures} tests failed, $(FAILURES_ALLOWED) maximum allowed. "; \
+	if test "$${num_failures}" -le $(FAILURES_ALLOWED); then \
+	  echo "Continuing..."; \
+	else \
+	  echo "Aborting the build."; \
+	  echo "Check the logs further above for details."; \
+	  false; \
+	fi
+# don't continue if RUSTBUILD_TEST_FLAGS is non-empty
+	test -z "$(RUSTBUILD_TEST_FLAGS)"
+endif
+endif
+
+override_dh_auto_test-indep:
+ifeq (true,$(BUILD_DOCS))
+ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
+ifeq (, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	# Run all rules that test the docs, i.e. in step.rs that depend on default:doc
+	$(RUSTBUILD_TEST) --no-fail-fast src/tools/linkchecker $(RUSTBUILD_FLAGS)
+endif
+endif
+endif
+
+run_rustbuild:
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) $(X_CMD) $(RUSTBUILD_FLAGS) $(X_FLAGS)
+
+override_dh_auto_install:
+	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) install $(RUSTBUILD_FLAGS)
+
+	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
+	mv $(DEB_DESTDIR)/usr/lib/lib*.so $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
+
+	# Replace duplicated compile-time/run-time dylibs with symlinks
+	@set -e; \
+	for f in $(DEB_DESTDIR)/usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/lib*.so; do \
+	  name=$${f##*/}; \
+	  if [ -f "$(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/$$name" ]; then \
+	    echo "ln -sf ../../../$(DEB_HOST_MULTIARCH)/$$name $$f"; \
+	    ln -sf ../../../$(DEB_HOST_MULTIARCH)/$$name $$f; \
+	  fi; \
+	done
+
+ifeq (true,$(BUILD_DOCS))
+	# Brute force to remove privacy-breach-logo lintian warning.
+	# We could have updated the upstream sources but it would complexify
+	# the rebase
+	@set -e; \
+	find $(DEB_DESTDIR)/usr/share/doc/rust/html -iname '*.html' | \
+	while read file; do \
+	  topdir=$$(echo "$$file" | sed 's,^$(DEB_DESTDIR)/usr/share/doc/rust/html/,,; s,/[^/]*$$,/,; s,^[^/]*$$,,; s,[^/]\+/,../,g'); \
+	  sed -i -e "s,https://doc.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," \
+              -e "s,https://www.rust-lang.org/\(favicon.ico\|logos/rust-logo-32x32-blk.png\),$${topdir}rust-logo-32x32-blk.png," "$$file"; \
+	done
+	find $(DEB_DESTDIR) \( -iname '*.html' -empty -o -name .lock -o -name '*.inc' \) -delete;
+endif
+
+override_dh_install-arch:
+	dh_install
+	dh_install -p$(LIBSTD_PKG) usr/lib/$(DEB_HOST_MULTIARCH)/
+	dh_install -plibstd-rust-dev usr/lib/rustlib/$(DEB_HOST_RUST_TYPE)/lib/
+
+override_dh_install-indep: debian/rust-src.install debian/rust-src.links
+	dh_install
+	chmod -x \
+	  debian/rust-gdb/usr/share/rust-gdb/*.py \
+	  debian/rust-lldb/usr/share/rust-lldb/*.py
+	$(RM) -rf $(SRC_CLEAN:%=debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION)/%)
+	# Get rid of lintian warnings
+	find debian/rust-src/usr/src/rustc-$(RUST_LONG_VERSION) \
+		\( -name .gitignore \
+		-o -name 'LICENSE*' \
+		-o -name 'LICENCE' \
+		-o -name 'license' \
+		-o -name 'COPYING*' \
+		\) -delete
+	# Remove files that autoload remote resources, caught by lintian
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/cssparser/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/kuchiki/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/url/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
+
+override_dh_installchangelogs:
+	dh_missing --list-missing || true
+	dh_installchangelogs RELEASES.md
+
+override_dh_installdocs:
+	dh_installdocs -X.tex -X.aux -X.log -X.out -X.toc
+
+override_dh_compress:
+	dh_compress -X.woff
+
+override_dh_strip:
+	# Work around #35733, #468333
+	find debian/libstd-rust-dev/ -name '*.rlib' -execdir mv '{}' '{}.a' \;
+	# This is expected to print out lots of "File format unrecognized" warnings about
+	# rust.metadata.bin and *.deflate but the .o files inside the rlibs should be stripped
+	# Some files are still omitted because of #875780 however.
+	dh_strip -v
+	find debian/libstd-rust-dev/ -name '*.rlib.a' -execdir sh -c 'mv "$$1" "$${1%.a}"' - '{}' \;
+
+override_dh_makeshlibs:
+	dh_makeshlibs -V
+
+	# dh_makeshlibs doesn't support our "libfoo-version.so" naming
+	# structure, so we have to do this ourselves.
+	install -o 0 -g 0 -d debian/$(LIBSTD_PKG)/DEBIAN
+	LC_ALL=C ls debian/$(LIBSTD_PKG)/usr/lib/$(DEB_HOST_MULTIARCH)/lib*.so | \
+	sed -n 's,^.*/\(lib.*\)-\(.\+\)\.so$$,\1 \2,p' | \
+	while read name version; do \
+	  echo "$$name $$version $(LIBSTD_PKG) (>= $(DEB_VERSION_UPSTREAM))"; \
+	done > debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+	chmod 644 debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+	chown 0:0 debian/$(LIBSTD_PKG)/DEBIAN/shlibs
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- -x$(LIBSTD_PKG)
+
+QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE = x=$$?; if [ $$x = 2 ]; then exit 0; else exit $$x; fi
+source_orig-stage0:
+	QUILT_PATCHES=debian/patches quilt push -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	$(MAKE) -f debian/rules clean
+	debian/make_orig-stage0_tarball.sh
+	QUILT_PATCHES=debian/patches quilt pop -aq; $(QUILT_SPECIAL_SNOWFLAKE_RETURN_CODE)
+	rm -rf .pc
+
+debian/watch-beta: debian/watch-beta.in debian/rules
+	oldver=$(shell echo $(RUST_LONG_VERSION) | sed -e 's/\./\\./g'); \
+	newver=$(shell echo $(RUST_VERSION) | perl -lpe 's/(\d+)\.(\d+)/$$1 . "." . ($$2+1)/e'); \
+	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
+
+source_orig-beta: debian/watch-beta
+	uscan $(USCAN_OPTS) --watchfile "$<"

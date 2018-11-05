@@ -1,0 +1,204 @@
+Test failures
+=============
+
+Starting from version 1.20.0+dfsg1-1 the Debian packages of rustc no longer
+fail the overall build if > 0 tests fail. Instead, we allow up to 5 tests to
+fail. In other words, if you're reading this in a binary package, between 0 and
+5 tests might have failed when building this.
+
+This is due to lack of maintainer time to investigate all failures. Many
+previous test failures were reported to upstream and did not receive a timely
+response, suggesting the failures were not important. I was then forced to
+patch out the test to make the build proceed, so several tests were being
+ignored in practise anyway.
+
+This brings the Debian package in line with the Fedora package which also
+ignores all test failures. (Many other distributions don't run tests at all.)
+
+If you think that the Debian rustc package is miscompiling your program in a
+way that the upstream distributed compiler doesn't, you may check the test
+failures here:
+
+https://buildd.debian.org/status/package.php?p=rustc
+
+If you can identify a relevant test failure, as well as the patches needed to
+fix it (either to rustc or LLVM), this will speed up the processing of any bug
+reports on the Debian side.
+
+We will also examine these failures ourselves on a best-effort basis and
+attempt to fix the more serious-looking ones.
+
+Ports architectures
+-------------------
+
+The number of allowed test failures on certain Debian ports architectures
+(currently powerpc, powerpcspe, sparc64, x32) is raised greatly to help unblock
+progress for porters. Of course, as a user this means you may run into more
+bugs than usual; as mentioned above bugs reports and patches are welcome.
+
+
+Shared libraries
+================
+
+For now, the shared libraries of Rust are private.
+The rational is the following:
+ * Upstream prefers static linking for now
+   - https://github.com/rust-lang/rust/issues/10209
+ * rust is still under heavy development. As far as we know, there is
+   no commitement from upstream to provide a stable ABI for now.
+   Until we know more, we cannot take the chance to have Rust-built packages
+   failing at each release of the compiler.
+ * Static builds are working out of the box just fine
+ * However, LD_LIBRARY_PATH has to be updated when -C prefer-dynamic is used
+
+ -- Sylvestre Ledru <sylvestre@debian.org>, Fri, 13 Feb 2015 15:08:43 +0100
+
+
+Architecture-specific notes
+===========================
+
+armhf
+-----
+
+We only ship debuginfo for libstd and not the compiler itself, otherwise builds
+run out of memory on the Debian buildds, with non-obvious and random errors.
+
+See https://github.com/rust-lang/rust/issues/45854 for details.
+
+If all your armhf build machines have ~8GB memory or more, you can experiment
+with disabling this work-around (i.e. revert to normal) in d/rules.
+
+
+Cross-compiling
+===============
+
+Rust uses LLVM, so cross-compiling works a bit differently from the GNU
+toolchain. The most important difference is that there are no "cross"
+compilers, every compiler is already a cross compiler. All you need to do is
+install the standard libraries for each target architecture you want to compile
+to. For rustc, this is libstd-rust-dev, so your debian/control would look
+something like this:
+
+    Build-Depends:
+     [..]
+     rustc:native    (>= $version),
+     libstd-rust-dev (>= $version),
+     [..]
+
+You need both, this is important. When Debian build toolchains satisfy the
+build-depends of a cross-build, (1) a "rustc:native" Build-Depends selects
+rustc for the native architecture, which is possible because it's "Multi-Arch:
+allowed", and this will implicitly pull in libstd-rust-dev also for the native
+architecture; and (2) a "libstd-rust-dev" Build-Depends implies libstd-rust-dev
+for the foreign architecture, since it's "Multi-Arch: same".
+
+You'll probably also want to add
+
+    include /usr/share/rustc/architecture.mk
+
+to your debian/rules. This sets some useful variables like DEB_HOST_RUST_TYPE.
+
+See the cargo package for an example.
+
+Terminology
+-----------
+
+The rust ecosystem generally uses the term "host" for the native architecture
+running the compiler, equivalent to DEB_BUILD_RUST_TYPE or "build" in GNU
+terminology, and "target" for the foreign architecture that the build products
+run on, equivalent to DEB_HOST_RUST_TYPE or "host" in GNU terminology. For
+example, rustc --version --verbose will output something like:
+
+    rustc 1.16.0
+    [..]
+    host: x86_64-unknown-linux-gnu
+
+And both rustc and cargo have --target flags:
+
+    $ rustc --help | grep '\-\-target'
+        --target TARGET     Target triple for which the code is compiled
+    $ cargo build --help | grep '\-\-target'
+        --target TRIPLE              Build for the target triple
+
+One major exception to this naming scheme is in CERTAIN PARTS OF the build
+scripts of cargo and rustc themselves, such as the `./configure` scripts and
+SOME PARTS of the `config.toml` files. Here, "build", "host" and "target" mean
+the same things they do in GNU toolchain terminology. However, IN OTHER PARTS
+OF the build scripts of cargo and rustc, as well as cargo and rustc's own
+output and logging messages, the term "host" and "target" mean as they do in
+the previous paragraph. Yes, it's a total mind fuck. :( Table for clarity:
+
+======================================= =============== ========================
+                                        Rust ecosystem, Some parts of the rustc
+GNU term / Debian envvar                rustc and cargo and cargo build scripts
+======================================= =============== ========================
+build   DEB_BUILD_{ARCH,RUST_TYPE}      host            build
+  the machine running the build
+--------------------------------------- --------------- ------------------------
+host    DEB_HOST_{ARCH,RUST_TYPE}       target          host(s)
+  the machine the build products run on
+--------------------------------------- --------------- ------------------------
+only relevant when building a compiler
+target  DEB_TARGET_{ARCH,RUST_TYPE}     N/A             target(s)
+  the one architecture that the built                     extra architectures
+  cross-compiler itself builds for                        to build "std" for
+--------------------------------------- --------------- ------------------------
+
+
+Porting to new architectures (on the same distro)
+=================================================
+
+As mentioned above, to cross-compile rust packages you need to install the rust
+standard library for each relevant foreign architecture. However, this is not
+needed when cross-compiling rustc itself; its build system will build any
+relevant foreign-architecture standard libraries automatically.
+
+Cross-build, in a schroot using sbuild
+--------------------------------------
+
+0. Set up an schroot for your native architecture, for sbuild:
+
+    sudo apt-get install sbuild
+    sudo sbuild-adduser $LOGNAME
+    newgrp sbuild # or log out and log back in
+    sudo sbuild-createchroot --include=eatmydata,ccache,gnupg unstable \
+      /srv/chroot/unstable-$(dpkg-architecture -qDEB_BUILD_ARCH)-sbuild \
+      http://deb.debian.org/debian
+
+   See https://wiki.debian.org/sbuild for more details.
+
+1. Build it:
+
+    sudo apt-get source --download-only rustc
+    sbuild --host=$new_arch rustc_*.dsc
+
+Cross-build, directly on your own system
+----------------------------------------
+
+0. Install the build-dependencies of rustc (including cargo and itself):
+
+    sudo dpkg --add-architecture $new_arch
+    sudo apt-get --no-install-recommends build-dep --host-architecture=$new_arch rustc
+
+1. Build it:
+
+    apt-get source --compile --host-architecture=$new_arch rustc
+
+Native-build using bundled upstream binary blobs
+------------------------------------------------
+
+Use the same instructions as given in "Bootstrapping" in debian/README.source
+in the source package, making sure to set the relevant architectures.
+
+Responsible distribution of cross-built binaries
+------------------------------------------------
+
+By nature, cross-builds do not run tests. These are important for rustc and
+many tests often fail on newly-supported architectures even if builds and
+cross-builds work fine. You should find some appropriate way to test your
+cross-built packages rather than blindly shipping them to users.
+
+For example, Debian experimental is an appropriate place to upload them, so
+that they can be installed and tested on Debian porter boxes, before being
+uploaded to unstable and distributed to users.
+
