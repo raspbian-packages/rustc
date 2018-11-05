@@ -50,7 +50,7 @@ fn classify_ret_ty<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, ret: &mut ArgType<'tc
     }
     let size = ret.layout.size;
     let bits = size.bits();
-    if bits <= 128 {
+    if bits <= 256 {
         let unit = if bits <= 8 {
             Reg::i8()
         } else if bits <= 16 {
@@ -84,6 +84,10 @@ fn classify_arg_ty<'a, 'tcx>(ccx: &CrateContext<'a, 'tcx>, arg: &mut ArgType<'tc
     }
 
     let total = arg.layout.size;
+    if total.bits() > 128 {
+       arg.make_indirect();
+       return;
+    }
     arg.cast_to(Uniform {
         unit: Reg::i64(),
         total
