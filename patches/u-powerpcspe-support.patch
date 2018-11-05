@@ -1,0 +1,95 @@
+diff -Nru rustc-1.24.0+dfsg1.orig/src/bootstrap/native.rs rustc-1.24.0+dfsg1/src/bootstrap/native.rs
+--- rustc-1.24.0+dfsg1.orig/src/bootstrap/native.rs	2018-02-12 19:51:18.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/bootstrap/native.rs	2018-02-26 16:10:36.018558904 +0100
+@@ -440,6 +440,7 @@
+             "mips64el-unknown-linux-gnuabi64" => "linux64-mips64",
+             "mipsel-unknown-linux-gnu" => "linux-mips32",
+             "powerpc-unknown-linux-gnu" => "linux-ppc",
++            "powerpc-unknown-linux-gnuspe" => "linux-ppc",
+             "powerpc64-unknown-linux-gnu" => "linux-ppc64",
+             "powerpc64le-unknown-linux-gnu" => "linux-ppc64le",
+             "s390x-unknown-linux-gnu" => "linux64-s390x",
+diff -Nru rustc-1.24.0+dfsg1.orig/src/librustc_back/target/mod.rs rustc-1.24.0+dfsg1/src/librustc_back/target/mod.rs
+--- rustc-1.24.0+dfsg1.orig/src/librustc_back/target/mod.rs	2018-02-12 19:51:18.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/librustc_back/target/mod.rs	2018-02-26 16:10:39.178562446 +0100
+@@ -144,6 +144,7 @@
+     ("mips64el-unknown-linux-gnuabi64", mips64el_unknown_linux_gnuabi64),
+     ("mipsel-unknown-linux-gnu", mipsel_unknown_linux_gnu),
+     ("powerpc-unknown-linux-gnu", powerpc_unknown_linux_gnu),
++    ("powerpc-unknown-linux-gnuspe", powerpc_unknown_linux_gnuspe),
+     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
+     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
+     ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
+diff -Nru rustc-1.24.0+dfsg1.orig/src/librustc_back/target/powerpc_unknown_linux_gnuspe.rs rustc-1.24.0+dfsg1/src/librustc_back/target/powerpc_unknown_linux_gnuspe.rs
+--- rustc-1.24.0+dfsg1.orig/src/librustc_back/target/powerpc_unknown_linux_gnuspe.rs	1970-01-01 01:00:00.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/librustc_back/target/powerpc_unknown_linux_gnuspe.rs	2018-02-26 16:10:39.178562446 +0100
+@@ -0,0 +1,35 @@
++// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
++// file at the top-level directory of this distribution and at
++// http://rust-lang.org/COPYRIGHT.
++//
++// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
++// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
++// option. This file may not be copied, modified, or distributed
++// except according to those terms.
++
++use LinkerFlavor;
++use target::{Target, TargetResult};
++
++pub fn target() -> TargetResult {
++    let mut base = super::linux_base::opts();
++    base.pre_link_args.get_mut(&LinkerFlavor::Gcc).unwrap().push("-mspe".to_string());
++    base.max_atomic_width = Some(32);
++
++    // see #36994
++    base.exe_allocation_crate = None;
++
++    Ok(Target {
++        llvm_target: "powerpc-unknown-linux-gnuspe".to_string(),
++        target_endian: "big".to_string(),
++        target_pointer_width: "32".to_string(),
++        target_c_int_width: "32".to_string(),
++        data_layout: "E-m:e-p:32:32-i64:64-n32".to_string(),
++        arch: "powerpc".to_string(),
++        target_os: "linux".to_string(),
++        target_env: "gnu".to_string(),
++        target_vendor: "unknown".to_string(),
++        linker_flavor: LinkerFlavor::Gcc,
++        options: base,
++    })
++}
+diff -Nru rustc-1.24.0+dfsg1.orig/src/test/run-make/atomic-lock-free/Makefile rustc-1.24.0+dfsg1/src/test/run-make/atomic-lock-free/Makefile
+--- rustc-1.24.0+dfsg1.orig/src/test/run-make/atomic-lock-free/Makefile	2018-02-15 22:24:54.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/test/run-make/atomic-lock-free/Makefile	2018-02-26 16:10:45.258569263 +0100
+@@ -32,6 +32,8 @@
+ ifeq ($(filter powerpc,$(LLVM_COMPONENTS)),powerpc)
+ 	$(RUSTC) --target=powerpc-unknown-linux-gnu atomic_lock_free.rs
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
++	$(RUSTC) --target=powerpc-unknown-linux-gnuspe atomic_lock_free.rs
++	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+ 	$(RUSTC) --target=powerpc64-unknown-linux-gnu atomic_lock_free.rs
+ 	nm "$(TMPDIR)/libatomic_lock_free.rlib" | $(CGREP) -v __atomic_fetch_add
+ 	$(RUSTC) --target=powerpc64le-unknown-linux-gnu atomic_lock_free.rs
+diff -Nru rustc-1.24.0+dfsg1.orig/src/tools/build-manifest/src/main.rs rustc-1.24.0+dfsg1/src/tools/build-manifest/src/main.rs
+--- rustc-1.24.0+dfsg1.orig/src/tools/build-manifest/src/main.rs	2018-02-12 19:51:19.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/tools/build-manifest/src/main.rs	2018-02-26 16:10:42.178565811 +0100
+@@ -82,6 +82,7 @@
+     "mipsel-unknown-linux-gnu",
+     "mipsel-unknown-linux-musl",
+     "powerpc-unknown-linux-gnu",
++    "powerpc-unknown-linux-gnuspe",
+     "powerpc64-unknown-linux-gnu",
+     "powerpc64le-unknown-linux-gnu",
+     "s390x-unknown-linux-gnu",
+diff -Nru rustc-1.24.0+dfsg1.orig/src/vendor/cc/src/lib.rs rustc-1.24.0+dfsg1/src/vendor/cc/src/lib.rs
+--- rustc-1.24.0+dfsg1.orig/src/vendor/cc/src/lib.rs	2018-02-12 21:28:22.000000000 +0100
++++ rustc-1.24.0+dfsg1/src/vendor/cc/src/lib.rs	2018-02-26 16:11:11.754599023 +0100
+@@ -1433,6 +1433,7 @@
+                         "mips64-unknown-linux-gnuabi64" => Some("mips64-linux-gnuabi64"),
+                         "mips64el-unknown-linux-gnuabi64" => Some("mips64el-linux-gnuabi64"),
+                         "powerpc-unknown-linux-gnu" => Some("powerpc-linux-gnu"),
++                        "powerpc-unknown-linux-gnuspe" => Some("powerpc-linux-gnuspe"),
+                         "powerpc-unknown-netbsd" => Some("powerpc--netbsd"),
+                         "powerpc64-unknown-linux-gnu" => Some("powerpc-linux-gnu"),
+                         "powerpc64le-unknown-linux-gnu" => Some("powerpc64le-linux-gnu"),
