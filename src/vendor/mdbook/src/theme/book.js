@@ -7,7 +7,7 @@ $( document ).ready(function() {
     window.onunload = function(){};
 
     // Set theme
-    var theme = store.get('mdbook-theme');
+    var theme;
     if (theme === null || theme === undefined) { theme = 'light'; }
 
     set_theme(theme);
@@ -145,8 +145,6 @@ $( document ).ready(function() {
             });
         }
 
-        store.set('mdbook-theme', theme);
-
         $('body').removeClass().addClass(theme);
     }
 
@@ -229,21 +227,6 @@ $( document ).ready(function() {
             editor.setValue(editor.originalCode);
             editor.clearSelection();
         });
-    });
-
-    var clipboardSnippets = new Clipboard('.clip-button', {
-        text: function(trigger) {
-            hideTooltip(trigger);
-            let playpen = $(trigger).parents(".playpen");
-            return playpen_text(playpen);
-        }
-    });
-    clipboardSnippets.on('success', function(e) {
-            e.clearSelection();
-            showTooltip(e.trigger, "Copied!");
-    });
-    clipboardSnippets.on('error', function(e) {
-            showTooltip(e.trigger, "Clipboard error!");
     });
 
     $.ajax({
@@ -336,17 +319,13 @@ function sidebarToggle() {
     var html = $("html");
     if ( html.hasClass("sidebar-hidden") ) {
         html.removeClass("sidebar-hidden").addClass("sidebar-visible");
-        store.set('mdbook-sidebar', 'visible');
     } else if ( html.hasClass("sidebar-visible") ) {
         html.removeClass("sidebar-visible").addClass("sidebar-hidden");
-        store.set('mdbook-sidebar', 'hidden');
     } else {
         if($("#sidebar").position().left === 0){
             html.addClass("sidebar-hidden");
-            store.set('mdbook-sidebar', 'hidden');
         } else {
             html.addClass("sidebar-visible");
-            store.set('mdbook-sidebar', 'visible');
         }
     }
 }
