@@ -1,0 +1,44 @@
+# Patches for upstream
+
+# pending, or forwarded
+u-sparc64-detection.patch
+u-fix-sparc64-cabi.patch
+u-powerpcspe-support.patch
+u-gperf-3.1.patch
+u-reproducible-build.patch
+# -- stolen from fedora:
+u-0001-Ignore-run-pass-sse2-when-using-system-LLVM.patch
+u-0002-Use-a-range-to-identify-SIGSEGV-in-stack-guards.patch
+u-rust-pr46592-bootstrap-libdir.patch
+u-rust-pr48362-libdir-relative.patch
+# -- ^^ https://src.fedoraproject.org/cgit/rpms/rust.git/tree/
+u-ignoretest-armhf_01.patch
+u-ignoretest-armhf_02.patch
+u-ignoretest-armhf_03.patch
+u-ignoretest-armhf_05.patch
+u-ignoretest-armhf_06.patch
+u-ignoretest-arm64.patch
+u-ignoretest-ppc64el.patch
+u-ignoretest-ppc64el_02.patch
+u-prefer-local-css.patch
+u-make-tests-work-without-rpath.patch
+
+# not forwarded, or forwarded but unlikely to be merged
+u-reproducible-dl-stage0.patch
+
+gcc-4.8-aarch64-ice.diff
+
+# Debian-specific patches, not suitable for upstream
+d-disable-cargo-vendor.patch
+d-rust-gdb-paths
+d-rust-lldb-paths
+d-add-soname.patch
+d-dont-download-stage0.patch
+d-no-web-dependencies-in-doc.patch
+d-ignore-removed-submodules.patch
+
+d-armel-disable-kernel-helpers.patch
+
+# Work around for some porterboxes, keep this commented
+#d-host-duplicates.patch
+i686-baseline.patch
