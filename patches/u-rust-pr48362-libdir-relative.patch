@@ -1,0 +1,64 @@
+diff --git a/src/bootstrap/builder.rs b/src/bootstrap/builder.rs
+index 66a1c9724620..fcb78c479fa2 100644
+--- a/src/bootstrap/builder.rs
++++ b/src/bootstrap/builder.rs
+@@ -444,10 +444,11 @@ impl<'a> Builder<'a> {
+ 
+             fn run(self, builder: &Builder) -> Interned<PathBuf> {
+                 let compiler = self.compiler;
+-                let lib = if compiler.stage >= 1 && builder.build.config.libdir.is_some() {
+-                    builder.build.config.libdir.clone().unwrap()
++                let config = &builder.build.config;
++                let lib = if compiler.stage >= 1 && config.libdir_relative().is_some() {
++                    builder.build.config.libdir_relative().unwrap()
+                 } else {
+-                    PathBuf::from("lib")
++                    Path::new("lib")
+                 };
+                 let sysroot = builder.sysroot(self.compiler).join(lib)
+                     .join("rustlib").join(self.target).join("lib");
+diff --git a/src/bootstrap/compile.rs b/src/bootstrap/compile.rs
+index 2dcc0e0e7cd9..c85b04ddc024 100644
+--- a/src/bootstrap/compile.rs
++++ b/src/bootstrap/compile.rs
+@@ -516,8 +516,7 @@ fn rustc_cargo_env(build: &Build, cargo: &mut Command) {
+          .env("CFG_VERSION", build.rust_version())
+          .env("CFG_PREFIX", build.config.prefix.clone().unwrap_or_default());
+ 
+-    let libdir_relative =
+-        build.config.libdir.clone().unwrap_or(PathBuf::from("lib"));
++    let libdir_relative = build.config.libdir_relative().unwrap_or(Path::new("lib"));
+     cargo.env("CFG_LIBDIR_RELATIVE", libdir_relative);
+ 
+     // If we're not building a compiler with debugging information then remove
+diff --git a/src/bootstrap/config.rs b/src/bootstrap/config.rs
+index 812ca6d64fb6..3cf8f36df25e 100644
+--- a/src/bootstrap/config.rs
++++ b/src/bootstrap/config.rs
+@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
+ use std::env;
+ use std::fs::File;
+ use std::io::prelude::*;
+-use std::path::PathBuf;
++use std::path::{Path, PathBuf};
+ use std::process;
+ use std::cmp;
+ 
+@@ -564,6 +564,17 @@ impl Config {
+         config
+     }
+ 
++    /// Try to find the relative path of `libdir`.
++    pub fn libdir_relative(&self) -> Option<&Path> {
++        let libdir = self.libdir.as_ref()?;
++        if libdir.is_relative() {
++            Some(libdir)
++        } else {
++            // Try to make it relative to the prefix.
++            libdir.strip_prefix(self.prefix.as_ref()?).ok()
++        }
++    }
++
+     pub fn verbose(&self) -> bool {
+         self.verbose > 0
+     }

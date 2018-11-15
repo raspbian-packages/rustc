@@ -1,0 +1,27 @@
+From ebca82f1fc8103830727bda970468ca8eae55d82 Mon Sep 17 00:00:00 2001
+From: Josh Stone <jistone@redhat.com>
+Date: Tue, 30 Jan 2018 10:18:54 -0800
+Subject: [PATCH] Ignore run-pass/sse2 when using system LLVM
+
+This is a test of `target_feature`, which needs a rust-specific patch to
+LLVM to add `MCSubtargetInfo::getFeatureTable()`.
+---
+ src/test/run-pass/sse2.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/test/run-pass/sse2.rs b/src/test/run-pass/sse2.rs
+index c27f83011cb1..858a53cb3836 100644
+--- a/src/test/run-pass/sse2.rs
++++ b/src/test/run-pass/sse2.rs
+@@ -7,7 +7,7 @@
+ // <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+ // option. This file may not be copied, modified, or distributed
+ // except according to those terms.
+-// min-llvm-version 4.0
++// no-system-llvm -- needs MCSubtargetInfo::getFeatureTable()
+ 
+ #![feature(cfg_target_feature)]
+ 
+-- 
+2.14.3
+
