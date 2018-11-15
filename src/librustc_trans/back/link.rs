@@ -1015,6 +1015,13 @@ fn link_args(cmd: &mut Linker,
         cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
     }
 
+    if (crate_type == config::CrateTypeDylib || crate_type == config::CrateTypeCdylib)
+       && t.options.linker_is_gnu {
+        let filename = String::from(out_filename.file_name().unwrap().to_str().unwrap());
+        let soname = [String::from("-Wl,-soname=") + &filename];
+        cmd.args(&soname);
+    }
+
     // Finally add all the linker arguments provided on the command line along
     // with any #[link_args] attributes found inside the crate
     if let Some(ref args) = sess.opts.cg.link_args {
