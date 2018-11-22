@@ -13,14 +13,16 @@
 
 #![no_std]
 #![crate_type = "staticlib"]
-#![feature(panic_implementation, lang_items, alloc)]
+#![feature(panic_implementation, alloc_error_handler, alloc)]
 
 #[panic_implementation]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
 }
 
-#[lang = "oom"]
-fn oom() {}
+#[alloc_error_handler]
+fn oom(_: core::alloc::Layout) -> ! {
+    loop {}
+}
 
 extern crate alloc;

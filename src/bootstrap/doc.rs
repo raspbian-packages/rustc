@@ -28,7 +28,7 @@ use build_helper::up_to_date;
 
 use util::symlink_dir;
 use builder::{Builder, Compiler, RunConfig, ShouldRun, Step};
-use tool::{self, prepare_tool_cargo, Tool};
+use tool::{self, prepare_tool_cargo, Tool, SourceType};
 use compile;
 use cache::{INTERNER, Interned};
 use config::Config;
@@ -686,7 +686,7 @@ impl Step for Rustc {
         };
 
         if !builder.config.compiler_docs {
-            builder.info(&format!("\tskipping - compiler/librustdoc docs disabled"));
+            builder.info("\tskipping - compiler/librustdoc docs disabled");
             return;
         }
 
@@ -788,7 +788,7 @@ impl Step for Rustdoc {
         };
 
         if !builder.config.compiler_docs {
-            builder.info(&format!("\tskipping - compiler/librustdoc docs disabled"));
+            builder.info("\tskipping - compiler/librustdoc docs disabled");
             return;
         }
 
@@ -799,14 +799,23 @@ impl Step for Rustdoc {
         builder.ensure(tool::Rustdoc { host: compiler.host });
 
         // Symlink compiler docs to the output directory of rustdoc documentation.
-        let out_dir = builder.stage_out(compiler, Mode::ToolRustc).join(target).join("doc");
+        let out_dir = builder.stage_out(compiler, Mode::ToolRustc)
+            .join(target)
+            .join("doc");
         t!(fs::create_dir_all(&out_dir));
         builder.clear_if_dirty(&out, &rustdoc);
         t!(symlink_dir_force(&builder.config, &out, &out_dir));
 
         // Build cargo command.
         let mut cargo = prepare_tool_cargo(
-            builder, compiler, Mode::ToolRustc, target, "doc", "src/tools/rustdoc");
+            builder,
+            compiler,
+            Mode::ToolRustc,
+            target,
+            "doc",
+            "src/tools/rustdoc",
+            SourceType::InTree,
+        );
 
         cargo.env("RUSTDOCFLAGS", "--document-private-items");
         builder.run(&mut cargo);

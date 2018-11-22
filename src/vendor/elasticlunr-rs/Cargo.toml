@@ -12,7 +12,7 @@
 
 [package]
 name = "elasticlunr-rs"
-version = "2.2.0"
+version = "2.3.3"
 authors = ["Matt Ickstadt <mattico8@gmail.com>"]
 exclude = ["tests/lunr-fixture-gen/**"]
 description = "A partial port of elasticlunr.js to Rust"
@@ -28,7 +28,7 @@ name = "elasticlunr"
 version = "1"
 
 [dependencies.regex]
-version = "0.2.7"
+version = "1"
 
 [dependencies.rust-stemmers]
 version = "1"

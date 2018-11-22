@@ -22,7 +22,7 @@ use builder::Builder;
 use common::{CodegenCx, Funclet};
 use debuginfo::{self, declare_local, VariableAccess, VariableKind, FunctionDebugContext};
 use monomorphize::Instance;
-use abi::{ArgAttribute, ArgTypeExt, FnType, FnTypeExt, PassMode};
+use abi::{ArgTypeExt, FnType, FnTypeExt, PassMode};
 use type_::Type;
 
 use syntax_pos::{DUMMY_SP, NO_EXPANSION, BytePos, Span};
@@ -268,7 +268,7 @@ pub fn codegen_mir<'a, 'tcx: 'a>(
                 let debug_scope = fx.scopes[decl.visibility_scope];
                 let dbg = debug_scope.is_valid() && bx.sess().opts.debuginfo == FullDebugInfo;
 
-                if !memory_locals.contains(local.index()) && !dbg {
+                if !memory_locals.contains(local) && !dbg {
                     debug!("alloc: {:?} ({}) -> operand", local, name);
                     return LocalRef::new_operand(bx.cx, layout);
                 }
@@ -291,7 +291,7 @@ pub fn codegen_mir<'a, 'tcx: 'a>(
                     debug!("alloc: {:?} (return place) -> place", local);
                     let llretptr = llvm::get_param(llfn, 0);
                     LocalRef::Place(PlaceRef::new_sized(llretptr, layout, layout.align))
-                } else if memory_locals.contains(local.index()) {
+                } else if memory_locals.contains(local) {
                     debug!("alloc: {:?} -> place", local);
                     LocalRef::Place(PlaceRef::alloca(&bx, layout, &format!("{:?}", local)))
                 } else {
@@ -415,7 +415,7 @@ fn create_funclets<'a, 'tcx>(
 fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
                             fx: &FunctionCx<'a, 'tcx>,
                             scopes: &IndexVec<mir::SourceScope, debuginfo::MirDebugScope>,
-                            memory_locals: &BitVector)
+                            memory_locals: &BitVector<mir::Local>)
                             -> Vec<LocalRef<'tcx>> {
     let mir = fx.mir;
     let tcx = bx.tcx();
@@ -428,10 +428,6 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
         Some(arg_scope.scope_metadata)
     } else {
         None
-    };
-
-    let deref_op = unsafe {
-        [llvm::LLVMRustDIBuilderCreateOpDeref()]
     };
 
     mir.args_iter().enumerate().map(|(arg_index, local)| {
@@ -491,7 +487,7 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
             llarg_idx += 1;
         }
 
-        if arg_scope.is_none() && !memory_locals.contains(local.index()) {
+        if arg_scope.is_none() && !memory_locals.contains(local) {
             // We don't have to cast or keep the argument in the alloca.
             // FIXME(eddyb): We should figure out how to use llvm.dbg.value instead
             // of putting everything in allocas just so we can use llvm.dbg.declare.
@@ -543,21 +539,11 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
             if arg_index > 0 || mir.upvar_decls.is_empty() {
                 // The Rust ABI passes indirect variables using a pointer and a manual copy, so we
                 // need to insert a deref here, but the C ABI uses a pointer and a copy using the
-                // byval attribute, for which LLVM does the deref itself, so we must not add it.
-                // Starting with D31439 in LLVM 5, it *always* does the deref itself.
-                let mut variable_access = VariableAccess::DirectVariable {
+                // byval attribute, for which LLVM always does the deref itself,
+                // so we must not add it.
+                let variable_access = VariableAccess::DirectVariable {
                     alloca: place.llval
                 };
-                if unsafe { llvm::LLVMRustVersionMajor() < 5 } {
-                    if let PassMode::Indirect(ref attrs) = arg.mode {
-                        if !attrs.contains(ArgAttribute::ByVal) {
-                            variable_access = VariableAccess::IndirectVariable {
-                                alloca: place.llval,
-                                address_operations: &deref_op,
-                            };
-                        }
-                    }
-                }
 
                 declare_local(
                     bx,
@@ -586,6 +572,25 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
             };
             let upvar_tys = upvar_substs.upvar_tys(def_id, tcx);
 
+            // Store the pointer to closure data in an alloca for debuginfo
+            // because that's what the llvm.dbg.declare intrinsic expects.
+
+            // FIXME(eddyb) this shouldn't be necessary but SROA seems to
+            // mishandle DW_OP_plus not preceded by DW_OP_deref, i.e. it
+            // doesn't actually strip the offset when splitting the closure
+            // environment into its components so it ends up out of bounds.
+            // (cuviper) It seems to be fine without the alloca on LLVM 6 and later.
+            let env_alloca = !env_ref && unsafe { llvm::LLVMRustVersionMajor() < 6 };
+            let env_ptr = if env_alloca {
+                let scratch = PlaceRef::alloca(bx,
+                    bx.cx.layout_of(tcx.mk_mut_ptr(arg.layout.ty)),
+                    "__debuginfo_env_ptr");
+                bx.store(place.llval, scratch.llval, scratch.align);
+                scratch.llval
+            } else {
+                place.llval
+            };
+
             for (i, (decl, ty)) in mir.upvar_decls.iter().zip(upvar_tys).enumerate() {
                 let byte_offset_of_var_in_env = closure_layout.fields.offset(i).bytes();
 
@@ -597,7 +602,10 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
                 };
 
                 // The environment and the capture can each be indirect.
-                let mut ops = if env_ref { &ops[..] } else { &ops[1..] };
+
+                // FIXME(eddyb) see above why we sometimes have to keep
+                // a pointer in an alloca for debuginfo atm.
+                let mut ops = if env_ref || env_alloca { &ops[..] } else { &ops[1..] };
 
                 let ty = if let (true, &ty::TyRef(_, ty, _)) = (decl.by_ref, &ty.sty) {
                     ty
@@ -607,7 +615,7 @@ fn arg_local_refs<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
                 };
 
                 let variable_access = VariableAccess::IndirectVariable {
-                    alloca: place.llval,
+                    alloca: env_ptr,
                     address_operations: &ops
                 };
                 declare_local(

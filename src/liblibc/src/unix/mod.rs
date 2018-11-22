@@ -268,6 +268,14 @@ pub const INADDR_ANY: in_addr_t = 0;
 pub const INADDR_BROADCAST: in_addr_t = 4294967295;
 pub const INADDR_NONE: in_addr_t = 4294967295;
 
+pub const ARPOP_REQUEST: u16 = 1;
+pub const ARPOP_REPLY: u16 = 2;
+
+pub const ATF_COM: ::c_int = 0x02;
+pub const ATF_PERM: ::c_int = 0x04;
+pub const ATF_PUBL: ::c_int = 0x08;
+pub const ATF_USETRAILERS: ::c_int = 0x10;
+
 cfg_if! {
     if #[cfg(cross_platform_docs)] {
         // on dox builds don't pull in anything
@@ -416,6 +424,13 @@ extern {
                link_name = "opendir$INODE64$UNIX2003")]
     #[cfg_attr(target_os = "netbsd", link_name = "__opendir30")]
     pub fn opendir(dirname: *const c_char) -> *mut ::DIR;
+
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86_64"),
+               link_name = "fdopendir$INODE64")]
+    #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
+               link_name = "fdopendir$INODE64$UNIX2003")]
+    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
+
     #[cfg_attr(target_os = "macos", link_name = "readdir$INODE64")]
     #[cfg_attr(target_os = "netbsd", link_name = "__readdir30")]
     #[cfg_attr(target_os = "freebsd", link_name = "readdir@FBSD_1.0")]

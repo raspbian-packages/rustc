@@ -1,11 +1,11 @@
-use std::iter::Peekable;
-use std::convert::From;
 use std::collections::{BTreeMap, VecDeque};
+use std::convert::From;
+use std::iter::Peekable;
 
-use pest::{Parser, Position};
-use pest::Error as PestError;
-use pest::iterators::FlatPairs;
 use grammar::{HandlebarsParser, Rule};
+use pest::iterators::Pair;
+use pest::Error as PestError;
+use pest::{Parser, Position};
 
 use serde_json::value::Value as Json;
 use std::str::FromStr;
@@ -129,10 +129,6 @@ impl Template {
         }
     }
 
-    fn unescape_tags(txt: &str) -> String {
-        txt.replace(r"\\{{", "{{")
-    }
-
     fn push_element(&mut self, e: TemplateElement, line: usize, col: usize) {
         self.elements.push(e);
         if let Some(ref mut maps) = self.mapping {
@@ -145,11 +141,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_subexpression<'a>(
+    fn parse_subexpression<'a, I>(
         source: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         limit: usize,
-    ) -> Result<Parameter, TemplateError> {
+    ) -> Result<Parameter, TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let espec = try!(Template::parse_expression(source, it.by_ref(), limit));
         if let Parameter::Name(name) = espec.name {
             Ok(Parameter::Subexpression(Subexpression {
@@ -164,11 +163,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_name<'a>(
+    fn parse_name<'a, I>(
         source: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         _: usize,
-    ) -> Result<Parameter, TemplateError> {
+    ) -> Result<Parameter, TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let name_node = it.next().unwrap();
         let rule = name_node.as_rule();
         let name_span = name_node.into_span();
@@ -184,11 +186,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_param<'a>(
+    fn parse_param<'a, I>(
         source: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         _: usize,
-    ) -> Result<Parameter, TemplateError> {
+    ) -> Result<Parameter, TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let mut param = it.next().unwrap();
         if param.as_rule() == Rule::param {
             param = it.next().unwrap();
@@ -230,11 +235,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_hash<'a>(
+    fn parse_hash<'a, I>(
         source: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         limit: usize,
-    ) -> Result<(String, Parameter), TemplateError> {
+    ) -> Result<(String, Parameter), TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let name = it.next().unwrap();
         let name_node = name.into_span();
         // identifier
@@ -245,11 +253,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_block_param<'a>(
+    fn parse_block_param<'a, I>(
         _: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         limit: usize,
-    ) -> Result<BlockParam, TemplateError> {
+    ) -> Result<BlockParam, TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let p1_name = it.next().unwrap();
         let p1_name_span = p1_name.into_span();
         // identifier
@@ -276,11 +287,14 @@ impl Template {
     }
 
     #[inline]
-    fn parse_expression<'a>(
+    fn parse_expression<'a, I>(
         source: &'a str,
-        it: &mut Peekable<FlatPairs<Rule>>,
+        it: &mut Peekable<I>,
         limit: usize,
-    ) -> Result<ExpressionSpec, TemplateError> {
+    ) -> Result<ExpressionSpec, TemplateError>
+    where
+        I: Iterator<Item = Pair<'a, Rule>>,
+    {
         let mut params: Vec<Parameter> = Vec::new();
         let mut hashes: BTreeMap<String, Parameter> = BTreeMap::new();
         let mut omit_pre_ws = false;
@@ -350,6 +364,45 @@ impl Template {
         }
     }
 
+    fn raw_string<'a>(
+        source: &'a str,
+        pair: Option<Pair<'a, Rule>>,
+        trim_left: bool,
+    ) -> TemplateElement {
+        let mut s = String::from(source);
+
+        if let Some(pair) = pair {
+            // the source may contains leading space because of pest's limitation
+            // we calculate none space start here in order to correct the offset
+            let pair_span = pair.clone().into_span();
+
+            let current_start = pair_span.start();
+            let span_length = pair_span.end() - current_start;
+            let leading_space_offset = s.len() - span_length;
+
+            // we would like to iterate pair reversely in order to remove certain
+            // index from our string buffer so here we convert the inner pairs to
+            // a vector.
+            let pairs: Vec<Pair<'a, Rule>> = pair.into_inner().collect();
+            for sub_pair in pairs.into_iter().rev() {
+                // remove escaped backslash
+                if sub_pair.as_rule() == Rule::escape {
+                    let escape_span = sub_pair.into_span();
+
+                    let backslash_pos = escape_span.start();
+                    let backslash_rel_pos = leading_space_offset + backslash_pos - current_start;
+                    s.remove(backslash_rel_pos);
+                }
+            }
+        }
+
+        if trim_left {
+            RawString(s.trim_left().to_owned())
+        } else {
+            RawString(s)
+        }
+    }
+
     pub fn compile2<S: AsRef<str>>(source: S, mapping: bool) -> Result<Template, TemplateError> {
         let source = source.as_ref();
         let mut helper_stack: VecDeque<HelperTemplate> = VecDeque::new();
@@ -366,37 +419,34 @@ impl Template {
                     negatives: _,
                 } => {
                     let (line_no, col_no) = pos.line_col();
-                    TemplateError::of(TemplateErrorReason::InvalidSyntax).at(
-                        source,
-                        line_no,
-                        col_no,
-                    )
+                    TemplateError::of(TemplateErrorReason::InvalidSyntax)
+                        .at(source, line_no, col_no)
                 }
                 PestError::CustomErrorPos { pos, message: _ } => {
                     let (line_no, col_no) = pos.line_col();
-                    TemplateError::of(TemplateErrorReason::InvalidSyntax).at(
-                        source,
-                        line_no,
-                        col_no,
-                    )
+                    TemplateError::of(TemplateErrorReason::InvalidSyntax)
+                        .at(source, line_no, col_no)
                 }
                 PestError::CustomErrorSpan { span, message: _ } => {
                     let (line_no, col_no) = span.start_pos().line_col();
-                    TemplateError::of(TemplateErrorReason::InvalidSyntax).at(
-                        source,
-                        line_no,
-                        col_no,
-                    )
+                    TemplateError::of(TemplateErrorReason::InvalidSyntax)
+                        .at(source, line_no, col_no)
                 }
             })?;
 
-        let mut it = parser_queue.flatten().peekable();
+        // println!("{:?}", parser_queue.clone());
+
+        // remove escape from our pair queue
+        let mut it = parser_queue
+            .flatten()
+            .filter(|p| p.as_rule() != Rule::escape)
+            .peekable();
         let mut end_pos: Option<Position> = None;
         loop {
             if let Some(pair) = it.next() {
                 let prev_end = end_pos.as_ref().map(|p| p.pos()).unwrap_or(0);
                 let rule = pair.as_rule();
-                let span = pair.into_span();
+                let span = pair.clone().into_span();
 
                 if rule != Rule::template {
                     // trailing string check
@@ -405,19 +455,17 @@ impl Template {
                     {
                         let (line_no, col_no) = span.start_pos().line_col();
                         if rule == Rule::raw_block_end {
-                            let text = &source[prev_end..span.start()];
                             let mut t = Template::new(mapping);
                             t.push_element(
-                                RawString(Template::unescape_tags(text)),
+                                Template::raw_string(&source[prev_end..span.start()], None, false),
                                 line_no,
                                 col_no,
                             );
                             template_stack.push_front(t);
                         } else {
-                            let text = &source[prev_end..span.start()];
                             let t = template_stack.front_mut().unwrap();
                             t.push_element(
-                                RawString(Template::unescape_tags(text)),
+                                Template::raw_string(&source[prev_end..span.start()], None, false),
                                 line_no,
                                 col_no,
                             );
@@ -437,12 +485,17 @@ impl Template {
                         } else {
                             span.start()
                         };
-                        let mut text = &source[start..span.end()];
-                        if omit_pro_ws {
-                            text = text.trim_left();
-                        }
+
                         let t = template_stack.front_mut().unwrap();
-                        t.push_element(RawString(Template::unescape_tags(text)), line_no, col_no);
+                        t.push_element(
+                            Template::raw_string(
+                                &source[start..span.end()],
+                                Some(pair.clone()),
+                                omit_pro_ws,
+                            ),
+                            line_no,
+                            col_no,
+                        );
                     }
                     Rule::helper_block_start
                     | Rule::raw_block_start
@@ -500,12 +553,12 @@ impl Template {
                         h.template = Some(t);
                     }
                     Rule::raw_block_text => {
-                        let mut text = span.as_str();
-                        if omit_pro_ws {
-                            text = text.trim_left();
-                        }
                         let mut t = Template::new(mapping);
-                        t.push_element(RawString(Template::unescape_tags(text)), line_no, col_no);
+                        t.push_element(
+                            Template::raw_string(span.as_str(), Some(pair.clone()), omit_pro_ws),
+                            line_no,
+                            col_no,
+                        );
                         template_stack.push_front(t);
                     }
                     Rule::expression
@@ -582,11 +635,7 @@ impl Template {
                                             h.name,
                                             close_tag_name,
                                         ),
-                                    ).at(
-                                        source,
-                                        line_no,
-                                        col_no,
-                                    ));
+                                    ).at(source, line_no, col_no));
                                 }
                             }
                             Rule::directive_block_end | Rule::partial_block_end => {
@@ -607,22 +656,18 @@ impl Template {
                                             d.name,
                                             close_tag_name,
                                         ),
-                                    ).at(
-                                        source,
-                                        line_no,
-                                        col_no,
-                                    ));
+                                    ).at(source, line_no, col_no));
                                 }
                             }
                             _ => unreachable!(),
                         }
                     }
-                    Rule::hbs_html_comment => {
+                    Rule::hbs_comment_compact => {
                         let text = span.as_str()
                             .trim_left_matches("{{!")
                             .trim_right_matches("}}");
                         let t = template_stack.front_mut().unwrap();
-                        t.push_element(HtmlComment(text.to_owned()), line_no, col_no);
+                        t.push_element(Comment(text.to_owned()), line_no, col_no);
                     }
                     Rule::hbs_comment => {
                         let text = span.as_str()
@@ -678,12 +723,11 @@ pub enum TemplateElement {
     PartialExpression(Directive),
     PartialBlock(Directive),
     Comment(String),
-    HtmlComment(String),
 }
 
 #[test]
 fn test_parse_escaped_tag_raw_string() {
-    let source = r"foo \\{{bar}}";
+    let source = r"foo \{{bar}}";
     let t = Template::compile(source.to_string()).ok().unwrap();
     assert_eq!(t.elements.len(), 1);
     assert_eq!(
@@ -693,8 +737,16 @@ fn test_parse_escaped_tag_raw_string() {
 }
 
 #[test]
+fn test_pure_backslash_raw_string() {
+    let source = r"\\\\";
+    let t = Template::compile(source).ok().unwrap();
+    assert_eq!(t.elements.len(), 1);
+    assert_eq!(*t.elements.get(0).unwrap(), RawString(source.to_string()));
+}
+
+#[test]
 fn test_parse_escaped_block_raw_string() {
-    let source = r"\\{{{{foo}}}} bar";
+    let source = r"\{{{{foo}}}} bar";
     let t = Template::compile(source.to_string()).ok().unwrap();
     assert_eq!(t.elements.len(), 1);
     assert_eq!(

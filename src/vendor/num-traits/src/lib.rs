@@ -18,9 +18,9 @@
 
 #![deny(unconditional_recursion)]
 
-#![cfg_attr(not(feature = "std"), no_std)]
+#![no_std]
 #[cfg(feature = "std")]
-extern crate core;
+extern crate std;
 
 use core::ops::{Add, Sub, Mul, Div, Rem};
 use core::ops::{AddAssign, SubAssign, MulAssign, DivAssign, RemAssign};
@@ -34,8 +34,10 @@ pub use float::FloatConst;
 // pub use real::{FloatCore, Real}; // NOTE: Don't do this, it breaks `use num_traits::*;`.
 pub use identities::{Zero, One, zero, one};
 pub use ops::inv::Inv;
-pub use ops::checked::{CheckedAdd, CheckedSub, CheckedMul, CheckedDiv, CheckedShl, CheckedShr};
+pub use ops::checked::{CheckedAdd, CheckedSub, CheckedMul, CheckedDiv,
+                       CheckedRem, CheckedNeg, CheckedShl, CheckedShr};
 pub use ops::wrapping::{WrappingAdd, WrappingMul, WrappingSub};
+pub use ops::mul_add::{MulAdd, MulAddAssign};
 pub use ops::saturating::Saturating;
 pub use sign::{Signed, Unsigned, abs, abs_sub, signum};
 pub use cast::{AsPrimitive, FromPrimitive, ToPrimitive, NumCast, cast};
@@ -158,6 +160,8 @@ macro_rules! int_trait_impl {
     )*)
 }
 int_trait_impl!(Num for usize u8 u16 u32 u64 isize i8 i16 i32 i64);
+#[cfg(has_i128)]
+int_trait_impl!(Num for u128 i128);
 
 impl<T: Num> Num for Wrapping<T>
     where Wrapping<T>:

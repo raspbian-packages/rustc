@@ -2,6 +2,7 @@
 
 use std::io::prelude::*;
 use std::io;
+use lzma_sys;
 
 #[cfg(feature = "tokio")]
 use futures::Poll;
@@ -59,7 +60,7 @@ impl<W: Write> XzEncoder<W> {
 
     fn dump(&mut self) -> io::Result<()> {
         while self.buf.len() > 0 {
-            let n = try!(self.obj.as_mut().unwrap().write(&self.buf));
+            let n = self.obj.as_mut().unwrap().write(&self.buf)?;
             self.buf.drain(..n);
         }
         Ok(())
@@ -77,8 +78,8 @@ impl<W: Write> XzEncoder<W> {
     /// function is called.
     pub fn try_finish(&mut self) -> io::Result<()> {
         loop {
-            try!(self.dump());
-            let res = try!(self.data.process_vec(&[], &mut self.buf, Action::Finish));
+            self.dump()?;
+            let res = self.data.process_vec(&[], &mut self.buf, Action::Finish)?;
             if res == Status::StreamEnd {
                 break
             }
@@ -97,7 +98,7 @@ impl<W: Write> XzEncoder<W> {
     /// re-acquire ownership of a stream it is safe to call this method after
     /// `try_finish` or `shutdown` has returned `Ok`.
     pub fn finish(mut self) -> io::Result<W> {
-        try!(self.try_finish());
+        self.try_finish()?;
         Ok(self.obj.take().unwrap())
     }
 
@@ -120,7 +121,7 @@ impl<W: Write> XzEncoder<W> {
 impl<W: Write> Write for XzEncoder<W> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         loop {
-            try!(self.dump());
+            self.dump()?;
 
             let total_in = self.total_in();
             self.data.process_vec(data, &mut self.buf, Action::Run)
@@ -135,7 +136,7 @@ impl<W: Write> Write for XzEncoder<W> {
 
     fn flush(&mut self) -> io::Result<()> {
         loop {
-            try!(self.dump());
+            self.dump()?;
             let status = self.data.process_vec(&[], &mut self.buf,
                                                Action::FullFlush).unwrap();
             if status == Status::StreamEnd {
@@ -173,10 +174,17 @@ impl<W: Write> Drop for XzEncoder<W> {
 }
 
 impl<W: Write> XzDecoder<W> {
-    /// Creates a new decoding stream which will decode all input written to it
-    /// into `obj`.
+    /// Creates a new decoding stream which will decode into `obj` one xz stream
+    /// from the input written to it.
     pub fn new(obj: W) -> XzDecoder<W> {
         let stream = Stream::new_stream_decoder(u64::max_value(), 0).unwrap();
+        XzDecoder::new_stream(obj, stream)
+    }
+
+    /// Creates a new decoding stream which will decode into `obj` all the xz streams
+    /// from the input written to it.
+    pub fn new_multi_decoder(obj: W) -> XzDecoder<W> {
+        let stream = Stream::new_stream_decoder(u64::max_value(), lzma_sys::LZMA_CONCATENATED).unwrap();
         XzDecoder::new_stream(obj, stream)
     }
 
@@ -208,7 +216,7 @@ impl<W: Write> XzDecoder<W> {
 
     fn dump(&mut self) -> io::Result<()> {
         if self.buf.len() > 0 {
-            try!(self.obj.as_mut().unwrap().write_all(&self.buf));
+            self.obj.as_mut().unwrap().write_all(&self.buf)?;
             self.buf.truncate(0);
         }
         Ok(())
@@ -216,9 +224,9 @@ impl<W: Write> XzDecoder<W> {
 
     fn try_finish(&mut self) -> io::Result<()> {
         loop {
-            try!(self.dump());
-            let res = try!(self.data.process_vec(&[], &mut self.buf,
-                                                 Action::Run));
+            self.dump()?;
+            let res = self.data.process_vec(&[], &mut self.buf,
+                                                 Action::Finish)?;
 
             // When decoding a truncated file, XZ returns LZMA_BUF_ERROR and
             // decodes no new data, which corresponds to this crate's MemNeeded
@@ -241,7 +249,7 @@ impl<W: Write> XzDecoder<W> {
 
     /// Unwrap the underlying writer, finishing the compression stream.
     pub fn finish(&mut self) -> io::Result<W> {
-        try!(self.try_finish());
+        self.try_finish()?;
         Ok(self.obj.take().unwrap())
     }
 
@@ -264,11 +272,11 @@ impl<W: Write> XzDecoder<W> {
 impl<W: Write> Write for XzDecoder<W> {
     fn write(&mut self, data: &[u8]) -> io::Result<usize> {
         loop {
-            try!(self.dump());
+            self.dump()?;
 
             let before = self.total_in();
-            let res = try!(self.data.process_vec(data, &mut self.buf,
-                                                 Action::Run));
+            let res = self.data.process_vec(data, &mut self.buf,
+                                                 Action::Run)?;
             let written = (self.total_in() - before) as usize;
 
             if written > 0 || data.len() == 0 || res == Status::StreamEnd {
@@ -278,7 +286,7 @@ impl<W: Write> Write for XzDecoder<W> {
     }
 
     fn flush(&mut self) -> io::Result<()> {
-        try!(self.dump());
+        self.dump()?;
         self.obj.as_mut().unwrap().flush()
     }
 }

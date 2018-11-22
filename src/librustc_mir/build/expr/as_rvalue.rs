@@ -102,7 +102,9 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                 });
                 if let Some(scope) = scope {
                     // schedule a shallow free of that memory, lest we unwind:
-                    this.schedule_drop(expr_span, scope, &Place::Local(result), value.ty);
+                    this.schedule_drop_storage_and_value(
+                        expr_span, scope, &Place::Local(result), value.ty,
+                    );
                 }
 
                 // malloc some memory of suitable type (thus far, uninitialized):
@@ -186,10 +188,49 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             }
             ExprKind::Closure { closure_id, substs, upvars, movability } => {
                 // see (*) above
-                let mut operands: Vec<_> =
-                    upvars.into_iter()
-                          .map(|upvar| unpack!(block = this.as_operand(block, scope, upvar)))
-                          .collect();
+                let mut operands: Vec<_> = upvars
+                    .into_iter()
+                    .map(|upvar| {
+                        let upvar = this.hir.mirror(upvar);
+                        match Category::of(&upvar.kind) {
+                            // Use as_place to avoid creating a temporary when
+                            // moving a variable into a closure, so that
+                            // borrowck knows which variables to mark as being
+                            // used as mut. This is OK here because the upvar
+                            // expressions have no side effects and act on
+                            // disjoint places.
+                            // This occurs when capturing by copy/move, while
+                            // by reference captures use as_operand
+                            Some(Category::Place) => {
+                                let place = unpack!(block = this.as_place(block, upvar));
+                                this.consume_by_copy_or_move(place)
+                            }
+                            _ => {
+                                // Turn mutable borrow captures into unique
+                                // borrow captures when capturing an immutable
+                                // variable. This is sound because the mutation
+                                // that caused the capture will cause an error.
+                                match upvar.kind {
+                                    ExprKind::Borrow {
+                                        borrow_kind: BorrowKind::Mut {
+                                            allow_two_phase_borrow: false
+                                        },
+                                        region,
+                                        arg,
+                                    } => unpack!(block = this.limit_capture_mutability(
+                                        upvar.span,
+                                        upvar.ty,
+                                        scope,
+                                        block,
+                                        arg,
+                                        region,
+                                    )),
+                                    _ => unpack!(block = this.as_operand(block, scope, upvar)),
+                                }
+                            }
+                        }
+                    })
+                    .collect();
                 let result = match substs {
                     UpvarSubsts::Generator(substs) => {
                         let movability = movability.unwrap();
@@ -198,12 +239,11 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                         operands.push(Operand::Constant(box Constant {
                             span: expr_span,
                             ty: this.hir.tcx().types.u32,
-                            literal: Literal::Value {
-                                value: ty::Const::from_bits(
-                                    this.hir.tcx(),
-                                    0,
-                                    ty::ParamEnv::empty().and(this.hir.tcx().types.u32)),
-                            },
+                            literal: ty::Const::from_bits(
+                                this.hir.tcx(),
+                                0,
+                                ty::ParamEnv::empty().and(this.hir.tcx().types.u32),
+                            ),
                         }));
                         box AggregateKind::Generator(closure_id, substs, movability)
                     }
@@ -372,14 +412,107 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         }
     }
 
+    fn limit_capture_mutability(
+        &mut self,
+        upvar_span: Span,
+        upvar_ty: Ty<'tcx>,
+        temp_lifetime: Option<region::Scope>,
+        mut block: BasicBlock,
+        arg: ExprRef<'tcx>,
+        region: &'tcx ty::RegionKind,
+    ) -> BlockAnd<Operand<'tcx>> {
+        let this = self;
+
+        let source_info = this.source_info(upvar_span);
+        let temp = this.local_decls.push(LocalDecl::new_temp(upvar_ty, upvar_span));
+
+        this.cfg.push(block, Statement {
+            source_info,
+            kind: StatementKind::StorageLive(temp)
+        });
+
+        let arg_place = unpack!(block = this.as_place(block, arg));
+
+        let mutability = match arg_place {
+            Place::Local(local) => this.local_decls[local].mutability,
+            Place::Projection(box Projection {
+                base: Place::Local(local),
+                elem: ProjectionElem::Deref,
+            }) => {
+                debug_assert!(
+                    if let Some(ClearCrossCrate::Set(BindingForm::RefForGuard))
+                        = this.local_decls[local].is_user_variable {
+                        true
+                    } else {
+                        false
+                    },
+                    "Unexpected capture place",
+                );
+                this.local_decls[local].mutability
+            }
+            Place::Projection(box Projection {
+                ref base,
+                elem: ProjectionElem::Field(upvar_index, _),
+            })
+            | Place::Projection(box Projection {
+                base: Place::Projection(box Projection {
+                    ref base,
+                    elem: ProjectionElem::Field(upvar_index, _),
+                }),
+                elem: ProjectionElem::Deref,
+            }) => {
+                // Not projected from the implicit `self` in a closure.
+                debug_assert!(
+                    match *base {
+                        Place::Local(local) => local == Local::new(1),
+                        Place::Projection(box Projection {
+                            ref base,
+                            elem: ProjectionElem::Deref,
+                        }) => *base == Place::Local(Local::new(1)),
+                        _ => false,
+                    },
+                    "Unexpected capture place"
+                );
+                // Not in a closure
+                debug_assert!(
+                    this.upvar_decls.len() > upvar_index.index(),
+                    "Unexpected capture place"
+                );
+                this.upvar_decls[upvar_index.index()].mutability
+            }
+            _ => bug!("Unexpected capture place"),
+        };
+
+        let borrow_kind = match mutability {
+            Mutability::Not => BorrowKind::Unique,
+            Mutability::Mut => BorrowKind::Mut { allow_two_phase_borrow: false },
+        };
+
+        this.cfg.push_assign(
+            block,
+            source_info,
+            &Place::Local(temp),
+            Rvalue::Ref(region, borrow_kind, arg_place),
+        );
+
+        // In constants, temp_lifetime is None. We should not need to drop
+        // anything because no values with a destructor can be created in
+        // a constant at this time, even if the type may need dropping.
+        if let Some(temp_lifetime) = temp_lifetime {
+            this.schedule_drop_storage_and_value(
+                upvar_span, temp_lifetime, &Place::Local(temp), upvar_ty,
+            );
+        }
+
+        block.and(Operand::Move(Place::Local(temp)))
+    }
+
     // Helper to get a `-1` value of the appropriate type
     fn neg_1_literal(&mut self, span: Span, ty: Ty<'tcx>) -> Operand<'tcx> {
         let param_ty = ty::ParamEnv::empty().and(self.hir.tcx().lift_to_global(&ty).unwrap());
         let bits = self.hir.tcx().layout_of(param_ty).unwrap().size.bits();
         let n = (!0u128) >> (128 - bits);
-        let literal = Literal::Value {
-            value: ty::Const::from_bits(self.hir.tcx(), n, param_ty)
-        };
+        let literal = ty::Const::from_bits(self.hir.tcx(), n, param_ty);
 
         self.literal_operand(span, ty, literal)
     }
@@ -390,9 +523,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
         let param_ty = ty::ParamEnv::empty().and(self.hir.tcx().lift_to_global(&ty).unwrap());
         let bits = self.hir.tcx().layout_of(param_ty).unwrap().size.bits();
         let n = 1 << (bits - 1);
-        let literal = Literal::Value {
-            value: ty::Const::from_bits(self.hir.tcx(), n, param_ty)
-        };
+        let literal = ty::Const::from_bits(self.hir.tcx(), n, param_ty);
 
         self.literal_operand(span, ty, literal)
     }

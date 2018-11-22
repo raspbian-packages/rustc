@@ -1,6 +1,6 @@
 //! Implements an elasticlunr.js inverted index. Most users do not need to use this module directly.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize, PartialEq)]
 struct TermFrequency {
@@ -8,39 +8,49 @@ struct TermFrequency {
     pub term_freq: f64,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 struct IndexItem {
-    pub docs: HashMap<String, TermFrequency>,
+    pub docs: BTreeMap<String, TermFrequency>,
     #[serde(rename = "df")]
     pub doc_freq: i64,
-    #[serde(flatten)]
-    pub children: HashMap<String, IndexItem>,
+    #[serde(flatten, serialize_with = "IndexItem::serialize")]
+    pub children: BTreeMap<char, IndexItem>,
 }
 
 impl IndexItem {
     fn new() -> Self {
-        IndexItem {
-            docs: HashMap::new(),
-            doc_freq: 0,
-            children: HashMap::new(),
+        Default::default()
+    }
+
+    fn serialize<S>(map: &BTreeMap<char, IndexItem>, ser: S) -> Result<S::Ok, S::Error>
+    where
+        S: ::serde::Serializer,
+    {
+        use serde::ser::SerializeMap;
+
+        let mut ser_map = ser.serialize_map(Some(map.len()))?;
+        let mut buf = [0u8; 4];
+        for (key, value) in map {
+            let key = key.encode_utf8(&mut buf);
+            ser_map.serialize_entry(key, value)?;
         }
+        ser_map.end()
     }
 
     fn add_token(&mut self, doc_ref: &str, token: &str, term_freq: f64) {
         let mut iter = token.chars();
         if let Some(character) = iter.next() {
-            let mut item = self.children
-                .entry(character.to_string())
-                .or_insert(IndexItem::new());
+            let mut item = self
+                .children
+                .entry(character)
+                .or_insert_with(IndexItem::new);
 
             for character in iter {
                 let tmp = item;
-                item = tmp.children
-                    .entry(character.to_string())
-                    .or_insert(IndexItem::new());
+                item = tmp.children.entry(character).or_insert_with(IndexItem::new);
             }
 
-            if !item.docs.contains_key(doc_ref.into()) {
+            if !item.docs.contains_key(doc_ref) {
                 item.doc_freq += 1;
             }
             item.docs
@@ -50,8 +60,8 @@ impl IndexItem {
 
     fn get_node(&self, token: &str) -> Option<&IndexItem> {
         let mut root = self;
-        for char in token.chars() {
-            if let Some(item) = root.children.get(&char.to_string()) {
+        for ch in token.chars() {
+            if let Some(item) = root.children.get(&ch) {
                 root = item;
             } else {
                 return None;
@@ -63,15 +73,13 @@ impl IndexItem {
 
     fn remove_token(&mut self, doc_ref: &str, token: &str) {
         let mut iter = token.char_indices();
-        if let Some((_, char)) = iter.next() {
-            if let Some(item) = self.children.get_mut(&char.to_string()) {
+        if let Some((_, ch)) = iter.next() {
+            if let Some(item) = self.children.get_mut(&ch) {
                 if let Some((idx, _)) = iter.next() {
                     item.remove_token(doc_ref, &token[idx..]);
-                } else {
-                    if item.docs.contains_key(doc_ref) {
-                        item.docs.remove(doc_ref);
-                        item.doc_freq -= 1;
-                    }
+                } else if item.docs.contains_key(doc_ref) {
+                    item.docs.remove(doc_ref);
+                    item.doc_freq -= 1;
                 }
             } else {
                 return;
@@ -81,16 +89,14 @@ impl IndexItem {
 }
 
 /// Implements an elasticlunr.js inverted index. Most users do not need to use this type directly.
-#[derive(Serialize, Deserialize, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Default)]
 pub struct InvertedIndex {
     root: IndexItem,
 }
 
 impl InvertedIndex {
     pub fn new() -> Self {
-        InvertedIndex {
-            root: IndexItem::new(),
-        }
+        Default::default()
     }
 
     pub fn add_token(&mut self, doc_ref: &str, token: &str, term_freq: f64) {
@@ -105,7 +111,7 @@ impl InvertedIndex {
         self.root.remove_token(doc_ref, token)
     }
 
-    pub fn get_docs(&self, token: &str) -> Option<HashMap<String, f64>> {
+    pub fn get_docs(&self, token: &str) -> Option<BTreeMap<String, f64>> {
         self.root.get_node(token).map(|node| {
             node.docs
                 .iter()
@@ -117,7 +123,7 @@ impl InvertedIndex {
     pub fn get_term_frequency(&self, doc_ref: &str, token: &str) -> f64 {
         self.root
             .get_node(token)
-            .and_then(|node| node.docs.get(doc_ref.into()))
+            .and_then(|node| node.docs.get(doc_ref))
             .map_or(0., |docs| docs.term_freq)
     }
 
@@ -222,19 +228,19 @@ mod tests {
         inverted_index.add_token("123", token, 1.);
         assert_eq!(
             inverted_index.get_docs(token).unwrap(),
-            hashmap!{
+            btreemap!{
                 "123".into() => 1.
             }
         );
 
-        assert_eq!(inverted_index.get_docs(""), Some(HashMap::new()));
+        assert_eq!(inverted_index.get_docs(""), Some(BTreeMap::new()));
 
         inverted_index.add_token("234", "boo", 100.);
         inverted_index.add_token("345", "too", 101.);
 
         assert_eq!(
             inverted_index.get_docs(token).unwrap(),
-            hashmap!{
+            btreemap!{
                 "123".into() => 1.
             }
         );
@@ -244,7 +250,7 @@ mod tests {
 
         assert_eq!(
             inverted_index.get_docs(token).unwrap(),
-            hashmap!{
+            btreemap!{
                 "123".into() => 1.,
                 "234".into() => 100.,
                 "345".into() => 101.,
@@ -285,13 +291,13 @@ mod tests {
         inverted_index.add_token("123", "foo", 1.);
         assert_eq!(
             inverted_index.get_docs("foo").unwrap(),
-            hashmap!{
+            btreemap!{
                 "123".into() => 1.,
             }
         );
 
         inverted_index.remove_token("123", "foo");
-        assert_eq!(inverted_index.get_docs("foo"), Some(HashMap::new()));
+        assert_eq!(inverted_index.get_docs("foo"), Some(BTreeMap::new()));
         assert_eq!(inverted_index.get_doc_frequency("foo"), 0);
         assert_eq!(inverted_index.has_token("foo"), true);
     }
@@ -306,7 +312,7 @@ mod tests {
 
         assert_eq!(
             inverted_index.get_docs("foo").unwrap(),
-            hashmap!{
+            btreemap!{
                 "123".into() => 1.
             }
         );

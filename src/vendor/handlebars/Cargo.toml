@@ -12,7 +12,7 @@
 
 [package]
 name = "handlebars"
-version = "0.32.0"
+version = "0.32.4"
 authors = ["Ning Sun <sunng@about.me>"]
 description = "Handlebars templating implemented in Rust."
 homepage = "https://github.com/sunng87/handlebars-rust"
@@ -22,19 +22,6 @@ keywords = ["handlebars", "templating", "web"]
 categories = ["template-engine"]
 license = "MIT"
 repository = "https://github.com/sunng87/handlebars-rust"
-[package.metadata.release]
-sign-commit = true
-upload-doc = true
-
-[[package.metadata.release.pre-release-replacements]]
-file = "CHANGELOG.md"
-replace = "{{version}}"
-search = "Unreleased"
-
-[[package.metadata.release.pre-release-replacements]]
-file = "CHANGELOG.md"
-replace = "{{date}}"
-search = "ReleaseDate"
 
 [lib]
 name = "handlebars"
@@ -55,7 +42,7 @@ version = "^1.0.0"
 version = "^1.0.0"
 
 [dependencies.regex]
-version = "^0.2.0"
+version = "^1.0.0"
 
 [dependencies.serde]
 version = "^1.0.0"

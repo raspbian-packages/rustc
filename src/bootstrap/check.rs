@@ -12,7 +12,7 @@
 
 use compile::{run_cargo, std_cargo, test_cargo, rustc_cargo, rustc_cargo_env, add_to_sysroot};
 use builder::{RunConfig, Builder, ShouldRun, Step};
-use tool::{self, prepare_tool_cargo};
+use tool::{self, prepare_tool_cargo, SourceType};
 use {Compiler, Mode};
 use cache::{INTERNER, Interned};
 use std::path::PathBuf;
@@ -217,12 +217,18 @@ impl Step for Rustdoc {
         let compiler = builder.compiler(0, builder.config.build);
         let target = self.target;
 
+        let stage_out = builder.stage_out(compiler, Mode::ToolRustc);
+        builder.clear_if_dirty(&stage_out, &libstd_stamp(builder, compiler, target));
+        builder.clear_if_dirty(&stage_out, &libtest_stamp(builder, compiler, target));
+        builder.clear_if_dirty(&stage_out, &librustc_stamp(builder, compiler, target));
+
         let mut cargo = prepare_tool_cargo(builder,
                                            compiler,
                                            Mode::ToolRustc,
                                            target,
                                            "check",
-                                           "src/tools/rustdoc");
+                                           "src/tools/rustdoc",
+                                           SourceType::InTree);
 
         let _folder = builder.fold_output(|| format!("stage{}-rustdoc", compiler.stage));
         println!("Checking rustdoc artifacts ({} -> {})", &compiler.host, target);
@@ -273,5 +279,6 @@ fn codegen_backend_stamp(builder: &Builder,
 /// Cargo's output path for rustdoc in a given stage, compiled by a particular
 /// compiler for the specified target.
 pub fn rustdoc_stamp(builder: &Builder, compiler: Compiler, target: Interned<String>) -> PathBuf {
-    builder.cargo_out(compiler, Mode::ToolRustc, target).join(".rustdoc-check.stamp")
+    builder.cargo_out(compiler, Mode::ToolRustc, target)
+        .join(".rustdoc-check.stamp")
 }

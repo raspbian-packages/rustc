@@ -545,7 +545,11 @@ LLVMRustWriteOutputFile(LLVMTargetMachineRef Target, LLVMPassManagerRef PMR,
     return LLVMRustResult::Failure;
   }
 
+#if LLVM_VERSION_GE(7, 0)
+  unwrap(Target)->addPassesToEmitFile(*PM, OS, nullptr, FileType, false);
+#else
   unwrap(Target)->addPassesToEmitFile(*PM, OS, FileType, false);
+#endif
   PM->run(*unwrap(M));
 
   // Apparently `addPassesToEmitFile` adds a pointer to our on-the-stack output
@@ -1080,11 +1084,40 @@ LLVMRustPrepareThinLTOInternalize(const LLVMRustThinLTOData *Data, LLVMModuleRef
 extern "C" bool
 LLVMRustPrepareThinLTOImport(const LLVMRustThinLTOData *Data, LLVMModuleRef M) {
   Module &Mod = *unwrap(M);
+
   const auto &ImportList = Data->ImportLists.lookup(Mod.getModuleIdentifier());
   auto Loader = [&](StringRef Identifier) {
     const auto &Memory = Data->ModuleMap.lookup(Identifier);
     auto &Context = Mod.getContext();
-    return getLazyBitcodeModule(Memory, Context, true, true);
+    auto MOrErr = getLazyBitcodeModule(Memory, Context, true, true);
+
+    if (!MOrErr)
+      return std::move(MOrErr);
+
+    // The rest of this closure is a workaround for
+    // https://bugs.llvm.org/show_bug.cgi?id=38184 where during ThinLTO imports
+    // we accidentally import wasm custom sections into different modules,
+    // duplicating them by in the final output artifact.
+    //
+    // The issue is worked around here by manually removing the
+    // `wasm.custom_sections` named metadata node from any imported module. This
+    // we know isn't used by any optimization pass so there's no need for it to
+    // be imported.
+    //
+    // Note that the metadata is currently lazily loaded, so we materialize it
+    // here before looking up if there's metadata inside. The `FunctionImporter`
+    // will immediately materialize metadata anyway after an import, so this
+    // shouldn't be a perf hit.
+    if (Error Err = (*MOrErr)->materializeMetadata()) {
+      Expected<std::unique_ptr<Module>> Ret(std::move(Err));
+      return std::move(Ret);
+    }
+
+    auto *WasmCustomSections = (*MOrErr)->getNamedMetadata("wasm.custom_sections");
+    if (WasmCustomSections)
+      WasmCustomSections->eraseFromParent();
+
+    return std::move(MOrErr);
   };
   FunctionImporter Importer(Data->Index, Loader);
   Expected<bool> Result = Importer.importFunctions(Mod, ImportList);
@@ -1224,15 +1257,6 @@ LLVMRustThinLTOPatchDICompileUnit(LLVMModuleRef Mod, DICompileUnit *Unit) {
   MD->addOperand(Unit);
 }
 
-extern "C" void
-LLVMRustThinLTORemoveAvailableExternally(LLVMModuleRef Mod) {
-  Module *M = unwrap(Mod);
-  for (Function &F : M->functions()) {
-    if (F.hasAvailableExternallyLinkage())
-      F.deleteBody();
-  }
-}
-
 #else
 
 extern "C" bool
@@ -1321,11 +1345,6 @@ LLVMRustThinLTOGetDICompileUnit(LLVMModuleRef Mod,
 
 extern "C" void
 LLVMRustThinLTOPatchDICompileUnit(LLVMModuleRef Mod) {
-  report_fatal_error("ThinLTO not available");
-}
-
-extern "C" void
-LLVMRustThinLTORemoveAvailableExternally(LLVMModuleRef Mod) {
   report_fatal_error("ThinLTO not available");
 }
 

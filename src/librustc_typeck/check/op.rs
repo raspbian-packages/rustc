@@ -18,7 +18,7 @@ use rustc::ty::adjustment::{Adjustment, Adjust, AllowTwoPhase, AutoBorrow, AutoB
 use rustc::infer::type_variable::TypeVariableOrigin;
 use errors;
 use syntax_pos::Span;
-use syntax::symbol::Symbol;
+use syntax::ast::Ident;
 use rustc::hir;
 
 impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
@@ -292,24 +292,24 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 }
                             }
                             let missing_trait = match op.node {
-                                hir::BiAdd    => Some("std::ops::AddAssign"),
-                                hir::BiSub    => Some("std::ops::SubAssign"),
-                                hir::BiMul    => Some("std::ops::MulAssign"),
-                                hir::BiDiv    => Some("std::ops::DivAssign"),
-                                hir::BiRem    => Some("std::ops::RemAssign"),
-                                hir::BiBitAnd => Some("std::ops::BitAndAssign"),
-                                hir::BiBitXor => Some("std::ops::BitXorAssign"),
-                                hir::BiBitOr  => Some("std::ops::BitOrAssign"),
-                                hir::BiShl    => Some("std::ops::ShlAssign"),
-                                hir::BiShr    => Some("std::ops::ShrAssign"),
+                                hir::BinOpKind::Add    => Some("std::ops::AddAssign"),
+                                hir::BinOpKind::Sub    => Some("std::ops::SubAssign"),
+                                hir::BinOpKind::Mul    => Some("std::ops::MulAssign"),
+                                hir::BinOpKind::Div    => Some("std::ops::DivAssign"),
+                                hir::BinOpKind::Rem    => Some("std::ops::RemAssign"),
+                                hir::BinOpKind::BitAnd => Some("std::ops::BitAndAssign"),
+                                hir::BinOpKind::BitXor => Some("std::ops::BitXorAssign"),
+                                hir::BinOpKind::BitOr  => Some("std::ops::BitOrAssign"),
+                                hir::BinOpKind::Shl    => Some("std::ops::ShlAssign"),
+                                hir::BinOpKind::Shr    => Some("std::ops::ShrAssign"),
                                 _             => None
                             };
                             if let Some(missing_trait) = missing_trait {
-                                if op.node == hir::BiAdd &&
+                                if op.node == hir::BinOpKind::Add &&
                                     self.check_str_addition(expr, lhs_expr, rhs_expr, lhs_ty,
-                                                            rhs_ty, &mut err) {
+                                                            rhs_ty, &mut err, true) {
                                     // This has nothing here because it means we did string
-                                    // concatenation (e.g. "Hello " + "World!"). This means
+                                    // concatenation (e.g. "Hello " += "World!"). This means
                                     // we don't want the note in the else clause to be emitted
                                 } else if let ty::TyParam(_) = lhs_ty.sty {
                                     // FIXME: point to span of param
@@ -360,25 +360,28 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 }
                             }
                             let missing_trait = match op.node {
-                                hir::BiAdd    => Some("std::ops::Add"),
-                                hir::BiSub    => Some("std::ops::Sub"),
-                                hir::BiMul    => Some("std::ops::Mul"),
-                                hir::BiDiv    => Some("std::ops::Div"),
-                                hir::BiRem    => Some("std::ops::Rem"),
-                                hir::BiBitAnd => Some("std::ops::BitAnd"),
-                                hir::BiBitXor => Some("std::ops::BitXor"),
-                                hir::BiBitOr  => Some("std::ops::BitOr"),
-                                hir::BiShl    => Some("std::ops::Shl"),
-                                hir::BiShr    => Some("std::ops::Shr"),
-                                hir::BiEq | hir::BiNe => Some("std::cmp::PartialEq"),
-                                hir::BiLt | hir::BiLe | hir::BiGt | hir::BiGe =>
-                                    Some("std::cmp::PartialOrd"),
-                                _             => None
+                                hir::BinOpKind::Add    => Some("std::ops::Add"),
+                                hir::BinOpKind::Sub    => Some("std::ops::Sub"),
+                                hir::BinOpKind::Mul    => Some("std::ops::Mul"),
+                                hir::BinOpKind::Div    => Some("std::ops::Div"),
+                                hir::BinOpKind::Rem    => Some("std::ops::Rem"),
+                                hir::BinOpKind::BitAnd => Some("std::ops::BitAnd"),
+                                hir::BinOpKind::BitXor => Some("std::ops::BitXor"),
+                                hir::BinOpKind::BitOr  => Some("std::ops::BitOr"),
+                                hir::BinOpKind::Shl    => Some("std::ops::Shl"),
+                                hir::BinOpKind::Shr    => Some("std::ops::Shr"),
+                                hir::BinOpKind::Eq |
+                                hir::BinOpKind::Ne => Some("std::cmp::PartialEq"),
+                                hir::BinOpKind::Lt |
+                                hir::BinOpKind::Le |
+                                hir::BinOpKind::Gt |
+                                hir::BinOpKind::Ge => Some("std::cmp::PartialOrd"),
+                                _ => None
                             };
                             if let Some(missing_trait) = missing_trait {
-                                if op.node == hir::BiAdd &&
+                                if op.node == hir::BinOpKind::Add &&
                                     self.check_str_addition(expr, lhs_expr, rhs_expr, lhs_ty,
-                                                            rhs_ty, &mut err) {
+                                                            rhs_ty, &mut err, false) {
                                     // This has nothing here because it means we did string
                                     // concatenation (e.g. "Hello " + "World!"). This means
                                     // we don't want the note in the else clause to be emitted
@@ -407,13 +410,16 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         (lhs_ty, rhs_ty, return_ty)
     }
 
-    fn check_str_addition(&self,
-                          expr: &'gcx hir::Expr,
-                          lhs_expr: &'gcx hir::Expr,
-                          rhs_expr: &'gcx hir::Expr,
-                          lhs_ty: Ty<'tcx>,
-                          rhs_ty: Ty<'tcx>,
-                          err: &mut errors::DiagnosticBuilder) -> bool {
+    fn check_str_addition(
+        &self,
+        expr: &'gcx hir::Expr,
+        lhs_expr: &'gcx hir::Expr,
+        rhs_expr: &'gcx hir::Expr,
+        lhs_ty: Ty<'tcx>,
+        rhs_ty: Ty<'tcx>,
+        err: &mut errors::DiagnosticBuilder,
+        is_assign: bool,
+    ) -> bool {
         let codemap = self.tcx.sess.codemap();
         let msg = "`to_owned()` can be used to create an owned `String` \
                    from a string reference. String concatenation \
@@ -425,34 +431,36 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         match (&lhs_ty.sty, &rhs_ty.sty) {
             (&TyRef(_, l_ty, _), &TyRef(_, r_ty, _))
             if l_ty.sty == TyStr && r_ty.sty == TyStr => {
-                err.span_label(expr.span,
-                    "`+` can't be used to concatenate two `&str` strings");
-                match codemap.span_to_snippet(lhs_expr.span) {
-                    Ok(lstring) => err.span_suggestion(lhs_expr.span,
-                                                       msg,
-                                                       format!("{}.to_owned()", lstring)),
-                    _ => err.help(msg),
-                };
+                if !is_assign {
+                    err.span_label(expr.span,
+                                   "`+` can't be used to concatenate two `&str` strings");
+                    match codemap.span_to_snippet(lhs_expr.span) {
+                        Ok(lstring) => err.span_suggestion(lhs_expr.span,
+                                                           msg,
+                                                           format!("{}.to_owned()", lstring)),
+                        _ => err.help(msg),
+                    };
+                }
                 true
             }
             (&TyRef(_, l_ty, _), &TyAdt(..))
             if l_ty.sty == TyStr && &format!("{:?}", rhs_ty) == "std::string::String" => {
                 err.span_label(expr.span,
                     "`+` can't be used to concatenate a `&str` with a `String`");
-                match codemap.span_to_snippet(lhs_expr.span) {
-                    Ok(lstring) => err.span_suggestion(lhs_expr.span,
-                                                       msg,
-                                                       format!("{}.to_owned()", lstring)),
-                    _ => err.help(msg),
-                };
-                match codemap.span_to_snippet(rhs_expr.span) {
-                    Ok(rstring) => {
-                        err.span_suggestion(rhs_expr.span,
-                                            "you also need to borrow the `String` on the right to \
-                                             get a `&str`",
-                                            format!("&{}", rstring));
+                match (
+                    codemap.span_to_snippet(lhs_expr.span),
+                    codemap.span_to_snippet(rhs_expr.span),
+                    is_assign,
+                ) {
+                    (Ok(l), Ok(r), false) => {
+                        err.multipart_suggestion(msg, vec![
+                            (lhs_expr.span, format!("{}.to_owned()", l)),
+                            (rhs_expr.span, format!("&{}", r)),
+                        ]);
                     }
-                    _ => {}
+                    _ => {
+                        err.help(msg);
+                    }
                 };
                 true
             }
@@ -482,7 +490,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                                     operator `{}`", op.as_str()));
                     match actual.sty {
                         TyUint(_) if op == hir::UnNeg => {
-                            err.note(&format!("unsigned values cannot be negated"));
+                            err.note("unsigned values cannot be negated");
                         },
                         TyStr | TyNever | TyChar | TyTuple(_) | TyArray(_,_) => {},
                         TyRef(_, ref lty, _) if lty.sty == TyStr => {},
@@ -515,20 +523,20 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         };
         let (opname, trait_did) = if let Op::Binary(op, IsAssign::Yes) = op {
             match op.node {
-                hir::BiAdd => ("add_assign", lang.add_assign_trait()),
-                hir::BiSub => ("sub_assign", lang.sub_assign_trait()),
-                hir::BiMul => ("mul_assign", lang.mul_assign_trait()),
-                hir::BiDiv => ("div_assign", lang.div_assign_trait()),
-                hir::BiRem => ("rem_assign", lang.rem_assign_trait()),
-                hir::BiBitXor => ("bitxor_assign", lang.bitxor_assign_trait()),
-                hir::BiBitAnd => ("bitand_assign", lang.bitand_assign_trait()),
-                hir::BiBitOr => ("bitor_assign", lang.bitor_assign_trait()),
-                hir::BiShl => ("shl_assign", lang.shl_assign_trait()),
-                hir::BiShr => ("shr_assign", lang.shr_assign_trait()),
-                hir::BiLt | hir::BiLe |
-                hir::BiGe | hir::BiGt |
-                hir::BiEq | hir::BiNe |
-                hir::BiAnd | hir::BiOr => {
+                hir::BinOpKind::Add => ("add_assign", lang.add_assign_trait()),
+                hir::BinOpKind::Sub => ("sub_assign", lang.sub_assign_trait()),
+                hir::BinOpKind::Mul => ("mul_assign", lang.mul_assign_trait()),
+                hir::BinOpKind::Div => ("div_assign", lang.div_assign_trait()),
+                hir::BinOpKind::Rem => ("rem_assign", lang.rem_assign_trait()),
+                hir::BinOpKind::BitXor => ("bitxor_assign", lang.bitxor_assign_trait()),
+                hir::BinOpKind::BitAnd => ("bitand_assign", lang.bitand_assign_trait()),
+                hir::BinOpKind::BitOr => ("bitor_assign", lang.bitor_assign_trait()),
+                hir::BinOpKind::Shl => ("shl_assign", lang.shl_assign_trait()),
+                hir::BinOpKind::Shr => ("shr_assign", lang.shr_assign_trait()),
+                hir::BinOpKind::Lt | hir::BinOpKind::Le |
+                hir::BinOpKind::Ge | hir::BinOpKind::Gt |
+                hir::BinOpKind::Eq | hir::BinOpKind::Ne |
+                hir::BinOpKind::And | hir::BinOpKind::Or => {
                     span_bug!(span,
                               "impossible assignment operation: {}=",
                               op.node.as_str())
@@ -536,23 +544,23 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
         } else if let Op::Binary(op, IsAssign::No) = op {
             match op.node {
-                hir::BiAdd => ("add", lang.add_trait()),
-                hir::BiSub => ("sub", lang.sub_trait()),
-                hir::BiMul => ("mul", lang.mul_trait()),
-                hir::BiDiv => ("div", lang.div_trait()),
-                hir::BiRem => ("rem", lang.rem_trait()),
-                hir::BiBitXor => ("bitxor", lang.bitxor_trait()),
-                hir::BiBitAnd => ("bitand", lang.bitand_trait()),
-                hir::BiBitOr => ("bitor", lang.bitor_trait()),
-                hir::BiShl => ("shl", lang.shl_trait()),
-                hir::BiShr => ("shr", lang.shr_trait()),
-                hir::BiLt => ("lt", lang.partial_ord_trait()),
-                hir::BiLe => ("le", lang.partial_ord_trait()),
-                hir::BiGe => ("ge", lang.partial_ord_trait()),
-                hir::BiGt => ("gt", lang.partial_ord_trait()),
-                hir::BiEq => ("eq", lang.eq_trait()),
-                hir::BiNe => ("ne", lang.eq_trait()),
-                hir::BiAnd | hir::BiOr => {
+                hir::BinOpKind::Add => ("add", lang.add_trait()),
+                hir::BinOpKind::Sub => ("sub", lang.sub_trait()),
+                hir::BinOpKind::Mul => ("mul", lang.mul_trait()),
+                hir::BinOpKind::Div => ("div", lang.div_trait()),
+                hir::BinOpKind::Rem => ("rem", lang.rem_trait()),
+                hir::BinOpKind::BitXor => ("bitxor", lang.bitxor_trait()),
+                hir::BinOpKind::BitAnd => ("bitand", lang.bitand_trait()),
+                hir::BinOpKind::BitOr => ("bitor", lang.bitor_trait()),
+                hir::BinOpKind::Shl => ("shl", lang.shl_trait()),
+                hir::BinOpKind::Shr => ("shr", lang.shr_trait()),
+                hir::BinOpKind::Lt => ("lt", lang.partial_ord_trait()),
+                hir::BinOpKind::Le => ("le", lang.partial_ord_trait()),
+                hir::BinOpKind::Ge => ("ge", lang.partial_ord_trait()),
+                hir::BinOpKind::Gt => ("gt", lang.partial_ord_trait()),
+                hir::BinOpKind::Eq => ("eq", lang.eq_trait()),
+                hir::BinOpKind::Ne => ("ne", lang.eq_trait()),
+                hir::BinOpKind::And | hir::BinOpKind::Or => {
                     span_bug!(span, "&& and || are not overloadable")
                 }
             }
@@ -571,7 +579,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                trait_did);
 
         let method = trait_did.and_then(|trait_did| {
-            let opname = Symbol::intern(opname);
+            let opname = Ident::from_str(opname);
             self.lookup_method_in_trait(span, opname, trait_did, lhs_ty, Some(other_tys))
         });
 
@@ -615,31 +623,31 @@ enum BinOpCategory {
 impl BinOpCategory {
     fn from(op: hir::BinOp) -> BinOpCategory {
         match op.node {
-            hir::BiShl | hir::BiShr =>
+            hir::BinOpKind::Shl | hir::BinOpKind::Shr =>
                 BinOpCategory::Shift,
 
-            hir::BiAdd |
-            hir::BiSub |
-            hir::BiMul |
-            hir::BiDiv |
-            hir::BiRem =>
+            hir::BinOpKind::Add |
+            hir::BinOpKind::Sub |
+            hir::BinOpKind::Mul |
+            hir::BinOpKind::Div |
+            hir::BinOpKind::Rem =>
                 BinOpCategory::Math,
 
-            hir::BiBitXor |
-            hir::BiBitAnd |
-            hir::BiBitOr =>
+            hir::BinOpKind::BitXor |
+            hir::BinOpKind::BitAnd |
+            hir::BinOpKind::BitOr =>
                 BinOpCategory::Bitwise,
 
-            hir::BiEq |
-            hir::BiNe |
-            hir::BiLt |
-            hir::BiLe |
-            hir::BiGe |
-            hir::BiGt =>
+            hir::BinOpKind::Eq |
+            hir::BinOpKind::Ne |
+            hir::BinOpKind::Lt |
+            hir::BinOpKind::Le |
+            hir::BinOpKind::Ge |
+            hir::BinOpKind::Gt =>
                 BinOpCategory::Comparison,
 
-            hir::BiAnd |
-            hir::BiOr =>
+            hir::BinOpKind::And |
+            hir::BinOpKind::Or =>
                 BinOpCategory::Shortcircuit,
         }
     }

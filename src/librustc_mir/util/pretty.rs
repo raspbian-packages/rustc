@@ -44,6 +44,9 @@ pub enum PassWhere {
 
     /// We just dumped the given statement or terminator.
     AfterLocation(Location),
+
+    /// We just dumped the terminator for a block but not the closing `}`.
+    AfterTerminator(BasicBlock),
 }
 
 /// If the session is properly configured, dumps a human-readable
@@ -114,8 +117,8 @@ pub fn dump_enabled<'a, 'gcx, 'tcx>(
         // see notes on #41697 below
         tcx.item_path_str(source.def_id)
     });
-    filters.split("|").any(|or_filter| {
-        or_filter.split("&").all(|and_filter| {
+    filters.split('|').any(|or_filter| {
+        or_filter.split('&').all(|and_filter| {
             and_filter == "all" || pass_name.contains(and_filter) || node_path.contains(and_filter)
         })
     })
@@ -178,10 +181,10 @@ fn dump_path(
     };
 
     let pass_num = if tcx.sess.opts.debugging_opts.dump_mir_exclude_pass_number {
-        format!("")
+        String::new()
     } else {
         match pass_num {
-            None => format!(".-------"),
+            None => ".-------".to_string(),
             Some(pass_num) => format!(".{}", pass_num),
         }
     };
@@ -351,6 +354,7 @@ where
     })?;
 
     extra_data(PassWhere::AfterLocation(current_location), w)?;
+    extra_data(PassWhere::AfterTerminator(block), w)?;
 
     writeln!(w, "{}}}", INDENT)
 }
@@ -384,7 +388,7 @@ struct ExtraComments<'cx, 'gcx: 'tcx, 'tcx: 'cx> {
 
 impl<'cx, 'gcx, 'tcx> ExtraComments<'cx, 'gcx, 'tcx> {
     fn push(&mut self, lines: &str) {
-        for line in lines.split("\n") {
+        for line in lines.split('\n') {
             self.comments.push(line.to_string());
         }
     }
@@ -394,7 +398,7 @@ impl<'cx, 'gcx, 'tcx> Visitor<'tcx> for ExtraComments<'cx, 'gcx, 'tcx> {
     fn visit_constant(&mut self, constant: &Constant<'tcx>, location: Location) {
         self.super_constant(constant, location);
         let Constant { span, ty, literal } = constant;
-        self.push(&format!("mir::Constant"));
+        self.push("mir::Constant");
         self.push(&format!("+ span: {:?}", span));
         self.push(&format!("+ ty: {:?}", ty));
         self.push(&format!("+ literal: {:?}", literal));
@@ -403,7 +407,7 @@ impl<'cx, 'gcx, 'tcx> Visitor<'tcx> for ExtraComments<'cx, 'gcx, 'tcx> {
     fn visit_const(&mut self, constant: &&'tcx ty::Const<'tcx>, _: Location) {
         self.super_const(constant);
         let ty::Const { ty, val, .. } = constant;
-        self.push(&format!("ty::Const"));
+        self.push("ty::Const");
         self.push(&format!("+ ty: {:?}", ty));
         self.push(&format!("+ val: {:?}", val));
     }
@@ -413,13 +417,13 @@ impl<'cx, 'gcx, 'tcx> Visitor<'tcx> for ExtraComments<'cx, 'gcx, 'tcx> {
         match rvalue {
             Rvalue::Aggregate(kind, _) => match **kind {
                 AggregateKind::Closure(def_id, substs) => {
-                    self.push(&format!("closure"));
+                    self.push("closure");
                     self.push(&format!("+ def_id: {:?}", def_id));
                     self.push(&format!("+ substs: {:#?}", substs));
                 }
 
                 AggregateKind::Generator(def_id, substs, movability) => {
-                    self.push(&format!("generator"));
+                    self.push("generator");
                     self.push(&format!("+ def_id: {:?}", def_id));
                     self.push(&format!("+ substs: {:#?}", substs));
                     self.push(&format!("+ movability: {:?}", movability));

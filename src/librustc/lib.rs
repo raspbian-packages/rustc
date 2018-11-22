@@ -49,7 +49,6 @@
 #![feature(fs_read_write)]
 #![feature(iterator_find_map)]
 #![cfg_attr(windows, feature(libc))]
-#![cfg_attr(stage0, feature(macro_lifetime_matcher))]
 #![feature(macro_vis_matcher)]
 #![feature(never_type)]
 #![feature(exhaustive_patterns)]
@@ -68,11 +67,13 @@
 #![feature(trusted_len)]
 #![feature(vec_remove_item)]
 #![feature(catch_expr)]
+#![feature(step_trait)]
 #![feature(integer_atomics)]
 #![feature(test)]
 #![feature(in_band_lifetimes)]
 #![feature(macro_at_most_once_rep)]
 #![feature(inclusive_range_methods)]
+#![feature(crate_in_paths)]
 
 #![recursion_limit="512"]
 
@@ -132,7 +133,6 @@ pub mod middle {
     pub mod allocator;
     pub mod borrowck;
     pub mod expr_use_visitor;
-    pub mod const_val;
     pub mod cstore;
     pub mod dataflow;
     pub mod dead;
@@ -164,6 +164,7 @@ pub mod util {
     pub mod ppaux;
     pub mod nodemap;
     pub mod fs;
+    pub mod time_graph;
 }
 
 // A private module so that macro-expanded idents like

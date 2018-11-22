@@ -18,11 +18,12 @@
 //! contain revealed `impl Trait` values).
 
 use borrow_check::nll::renumber;
+use borrow_check::nll::type_check::free_region_relations::UniversalRegionRelations;
 use borrow_check::nll::universal_regions::UniversalRegions;
 use rustc::hir::def_id::DefId;
 use rustc::infer::InferOk;
-use rustc::mir::visit::TyContext;
 use rustc::mir::*;
+use rustc::traits::query::type_op::custom::CustomTypeOp;
 use rustc::traits::{ObligationCause, PredicateObligations};
 use rustc::ty::subst::Subst;
 use rustc::ty::Ty;
@@ -37,22 +38,25 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
         mir: &Mir<'tcx>,
         mir_def_id: DefId,
         universal_regions: &UniversalRegions<'tcx>,
+        universal_region_relations: &UniversalRegionRelations<'tcx>,
+        normalized_inputs_and_output: &[Ty<'tcx>],
     ) {
         let tcx = self.infcx.tcx;
 
-        let &UniversalRegions {
-            unnormalized_output_ty,
-            unnormalized_input_tys,
-            ..
-        } = universal_regions;
+        let (&normalized_output_ty, normalized_input_tys) =
+            normalized_inputs_and_output.split_last().unwrap();
         let infcx = self.infcx;
 
         // Equate expected input tys with those in the MIR.
         let argument_locals = (1..).map(Local::new);
-        for (&unnormalized_input_ty, local) in unnormalized_input_tys.iter().zip(argument_locals) {
-            let input_ty = self.normalize(&unnormalized_input_ty, Locations::All);
+        for (&normalized_input_ty, local) in normalized_input_tys.iter().zip(argument_locals) {
+            debug!(
+                "equate_inputs_and_outputs: normalized_input_ty = {:?}",
+                normalized_input_ty
+            );
+
             let mir_input_ty = mir.local_decls[local].ty;
-            self.equate_normalized_input_or_output(input_ty, mir_input_ty);
+            self.equate_normalized_input_or_output(normalized_input_ty, mir_input_ty);
         }
 
         assert!(
@@ -66,82 +70,76 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
 
         // Return types are a bit more complex. They may contain existential `impl Trait`
         // types.
-        debug!(
-            "equate_inputs_and_outputs: unnormalized_output_ty={:?}",
-            unnormalized_output_ty
-        );
-        let output_ty = self.normalize(&unnormalized_output_ty, Locations::All);
-        debug!(
-            "equate_inputs_and_outputs: normalized output_ty={:?}",
-            output_ty
-        );
+        let param_env = self.param_env;
         let mir_output_ty = mir.local_decls[RETURN_PLACE].ty;
         let anon_type_map =
             self.fully_perform_op(
                 Locations::All,
-                || format!("input_output"),
-                |cx| {
-                    let mut obligations = ObligationAccumulator::default();
+                CustomTypeOp::new(
+                    |infcx| {
+                        let mut obligations = ObligationAccumulator::default();
 
-                    let dummy_body_id = ObligationCause::dummy().body_id;
-                    let (output_ty, anon_type_map) = obligations.add(infcx.instantiate_anon_types(
-                        mir_def_id,
-                        dummy_body_id,
-                        cx.param_env,
-                        &output_ty,
-                    ));
-                    debug!(
-                        "equate_inputs_and_outputs: instantiated output_ty={:?}",
-                        output_ty
-                    );
-                    debug!(
-                        "equate_inputs_and_outputs: anon_type_map={:#?}",
-                        anon_type_map
-                    );
-
-                    debug!(
-                        "equate_inputs_and_outputs: mir_output_ty={:?}",
-                        mir_output_ty
-                    );
-                    obligations.add(
-                        infcx
-                            .at(&ObligationCause::dummy(), cx.param_env)
-                            .eq(output_ty, mir_output_ty)?,
-                    );
-
-                    for (&anon_def_id, anon_decl) in &anon_type_map {
-                        let anon_defn_ty = tcx.type_of(anon_def_id);
-                        let anon_defn_ty = anon_defn_ty.subst(tcx, anon_decl.substs);
-                        let anon_defn_ty = renumber::renumber_regions(
-                            cx.infcx,
-                            TyContext::Location(Location::START),
-                            &anon_defn_ty,
+                        let dummy_body_id = ObligationCause::dummy().body_id;
+                        let (output_ty, anon_type_map) =
+                            obligations.add(infcx.instantiate_anon_types(
+                                mir_def_id,
+                                dummy_body_id,
+                                param_env,
+                                &normalized_output_ty,
+                            ));
+                        debug!(
+                            "equate_inputs_and_outputs: instantiated output_ty={:?}",
+                            output_ty
                         );
                         debug!(
-                            "equate_inputs_and_outputs: concrete_ty={:?}",
-                            anon_decl.concrete_ty
+                            "equate_inputs_and_outputs: anon_type_map={:#?}",
+                            anon_type_map
                         );
-                        debug!("equate_inputs_and_outputs: anon_defn_ty={:?}", anon_defn_ty);
+
+                        debug!(
+                            "equate_inputs_and_outputs: mir_output_ty={:?}",
+                            mir_output_ty
+                        );
                         obligations.add(
                             infcx
-                                .at(&ObligationCause::dummy(), cx.param_env)
-                                .eq(anon_decl.concrete_ty, anon_defn_ty)?,
+                                .at(&ObligationCause::dummy(), param_env)
+                                .eq(output_ty, mir_output_ty)?,
                         );
-                    }
 
-                    debug!("equate_inputs_and_outputs: equated");
+                        for (&anon_def_id, anon_decl) in &anon_type_map {
+                            let anon_defn_ty = tcx.type_of(anon_def_id);
+                            let anon_defn_ty = anon_defn_ty.subst(tcx, anon_decl.substs);
+                            let anon_defn_ty = renumber::renumber_regions(
+                                infcx,
+                                &anon_defn_ty,
+                            );
+                            debug!(
+                                "equate_inputs_and_outputs: concrete_ty={:?}",
+                                anon_decl.concrete_ty
+                            );
+                            debug!("equate_inputs_and_outputs: anon_defn_ty={:?}", anon_defn_ty);
+                            obligations.add(
+                                infcx
+                                    .at(&ObligationCause::dummy(), param_env)
+                                    .eq(anon_decl.concrete_ty, anon_defn_ty)?,
+                            );
+                        }
 
-                    Ok(InferOk {
-                        value: Some(anon_type_map),
-                        obligations: obligations.into_vec(),
-                    })
-                },
+                        debug!("equate_inputs_and_outputs: equated");
+
+                        Ok(InferOk {
+                            value: Some(anon_type_map),
+                            obligations: obligations.into_vec(),
+                        })
+                    },
+                    || "input_output".to_string(),
+                ),
             ).unwrap_or_else(|terr| {
                 span_mirbug!(
                     self,
                     Location::START,
                     "equate_inputs_and_outputs: `{:?}=={:?}` failed with `{:?}`",
-                    output_ty,
+                    normalized_output_ty,
                     mir_output_ty,
                     terr
                 );
@@ -155,14 +153,16 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
         if let Some(anon_type_map) = anon_type_map {
             self.fully_perform_op(
                 Locations::All,
-                || format!("anon_type_map"),
-                |_cx| {
-                    infcx.constrain_anon_types(&anon_type_map, universal_regions);
-                    Ok(InferOk {
-                        value: (),
-                        obligations: vec![],
-                    })
-                },
+                CustomTypeOp::new(
+                    |_cx| {
+                        infcx.constrain_anon_types(&anon_type_map, universal_region_relations);
+                        Ok(InferOk {
+                            value: (),
+                            obligations: vec![],
+                        })
+                    },
+                    || "anon_type_map".to_string(),
+                ),
             ).unwrap();
         }
     }

@@ -55,6 +55,7 @@ pub enum CallConv {
     X86_64_Win64 = 79,
     X86_VectorCall = 80,
     X86_Intr = 83,
+    AmdGpuKernel = 91,
 }
 
 /// LLVMRustLinkage
@@ -1790,7 +1791,6 @@ extern "C" {
                                            CU1: *mut *mut c_void,
                                            CU2: *mut *mut c_void);
     pub fn LLVMRustThinLTOPatchDICompileUnit(M: ModuleRef, CU: *mut c_void);
-    pub fn LLVMRustThinLTORemoveAvailableExternally(M: ModuleRef);
 
     pub fn LLVMRustLinkerNew(M: ModuleRef) -> LinkerRef;
     pub fn LLVMRustLinkerAdd(linker: LinkerRef,

@@ -10,7 +10,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use oldtime::Duration as OldDuration;
 
 use {Weekday, Timelike, Datelike};
-use offset::{TimeZone, Offset, Utc, Local, FixedOffset};
+#[cfg(feature="clock")]
+use offset::Local;
+use offset::{TimeZone, Offset, Utc, FixedOffset};
 use naive::{NaiveTime, NaiveDateTime, IsoWeek};
 use Date;
 use format::{Item, Numeric, Pad, Fixed};
@@ -119,6 +121,30 @@ impl<Tz: TimeZone> DateTime<Tz> {
     #[inline]
     pub fn timestamp_millis(&self) -> i64 {
         self.datetime.timestamp_millis()
+    }
+
+    /// Returns the number of non-leap-nanoseconds since January 1, 1970 UTC
+    ///
+    /// Note that this does reduce the number of years that can be represented
+    /// from ~584 Billion to ~584. (If this is a problem, please file
+    /// an issue to let me know what domain needs nanosecond precision over
+    /// millenia, I'm curious.)
+    ///
+    /// # Example
+    ///
+    /// ~~~~
+    /// use chrono::Utc;
+    /// use chrono::TimeZone;
+    ///
+    /// let dt = Utc.ymd(1970, 1, 1).and_hms_nano(0, 0, 1, 444);
+    /// assert_eq!(dt.timestamp_nanos(), 1_000_000_444);
+    ///
+    /// let dt = Utc.ymd(2001, 9, 9).and_hms_nano(1, 46, 40, 555);
+    /// assert_eq!(dt.timestamp_nanos(), 1_000_000_000_000_000_555);
+    /// ~~~~
+    #[inline]
+    pub fn timestamp_nanos(&self) -> i64 {
+        self.datetime.timestamp_nanos()
     }
 
     /// Returns the number of milliseconds since the last second boundary
@@ -485,6 +511,15 @@ impl<Tz: TimeZone> Sub<OldDuration> for DateTime<Tz> {
     }
 }
 
+impl<Tz: TimeZone> Sub<DateTime<Tz>> for DateTime<Tz> {
+    type Output = OldDuration;
+
+    #[inline]
+    fn sub(self, rhs: DateTime<Tz>) -> OldDuration {
+        self.signed_duration_since(rhs)
+    }
+}
+
 impl<Tz: TimeZone> fmt::Debug for DateTime<Tz> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}{:?}", self.naive_local(), self.offset)
@@ -532,6 +567,7 @@ impl str::FromStr for DateTime<Utc> {
     }
 }
 
+#[cfg(feature="clock")]
 impl str::FromStr for DateTime<Local> {
     type Err = ParseError;
 
@@ -558,6 +594,7 @@ impl From<SystemTime> for DateTime<Utc> {
     }
 }
 
+#[cfg(feature="clock")]
 impl From<SystemTime> for DateTime<Local> {
     fn from(t: SystemTime) -> DateTime<Local> {
         DateTime::<Utc>::from(t).with_timezone(&Local)
@@ -594,7 +631,7 @@ fn test_encodable_json<FUtc, FFixed, E>(to_string_utc: FUtc, to_string_fixed: FF
                Some(r#""2014-07-24T12:34:06+01:00:50""#.into()));
 }
 
-#[cfg(all(test, any(feature = "rustc-serialize", feature = "serde")))]
+#[cfg(all(test, feature="clock", any(feature = "rustc-serialize", feature = "serde")))]
 fn test_decodable_json<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
                                                 fixed_from_str: FFixed,
                                                 local_from_str: FLocal)
@@ -631,7 +668,7 @@ fn test_decodable_json<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
     assert!(fixed_from_str(r#""2014-07-32T12:34:06Z""#).is_err());
 }
 
-#[cfg(all(test, feature = "rustc-serialize"))]
+#[cfg(all(test, feature="clock", feature = "rustc-serialize"))]
 fn test_decodable_json_timestamps<FUtc, FFixed, FLocal, E>(utc_from_str: FUtc,
                                                            fixed_from_str: FFixed,
                                                            local_from_str: FLocal)
@@ -665,7 +702,9 @@ pub mod rustc_serialize {
     use std::fmt;
     use std::ops::Deref;
     use super::DateTime;
-    use offset::{TimeZone, LocalResult, Utc, Local, FixedOffset};
+    #[cfg(feature="clock")]
+    use offset::Local;
+    use offset::{TimeZone, LocalResult, Utc, FixedOffset};
     use rustc_serialize::{Encodable, Encoder, Decodable, Decoder};
 
     impl<Tz: TimeZone> Encodable for DateTime<Tz> {
@@ -695,7 +734,9 @@ pub mod rustc_serialize {
         }
     }
 
+    #[allow(deprecated)]
     impl Decodable for TsSeconds<FixedOffset> {
+        #[allow(deprecated)]
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds<FixedOffset>, D::Error> {
             from(FixedOffset::east(0).timestamp_opt(d.read_i64()?, 0), d)
                 .map(TsSeconds)
@@ -717,13 +758,16 @@ pub mod rustc_serialize {
     #[derive(Debug)]
     pub struct TsSeconds<Tz: TimeZone>(DateTime<Tz>);
 
+    #[allow(deprecated)]
     impl<Tz: TimeZone> From<TsSeconds<Tz>> for DateTime<Tz> {
         /// Pull the inner DateTime<Tz> out
+        #[allow(deprecated)]
         fn from(obj: TsSeconds<Tz>) -> DateTime<Tz> {
             obj.0
         }
     }
 
+    #[allow(deprecated)]
     impl<Tz: TimeZone> Deref for TsSeconds<Tz> {
         type Target = DateTime<Tz>;
 
@@ -732,6 +776,7 @@ pub mod rustc_serialize {
         }
     }
 
+    #[allow(deprecated)]
     impl Decodable for TsSeconds<Utc> {
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds<Utc>, D::Error> {
             from(Utc.timestamp_opt(d.read_i64()?, 0), d)
@@ -739,6 +784,7 @@ pub mod rustc_serialize {
         }
     }
 
+    #[cfg(feature="clock")]
     impl Decodable for DateTime<Local> {
         fn decode<D: Decoder>(d: &mut D) -> Result<DateTime<Local>, D::Error> {
             match d.read_str()?.parse::<DateTime<FixedOffset>>() {
@@ -748,7 +794,10 @@ pub mod rustc_serialize {
         }
     }
 
+    #[cfg(feature="clock")]
+    #[allow(deprecated)]
     impl Decodable for TsSeconds<Local> {
+        #[allow(deprecated)]
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds<Local>, D::Error> {
             from(Utc.timestamp_opt(d.read_i64()?, 0), d)
                 .map(|dt| TsSeconds(dt.with_timezone(&Local)))
@@ -762,11 +811,13 @@ pub mod rustc_serialize {
         super::test_encodable_json(json::encode, json::encode);
     }
 
+    #[cfg(feature="clock")]
     #[test]
     fn test_decodable() {
         super::test_decodable_json(json::decode, json::decode, json::decode);
     }
 
+    #[cfg(feature="clock")]
     #[test]
     fn test_decodable_timestamps() {
         super::test_decodable_json_timestamps(json::decode, json::decode, json::decode);
@@ -779,7 +830,9 @@ pub mod rustc_serialize {
 pub mod serde {
     use std::fmt;
     use super::DateTime;
-    use offset::{TimeZone, Utc, Local, FixedOffset};
+    #[cfg(feature="clock")]
+    use offset::Local;
+    use offset::{TimeZone, Utc, FixedOffset};
     use serdelib::{ser, de};
 
     /// Ser/de to/from timestamps in seconds
@@ -939,6 +992,167 @@ pub mod serde {
         }
     }
 
+    /// Ser/de to/from timestamps in nanoseconds
+    ///
+    /// Intended for use with `serde`'s `with` attribute.
+    ///
+    /// # Example:
+    ///
+    /// ```rust
+    /// # // We mark this ignored so that we can test on 1.13 (which does not
+    /// # // support custom derive), and run tests with --ignored on beta and
+    /// # // nightly to actually trigger these.
+    /// #
+    /// # #[macro_use] extern crate serde_derive;
+    /// # #[macro_use] extern crate serde_json;
+    /// # extern crate chrono;
+    /// # use chrono::{TimeZone, DateTime, Utc};
+    /// use chrono::serde::ts_nanoseconds;
+    /// #[derive(Deserialize, Serialize)]
+    /// struct S {
+    ///     #[serde(with = "ts_nanoseconds")]
+    ///     time: DateTime<Utc>
+    /// }
+    ///
+    /// # fn example() -> Result<S, serde_json::Error> {
+    /// let time = Utc.ymd(2018, 5, 17).and_hms_nano(02, 04, 59, 918355733);
+    /// let my_s = S {
+    ///     time: time.clone(),
+    /// };
+    ///
+    /// let as_string = serde_json::to_string(&my_s)?;
+    /// assert_eq!(as_string, r#"{"time":1526522699918355733}"#);
+    /// let my_s: S = serde_json::from_str(&as_string)?;
+    /// assert_eq!(my_s.time, time);
+    /// # Ok(my_s)
+    /// # }
+    /// # fn main() { example().unwrap(); }
+    /// ```
+    pub mod ts_nanoseconds {
+        use std::fmt;
+        use serdelib::{ser, de};
+
+        use {DateTime, Utc};
+        use offset::{LocalResult, TimeZone};
+
+        /// Deserialize a `DateTime` from a nanosecond timestamp
+        ///
+        /// Intended for use with `serde`s `deserialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # extern crate chrono;
+        /// # use chrono::{DateTime, Utc};
+        /// use chrono::serde::ts_nanoseconds::deserialize as from_nano_ts;
+        /// #[derive(Deserialize)]
+        /// struct S {
+        ///     #[serde(deserialize_with = "from_nano_ts")]
+        ///     time: DateTime<Utc>
+        /// }
+        ///
+        /// # fn example() -> Result<S, serde_json::Error> {
+        /// let my_s: S = serde_json::from_str(r#"{ "time": 1526522699918355733 }"#)?;
+        /// # Ok(my_s)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn deserialize<'de, D>(d: D) -> Result<DateTime<Utc>, D::Error>
+            where D: de::Deserializer<'de>
+        {
+            Ok(try!(d.deserialize_i64(NanoSecondsTimestampVisitor)))
+        }
+
+        /// Serialize a UTC datetime into an integer number of nanoseconds since the epoch
+        ///
+        /// Intended for use with `serde`s `serialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # extern crate chrono;
+        /// # use chrono::{TimeZone, DateTime, Utc};
+        /// use chrono::serde::ts_nanoseconds::serialize as to_nano_ts;
+        /// #[derive(Serialize)]
+        /// struct S {
+        ///     #[serde(serialize_with = "to_nano_ts")]
+        ///     time: DateTime<Utc>
+        /// }
+        ///
+        /// # fn example() -> Result<String, serde_json::Error> {
+        /// let my_s = S {
+        ///     time: Utc.ymd(2018, 5, 17).and_hms_nano(02, 04, 59, 918355733),
+        /// };
+        /// let as_string = serde_json::to_string(&my_s)?;
+        /// assert_eq!(as_string, r#"{"time":1526522699918355733}"#);
+        /// # Ok(as_string)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn serialize<S>(dt: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Error>
+            where S: ser::Serializer
+        {
+            serializer.serialize_i64(dt.timestamp_nanos())
+        }
+
+        struct NanoSecondsTimestampVisitor;
+
+        impl<'de> de::Visitor<'de> for NanoSecondsTimestampVisitor {
+            type Value = DateTime<Utc>;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result
+            {
+                write!(formatter, "a unix timestamp in seconds")
+            }
+
+            /// Deserialize a timestamp in seconds since the epoch
+            fn visit_i64<E>(self, value: i64) -> Result<DateTime<Utc>, E>
+                where E: de::Error
+            {
+                from(Utc.timestamp_opt(value / 1_000_000_000,
+                                       (value % 1_000_000_000) as u32),
+                     &value)
+            }
+
+            /// Deserialize a timestamp in seconds since the epoch
+            fn visit_u64<E>(self, value: u64) -> Result<DateTime<Utc>, E>
+                where E: de::Error
+            {
+                from(Utc.timestamp_opt(value as i64 / 1_000_000_000,
+                                       (value as i64 % 1_000_000_000) as u32),
+                     &value)
+            }
+        }
+
+        // try!-like function to convert a LocalResult into a serde-ish Result
+        fn from<T, E, V>(me: LocalResult<T>, ts: &V) -> Result<T, E>
+            where E: de::Error,
+                  V: fmt::Display,
+                  T: fmt::Display,
+        {
+            match me {
+                LocalResult::None => Err(E::custom(
+                    format!("value is not a legal timestamp: {}", ts))),
+                LocalResult::Ambiguous(min, max) => Err(E::custom(
+                    format!("value is an ambiguous timestamp: {}, could be either of {}, {}",
+                            ts, min, max))),
+                LocalResult::Single(val) => Ok(val)
+            }
+        }
+    }
+
     impl<Tz: TimeZone> ser::Serialize for DateTime<Tz> {
         /// Serialize into a rfc3339 time string
         ///
@@ -1015,6 +1229,7 @@ pub mod serde {
     ///
     /// See [the `serde` module](./serde/index.html) for alternate
     /// serialization formats.
+    #[cfg(feature="clock")]
     impl<'de> de::Deserialize<'de> for DateTime<Local> {
         fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
             where D: de::Deserializer<'de>
@@ -1031,6 +1246,7 @@ pub mod serde {
         super::test_encodable_json(self::serde_json::to_string, self::serde_json::to_string);
     }
 
+    #[cfg(feature="clock")]
     #[test]
     fn test_serde_deserialize() {
         super::test_decodable_json(|input| self::serde_json::from_str(&input), |input| self::serde_json::from_str(&input),
@@ -1054,9 +1270,12 @@ pub mod serde {
 #[cfg(test)]
 mod tests {
     use super::DateTime;
+    #[cfg(feature="clock")]
     use Datelike;
     use naive::{NaiveTime, NaiveDate};
-    use offset::{TimeZone, Utc, Local, FixedOffset};
+    #[cfg(feature="clock")]
+    use offset::Local;
+    use offset::{TimeZone, Utc, FixedOffset};
     use oldtime::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1130,6 +1349,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature="clock")]
     fn test_datetime_with_timezone() {
         let local_now = Local::now();
         let utc_now = local_now.with_timezone(&Utc);
@@ -1225,6 +1445,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature="clock")]
     fn test_datetime_format_with_local() {
         // if we are not around the year boundary, local and UTC date should have the same year
         let dt = Local::now().with_month(5).unwrap();
@@ -1232,6 +1453,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature="clock")]
     fn test_datetime_is_copy() {
         // UTC is known to be `Copy`.
         let a = Utc::now();
@@ -1240,6 +1462,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature="clock")]
     fn test_datetime_is_send() {
         use std::thread;
 
@@ -1280,7 +1503,9 @@ mod tests {
                    UNIX_EPOCH - Duration::new(999_999_999, 999_999_999));
 
         // DateTime<any tz> -> SystemTime (via `with_timezone`)
-        assert_eq!(SystemTime::from(epoch.with_timezone(&Local)), UNIX_EPOCH);
+        #[cfg(feature="clock")] {
+            assert_eq!(SystemTime::from(epoch.with_timezone(&Local)), UNIX_EPOCH);
+        }
         assert_eq!(SystemTime::from(epoch.with_timezone(&FixedOffset::east(32400))), UNIX_EPOCH);
         assert_eq!(SystemTime::from(epoch.with_timezone(&FixedOffset::west(28800))), UNIX_EPOCH);
     }

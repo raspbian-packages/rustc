@@ -28,7 +28,7 @@ use rustc_data_structures::stable_hasher::ToStableHashKey;
 use lint;
 use middle::cstore;
 
-use syntax::ast::{self, IntTy, UintTy};
+use syntax::ast::{self, IntTy, UintTy, MetaItemKind};
 use syntax::codemap::{FileName, FilePathMapping};
 use syntax::edition::{Edition, EDITION_NAME_LIST, DEFAULT_EDITION};
 use syntax::parse::token;
@@ -98,15 +98,15 @@ pub enum Lto {
 #[derive(Clone, PartialEq, Hash)]
 pub enum CrossLangLto {
     LinkerPlugin(PathBuf),
-    NoLink,
+    LinkerPluginAuto,
     Disabled
 }
 
 impl CrossLangLto {
-    pub fn embed_bitcode(&self) -> bool {
+    pub fn enabled(&self) -> bool {
         match *self {
             CrossLangLto::LinkerPlugin(_) |
-            CrossLangLto::NoLink => true,
+            CrossLangLto::LinkerPluginAuto => true,
             CrossLangLto::Disabled => false,
         }
     }
@@ -455,15 +455,28 @@ pub enum BorrowckMode {
     Ast,
     Mir,
     Compare,
+    Migrate,
 }
 
 impl BorrowckMode {
+    /// Should we run the MIR-based borrow check, but also fall back
+    /// on the AST borrow check if the MIR-based one errors.
+    pub fn migrate(self) -> bool {
+        match self {
+            BorrowckMode::Ast => false,
+            BorrowckMode::Compare => false,
+            BorrowckMode::Mir => false,
+            BorrowckMode::Migrate => true,
+        }
+    }
+
     /// Should we emit the AST-based borrow checker errors?
     pub fn use_ast(self) -> bool {
         match self {
             BorrowckMode::Ast => true,
             BorrowckMode::Compare => true,
             BorrowckMode::Mir => false,
+            BorrowckMode::Migrate => false,
         }
     }
     /// Should we emit the MIR-based borrow checker errors?
@@ -472,6 +485,7 @@ impl BorrowckMode {
             BorrowckMode::Ast => false,
             BorrowckMode::Compare => true,
             BorrowckMode::Mir => true,
+            BorrowckMode::Migrate => true,
         }
     }
 }
@@ -885,9 +899,7 @@ macro_rules! options {
                       -> bool {
             match v {
                 Some(s) => {
-                    for s in s.split_whitespace() {
-                        slot.push(s.to_string());
-                    }
+                    slot.extend(s.split_whitespace().map(|s| s.to_string()));
                     true
                 },
                 None => false,
@@ -1020,7 +1032,7 @@ macro_rules! options {
                 let mut bool_arg = None;
                 if parse_opt_bool(&mut bool_arg, v) {
                     *slot = if bool_arg.unwrap() {
-                        CrossLangLto::NoLink
+                        CrossLangLto::LinkerPluginAuto
                     } else {
                         CrossLangLto::Disabled
                     };
@@ -1029,8 +1041,7 @@ macro_rules! options {
             }
 
             *slot = match v {
-                None |
-                Some("no-link") => CrossLangLto::NoLink,
+                None => CrossLangLto::LinkerPluginAuto,
                 Some(path) => CrossLangLto::LinkerPlugin(PathBuf::from(path)),
             };
             true
@@ -1128,7 +1139,7 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
     emit_end_regions: bool = (false, parse_bool, [UNTRACKED],
         "emit EndRegion as part of MIR; enable transforms that solely process EndRegion"),
     borrowck: Option<String> = (None, parse_opt_string, [UNTRACKED],
-        "select which borrowck is used (`ast`, `mir`, or `compare`)"),
+        "select which borrowck is used (`ast`, `mir`, `migrate`, or `compare`)"),
     two_phase_borrows: bool = (false, parse_bool, [UNTRACKED],
         "use two-phase reserved/active distinction for `&mut` borrows in MIR borrowck"),
     two_phase_beyond_autoref: bool = (false, parse_bool, [UNTRACKED],
@@ -1152,8 +1163,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "gather codegen statistics"),
     asm_comments: bool = (false, parse_bool, [TRACKED],
         "generate comments into the assembly (may change behavior)"),
-    no_verify: bool = (false, parse_bool, [TRACKED],
-        "skip LLVM verification"),
+    verify_llvm_ir: bool = (false, parse_bool, [TRACKED],
+        "verify LLVM IR"),
     borrowck_stats: bool = (false, parse_bool, [UNTRACKED],
         "gather borrowck statistics"),
     no_landing_pads: bool = (false, parse_bool, [TRACKED],
@@ -1194,6 +1205,8 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "run all passes except codegen; no output"),
     treat_err_as_bug: bool = (false, parse_bool, [TRACKED],
           "treat all errors that occur as bugs"),
+    report_delayed_bugs: bool = (false, parse_bool, [TRACKED],
+          "immediately print bugs registered with `delay_span_bug`"),
     external_macro_backtrace: bool = (false, parse_bool, [UNTRACKED],
           "show macro backtraces even for non-local macros"),
     teach: bool = (false, parse_bool, [TRACKED],
@@ -1232,8 +1245,6 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "for every macro invocation, print its name and arguments"),
     debug_macros: bool = (false, parse_bool, [TRACKED],
           "emit line numbers debug info inside macros"),
-    enable_nonzeroing_move_hints: bool = (false, parse_bool, [TRACKED],
-          "force nonzeroing move optimization on"),
     keep_hygiene_data: bool = (false, parse_bool, [UNTRACKED],
           "don't clear the hygiene data after analysis"),
     keep_ast: bool = (false, parse_bool, [UNTRACKED],
@@ -1352,6 +1363,10 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
           "generate build artifacts that are compatible with linker-based LTO."),
     no_parallel_llvm: bool = (false, parse_bool, [UNTRACKED],
           "don't run LLVM in parallel (while keeping codegen-units and ThinLTO)"),
+    no_leak_check: bool = (false, parse_bool, [UNTRACKED],
+        "disables the 'leak check' for subtyping; unsound, but useful for tests"),
+    crate_attr: Vec<String> = (Vec::new(), parse_string_push, [TRACKED],
+        "inject the given attribute in the crate"),
 }
 
 pub fn default_lib_output() -> CrateType {
@@ -1367,6 +1382,7 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     let vendor = &sess.target.target.target_vendor;
     let min_atomic_width = sess.target.target.min_atomic_width();
     let max_atomic_width = sess.target.target.max_atomic_width();
+    let atomic_cas = sess.target.target.options.atomic_cas;
 
     let mut ret = HashSet::new();
     // Target bindings.
@@ -1405,6 +1421,9 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
                 ));
             }
         }
+    }
+    if atomic_cas {
+        ret.insert((Symbol::intern("target_has_atomic"), Some(Symbol::intern("cas"))));
     }
     if sess.opts.debug_assertions {
         ret.insert((Symbol::intern("debug_assertions"), None));
@@ -1727,24 +1746,58 @@ pub fn parse_cfgspecs(cfgspecs: Vec<String>) -> ast::CrateConfig {
             let mut parser =
                 parse::new_parser_from_source_str(&sess, FileName::CfgSpec, s.to_string());
 
-            let meta_item = panictry!(parser.parse_meta_item());
+            macro_rules! error {($reason: expr) => {
+                early_error(ErrorOutputType::default(),
+                            &format!(concat!("invalid `--cfg` argument: `{}` (", $reason, ")"), s));
+            }}
 
-            if parser.token != token::Eof {
-                early_error(
-                    ErrorOutputType::default(),
-                    &format!("invalid --cfg argument: {}", s),
-                )
-            } else if meta_item.is_meta_item_list() {
-                let msg = format!(
-                    "invalid predicate in --cfg command line argument: `{}`",
-                    meta_item.ident
-                );
-                early_error(ErrorOutputType::default(), &msg)
+            match &mut parser.parse_meta_item() {
+                Ok(meta_item) if parser.token == token::Eof => {
+                    if meta_item.ident.segments.len() != 1 {
+                        error!("argument key must be an identifier");
+                    }
+                    match &meta_item.node {
+                        MetaItemKind::List(..) => {
+                            error!(r#"expected `key` or `key="value"`"#);
+                        }
+                        MetaItemKind::NameValue(lit) if !lit.node.is_str() => {
+                            error!("argument value must be a string");
+                        }
+                        MetaItemKind::NameValue(..) | MetaItemKind::Word => {
+                            return (meta_item.name(), meta_item.value_str());
+                        }
+                    }
+                }
+                Ok(..) => {}
+                Err(err) => err.cancel(),
             }
 
-            (meta_item.name(), meta_item.value_str())
+            error!(r#"expected `key` or `key="value"`"#);
         })
         .collect::<ast::CrateConfig>()
+}
+
+pub fn get_cmd_lint_options(matches: &getopts::Matches,
+                            error_format: ErrorOutputType)
+                            -> (Vec<(String, lint::Level)>, bool, Option<lint::Level>) {
+    let mut lint_opts = vec![];
+    let mut describe_lints = false;
+
+    for &level in &[lint::Allow, lint::Warn, lint::Deny, lint::Forbid] {
+        for lint_name in matches.opt_strs(level.as_str()) {
+            if lint_name == "help" {
+                describe_lints = true;
+            } else {
+                lint_opts.push((lint_name.replace("-", "_"), level));
+            }
+        }
+    }
+
+    let lint_cap = matches.opt_str("cap-lints").map(|cap| {
+        lint::Level::from_str(&cap)
+            .unwrap_or_else(|| early_error(error_format, &format!("unknown lint level: `{}`", cap)))
+    });
+    (lint_opts, describe_lints, lint_cap)
 }
 
 pub fn build_session_options_and_crate_config(
@@ -1787,7 +1840,7 @@ pub fn build_session_options_and_crate_config(
         early_error(
                 ErrorOutputType::default(),
                 &format!(
-                    "Edition {} is unstable an only\
+                    "Edition {} is unstable and only \
                     available for nightly builds of rustc.",
                     edition,
                 )
@@ -1824,23 +1877,7 @@ pub fn build_session_options_and_crate_config(
     let crate_types = parse_crate_types_from_list(unparsed_crate_types)
         .unwrap_or_else(|e| early_error(error_format, &e[..]));
 
-    let mut lint_opts = vec![];
-    let mut describe_lints = false;
-
-    for &level in &[lint::Allow, lint::Warn, lint::Deny, lint::Forbid] {
-        for lint_name in matches.opt_strs(level.as_str()) {
-            if lint_name == "help" {
-                describe_lints = true;
-            } else {
-                lint_opts.push((lint_name.replace("-", "_"), level));
-            }
-        }
-    }
-
-    let lint_cap = matches.opt_str("cap-lints").map(|cap| {
-        lint::Level::from_str(&cap)
-            .unwrap_or_else(|| early_error(error_format, &format!("unknown lint level: `{}`", cap)))
-    });
+    let (lint_opts, describe_lints, lint_cap) = get_cmd_lint_options(matches, error_format);
 
     let mut debugging_opts = build_debugging_options(matches, error_format);
 
@@ -1967,6 +2004,13 @@ pub fn build_session_options_and_crate_config(
         early_error(
             error_format,
             "can't perform LTO when compiling incrementally",
+        );
+    }
+
+    if debugging_opts.profile && incremental.is_some() {
+        early_error(
+            error_format,
+            "can't instrument with gcov profiling when compiling incrementally",
         );
     }
 
@@ -2147,6 +2191,7 @@ pub fn build_session_options_and_crate_config(
         None | Some("ast") => BorrowckMode::Ast,
         Some("mir") => BorrowckMode::Mir,
         Some("compare") => BorrowckMode::Compare,
+        Some("migrate") => BorrowckMode::Migrate,
         Some(m) => early_error(error_format, &format!("unknown borrowck mode `{}`", m)),
     };
 
@@ -3097,7 +3142,7 @@ mod tests {
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
-        opts.debugging_opts.no_verify = true;
+        opts.debugging_opts.verify_llvm_ir = true;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
@@ -3117,6 +3162,10 @@ mod tests {
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
+        opts.debugging_opts.report_delayed_bugs = true;
+        assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
+
+        opts = reference.clone();
         opts.debugging_opts.continue_parse_after_error = true;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
@@ -3126,10 +3175,6 @@ mod tests {
 
         opts = reference.clone();
         opts.debugging_opts.force_overflow_checks = Some(true);
-        assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
-
-        opts = reference.clone();
-        opts.debugging_opts.enable_nonzeroing_move_hints = true;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
@@ -3145,7 +3190,7 @@ mod tests {
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
-        opts.debugging_opts.cross_lang_lto = CrossLangLto::NoLink;
+        opts.debugging_opts.cross_lang_lto = CrossLangLto::LinkerPluginAuto;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
     }
 

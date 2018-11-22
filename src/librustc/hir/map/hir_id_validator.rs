@@ -105,7 +105,7 @@ impl<'a, 'hir: 'a> HirIdValidator<'a, 'hir> {
               .collect();
 
             // Try to map those to something more useful
-            let mut missing_items = vec![];
+            let mut missing_items = Vec::with_capacity(missing.len());
 
             for local_id in missing {
                 let hir_id = HirId {
@@ -179,7 +179,7 @@ impl<'a, 'hir: 'a> intravisit::Visitor<'hir> for HirIdValidator<'a, 'hir> {
 
     fn visit_impl_item_ref(&mut self, _: &'hir hir::ImplItemRef) {
         // Explicitly do nothing here. ImplItemRefs contain hir::Visibility
-        // values that actually belong to an ImplItem instead of the ItemImpl
+        // values that actually belong to an ImplItem instead of the ItemKind::Impl
         // we are currently in. So for those it's correct that they have a
         // different owner.
     }

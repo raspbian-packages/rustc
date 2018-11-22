@@ -39,7 +39,7 @@
 //! These methods return true to indicate that the visitor has found what it is looking for
 //! and does not need to visit anything else.
 
-use middle::const_val::ConstVal;
+use mir::interpret::ConstValue;
 use hir::def_id::DefId;
 use ty::{self, Binder, Ty, TyCtxt, TypeFlags};
 
@@ -136,6 +136,20 @@ pub trait TypeFoldable<'tcx>: fmt::Debug + Clone {
     fn has_late_bound_regions(&self) -> bool {
         self.has_type_flags(TypeFlags::HAS_RE_LATE_BOUND)
     }
+
+    /// A visitor that does not recurse into types, works like `fn walk_shallow` in `Ty`.
+    fn visit_tys_shallow(&self, visit: impl FnMut(Ty<'tcx>) -> bool) -> bool {
+
+        pub struct Visitor<F>(F);
+
+        impl<'tcx, F: FnMut(Ty<'tcx>) -> bool> TypeVisitor<'tcx> for Visitor<F> {
+            fn visit_ty(&mut self, ty: Ty<'tcx>) -> bool {
+                self.0(ty)
+            }
+        }
+
+        self.visit_with(&mut Visitor(visit))
+    }
 }
 
 /// The TypeFolder trait defines the actual *folding*. There is a
@@ -186,21 +200,29 @@ pub trait TypeVisitor<'tcx> : Sized {
 ///////////////////////////////////////////////////////////////////////////
 // Some sample folders
 
-pub struct BottomUpFolder<'a, 'gcx: 'a+'tcx, 'tcx: 'a, F>
-    where F: FnMut(Ty<'tcx>) -> Ty<'tcx>
+pub struct BottomUpFolder<'a, 'gcx: 'a+'tcx, 'tcx: 'a, F, G>
+    where F: FnMut(Ty<'tcx>) -> Ty<'tcx>,
+          G: FnMut(ty::Region<'tcx>) -> ty::Region<'tcx>,
 {
     pub tcx: TyCtxt<'a, 'gcx, 'tcx>,
     pub fldop: F,
+    pub reg_op: G,
 }
 
-impl<'a, 'gcx, 'tcx, F> TypeFolder<'gcx, 'tcx> for BottomUpFolder<'a, 'gcx, 'tcx, F>
+impl<'a, 'gcx, 'tcx, F, G> TypeFolder<'gcx, 'tcx> for BottomUpFolder<'a, 'gcx, 'tcx, F, G>
     where F: FnMut(Ty<'tcx>) -> Ty<'tcx>,
+          G: FnMut(ty::Region<'tcx>) -> ty::Region<'tcx>,
 {
     fn tcx<'b>(&'b self) -> TyCtxt<'b, 'gcx, 'tcx> { self.tcx }
 
     fn fold_ty(&mut self, ty: Ty<'tcx>) -> Ty<'tcx> {
         let t1 = ty.super_fold_with(self);
         (self.fldop)(t1)
+    }
+
+    fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
+        let r = r.super_fold_with(self);
+        (self.reg_op)(r)
     }
 }
 
@@ -239,13 +261,34 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         value.fold_with(&mut RegionFolder::new(self, skipped_regions, &mut f))
     }
 
-    pub fn for_each_free_region<T,F>(self,
-                                     value: &T,
-                                     callback: F)
-        where F: FnMut(ty::Region<'tcx>),
-              T: TypeFoldable<'tcx>,
-    {
-        value.visit_with(&mut RegionVisitor {
+    /// Invoke `callback` on every region appearing free in `value`.
+    pub fn for_each_free_region(
+        self,
+        value: &impl TypeFoldable<'tcx>,
+        mut callback: impl FnMut(ty::Region<'tcx>),
+    ) {
+        self.any_free_region_meets(value, |r| {
+            callback(r);
+            false
+        });
+    }
+
+    /// True if `callback` returns true for every region appearing free in `value`.
+    pub fn all_free_regions_meet(
+        self,
+        value: &impl TypeFoldable<'tcx>,
+        mut callback: impl FnMut(ty::Region<'tcx>) -> bool,
+    ) -> bool {
+        !self.any_free_region_meets(value, |r| !callback(r))
+    }
+
+    /// True if `callback` returns true for some region appearing free in `value`.
+    pub fn any_free_region_meets(
+        self,
+        value: &impl TypeFoldable<'tcx>,
+        callback: impl FnMut(ty::Region<'tcx>) -> bool,
+    ) -> bool {
+        return value.visit_with(&mut RegionVisitor {
             outer_index: ty::INNERMOST,
             callback
         });
@@ -273,25 +316,31 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         }
 
         impl<'tcx, F> TypeVisitor<'tcx> for RegionVisitor<F>
-            where F : FnMut(ty::Region<'tcx>)
+            where F: FnMut(ty::Region<'tcx>) -> bool
         {
             fn visit_binder<T: TypeFoldable<'tcx>>(&mut self, t: &Binder<T>) -> bool {
                 self.outer_index.shift_in(1);
-                t.skip_binder().visit_with(self);
+                let result = t.skip_binder().visit_with(self);
                 self.outer_index.shift_out(1);
-
-                false // keep visiting
+                result
             }
 
             fn visit_region(&mut self, r: ty::Region<'tcx>) -> bool {
                 match *r {
                     ty::ReLateBound(debruijn, _) if debruijn < self.outer_index => {
-                        /* ignore bound regions */
+                        false // ignore bound regions, keep visiting
                     }
                     _ => (self.callback)(r),
                 }
+            }
 
-                false // keep visiting
+            fn visit_ty(&mut self, ty: Ty<'tcx>) -> bool {
+                // We're only interested in types involving regions
+                if ty.flags.intersects(TypeFlags::HAS_FREE_REGIONS) {
+                    ty.super_visit_with(self)
+                } else {
+                    false // keep visiting
+                }
             }
         }
     }
@@ -671,7 +720,7 @@ impl<'tcx> TypeVisitor<'tcx> for HasTypeFlagsVisitor {
     }
 
     fn visit_const(&mut self, c: &'tcx ty::Const<'tcx>) -> bool {
-        if let ConstVal::Unevaluated(..) = c.val {
+        if let ConstValue::Unevaluated(..) = c.val {
             let projection_flags = TypeFlags::HAS_NORMALIZABLE_PROJECTION |
                 TypeFlags::HAS_PROJECTION;
             if projection_flags.intersects(self.flags) {

@@ -89,7 +89,6 @@
 #![feature(extern_types)]
 #![feature(fundamental)]
 #![feature(intrinsics)]
-#![feature(iterator_flatten)]
 #![feature(lang_items)]
 #![feature(link_llvm_intrinsics)]
 #![feature(never_type)]
@@ -100,7 +99,6 @@
 #![feature(optin_builtin_traits)]
 #![feature(prelude_import)]
 #![feature(repr_simd, platform_intrinsics)]
-#![cfg_attr(stage0, feature(repr_transparent))]
 #![feature(rustc_attrs)]
 #![feature(rustc_const_unstable)]
 #![feature(simd_ffi)]
@@ -246,9 +244,6 @@ macro_rules! vector_impl { ($([$f:ident, $($args:tt)*]),*) => { $($f!($($args)*)
 #[cfg(not(stage0))] // allow changes to how stdsimd works in stage0
 mod coresimd;
 
-#[unstable(feature = "stdsimd", issue = "48556")]
-#[cfg(not(stage0))]
-pub use coresimd::simd;
 #[stable(feature = "simd_arch", since = "1.27.0")]
 #[cfg(not(stage0))]
 pub use coresimd::arch;

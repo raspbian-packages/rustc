@@ -25,7 +25,7 @@ You may be looking for:
 <details>
 <summary>
 Click to show Cargo.toml.
-<a href="http://play.integer32.com/?gist=9003c5b88c1f4989941925d7190c6eec" target="_blank">Run this code in the playground.</a>
+<a href="https://play.rust-lang.org/?gist=9003c5b88c1f4989941925d7190c6eec" target="_blank">Run this code in the playground.</a>
 </summary>
 
 ```toml
@@ -79,12 +79,13 @@ fn main() {
 
 ## Getting help
 
-Serde developers live in the #serde channel on
-[`irc.mozilla.org`](https://wiki.mozilla.org/IRC). The #rust channel is also a
-good resource with generally faster response time but less specific knowledge
-about Serde. If IRC is not your thing or you don't get a good response, we are
-happy to respond to [GitHub issues](https://github.com/serde-rs/serde/issues/new)
-as well.
+Serde developers live in the #serde channel on [`irc.mozilla.org`][irc]. The
+\#rust channel is also a good resource with generally faster response time but
+less specific knowledge about Serde. If IRC is not your thing or you don't get a
+good response, we are happy to respond to [GitHub issues][issues] as well.
+
+[irc]: https://wiki.mozilla.org/IRC
+[issues]: https://github.com/serde-rs/serde/issues/new/choose
 
 ## License
 

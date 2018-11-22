@@ -33,6 +33,10 @@ cfg_if! {
         #[path = "arch/aarch64.rs"]
         #[macro_use]
         mod arch;
+    } else if #[cfg(target_arch = "powerpc")] {
+        #[path = "arch/powerpc.rs"]
+        #[macro_use]
+        mod arch;
     } else if #[cfg(target_arch = "powerpc64")] {
         #[path = "arch/powerpc64.rs"]
         #[macro_use]
@@ -56,8 +60,8 @@ cfg_if! {
 }
 pub use self::arch::Feature;
 
-mod cache;
 mod bit;
+mod cache;
 
 cfg_if! {
     if #[cfg(any(target_arch = "x86", target_arch = "x86_64"))] {

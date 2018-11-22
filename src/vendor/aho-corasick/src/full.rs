@@ -3,6 +3,7 @@ use std::mem;
 
 use super::{
     FAIL_STATE,
+    AllBytesIter,
     StateIdx, AcAutomaton, Transitions, Match,
     usize_bytes, vec_bytes,
 };
@@ -44,11 +45,11 @@ impl<P: AsRef<[u8]>> FullAcAutomaton<P> {
     pub fn memory_usage(&self) -> usize {
         self.pats.iter()
             .map(|p| vec_bytes() + p.as_ref().len())
-            .fold(0, |a, b| a + b)
+            .sum::<usize>()
         + (4 * self.trans.len())
         + self.out.iter()
               .map(|v| vec_bytes() + (usize_bytes() * v.len()))
-              .fold(0, |a, b| a + b)
+              .sum::<usize>()
         + self.start_bytes.len()
     }
 
@@ -56,11 +57,11 @@ impl<P: AsRef<[u8]>> FullAcAutomaton<P> {
     pub fn heap_bytes(&self) -> usize {
         self.pats.iter()
             .map(|p| mem::size_of::<P>() + p.as_ref().len())
-            .fold(0, |a, b| a + b)
+            .sum::<usize>()
         + (4 * self.trans.len())
         + self.out.iter()
               .map(|v| vec_bytes() + (usize_bytes() * v.len()))
-              .fold(0, |a, b| a + b)
+              .sum::<usize>()
         + self.start_bytes.len()
     }
 
@@ -119,12 +120,11 @@ impl<P: AsRef<[u8]>> Automaton<P> for FullAcAutomaton<P> {
 impl<P: AsRef<[u8]>> FullAcAutomaton<P> {
     fn build_matrix<T: Transitions>(&mut self, ac: &AcAutomaton<P, T>) {
         for (si, s) in ac.states.iter().enumerate().skip(1) {
-            for b in (0..256).map(|b| b as u8) {
-                self.set(si as StateIdx, b, ac.next_state(si as StateIdx, b));
+            for i in AllBytesIter::new() {
+                let goto = ac.memoized_next_state(self, si as StateIdx, i);
+                self.set(si as StateIdx, i, goto);
             }
-            for &pati in &s.out {
-                self.out[si].push(pati);
-            }
+            self.out[si].extend_from_slice(&s.out);
         }
     }
 }

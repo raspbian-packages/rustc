@@ -56,6 +56,7 @@ use builder::{Builder, MemFlags};
 use callee;
 use common::{C_bool, C_bytes_in_context, C_i32, C_usize};
 use rustc_mir::monomorphize::collector::{self, MonoItemCollectionMode};
+use rustc_mir::monomorphize::item::DefPathBasedNames;
 use common::{self, C_struct_in_context, C_array, val_ty};
 use consts;
 use context::{self, CodegenCx};
@@ -67,16 +68,14 @@ use monomorphize::Instance;
 use monomorphize::partitioning::{self, PartitioningStrategy, CodegenUnit, CodegenUnitExt};
 use rustc_codegen_utils::symbol_names_test;
 use time_graph;
-use mono_item::{MonoItem, BaseMonoItemExt, MonoItemExt, DefPathBasedNames};
+use mono_item::{MonoItem, BaseMonoItemExt, MonoItemExt};
 use type_::Type;
 use type_of::LayoutLlvmExt;
 use rustc::util::nodemap::{FxHashMap, FxHashSet, DefIdSet};
 use CrateInfo;
 use rustc_data_structures::sync::Lrc;
-use rustc_target::spec::TargetTriple;
 
 use std::any::Any;
-use std::collections::BTreeMap;
 use std::ffi::CString;
 use std::str;
 use std::sync::Arc;
@@ -87,12 +86,11 @@ use std::sync::mpsc;
 use syntax_pos::Span;
 use syntax_pos::symbol::InternedString;
 use syntax::attr;
-use rustc::hir;
-use syntax::ast;
+use rustc::hir::{self, CodegenFnAttrs};
 
 use mir::operand::OperandValue;
 
-pub use rustc_codegen_utils::check_for_rustc_errors_attr;
+use rustc_codegen_utils::check_for_rustc_errors_attr;
 
 pub struct StatRecorder<'a, 'tcx: 'a> {
     cx: &'a CodegenCx<'a, 'tcx>,
@@ -124,16 +122,16 @@ impl<'a, 'tcx> Drop for StatRecorder<'a, 'tcx> {
     }
 }
 
-pub fn bin_op_to_icmp_predicate(op: hir::BinOp_,
+pub fn bin_op_to_icmp_predicate(op: hir::BinOpKind,
                                 signed: bool)
                                 -> llvm::IntPredicate {
     match op {
-        hir::BiEq => llvm::IntEQ,
-        hir::BiNe => llvm::IntNE,
-        hir::BiLt => if signed { llvm::IntSLT } else { llvm::IntULT },
-        hir::BiLe => if signed { llvm::IntSLE } else { llvm::IntULE },
-        hir::BiGt => if signed { llvm::IntSGT } else { llvm::IntUGT },
-        hir::BiGe => if signed { llvm::IntSGE } else { llvm::IntUGE },
+        hir::BinOpKind::Eq => llvm::IntEQ,
+        hir::BinOpKind::Ne => llvm::IntNE,
+        hir::BinOpKind::Lt => if signed { llvm::IntSLT } else { llvm::IntULT },
+        hir::BinOpKind::Le => if signed { llvm::IntSLE } else { llvm::IntULE },
+        hir::BinOpKind::Gt => if signed { llvm::IntSGT } else { llvm::IntUGT },
+        hir::BinOpKind::Ge => if signed { llvm::IntSGE } else { llvm::IntUGE },
         op => {
             bug!("comparison_op_to_icmp_predicate: expected comparison operator, \
                   found {:?}",
@@ -142,14 +140,14 @@ pub fn bin_op_to_icmp_predicate(op: hir::BinOp_,
     }
 }
 
-pub fn bin_op_to_fcmp_predicate(op: hir::BinOp_) -> llvm::RealPredicate {
+pub fn bin_op_to_fcmp_predicate(op: hir::BinOpKind) -> llvm::RealPredicate {
     match op {
-        hir::BiEq => llvm::RealOEQ,
-        hir::BiNe => llvm::RealUNE,
-        hir::BiLt => llvm::RealOLT,
-        hir::BiLe => llvm::RealOLE,
-        hir::BiGt => llvm::RealOGT,
-        hir::BiGe => llvm::RealOGE,
+        hir::BinOpKind::Eq => llvm::RealOEQ,
+        hir::BinOpKind::Ne => llvm::RealUNE,
+        hir::BinOpKind::Lt => llvm::RealOLT,
+        hir::BinOpKind::Le => llvm::RealOLE,
+        hir::BinOpKind::Gt => llvm::RealOGT,
+        hir::BinOpKind::Ge => llvm::RealOGE,
         op => {
             bug!("comparison_op_to_fcmp_predicate: expected comparison operator, \
                   found {:?}",
@@ -164,7 +162,7 @@ pub fn compare_simd_types<'a, 'tcx>(
     rhs: ValueRef,
     t: Ty<'tcx>,
     ret_ty: Type,
-    op: hir::BinOp_
+    op: hir::BinOpKind
 ) -> ValueRef {
     let signed = match t.sty {
         ty::TyFloat(_) => {
@@ -265,8 +263,8 @@ pub fn unsize_thin_ptr<'a, 'tcx>(
             }
             let (lldata, llextra) = result.unwrap();
             // HACK(eddyb) have to bitcast pointers until LLVM removes pointee types.
-            (bx.bitcast(lldata, dst_layout.scalar_pair_element_llvm_type(bx.cx, 0)),
-             bx.bitcast(llextra, dst_layout.scalar_pair_element_llvm_type(bx.cx, 1)))
+            (bx.bitcast(lldata, dst_layout.scalar_pair_element_llvm_type(bx.cx, 0, true)),
+             bx.bitcast(llextra, dst_layout.scalar_pair_element_llvm_type(bx.cx, 1, true)))
         }
         _ => bug!("unsize_thin_ptr: called on bad types"),
     }
@@ -332,12 +330,12 @@ pub fn coerce_unsized_into<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
 }
 
 pub fn cast_shift_expr_rhs(
-    cx: &Builder, op: hir::BinOp_, lhs: ValueRef, rhs: ValueRef
+    cx: &Builder, op: hir::BinOpKind, lhs: ValueRef, rhs: ValueRef
 ) -> ValueRef {
     cast_shift_rhs(op, lhs, rhs, |a, b| cx.trunc(a, b), |a, b| cx.zext(a, b))
 }
 
-fn cast_shift_rhs<F, G>(op: hir::BinOp_,
+fn cast_shift_rhs<F, G>(op: hir::BinOpKind,
                         lhs: ValueRef,
                         rhs: ValueRef,
                         trunc: F,
@@ -396,9 +394,14 @@ pub fn from_immediate(bx: &Builder, val: ValueRef) -> ValueRef {
 
 pub fn to_immediate(bx: &Builder, val: ValueRef, layout: layout::TyLayout) -> ValueRef {
     if let layout::Abi::Scalar(ref scalar) = layout.abi {
-        if scalar.is_bool() {
-            return bx.trunc(val, Type::i1(bx.cx));
-        }
+        return to_immediate_scalar(bx, val, scalar);
+    }
+    val
+}
+
+pub fn to_immediate_scalar(bx: &Builder, val: ValueRef, scalar: &layout::Scalar) -> ValueRef {
+    if scalar.is_bool() {
+        return bx.trunc(val, Type::i1(bx.cx));
     }
     val
 }
@@ -508,17 +511,14 @@ pub fn codegen_instance<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>, instance: Instance<'
     mir::codegen_mir(cx, lldecl, &mir, instance, sig);
 }
 
-pub fn set_link_section(cx: &CodegenCx,
-                        llval: ValueRef,
-                        attrs: &[ast::Attribute]) {
-    if let Some(sect) = attr::first_attr_value_str_by_name(attrs, "link_section") {
-        if contains_null(&sect.as_str()) {
-            cx.sess().fatal(&format!("Illegal null byte in link_section value: `{}`", &sect));
-        }
-        unsafe {
-            let buf = CString::new(sect.as_str().as_bytes()).unwrap();
-            llvm::LLVMSetSection(llval, buf.as_ptr());
-        }
+pub fn set_link_section(llval: ValueRef, attrs: &CodegenFnAttrs) {
+    let sect = match attrs.link_section {
+        Some(name) => name,
+        None => return,
+    };
+    unsafe {
+        let buf = CString::new(sect.as_str().as_bytes()).unwrap();
+        llvm::LLVMSetSection(llval, buf.as_ptr());
     }
 }
 
@@ -606,10 +606,6 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
         let result = bx.call(start_fn, &args, None);
         bx.ret(bx.intcast(result, Type::c_int(cx), true));
     }
-}
-
-fn contains_null(s: &str) -> bool {
-    s.bytes().any(|b| b == 0)
 }
 
 fn write_metadata<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'gcx>,
@@ -712,7 +708,7 @@ pub fn iter_globals(llmod: llvm::ModuleRef) -> ValueIter {
 }
 
 pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             rx: mpsc::Receiver<Box<Any + Send>>)
+                             rx: mpsc::Receiver<Box<dyn Any + Send>>)
                              -> OngoingCodegen {
 
     check_for_rustc_errors_attr(tcx);
@@ -1094,7 +1090,6 @@ impl CrateInfo {
             used_crates_dynamic: cstore::used_crates(tcx, LinkagePreference::RequireDynamic),
             used_crates_static: cstore::used_crates(tcx, LinkagePreference::RequireStatic),
             used_crate_source: FxHashMap(),
-            wasm_custom_sections: BTreeMap::new(),
             wasm_imports: FxHashMap(),
             lang_item_to_crate: FxHashMap(),
             missing_lang_items: FxHashMap(),
@@ -1104,16 +1099,9 @@ impl CrateInfo {
         let load_wasm_items = tcx.sess.crate_types.borrow()
             .iter()
             .any(|c| *c != config::CrateTypeRlib) &&
-            tcx.sess.opts.target_triple == TargetTriple::from_triple("wasm32-unknown-unknown");
+            tcx.sess.opts.target_triple.triple() == "wasm32-unknown-unknown";
 
         if load_wasm_items {
-            info!("attempting to load all wasm sections");
-            for &id in tcx.wasm_custom_sections(LOCAL_CRATE).iter() {
-                let (name, contents) = fetch_wasm_section(tcx, id);
-                info.wasm_custom_sections.entry(name)
-                    .or_insert(Vec::new())
-                    .extend(contents);
-            }
             info.load_wasm_imports(tcx, LOCAL_CRATE);
         }
 
@@ -1137,12 +1125,6 @@ impl CrateInfo {
                 info.is_no_builtins.insert(cnum);
             }
             if load_wasm_items {
-                for &id in tcx.wasm_custom_sections(cnum).iter() {
-                    let (name, contents) = fetch_wasm_section(tcx, id);
-                    info.wasm_custom_sections.entry(name)
-                        .or_insert(Vec::new())
-                        .extend(contents);
-                }
                 info.load_wasm_imports(tcx, cnum);
             }
             let missing = tcx.missing_lang_items(cnum);
@@ -1295,7 +1277,7 @@ pub fn provide(providers: &mut Providers) {
         all.iter()
             .find(|cgu| *cgu.name() == name)
             .cloned()
-            .expect(&format!("failed to find cgu with name {:?}", name))
+            .unwrap_or_else(|| panic!("failed to find cgu with name {:?}", name))
     };
     providers.compile_codegen_unit = compile_codegen_unit;
 
@@ -1377,34 +1359,4 @@ mod temp_stable_hash_impls {
             // do nothing
         }
     }
-}
-
-fn fetch_wasm_section(tcx: TyCtxt, id: DefId) -> (String, Vec<u8>) {
-    use rustc::mir::interpret::GlobalId;
-    use rustc::middle::const_val::ConstVal;
-
-    info!("loading wasm section {:?}", id);
-
-    let section = tcx.get_attrs(id)
-        .iter()
-        .find(|a| a.check_name("wasm_custom_section"))
-        .expect("missing #[wasm_custom_section] attribute")
-        .value_str()
-        .expect("malformed #[wasm_custom_section] attribute");
-
-    let instance = ty::Instance::mono(tcx, id);
-    let cid = GlobalId {
-        instance,
-        promoted: None
-    };
-    let param_env = ty::ParamEnv::reveal_all();
-    let val = tcx.const_eval(param_env.and(cid)).unwrap();
-
-    let const_val = match val.val {
-        ConstVal::Value(val) => val,
-        ConstVal::Unevaluated(..) => bug!("should be evaluated"),
-    };
-
-    let alloc = tcx.const_value_to_allocation((const_val, val.ty));
-    (section.to_string(), alloc.bytes.clone())
 }

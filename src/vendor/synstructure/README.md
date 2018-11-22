@@ -1,50 +1,158 @@
 # synstructure
 
+[![Latest Version](https://img.shields.io/crates/v/synstructure.svg)](https://crates.io/crates/synstructure)
+[![Documentation](https://docs.rs/synstructure/badge.svg)](https://docs.rs/synstructure)
+[![Build Status](https://travis-ci.org/mystor/synstructure.svg?branch=master)](https://travis-ci.org/mystor/synstructure)
+[![Rustc Version 1.15+](https://img.shields.io/badge/rustc-1.15+-lightgray.svg)](https://blog.rust-lang.org/2017/02/02/Rust-1.15.html)
+
 > NOTE: What follows is an exerpt from the module level documentation. For full
 > details read the docs on [docs.rs](https://docs.rs/synstructure/)
 
-This crate provides helper methods for matching against enum variants, and
+This crate provides helper types for matching against enum variants, and
 extracting bindings to each of the fields in the deriving Struct or Enum in
 a generic way.
 
-If you are writing a `#[derive]` which needs to perform some operation on every
-field, then you have come to the right place!
+If you are writing a `#[derive]` which needs to perform some operation on
+every field, then you have come to the right place!
 
-## Example Usage
-
+# Example: `WalkFields`
+### Trait Implementation
 ```rust
-extern crate syn;
+pub trait WalkFields: std::any::Any {
+    fn walk_fields(&self, walk: &mut FnMut(&WalkFields));
+}
+impl WalkFields for i32 {
+    fn walk_fields(&self, _walk: &mut FnMut(&WalkFields)) {}
+}
+```
+
+### Custom Derive
+```rust
+#[macro_use]
 extern crate synstructure;
 #[macro_use]
 extern crate quote;
-use synstructure::{each_field, BindStyle};
+extern crate proc_macro2;
 
-type TokenStream = String; // XXX: Dummy to not depend on rustc_macro
-
-fn sum_fields_derive(input: TokenStream) -> TokenStream {
-    let source = input.to_string();
-    let ast = syn::parse_macro_input(&source).unwrap();
-
-    let match_body = each_field(&ast, &BindStyle::Ref.into(), |bi| quote! {
-        sum += #bi as i64;
+fn walkfields_derive(s: synstructure::Structure) -> proc_macro2::TokenStream {
+    let body = s.each(|bi| quote!{
+        walk(#bi)
     });
 
-    let name = &ast.ident;
-    let (impl_generics, ty_generics, where_clause) = ast.generics.split_for_impl();
-    let result = quote! {
-        impl #impl_generics ::sum_fields::SumFields for #name #ty_generics #where_clause {
-            fn sum_fields(&self) -> i64 {
-                let mut sum = 0i64;
-                match *self { #match_body }
-                sum
+    s.bound_impl(quote!(example_traits::WalkFields), quote!{
+        fn walk_fields(&self, walk: &mut FnMut(&example_traits::WalkFields)) {
+            match *self { #body }
+        }
+    })
+}
+decl_derive!([WalkFields] => walkfields_derive);
+
+/*
+ * Test Case
+ */
+fn main() {
+    test_derive! {
+        walkfields_derive {
+            enum A<T> {
+                B(i32, T),
+                C(i32),
             }
         }
-    };
-
-    result.to_string().parse().unwrap()
+        expands to {
+            #[allow(non_upper_case_globals)]
+            const _DERIVE_example_traits_WalkFields_FOR_A: () = {
+                extern crate example_traits;
+                impl<T> example_traits::WalkFields for A<T>
+                    where T: example_traits::WalkFields
+                {
+                    fn walk_fields(&self, walk: &mut FnMut(&example_traits::WalkFields)) {
+                        match *self {
+                            A::B(ref __binding_0, ref __binding_1,) => {
+                                { walk(__binding_0) }
+                                { walk(__binding_1) }
+                            }
+                            A::C(ref __binding_0,) => {
+                                { walk(__binding_0) }
+                            }
+                        }
+                    }
+                }
+            };
+        }
+    }
 }
+```
 
-fn main() {}
+# Example: `Interest`
+### Trait Implementation
+```rust
+pub trait Interest {
+    fn interesting(&self) -> bool;
+}
+impl Interest for i32 {
+    fn interesting(&self) -> bool { *self > 0 }
+}
+```
+
+### Custom Derive
+```rust
+#[macro_use]
+extern crate synstructure;
+#[macro_use]
+extern crate quote;
+extern crate proc_macro2;
+
+fn interest_derive(mut s: synstructure::Structure) -> proc_macro2::TokenStream {
+    let body = s.fold(false, |acc, bi| quote!{
+        #acc || example_traits::Interest::interesting(#bi)
+    });
+
+    s.bound_impl(quote!(example_traits::Interest), quote!{
+        fn interesting(&self) -> bool {
+            match *self {
+                #body
+            }
+        }
+    })
+}
+decl_derive!([Interest] => interest_derive);
+
+/*
+ * Test Case
+ */
+fn main() {
+    test_derive!{
+        interest_derive {
+            enum A<T> {
+                B(i32, T),
+                C(i32),
+            }
+        }
+        expands to {
+            #[allow(non_upper_case_globals)]
+            const _DERIVE_example_traits_Interest_FOR_A: () = {
+                extern crate example_traits;
+                impl<T> example_traits::Interest for A<T>
+                    where T: example_traits::Interest
+                {
+                    fn interesting(&self) -> bool {
+                        match *self {
+                            A::B(ref __binding_0, ref __binding_1,) => {
+                                false ||
+                                    example_traits::Interest::interesting(__binding_0) ||
+                                    example_traits::Interest::interesting(__binding_1)
+                            }
+                            A::C(ref __binding_0,) => {
+                                false ||
+                                    example_traits::Interest::interesting(__binding_0)
+                            }
+                        }
+                    }
+                }
+            };
+        }
+    }
+}
 ```
 
 For more example usage, consider investigating the `abomonation_derive` crate,

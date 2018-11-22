@@ -22,13 +22,13 @@ dox() {
   rm -rf target/doc/$arch
   mkdir target/doc/$arch
 
-  cargo build --target $target --manifest-path crates/stdsimd/Cargo.toml
+  cargo build --verbose --target $target --manifest-path crates/stdsimd/Cargo.toml
 
-  rustdoc --target $target \
+  rustdoc --verbose --target $target \
           -o target/doc/$arch crates/coresimd/src/lib.rs \
           --crate-name coresimd \
           --library-path target/$target/debug/deps
-  rustdoc --target $target \
+  rustdoc --verbose --target $target \
           -o target/doc/$arch crates/stdsimd/src/lib.rs \
           --crate-name stdsimd \
           --library-path target/$target/debug/deps \
@@ -40,8 +40,8 @@ dox i686 i686-unknown-linux-gnu
 dox x86_64 x86_64-unknown-linux-gnu
 dox arm armv7-unknown-linux-gnueabihf
 dox aarch64 aarch64-unknown-linux-gnu
-dox powerpc powerpc-unknown-linux-gnu
-dox powerpc64 powerpc64-unknown-linux-gnu
+# dox powerpc powerpc-unknown-linux-gnu
+dox powerpc64le powerpc64le-unknown-linux-gnu
 dox mips mips-unknown-linux-gnu
 dox mips64 mips64-unknown-linux-gnuabi64
 

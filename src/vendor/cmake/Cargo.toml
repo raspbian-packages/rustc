@@ -12,11 +12,11 @@
 
 [package]
 name = "cmake"
-version = "0.1.30"
+version = "0.1.31"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "A build dependency for running `cmake` to build a native library\n"
 homepage = "https://github.com/alexcrichton/cmake-rs"
-documentation = "http://alexcrichton.com/cmake-rs"
+documentation = "https://docs.rs/cmake"
 readme = "README.md"
 keywords = ["build-dependencies"]
 license = "MIT/Apache-2.0"

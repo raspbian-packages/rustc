@@ -3,8 +3,10 @@ use std::ffi::{OsStr, OsString};
 use std::fmt::Display;
 use std::fs::File;
 use std::io::{self, BufWriter, Write};
-#[cfg(all(feature = "debug", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "debug", not(any(target_os = "windows", target_arch = "wasm32"))))]
 use std::os::unix::ffi::OsStrExt;
+#[cfg(all(feature = "debug", any(target_os = "windows", target_arch = "wasm32")))]
+use osstringext::OsStrExt3;
 use std::path::PathBuf;
 use std::slice::Iter;
 use std::iter::Peekable;
@@ -122,6 +124,7 @@ where
             Shell::Fish => format!("{}.fish", name),
             Shell::Zsh => format!("_{}", name),
             Shell::PowerShell => format!("_{}.ps1", name),
+            Shell::Elvish => format!("{}.elv", name),
         };
 
         let mut file = match File::create(out_dir.join(file_name)) {
@@ -311,7 +314,7 @@ where
             self.flags.push(fb);
         }
     }
-    // actually adds the arguments but from a borrow (which means we have to do some clonine)
+    // actually adds the arguments but from a borrow (which means we have to do some cloning)
     pub fn add_arg_ref(&mut self, a: &Arg<'a, 'b>) {
         debug_assert!(self.debug_asserts(a));
         self.add_conditional_reqs(a);
@@ -654,13 +657,12 @@ where
 
     // Checks if the arg matches a subcommand name, or any of it's aliases (if defined)
     fn possible_subcommand(&self, arg_os: &OsStr) -> (bool, Option<&str>) {
+        #[cfg(not(any(target_os = "windows", target_arch = "wasm32")))]
+        use std::os::unix::ffi::OsStrExt;
+        #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
+        use osstringext::OsStrExt3;
         debugln!("Parser::possible_subcommand: arg={:?}", arg_os);
         fn starts(h: &str, n: &OsStr) -> bool {
-            #[cfg(not(any(target_os = "windows", target_arch = "wasm32")))]
-            use std::os::unix::ffi::OsStrExt;
-            #[cfg(any(target_os = "windows", target_arch = "wasm32"))]
-            use osstringext::OsStrExt3;
-
             let n_bytes = n.as_bytes();
             let h_bytes = OsStr::new(h).as_bytes();
 
@@ -691,6 +693,12 @@ where
                 })
                 .map(|sc| &sc.p.meta.name)
                 .collect::<Vec<_>>();
+
+            for sc in &v {
+                if OsStr::new(sc) == arg_os {
+                    return (true, Some(sc));
+                }
+            }
 
             if v.len() == 1 {
                 return (true, Some(v[0]));
@@ -809,7 +817,7 @@ where
         // Is this a new argument, or values from a previous option?
         let mut ret = if arg_os.starts_with(b"--") {
             debugln!("Parser::is_new_arg: -- found");
-            if arg_os.len_() == 2 && !arg_allows_tac {
+            if arg_os.len() == 2 && !arg_allows_tac {
                 return true; // We have to return true so override everything else
             } else if arg_allows_tac {
                 return false;
@@ -818,7 +826,7 @@ where
         } else if arg_os.starts_with(b"-") {
             debugln!("Parser::is_new_arg: - found");
             // a singe '-' by itself is a value and typically means "stdin" on unix systems
-            !(arg_os.len_() == 1)
+            !(arg_os.len() == 1)
         } else {
             debugln!("Parser::is_new_arg: probably value");
             false
@@ -874,7 +882,7 @@ where
             self.unset(AS::ValidNegNumFound);
             // Is this a new argument, or values from a previous option?
             let starts_new_arg = self.is_new_arg(&arg_os, needs_val_of);
-            if !self.is_set(AS::TrailingValues) && arg_os.starts_with(b"--") && arg_os.len_() == 2
+            if !self.is_set(AS::TrailingValues) && arg_os.starts_with(b"--") && arg_os.len() == 2
                 && starts_new_arg
             {
                 debugln!("Parser::get_matches_with: setting TrailingVals=true");
@@ -931,7 +939,7 @@ where
                             }
                             _ => (),
                         }
-                    } else if arg_os.starts_with(b"-") && arg_os.len_() != 1 {
+                    } else if arg_os.starts_with(b"-") && arg_os.len() != 1 {
                         // Try to parse short args like normal, if AllowLeadingHyphen or
                         // AllowNegativeNumbers is set, parse_short_arg will *not* throw
                         // an error, and instead return Ok(None)
@@ -1499,14 +1507,25 @@ where
     }
 
     fn use_long_help(&self) -> bool {
-        self.meta.long_about.is_some() || self.flags.iter().any(|f| f.b.long_help.is_some())
-            || self.opts.iter().any(|o| o.b.long_help.is_some())
-            || self.positionals.values().any(|p| p.b.long_help.is_some())
+        // In this case, both must be checked. This allows the retention of 
+        // original formatting, but also ensures that the actual -h or --help
+        // specified by the user is sent through. If HiddenShortHelp is not included,
+        // then items specified with hidden_short_help will also be hidden.
+        let should_long = |v: &Base| { 
+            v.long_help.is_some() || 
+            v.is_set(ArgSettings::HiddenLongHelp) || 
+            v.is_set(ArgSettings::HiddenShortHelp) 
+        };
+
+        self.meta.long_about.is_some() 
+            || self.flags.iter().any(|f| should_long(&f.b))
+            || self.opts.iter().any(|o| should_long(&o.b))
+            || self.positionals.values().any(|p| should_long(&p.b))
             || self.subcommands
                 .iter()
                 .any(|s| s.p.meta.long_about.is_some())
     }
-
+    
     fn _help(&self, mut use_long: bool) -> Error {
         debugln!("Parser::_help: use_long={:?}", use_long);
         use_long = use_long && self.use_long_help();
@@ -1543,7 +1562,7 @@ where
         // maybe here lifetime should be 'a
         debugln!("Parser::parse_long_arg;");
 
-        // Update the curent index
+        // Update the current index
         self.cur_idx.set(self.cur_idx.get() + 1);
 
         let mut val = None;
@@ -1677,7 +1696,7 @@ where
                 ret = self.parse_flag(flag, matcher)?;
 
                 // Handle conflicts, requirements, overrides, etc.
-                // Must be called here due to mutablilty
+                // Must be called here due to mutabililty
                 if self.cache.map_or(true, |name| name != flag.b.name) {
                     self.cache = Some(flag.b.name);
                 }
@@ -1713,7 +1732,7 @@ where
         if let Some(fv) = val {
             has_eq = fv.starts_with(&[b'=']) || had_eq;
             let v = fv.trim_left_matches(b'=');
-            if !empty_vals && (v.len_() == 0 || (needs_eq && !has_eq)) {
+            if !empty_vals && (v.len() == 0 || (needs_eq && !has_eq)) {
                 sdebugln!("Found Empty - Error");
                 return Err(Error::empty_value(
                     opt,
@@ -1721,7 +1740,7 @@ where
                     self.color(),
                 ));
             }
-            sdebugln!("Found - {:?}, len: {}", v, v.len_());
+            sdebugln!("Found - {:?}, len: {}", v, v.len());
             debugln!(
                 "Parser::parse_opt: {:?} contains '='...{:?}",
                 fv,
@@ -1774,7 +1793,7 @@ where
         );
         if !(self.is_set(AS::TrailingValues) && self.is_set(AS::DontDelimitTrailingValues)) {
             if let Some(delim) = arg.val_delim() {
-                if val.is_empty_() {
+                if val.is_empty() {
                     Ok(self.add_single_val_to_arg(arg, val, matcher)?)
                 } else {
                     let mut iret = ParseResult::ValuesDone;

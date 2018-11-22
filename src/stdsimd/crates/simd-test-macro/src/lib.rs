@@ -3,8 +3,6 @@
 //! This macro expands to a `#[test]` function which tests the local machine
 //! for the appropriate cfg before calling the inner test function.
 
-#![feature(proc_macro)]
-
 extern crate proc_macro;
 extern crate proc_macro2;
 #[macro_use]
@@ -12,7 +10,7 @@ extern crate quote;
 
 use std::env;
 
-use proc_macro2::{Literal, Span, Term, TokenStream, TokenTree};
+use proc_macro2::{Ident, Literal, Span, TokenStream, TokenTree};
 
 fn string(s: &str) -> TokenTree {
     Literal::string(s).into()
@@ -20,20 +18,18 @@ fn string(s: &str) -> TokenTree {
 
 #[proc_macro_attribute]
 pub fn simd_test(
-    attr: proc_macro::TokenStream, item: proc_macro::TokenStream
+    attr: proc_macro::TokenStream, item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let tokens = TokenStream::from(attr)
-        .into_iter()
-        .collect::<Vec<_>>();
+    let tokens = TokenStream::from(attr).into_iter().collect::<Vec<_>>();
     if tokens.len() != 3 {
         panic!("expected #[simd_test(enable = \"feature\")]");
     }
     match &tokens[0] {
-        TokenTree::Term(tt) if tt.to_string() == "enable" => {}
+        TokenTree::Ident(tt) if tt.to_string() == "enable" => {}
         _ => panic!("expected #[simd_test(enable = \"feature\")]"),
     }
     match &tokens[1] {
-        TokenTree::Op(tt) if tt.op() == '=' => {}
+        TokenTree::Punct(tt) if tt.as_char() == '=' => {}
         _ => panic!("expected #[simd_test(enable = \"feature\")]"),
     }
     let enable_feature = match &tokens[2] {
@@ -53,22 +49,24 @@ pub fn simd_test(
     let item = TokenStream::from(item);
     let name = find_name(item.clone());
 
-    let name: TokenStream = name.as_str().parse().expect(&format!(
-        "failed to parse name: {}",
-        name.clone().as_str()
-    ));
+    let name: TokenStream = name
+        .to_string()
+        .parse()
+        .expect(&format!("failed to parse name: {}", name.to_string()));
 
     let target = env::var("TARGET")
         .expect("TARGET environment variable should be set for rustc");
     let mut force_test = false;
-    let macro_test = match target.split('-').next().expect(&format!(
-        "target triple contained no \"-\": {}",
-        target
-    )) {
+    let macro_test = match target
+        .split('-')
+        .next()
+        .expect(&format!("target triple contained no \"-\": {}", target))
+    {
         "i686" | "x86_64" | "i586" => "is_x86_feature_detected",
         "arm" | "armv7" => "is_arm_feature_detected",
         "aarch64" => "is_aarch64_feature_detected",
-        "powerpc64" => "is_powerpc64_feature_detected",
+        "powerpc" | "powerpcle" => "is_powerpc_feature_detected",
+        "powerpc64" | "powerpc64le" => "is_powerpc64_feature_detected",
         "mips" | "mipsel" => {
             // FIXME:
             // On MIPS CI run-time feature detection always returns false due
@@ -86,9 +84,9 @@ pub fn simd_test(
         }
         t => panic!("unknown target: {}", t),
     };
-    let macro_test = proc_macro2::Term::new(macro_test, Span::call_site());
+    let macro_test = Ident::new(macro_test, Span::call_site());
 
-    let mut cfg_target_features = quote::Tokens::new();
+    let mut cfg_target_features = TokenStream::new();
     use quote::ToTokens;
     for feature in target_features {
         let q = quote_spanned! {
@@ -100,10 +98,18 @@ pub fn simd_test(
     let q = quote!{ true };
     q.to_tokens(&mut cfg_target_features);
 
+    let test_norun = std::env::var("STDSIMD_TEST_NORUN").is_ok();
+    let maybe_ignore = if !test_norun {
+        TokenStream::new()
+    } else {
+        (quote! { #[ignore] }).into()
+    };
+
     let ret: TokenStream = quote_spanned! {
         proc_macro2::Span::call_site() =>
         #[allow(non_snake_case)]
         #[test]
+        #maybe_ignore
         fn #name() {
             if #force_test | (#cfg_target_features) {
                 return unsafe { #name() };
@@ -118,18 +124,18 @@ pub fn simd_test(
     ret.into()
 }
 
-fn find_name(item: TokenStream) -> Term {
+fn find_name(item: TokenStream) -> Ident {
     let mut tokens = item.into_iter();
     while let Some(tok) = tokens.next() {
-        if let TokenTree::Term(word) = tok {
-            if word.as_str() == "fn" {
+        if let TokenTree::Ident(word) = tok {
+            if word == "fn" {
                 break;
             }
         }
     }
 
     match tokens.next() {
-        Some(TokenTree::Term(word)) => word,
+        Some(TokenTree::Ident(word)) => word,
         _ => panic!("failed to find function name"),
     }
 }

@@ -1,8 +1,0 @@
-language: rust
-rust: nightly
-script: cd test-project && cargo test
-
-notifications:
-  email:
-    - pmunksgaard@gmail.com
-    - laumann.thomas@gmail.com

@@ -24,7 +24,7 @@
 //! file.write_all(index.to_json_pretty().as_bytes());
 //! ```
 
-#![cfg_attr(all(test, feature = "bench"), feature(test))]
+#![cfg_attr(feature = "bench", feature(test))]
 
 #[macro_use]
 extern crate lazy_static;
@@ -53,7 +53,7 @@ pub mod inverted_index;
 pub mod lang;
 pub mod pipeline;
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use document_store::DocumentStore;
 use inverted_index::InvertedIndex;
@@ -74,19 +74,25 @@ pub use pipeline::Pipeline;
 /// ```
 pub struct IndexBuilder {
     save: bool,
-    fields: Vec<String>,
+    fields: BTreeSet<String>,
     ref_field: String,
     pipeline: Option<Pipeline>,
 }
 
-impl IndexBuilder {
-    pub fn new() -> Self {
+impl Default for IndexBuilder {
+    fn default() -> Self {
         IndexBuilder {
             save: true,
-            fields: Vec::new(),
+            fields: BTreeSet::new(),
             ref_field: "id".into(),
             pipeline: None,
         }
+    }
+}
+
+impl IndexBuilder {
+    pub fn new() -> Self {
+        Default::default()
     }
 
     /// Set whether or not documents should be saved in the `Index`'s document store.
@@ -96,12 +102,16 @@ impl IndexBuilder {
     }
 
     /// Add a document field to the `Index`.
+    ///
+    /// If the `Index` already contains a field with an identical name, adding it again is a no-op.
     pub fn add_field(mut self, field: &str) -> Self {
-        self.fields.push(field.into());
+        self.fields.insert(field.into());
         self
     }
 
     /// Add the document fields to the `Index`.
+    ///
+    /// If the `Index` already contains a field with an identical name, adding it again is a no-op.
     pub fn add_fields<I>(mut self, fields: I) -> Self
     where
         I: IntoIterator,
@@ -126,14 +136,15 @@ impl IndexBuilder {
 
     /// Build an `Index` from this builder.
     pub fn build(self) -> Index {
-        let index = self.fields
+        let index = self
+            .fields
             .iter()
             .map(|f| (f.clone(), InvertedIndex::new()))
             .collect();
 
         Index {
             index,
-            fields: self.fields,
+            fields: self.fields.into_iter().collect(),
             ref_field: self.ref_field,
             document_store: DocumentStore::new(self.save),
             pipeline: self.pipeline.unwrap_or_default(),
@@ -146,12 +157,13 @@ impl IndexBuilder {
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Index {
+    // TODO(3.0): Use a BTreeSet<String>
     pub fields: Vec<String>,
     pub pipeline: Pipeline,
     #[serde(rename = "ref")]
     pub ref_field: String,
     pub version: &'static str,
-    index: HashMap<String, InvertedIndex>,
+    index: BTreeMap<String, InvertedIndex>,
     pub document_store: DocumentStore,
 }
 
@@ -159,52 +171,50 @@ impl Index {
     /// Create a new index with the provided fields.
     ///
     /// # Example
+    ///
     /// ```
     /// # use elasticlunr::Index;
     /// let mut index = Index::new(&["title", "body", "breadcrumbs"]);
     /// index.add_doc("1", &["How to Foo", "First, you need to `bar`.", "Chapter 1 > How to Foo"]);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if multiple given fields are identical.
     pub fn new<I>(fields: I) -> Self
     where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
-        let mut indices = HashMap::new();
-        let mut field_vec = Vec::new();
-        for field in fields {
-            let field = field.as_ref().to_string();
-            field_vec.push(field.clone());
-            indices.insert(field, InvertedIndex::new());
-        }
-
-        Index {
-            fields: field_vec,
-            index: indices,
-            pipeline: Pipeline::default(),
-            ref_field: "id".into(),
-            version: ::ELASTICLUNR_VERSION,
-            document_store: DocumentStore::new(true),
-        }
+        Index::with_language(Language::English, fields)
     }
 
     /// Create a new index with the provided fields for the given
     /// [`Language`](lang/enum.Language.html).
     ///
     /// # Example
+    ///
     /// ```
     /// # use elasticlunr::{Index, Language};
     /// let mut index = Index::with_language(Language::English, &["title", "body"]);
     /// index.add_doc("1", &["this is a title", "this is body text"]);
     /// ```
+    ///
+    /// # Panics
+    ///
+    /// Panics if multiple given fields are identical.
     pub fn with_language<I>(lang: Language, fields: I) -> Self
     where
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
-        let mut indices = HashMap::new();
+        let mut indices = BTreeMap::new();
         let mut field_vec = Vec::new();
         for field in fields {
             let field = field.as_ref().to_string();
+            if field_vec.contains(&field) {
+                panic!("The Index already contains the field {}", field);
+            }
             field_vec.push(field.clone());
             indices.insert(field, InvertedIndex::new());
         }
@@ -235,9 +245,9 @@ impl Index {
         I: IntoIterator,
         I::Item: AsRef<str>,
     {
-        let mut doc = HashMap::new();
+        let mut doc = BTreeMap::new();
         doc.insert(self.ref_field.clone(), doc_ref.into());
-        let mut token_freq = HashMap::new();
+        let mut token_freq = BTreeMap::new();
 
         for (field, value) in self.fields.iter().zip(data) {
             doc.insert(field.clone(), value.as_ref().to_string());
@@ -287,9 +297,15 @@ mod tests {
 
     #[test]
     fn add_field_to_builder() {
-        let idx = IndexBuilder::new().add_field("foo").build();
+        let idx = IndexBuilder::new()
+            .add_field("foo")
+            .add_fields(&["foo", "bar", "baz"])
+            .build();
 
-        assert_eq!(idx.get_fields()[0], "foo");
+        let idx_fields = idx.get_fields();
+        for f in &["foo", "bar", "baz"] {
+            assert_eq!(idx_fields.iter().filter(|x| x == f).count(), 1);
+        }
     }
 
     #[test]
@@ -300,7 +316,7 @@ mod tests {
         assert_eq!(idx.document_store.len(), 1);
         assert_eq!(
             idx.document_store.get_doc("1").unwrap(),
-            hashmap!{
+            btreemap!{
                 "id".into() => "1".into(),
                 "body".into() => "this is a test".into(),
             }
@@ -314,5 +330,11 @@ mod tests {
         idx.add_doc("1", &["", "test"]);
         assert_eq!(idx.index["body"].get_doc_frequency("test"), 1);
         assert_eq!(idx.index["body"].get_docs("test").unwrap()["1"], 1.);
+    }
+
+    #[test]
+    #[should_panic]
+    fn creating_index_with_identical_fields_panics() {
+        let _idx = Index::new(&["title", "body", "title"]);
     }
 }

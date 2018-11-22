@@ -283,6 +283,10 @@ fn main() {
         cmd.arg("--cfg").arg("parallel_queries");
     }
 
+    if env::var_os("RUSTC_VERIFY_LLVM_IR").is_some() {
+        cmd.arg("-Z").arg("verify-llvm-ir");
+    }
+
     let color = match env::var("RUSTC_COLOR") {
         Ok(s) => usize::from_str(&s).expect("RUSTC_COLOR should be an integer"),
         Err(_) => 0,
@@ -292,8 +296,10 @@ fn main() {
         cmd.arg("--color=always");
     }
 
-    if env::var_os("RUSTC_DENY_WARNINGS").is_some() {
+    if env::var_os("RUSTC_DENY_WARNINGS").is_some() && env::var_os("RUSTC_EXTERNAL_TOOL").is_none()
+    {
         cmd.arg("-Dwarnings");
+        cmd.arg("-Dbare_trait_objects");
     }
 
     if verbose > 1 {
@@ -322,7 +328,7 @@ fn main() {
             let start = Instant::now();
             let status = cmd
                 .status()
-                .expect(&format!("\n\n failed to run {:?}", cmd));
+                .unwrap_or_else(|_| panic!("\n\n failed to run {:?}", cmd));
             let dur = start.elapsed();
 
             let is_test = args.iter().any(|a| a == "--test");
@@ -342,7 +348,7 @@ fn main() {
         }
     }
 
-    let code = exec_cmd(&mut cmd).expect(&format!("\n\n failed to run {:?}", cmd));
+    let code = exec_cmd(&mut cmd).unwrap_or_else(|_| panic!("\n\n failed to run {:?}", cmd));
     std::process::exit(code);
 }
 

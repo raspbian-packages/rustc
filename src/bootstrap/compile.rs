@@ -24,7 +24,6 @@ use std::io::prelude::*;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str;
-use std::cmp::min;
 
 use build_helper::{output, mtime, up_to_date};
 use filetime::FileTime;
@@ -67,6 +66,16 @@ impl Step for Std {
     fn run(self, builder: &Builder) {
         let target = self.target;
         let compiler = self.compiler;
+
+        if builder.config.keep_stage.contains(&compiler.stage) {
+            builder.info("Warning: Using a potentially old libstd. This may not behave well.");
+            builder.ensure(StdLink {
+                compiler: compiler,
+                target_compiler: compiler,
+                target,
+            });
+            return;
+        }
 
         builder.ensure(StartupObjects { compiler, target });
 
@@ -353,6 +362,16 @@ impl Step for Test {
 
         builder.ensure(Std { compiler, target });
 
+        if builder.config.keep_stage.contains(&compiler.stage) {
+            builder.info("Warning: Using a potentially old libtest. This may not behave well.");
+            builder.ensure(TestLink {
+                compiler: compiler,
+                target_compiler: compiler,
+                target,
+            });
+            return;
+        }
+
         if builder.force_use_stage1(compiler, target) {
             builder.ensure(Test {
                 compiler: builder.compiler(1, builder.config.build),
@@ -468,6 +487,16 @@ impl Step for Rustc {
         let target = self.target;
 
         builder.ensure(Test { compiler, target });
+
+        if builder.config.keep_stage.contains(&compiler.stage) {
+            builder.info("Warning: Using a potentially old librustc. This may not behave well.");
+            builder.ensure(RustcLink {
+                compiler: compiler,
+                target_compiler: compiler,
+                target,
+            });
+            return;
+        }
 
         if builder.force_use_stage1(compiler, target) {
             builder.ensure(Rustc {
@@ -624,6 +653,14 @@ impl Step for CodegenBackend {
         let backend = self.backend;
 
         builder.ensure(Rustc { compiler, target });
+
+        if builder.config.keep_stage.contains(&compiler.stage) {
+            builder.info("Warning: Using a potentially old codegen backend. \
+                This may not behave well.");
+            // Codegen backends are linked separately from this step today, so we don't do
+            // anything here.
+            return;
+        }
 
         if builder.force_use_stage1(compiler, target) {
             builder.ensure(CodegenBackend {
@@ -786,8 +823,11 @@ fn copy_lld_to_sysroot(builder: &Builder,
         .join("bin");
     t!(fs::create_dir_all(&dst));
 
-    let exe = exe("lld", &target);
-    builder.copy(&lld_install_root.join("bin").join(&exe), &dst.join(&exe));
+    let src_exe = exe("lld", &target);
+    let dst_exe = exe("rust-lld", &target);
+    // we prepend this bin directory to the user PATH when linking Rust binaries. To
+    // avoid shadowing the system LLD we rename the LLD we provide to `rust-lld`.
+    builder.copy(&lld_install_root.join("bin").join(&src_exe), &dst.join(&dst_exe));
 }
 
 /// Cargo's output path for the standard library in a given stage, compiled
@@ -873,7 +913,7 @@ impl Step for Assemble {
     type Output = Compiler;
 
     fn should_run(run: ShouldRun) -> ShouldRun {
-        run.all_krates("rustc-main")
+        run.never()
     }
 
     /// Prepare a new compiler from the artifacts in `stage`
@@ -915,28 +955,16 @@ impl Step for Assemble {
         // link to these. (FIXME: Is that correct? It seems to be correct most
         // of the time but I think we do link to these for stage2/bin compilers
         // when not performing a full bootstrap).
-        if builder.config.keep_stage.map_or(false, |s| target_compiler.stage <= s) {
-            builder.verbose("skipping compilation of compiler due to --keep-stage");
-            let compiler = build_compiler;
-            for stage in 0..min(target_compiler.stage, builder.config.keep_stage.unwrap()) {
-                let target_compiler = builder.compiler(stage, target_compiler.host);
-                let target = target_compiler.host;
-                builder.ensure(StdLink { compiler, target_compiler, target });
-                builder.ensure(TestLink { compiler, target_compiler, target });
-                builder.ensure(RustcLink { compiler, target_compiler, target });
-            }
-        } else {
-            builder.ensure(Rustc {
+        builder.ensure(Rustc {
+            compiler: build_compiler,
+            target: target_compiler.host,
+        });
+        for &backend in builder.config.rust_codegen_backends.iter() {
+            builder.ensure(CodegenBackend {
                 compiler: build_compiler,
                 target: target_compiler.host,
+                backend,
             });
-            for &backend in builder.config.rust_codegen_backends.iter() {
-                builder.ensure(CodegenBackend {
-                    compiler: build_compiler,
-                    target: target_compiler.host,
-                    backend,
-                });
-            }
         }
 
         let lld_install = if builder.config.lld_enabled {
@@ -1049,7 +1077,7 @@ pub fn run_cargo(builder: &Builder, cargo: &mut Command, stamp: &Path, is_check:
                !filename.ends_with(".lib") &&
                !is_dylib(&filename) &&
                !(is_check && filename.ends_with(".rmeta")) {
-                return;
+                continue;
             }
 
             let filename = Path::new(&*filename);
@@ -1057,14 +1085,14 @@ pub fn run_cargo(builder: &Builder, cargo: &mut Command, stamp: &Path, is_check:
             // If this was an output file in the "host dir" we don't actually
             // worry about it, it's not relevant for us.
             if filename.starts_with(&host_root_dir) {
-                return;
+                continue;
             }
 
             // If this was output in the `deps` dir then this is a precise file
             // name (hash included) so we start tracking it.
             if filename.starts_with(&target_deps_dir) {
                 deps.push(filename.to_path_buf());
-                return;
+                continue;
             }
 
             // Otherwise this was a "top level artifact" which right now doesn't
@@ -1163,7 +1191,7 @@ pub fn run_cargo(builder: &Builder, cargo: &mut Command, stamp: &Path, is_check:
 pub fn stream_cargo(
     builder: &Builder,
     cargo: &mut Command,
-    cb: &mut FnMut(CargoMessage),
+    cb: &mut dyn FnMut(CargoMessage),
 ) -> bool {
     if builder.config.dry_run {
         return true;

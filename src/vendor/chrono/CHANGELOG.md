@@ -8,6 +8,37 @@ Chrono obeys the principle of [Semantic Versioning](http://semver.org/).
 There were/are numerous minor versions before 1.0 due to the language changes.
 Versions with only mechnical changes will be omitted from the following list.
 
+## 0.4.4
+
+### Features
+
+* Added support for parsing nanoseconds without the leading dot (@emschwartz #251)
+
+## 0.4.3
+
+### Features
+
+* Added methods to DateTime/NaiveDateTime to present the stored value as a number
+  of nanoseconds since the UNIX epoch (@harkonenbade #247)
+* Added a serde serialise/deserialise module for nanosecond timestamps. (@harkonenbade #247)
+* Added "Permissive" timezone parsing which allows a numeric timezone to
+  be specified without minutes. (@quodlibetor #242)
+
+## 0.4.2
+
+### Deprecations
+
+* More strongly deprecate RustcSerialize: remove it from documentation unless
+  the feature is enabled, issue a deprecation warning if the rustc-serialize
+  feature is enabled (@quodlibetor #174)
+
+### Features
+
+* Move all uses of the system clock behind a `clock` feature, for use in
+  environments where we don't have access to the current time. (@jethrogb #236)
+* Implement subtraction of two `Date`s, `Time`s, or `DateTime`s, returning a
+  `Duration` (@tobz1000 #237)
+
 ## 0.4.1
 
 ### Bug Fixes

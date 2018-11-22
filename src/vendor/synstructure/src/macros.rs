@@ -2,43 +2,56 @@
 //! be used together to eliminate some of the boilerplate required in order to
 //! declare and test custom derive implementations.
 
-// XXX: Stop using `ignore` blocks for examples in this module.
-
 // Re-exports used by the decl_derive! and test_derive!
-pub mod syn {
-    pub use syn::*; // For syn::parse_derive_input
-}
-
-pub mod quote {
-    pub use quote::*; // For quote::Tokens
-}
-
-pub mod proc_macro {
-    pub use proc_macro::*; // For proc_macro::TokenStream
-}
+pub use syn::{parse_str, parse, DeriveInput};
+pub use proc_macro::TokenStream as TokenStream;
+pub use proc_macro2::TokenStream as TokenStream2;
 
 /// The `decl_derive!` macro declares a custom derive wrapper. It will parse the
-/// incoming TokenStream into a `synstructure::Structure` object, and pass it
+/// incoming `TokenStream` into a `synstructure::Structure` object, and pass it
 /// into the inner function.
 ///
 /// Your inner function should have the following type:
 ///
 /// ```
 /// # extern crate quote;
+/// # extern crate proc_macro2;
 /// # extern crate synstructure;
-/// fn derive(input: synstructure::Structure) -> quote::Tokens {
-///     // Your body here
-/// # unimplemented!()
+/// fn derive(input: synstructure::Structure) -> proc_macro2::TokenStream {
+///     unimplemented!()
 /// }
 /// ```
 ///
 /// # Usage
 ///
-/// ```ignore
-/// fn derive_interesting(mut input: synstructure::Structure) -> quote::Tokens {
-///     // Your body here
+/// ### Without Attributes
+/// ```
+/// # #[macro_use] extern crate quote;
+/// # extern crate proc_macro2;
+/// # extern crate synstructure;
+/// # fn main() {}
+/// fn derive_interesting(_input: synstructure::Structure) -> proc_macro2::TokenStream {
+///     quote! { ... }
 /// }
+///
+/// # const _IGNORE: &'static str = stringify! {
+/// decl_derive!([Interesting] => derive_interesting);
+/// # };
+/// ```
+///
+/// ### With Attributes
+/// ```
+/// # #[macro_use] extern crate quote;
+/// # extern crate proc_macro2;
+/// # extern crate synstructure;
+/// # fn main() {}
+/// fn derive_interesting(_input: synstructure::Structure) -> proc_macro2::TokenStream {
+///     quote! { ... }
+/// }
+///
+/// # const _IGNORE: &'static str = stringify! {
 /// decl_derive!([Interesting, attributes(interesting_ignore)] => derive_interesting);
+/// # };
 /// ```
 #[macro_export]
 macro_rules! decl_derive {
@@ -47,17 +60,14 @@ macro_rules! decl_derive {
         #[proc_macro_derive($derives $($derive_t)*)]
         #[allow(non_snake_case)]
         pub fn $derives(
-            i: $crate::macros::proc_macro::TokenStream
-        ) -> $crate::macros::proc_macro::TokenStream
+            i: $crate::macros::TokenStream
+        ) -> $crate::macros::TokenStream
         {
-            let parsed = $crate::macros::syn::parse_derive_input(&i.to_string())
+            let parsed = $crate::macros::parse::<$crate::macros::DeriveInput>(i)
                 .expect(concat!("Failed to parse input to `#[derive(",
                                 stringify!($derives),
                                 ")]`"));
-            $inner($crate::Structure::new(&parsed)).parse()
-                .expect(concat!("Failed to parse output from `#[derive(",
-                                stringify!($derives),
-                                ")]`"))
+            $inner($crate::Structure::new(&parsed)).into()
         }
     };
 }
@@ -74,25 +84,21 @@ macro_rules! decl_derive {
 ///
 /// # Usage
 ///
-/// ```ignore
-/// test_derive!{
-///     super::derive_interesting {
-///         struct A {
-///             a: i32,
-///             b: i32,
+/// ```
+/// # #[macro_use] extern crate quote;
+/// # extern crate proc_macro2;
+/// # #[macro_use] extern crate synstructure;
+/// fn test_derive_example(_s: synstructure::Structure) -> proc_macro2::TokenStream {
+///     quote! { const YOUR_OUTPUT: &'static str = "here"; }
+/// }
+///
+/// fn main() {
+///     test_derive!{
+///         test_derive_example {
+///             struct A;
 ///         }
-///     }
-///     expands to {
-///         impl ::Interesting for A {
-///             fn is_interesting(&self) -> bool {
-///                 match *self {
-///                     A { a: ref __binding_0, b: ref __binding_1, } => {
-///                         false ||
-///                             ::Interesting::is_interesting(__binding_0) ||
-///                             ::Interesting::is_interesting(__binding_1)
-///                     }
-///                 }
-///             }
+///         expands to {
+///             const YOUR_OUTPUT: &'static str = "here";
 ///         }
 ///     }
 /// }
@@ -114,33 +120,33 @@ macro_rules! test_derive {
     ($name:path { $($i:tt)* } expands to { $($o:tt)* } no_build) => {
         {
             let i = stringify!( $($i)* );
-            let parsed = $crate::macros::syn::parse_derive_input(i)
+            let parsed = $crate::macros::parse_str::<$crate::macros::DeriveInput>(i)
                 .expect(concat!("Failed to parse input to `#[derive(",
                                 stringify!($name),
                                 ")]`"));
 
-            // NOTE: These outputs can get quite long, so we'd like to avoid
-            // recursive macros like `quote!` for parsing them. Instead, we use
-            // stringify (which is inconsistent with whitespace), split on
-            // whitespace, and compare the lists of tokens.
-
             let res = $name($crate::Structure::new(&parsed));
-            let expected = stringify!( $($o)* );
+            let expected = stringify!( $($o)* )
+                .parse::<$crate::macros::TokenStream2>()
+                .expect("output should be a valid TokenStream");
+            let mut expected_toks = $crate::macros::TokenStream2::from(expected);
+            if res.to_string() != expected_toks.to_string() {
+                panic!("\
+test_derive failed:
+expected:
+```
+{}
+```
 
-            let res_toks = res.as_str()
-                .split(|ch: char| ch.is_whitespace())
-                .filter(|s: &&str| !s.is_empty())
-                .collect::<Vec<&str>>();
-
-            let exp_toks = expected
-                .split(|ch: char| ch.is_whitespace())
-                .filter(|s: &&str| !s.is_empty())
-                .collect::<Vec<&str>>();
-
-            assert_eq!(
-                res_toks,
-                exp_toks
-            )
+got:
+```
+{}
+```\n",
+                    $crate::unpretty_print(&expected_toks),
+                    $crate::unpretty_print(&res),
+                );
+            }
+            // assert_eq!(res, expected_toks)
         }
     };
 }
@@ -149,13 +155,19 @@ macro_rules! test_derive {
 /// implementations. It provides mechanisms for operating over structures
 /// performing modifications on each field etc.
 ///
-/// This macro is a helper wrapper over decl_derive!.
+/// This macro doesn't define the actual derive, but rather the implementation
+/// method. Use `decl_derive!` to generate the implementation wrapper.
 ///
-/// # Warning
+/// # Stability Warning
 ///
 /// This is an unstable experimental macro API, which may be changed or removed
 /// in a future version. I'm not yet confident enough that this API is useful
-/// enough to warrant its complexity and inclusion in synstructure.
+/// enough to warrant its complexity and inclusion in `synstructure`.
+///
+/// # Caveat
+///
+/// The `quote!` macro from `quote` must be imported in the calling crate, as
+/// this macro depends on it.
 ///
 /// # Note
 ///
@@ -163,12 +175,23 @@ macro_rules! test_derive {
 /// avaliable when that feature is enabled.
 ///
 /// # Example
-/// ```ignore
+///
+/// ```
+/// extern crate syn;
+/// #[macro_use]
+/// extern crate quote;
+/// #[macro_use]
+/// extern crate synstructure;
+/// extern crate proc_macro2;
+/// # const _IGNORE: &'static str = stringify! {
+/// decl_derive!([Interest] => derive_interest);
+/// # };
+///
 /// simple_derive! {
 ///     // This macro implements the `Interesting` method exported by the `aa`
 ///     // crate. It will explicitly add an `extern crate` invocation to import the
 ///     // crate into the expanded context.
-///     derive(Interesting) impl ::aa::Interesting {
+///     derive_interest impl synstructure_test_traits::Interest {
 ///         // A "filter" block can be added. It evaluates its body with the (s)
 ///         // variable bound to a mutable reference to the input `Structure`
 ///         // object.
@@ -177,16 +200,52 @@ macro_rules! test_derive {
 ///         // filtering out fields which should be ignored by all methods and for
 ///         // the purposes of binding type parameters.
 ///         filter(s) {
-///             s.filter(|bi| bi.ast().ident != Some("a".into()));
+///             s.filter(|bi| bi.ast().ident != Some(syn::Ident::new("a",
+///                 proc_macro2::Span::call_site())));
 ///         }
 ///
 ///         // This is an implementation of a method in the implemented crate. The
 ///         // return value should be the series of match patterns to destructure
 ///         // the `self` argument with.
-///         fn is_interesting(&self as s) -> bool {
+///         fn interesting(&self as s) -> bool {
 ///             s.fold(false, |acc, bi| {
-///                 quote!(#acc || ::aa::Interesting::is_interesting(#bi))
+///                 quote!(#acc || synstructure_test_traits::Interest::interesting(#bi))
 ///             })
+///         }
+///     }
+/// }
+///
+/// fn main() {
+///     test_derive!{
+///         derive_interest {
+///             struct A<T> {
+///                 x: i32,
+///                 a: bool, // Will be ignored by filter
+///                 c: T,
+///             }
+///         }
+///         expands to {
+///             #[allow(non_upper_case_globals)]
+///             const _DERIVE_synstructure_test_traits_Interest_FOR_A: () = {
+///                 extern crate synstructure_test_traits;
+///                 impl<T> synstructure_test_traits::Interest for A<T>
+///                     where T: synstructure_test_traits::Interest
+///                 {
+///                     fn interesting(&self) -> bool {
+///                         match *self {
+///                             A {
+///                                 x: ref __binding_0,
+///                                 c: ref __binding_2,
+///                                 ..
+///                             } => {
+///                                 false ||
+///                                     synstructure_test_traits::Interest::interesting(__binding_0) ||
+///                                     synstructure_test_traits::Interest::interesting(__binding_2)
+///                             }
+///                         }
+///                     }
+///                 }
+///             };
 ///         }
 ///     }
 /// }
@@ -196,14 +255,14 @@ macro_rules! test_derive {
 macro_rules! simple_derive {
     // entry point
     (
-        derive($name:ident) $iname:ident impl $path:path { $($rest:tt)* }
+        $iname:ident impl $path:path { $($rest:tt)* }
     ) => {
-        simple_derive!(@I [$name, $iname, $path] { $($rest)* } [] []);
+        simple_derive!(__I [$iname, $path] { $($rest)* } [] []);
     };
 
     // Adding a filter block
     (
-        @I $opt:tt {
+        __I $opt:tt {
             filter($s:ident) {
                 $($body:tt)*
             }
@@ -211,7 +270,7 @@ macro_rules! simple_derive {
         } [$($done:tt)*] [$($filter:tt)*]
     ) => {
         simple_derive!(
-            @I $opt { $($rest)* } [$($done)*] [
+            __I $opt { $($rest)* } [$($done)*] [
                 $($filter)*
                 [
                     st_name = $s,
@@ -225,7 +284,7 @@ macro_rules! simple_derive {
 
     // &self bound method
     (
-        @I $opt:tt {
+        __I $opt:tt {
             fn $fn_name:ident (&self as $s:ident $($params:tt)*) $(-> $t:ty)* {
                 $($body:tt)*
             }
@@ -233,7 +292,7 @@ macro_rules! simple_derive {
         } [$($done:tt)*] [$($filter:tt)*]
     ) => {
         simple_derive!(
-            @I $opt { $($rest)* } [
+            __I $opt { $($rest)* } [
                 $($done)*
                 [
                     st_name = $s,
@@ -252,7 +311,7 @@ macro_rules! simple_derive {
 
     // &mut self bound method
     (
-        @I $opt:tt {
+        __I $opt:tt {
             fn $fn_name:ident (&mut self as $s:ident $($params:tt)*) $(-> $t:ty)* {
                 $($body:tt)*
             }
@@ -260,7 +319,7 @@ macro_rules! simple_derive {
         } [$($done:tt)*] [$($filter:tt)*]
     ) => {
         simple_derive!(
-            @I $opt { $($rest)* } [
+            __I $opt { $($rest)* } [
                 $($done)*
                 [
                     st_name = $s,
@@ -279,7 +338,7 @@ macro_rules! simple_derive {
 
     // self bound method
     (
-        @I $opt:tt {
+        __I $opt:tt {
             fn $fn_name:ident (self as $s:ident $($params:tt)*) $(-> $t:ty)* {
                 $($body:tt)*
             }
@@ -287,7 +346,7 @@ macro_rules! simple_derive {
         } [$($done:tt)*] [$($filter:tt)*]
     ) => {
         simple_derive!(
-            @I $opt { $($rest)* } [
+            __I $opt { $($rest)* } [
                 $($done)*
                 [
                     st_name = $s,
@@ -308,7 +367,7 @@ macro_rules! simple_derive {
 
     // codegen after data collection
     (
-        @I [$name:ident, $iname:ident, $path:path] {} [$(
+        __I [$iname:ident, $path:path] {} [$(
             [
                 st_name = $st_name:ident,
                 bind_style = $bind_style:ident,
@@ -323,8 +382,7 @@ macro_rules! simple_derive {
             ]
         )*]
     ) => {
-        decl_derive!([$name] => $iname);
-        fn $iname(mut st: $crate::Structure) -> $crate::macros::quote::Tokens {
+        fn $iname(mut st: $crate::Structure) -> $crate::macros::TokenStream2 {
             let _ = &mut st; // Silence the unused mut warning
 
             // Filter/transform the `Structure` object before cloning it for
@@ -349,7 +407,7 @@ macro_rules! simple_derive {
                 };
             )*
 
-            st.bound_impl(stringify!($path), quote!{
+            st.bound_impl(quote!($path), quote!{
                 $(#$result)*
             })
         }

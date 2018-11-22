@@ -207,7 +207,7 @@ let string = "salutations !";
 // The ordering relation for strings can't be evaluated at compile time,
 // so this doesn't work:
 match string {
-    "hello" ... "world" => {}
+    "hello" ..= "world" => {}
     _ => {}
 }
 
@@ -1501,12 +1501,12 @@ struct Foo {
 "##,
 
 E0131: r##"
-It is not possible to define `main` with type parameters, or even with function
-parameters. When `main` is present, it must take no arguments and return `()`.
+It is not possible to define `main` with generic parameters.
+When `main` is present, it must take no arguments and return `()`.
 Erroneous code example:
 
 ```compile_fail,E0131
-fn main<T>() { // error: main function is not allowed to have type parameters
+fn main<T>() { // error: main function is not allowed to have generic parameters
 }
 ```
 "##,
@@ -2146,7 +2146,7 @@ fn main() -> i32 { 0 }
 
 let x = 1u8;
 match x {
-    0u8...3i8 => (),
+    0u8..=3i8 => (),
     // error: mismatched types in range: expected u8, found i8
     _ => ()
 }
@@ -2189,7 +2189,7 @@ as the type you're matching on. Example:
 let x = 1u8;
 
 match x {
-    0u8...3u8 => (), // ok!
+    0u8..=3u8 => (), // ok!
     _ => ()
 }
 ```
@@ -2338,7 +2338,7 @@ Rust does not currently support this. A simple example that causes this error:
 
 ```compile_fail,E0225
 fn main() {
-    let _: Box<std::io::Read + std::io::Write>;
+    let _: Box<dyn std::io::Read + std::io::Write>;
 }
 ```
 
@@ -2348,7 +2348,7 @@ auto traits. For example, the following compiles correctly:
 
 ```
 fn main() {
-    let _: Box<std::io::Read + Send + Sync>;
+    let _: Box<dyn std::io::Read + Send + Sync>;
 }
 ```
 "##,
@@ -3709,7 +3709,7 @@ The `export_name` attribute was malformed.
 Erroneous code example:
 
 ```ignore (error-emitted-at-codegen-which-cannot-be-handled-by-compile_fail)
-#[export_name] // error: export_name attribute has invalid format
+#[export_name] // error: `export_name` attribute has invalid format
 pub fn something() {}
 
 fn main() {}
@@ -4542,6 +4542,15 @@ fn start(_: isize, _: *const *const u8) -> isize where (): Copy {
     //^ error: start function is not allowed to have a where clause
     0
 }
+```
+"##,
+
+E0648: r##"
+`export_name` attributes may not contain null characters (`\0`).
+
+```compile_fail,E0648
+#[export_name="\0foo"] // error: `export_name` may not contain null characters
+pub fn bar() {}
 ```
 "##,
 

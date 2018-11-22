@@ -11,9 +11,8 @@
 
 use std::ffi::{CStr, CString};
 
-use rustc::hir::{self, CodegenFnAttrFlags};
+use rustc::hir::CodegenFnAttrFlags;
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
-use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::session::Session;
 use rustc::session::config::Sanitizer;
 use rustc::ty::TyCtxt;
@@ -95,6 +94,11 @@ pub fn set_probestack(cx: &CodegenCx, llfn: ValueRef) {
 
     // probestack doesn't play nice either with pgo-gen.
     if cx.sess().opts.debugging_opts.pgo_gen.is_some() {
+        return;
+    }
+
+    // probestack doesn't play nice either with gcov profiling.
+    if cx.sess().opts.debugging_opts.profile {
         return;
     }
 
@@ -217,46 +221,27 @@ pub fn provide(providers: &mut Providers) {
         }
     };
 
-    providers.wasm_custom_sections = |tcx, cnum| {
-        assert_eq!(cnum, LOCAL_CRATE);
-        let mut finder = WasmSectionFinder { tcx, list: Vec::new() };
-        tcx.hir.krate().visit_all_item_likes(&mut finder);
-        Lrc::new(finder.list)
-    };
-
     provide_extern(providers);
-}
-
-struct WasmSectionFinder<'a, 'tcx: 'a> {
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    list: Vec<DefId>,
-}
-
-impl<'a, 'tcx: 'a> ItemLikeVisitor<'tcx> for WasmSectionFinder<'a, 'tcx> {
-    fn visit_item(&mut self, i: &'tcx hir::Item) {
-        match i.node {
-            hir::ItemConst(..) => {}
-            _ => return,
-        }
-        if i.attrs.iter().any(|i| i.check_name("wasm_custom_section")) {
-            self.list.push(self.tcx.hir.local_def_id(i.id));
-        }
-    }
-
-    fn visit_trait_item(&mut self, _: &'tcx hir::TraitItem) {}
-
-    fn visit_impl_item(&mut self, _: &'tcx hir::ImplItem) {}
 }
 
 pub fn provide_extern(providers: &mut Providers) {
     providers.wasm_import_module_map = |tcx, cnum| {
+        // Build up a map from DefId to a `NativeLibrary` structure, where
+        // `NativeLibrary` internally contains information about
+        // `#[link(wasm_import_module = "...")]` for example.
+        let native_libs = tcx.native_libraries(cnum);
+        let mut def_id_to_native_lib = FxHashMap();
+        for lib in native_libs.iter() {
+            if let Some(id) = lib.foreign_module {
+                def_id_to_native_lib.insert(id, lib);
+            }
+        }
+
         let mut ret = FxHashMap();
         for lib in tcx.foreign_modules(cnum).iter() {
-            let attrs = tcx.get_attrs(lib.def_id);
-            let mut module = None;
-            for attr in attrs.iter().filter(|a| a.check_name("wasm_import_module")) {
-                module = attr.value_str();
-            }
+            let module = def_id_to_native_lib
+                .get(&lib.def_id)
+                .and_then(|s| s.wasm_import_module);
             let module = match module {
                 Some(s) => s,
                 None => continue,
@@ -268,7 +253,7 @@ pub fn provide_extern(providers: &mut Providers) {
         }
 
         Lrc::new(ret)
-    }
+    };
 }
 
 fn wasm_import_module(tcx: TyCtxt, id: DefId) -> Option<CString> {

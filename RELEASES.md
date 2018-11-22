@@ -1,3 +1,81 @@
+Version 1.29.0 (2018-09-13)
+==========================
+
+Compiler
+--------
+- [Bumped minimum LLVM version to 5.0.][51899]
+- [Added `powerpc64le-unknown-linux-musl` target.][51619]
+- [Added `aarch64-unknown-hermit` and `x86_64-unknown-hermit` targets.][52861]
+
+Libraries
+---------
+- [`Once::call_once` now no longer requires `Once` to be `'static`.][52239]
+- [`BuildHasherDefault` now implements `PartialEq` and `Eq`.][52402]
+- [`Box<CStr>`, `Box<OsStr>`, and `Box<Path>` now implement `Clone`.][51912]
+- [Implemented `PartialEq<&str>` for `OsString` and `PartialEq<OsString>`
+  for `&str`.][51178]
+- [`Cell<T>` now allows `T` to be unsized.][50494]
+- [`SocketAddr` is now stable on Redox.][52656]
+
+Stabilized APIs
+---------------
+- [`Arc::downcast`]
+- [`Iterator::flatten`]
+- [`Rc::downcast`]
+
+Cargo
+-----
+- [Cargo can silently fix some bad lockfiles ][cargo/5831] You can use
+  `--locked` to disable this behaviour.
+- [`cargo-install` will now allow you to cross compile an install
+  using `--target`][cargo/5614]
+- [Added the `cargo-fix` subcommand to automatically move project code from
+  2015 edition to 2018.][cargo/5723]
+
+Misc
+----
+- [`rustdoc` now has the `--cap-lints` option which demotes all lints above
+  the specified level to that level.][52354] For example `--cap-lints warn`
+  will demote `deny` and `forbid` lints to `warn`.
+- [`rustc` and `rustdoc` will now have the exit code of `1` if compilation
+  fails, and `101` if there is a panic.][52197]
+- [A preview of clippy has been made available through rustup.][51122]
+  You can install the preview with `rustup component add clippy-preview`
+
+Compatibility Notes
+-------------------
+- [`str::{slice_unchecked, slice_unchecked_mut}` are now deprecated.][51807]
+  Use `str::get_unchecked(begin..end)` instead.
+- [`std::env::home_dir` is now deprecated for its unintuitive behaviour.][51656]
+  Consider using the `home_dir` function from
+  https://crates.io/crates/dirs instead.
+- [`rustc` will no longer silently ignore invalid data in target spec.][52330]
+
+[52861]: https://github.com/rust-lang/rust/pull/52861/
+[52656]: https://github.com/rust-lang/rust/pull/52656/
+[52239]: https://github.com/rust-lang/rust/pull/52239/
+[52330]: https://github.com/rust-lang/rust/pull/52330/
+[52354]: https://github.com/rust-lang/rust/pull/52354/
+[52402]: https://github.com/rust-lang/rust/pull/52402/
+[52103]: https://github.com/rust-lang/rust/pull/52103/
+[52197]: https://github.com/rust-lang/rust/pull/52197/
+[51807]: https://github.com/rust-lang/rust/pull/51807/
+[51899]: https://github.com/rust-lang/rust/pull/51899/
+[51912]: https://github.com/rust-lang/rust/pull/51912/
+[51511]: https://github.com/rust-lang/rust/pull/51511/
+[51619]: https://github.com/rust-lang/rust/pull/51619/
+[51656]: https://github.com/rust-lang/rust/pull/51656/
+[51178]: https://github.com/rust-lang/rust/pull/51178/
+[51122]: https://github.com/rust-lang/rust/pull/51122
+[50494]: https://github.com/rust-lang/rust/pull/50494/
+[cargo/5614]: https://github.com/rust-lang/cargo/pull/5614/
+[cargo/5723]: https://github.com/rust-lang/cargo/pull/5723/
+[cargo/5831]: https://github.com/rust-lang/cargo/pull/5831/
+[`Arc::downcast`]: https://doc.rust-lang.org/std/sync/struct.Arc.html#method.downcast
+[`Iterator::flatten`]: https://doc.rust-lang.org/std/iter/trait.Iterator.html#method.flatten
+[`Rc::downcast`]: https://doc.rust-lang.org/std/rc/struct.Rc.html#method.downcast
+
+
 Version 1.28.0 (2018-08-02)
 ===========================
 
@@ -94,9 +172,9 @@ Misc
 
 Compatibility Notes
 -------------------
-- [Rust will no longer consider trait objects with duplicated constraints to
-  have implementations.][51276] For example the below code will now fail
-  to compile.
+- [Rust will consider trait objects with duplicated constraints to be the same
+  type as without the duplicated constraint.][51276] For example the below code will
+  now fail to compile.
   ```rust
   trait Trait {}
 
@@ -144,7 +222,7 @@ Compatibility Notes
 [`alloc::handle_alloc_error`]: https://doc.rust-lang.org/std/alloc/fn.handle_alloc_error.html
 [`btree_map::Entry::or_default`]: https://doc.rust-lang.org/std/collections/btree_map/enum.Entry.html#method.or_default
 [`fmt::Alignment`]: https://doc.rust-lang.org/std/fmt/enum.Alignment.html
-[`hash_map::Entry::or_default`]: https://doc.rust-lang.org/std/collections/btree_map/enum.Entry.html#method.or_default
+[`hash_map::Entry::or_default`]: https://doc.rust-lang.org/std/collections/hash_map/enum.Entry.html#method.or_default
 [`iter::repeat_with`]: https://doc.rust-lang.org/std/iter/fn.repeat_with.html
 [`num::NonZeroUsize`]: https://doc.rust-lang.org/std/num/struct.NonZeroUsize.html
 [`num::NonZeroU128`]: https://doc.rust-lang.org/std/num/struct.NonZeroU128.html
@@ -159,6 +237,17 @@ Compatibility Notes
 [`{Any + Send + Sync}::downcast_mut`]: https://doc.rust-lang.org/std/any/trait.Any.html#method.downcast_mut-2
 [`{Any + Send + Sync}::downcast_ref`]: https://doc.rust-lang.org/std/any/trait.Any.html#method.downcast_ref-2
 [`{Any + Send + Sync}::is`]: https://doc.rust-lang.org/std/any/trait.Any.html#method.is-2
+
+Version 1.27.2 (2018-07-20)
+===========================
+
+Compatibility Notes
+-------------------
+
+- The borrow checker was fixed to avoid potential unsoundness when using
+  match ergonomics: [#52213][52213].
+
+[52213]: https://github.com/rust-lang/rust/issues/52213
 
 Version 1.27.1 (2018-07-10)
 ===========================
@@ -190,7 +279,7 @@ Version 1.27.0 (2018-06-21)
 Language
 --------
 - [Removed 'proc' from the reserved keywords list.][49699] This allows `proc` to
-  be used as an identifer.
+  be used as an identifier.
 - [The dyn syntax is now available.][49968] This syntax is equivalent to the
   bare `Trait` syntax, and should make it clearer when being used in tandem with
   `impl Trait`. Since it is equivalent to the following syntax:
@@ -3107,7 +3196,7 @@ Language
   [RFC 1513](https://github.com/rust-lang/rfcs/blob/master/text/1513-less-unwinding.md).
 * [Add a new crate type, 'cdylib'](https://github.com/rust-lang/rust/pull/33553).
   cdylibs are dynamic libraries suitable for loading by non-Rust hosts.
-  [RFC 1510](https://github.com/rust-lang/rfcs/blob/master/text/1510-rdylib.md).
+  [RFC 1510](https://github.com/rust-lang/rfcs/blob/master/text/1510-cdylib.md).
   Note that Cargo does not yet directly support cdylibs.
 
 Stabilized APIs
@@ -4795,7 +4884,7 @@ Language
 --------
 
 * Patterns with `ref mut` now correctly invoke [`DerefMut`] when
-  matching against dereferencable values.
+  matching against dereferenceable values.
 
 Libraries
 ---------

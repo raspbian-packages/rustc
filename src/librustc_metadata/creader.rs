@@ -188,13 +188,12 @@ impl<'a> CrateLoader<'a> {
     fn register_crate(&mut self,
                       root: &Option<CratePaths>,
                       ident: Symbol,
-                      name: Symbol,
                       span: Span,
                       lib: Library,
                       dep_kind: DepKind)
                       -> (CrateNum, Lrc<cstore::CrateMetadata>) {
-        info!("register crate `extern crate {} as {}`", name, ident);
         let crate_root = lib.metadata.get_root();
+        info!("register crate `extern crate {} as {}`", crate_root.name, ident);
         self.verify_no_symbol_conflicts(span, &crate_root);
 
         // Claim this crate number and cache it
@@ -233,7 +232,7 @@ impl<'a> CrateLoader<'a> {
             .collect();
 
         let cmeta = cstore::CrateMetadata {
-            name,
+            name: crate_root.name,
             extern_crate: Lock::new(None),
             def_path_table: Lrc::new(def_path_table),
             trait_impls,
@@ -328,7 +327,7 @@ impl<'a> CrateLoader<'a> {
                 (cnum, data)
             }
             LoadResult::Loaded(library) => {
-                self.register_crate(root, ident, name, span, library, dep_kind)
+                self.register_crate(root, ident, span, library, dep_kind)
             }
         }
     }
@@ -536,7 +535,7 @@ impl<'a> CrateLoader<'a> {
                 Ok(f) => f,
                 Err(err) => self.sess.span_fatal(span, &err),
             };
-            mem::transmute::<*mut u8, fn(&mut Registry)>(sym)
+            mem::transmute::<*mut u8, fn(&mut dyn Registry)>(sym)
         };
 
         struct MyRegistrar {
@@ -569,9 +568,11 @@ impl<'a> CrateLoader<'a> {
             fn register_bang_proc_macro(&mut self,
                                         name: &str,
                                         expand: fn(TokenStream) -> TokenStream) {
-                let expand = SyntaxExtension::ProcMacro(
-                    Box::new(BangProcMacro { inner: expand }), self.edition
-                );
+                let expand = SyntaxExtension::ProcMacro {
+                    expander: Box::new(BangProcMacro { inner: expand }),
+                    allow_internal_unstable: false,
+                    edition: self.edition,
+                };
                 self.extensions.push((Symbol::intern(name), Lrc::new(expand)));
             }
         }
@@ -801,7 +802,7 @@ impl<'a> CrateLoader<'a> {
                                            name));
                 }
             } else {
-                self.sess.err(&format!("Must link std to be compiled with `-Z sanitizer`"));
+                self.sess.err("Must link std to be compiled with `-Z sanitizer`");
             }
         }
     }
@@ -1017,7 +1018,7 @@ impl<'a> CrateLoader<'a> {
     fn inject_dependency_if(&self,
                             krate: CrateNum,
                             what: &str,
-                            needs_dep: &Fn(&cstore::CrateMetadata) -> bool) {
+                            needs_dep: &dyn Fn(&cstore::CrateMetadata) -> bool) {
         // don't perform this validation if the session has errors, as one of
         // those errors may indicate a circular dependency which could cause
         // this to stack overflow.

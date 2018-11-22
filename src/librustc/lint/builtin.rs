@@ -77,7 +77,8 @@ declare_lint! {
 declare_lint! {
     pub UNREACHABLE_CODE,
     Warn,
-    "detects unreachable code paths"
+    "detects unreachable code paths",
+    report_in_external_macro: true
 }
 
 declare_lint! {
@@ -216,7 +217,8 @@ declare_lint! {
 declare_lint! {
     pub DEPRECATED,
     Warn,
-    "detects use of deprecated items"
+    "detects use of deprecated items",
+    report_in_external_macro: true
 }
 
 declare_lint! {
@@ -252,7 +254,7 @@ declare_lint! {
 declare_lint! {
     pub ELIDED_LIFETIMES_IN_PATHS,
     Allow,
-    "hidden lifetime parameters are deprecated, try `Foo<'_>`"
+    "hidden lifetime parameters in types are deprecated"
 }
 
 declare_lint! {
@@ -281,6 +283,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub IRREFUTABLE_LET_PATTERNS,
+    Deny,
+    "detects irrefutable patterns in if-let and while-let statements"
+}
+
+declare_lint! {
     pub UNUSED_LABELS,
     Allow,
     "detects labels that are never used"
@@ -302,6 +310,34 @@ declare_lint! {
     pub INTRA_DOC_LINK_RESOLUTION_FAILURE,
     Warn,
     "warn about documentation intra links resolution failure"
+}
+
+declare_lint! {
+    pub WHERE_CLAUSES_OBJECT_SAFETY,
+    Warn,
+    "checks the object safety of where clauses"
+}
+
+declare_lint! {
+    pub PROC_MACRO_DERIVE_RESOLUTION_FALLBACK,
+    Warn,
+    "detects proc macro derives using inaccessible names from parent modules"
+}
+
+declare_lint! {
+    pub MACRO_USE_EXTERN_CRATE,
+    Allow,
+    "the `#[macro_use]` attribute is now deprecated in favor of using macros \
+     via the module system"
+}
+
+/// Some lints that are buffered from `libsyntax`. See `syntax::early_buffered_lints`.
+pub mod parser {
+    declare_lint! {
+        pub QUESTION_MARK_MACRO_SEP,
+        Allow,
+        "detects the use of `?` as a macro separator"
+    }
 }
 
 /// Does nothing as a lint pass, but registers some `Lint`s
@@ -355,9 +391,14 @@ impl LintPass for HardwiredLints {
             BARE_TRAIT_OBJECTS,
             ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
             UNSTABLE_NAME_COLLISIONS,
+            IRREFUTABLE_LET_PATTERNS,
             DUPLICATE_ASSOCIATED_TYPE_BINDINGS,
             DUPLICATE_MACRO_EXPORTS,
             INTRA_DOC_LINK_RESOLUTION_FAILURE,
+            WHERE_CLAUSES_OBJECT_SAFETY,
+            PROC_MACRO_DERIVE_RESOLUTION_FALLBACK,
+            MACRO_USE_EXTERN_CRATE,
+            parser::QUESTION_MARK_MACRO_SEP,
         )
     }
 }
@@ -370,6 +411,8 @@ pub enum BuiltinLintDiagnostics {
     BareTraitObject(Span, /* is_global */ bool),
     AbsPathWithModule(Span),
     DuplicatedMacroExports(ast::Ident, Span, Span),
+    ProcMacroDeriveResolutionFallback(Span),
+    ElidedLifetimesInPaths(usize, Span, bool, Span, String),
 }
 
 impl BuiltinLintDiagnostics {
@@ -381,7 +424,7 @@ impl BuiltinLintDiagnostics {
                     Ok(ref s) if is_global => (format!("dyn ({})", s),
                                                Applicability::MachineApplicable),
                     Ok(s) => (format!("dyn {}", s), Applicability::MachineApplicable),
-                    Err(_) => (format!("dyn <type>"), Applicability::HasPlaceholders)
+                    Err(_) => ("dyn <type>".to_string(), Applicability::HasPlaceholders)
                 };
                 db.span_suggestion_with_applicability(span, "use `dyn`", sugg, app);
             }
@@ -398,13 +441,52 @@ impl BuiltinLintDiagnostics {
 
                         (format!("crate{}{}", opt_colon, s), Applicability::MachineApplicable)
                     }
-                    Err(_) => (format!("crate::<path>"), Applicability::HasPlaceholders)
+                    Err(_) => ("crate::<path>".to_string(), Applicability::HasPlaceholders)
                 };
                 db.span_suggestion_with_applicability(span, "use `crate`", sugg, app);
             }
             BuiltinLintDiagnostics::DuplicatedMacroExports(ident, earlier_span, later_span) => {
                 db.span_label(later_span, format!("`{}` already exported", ident));
                 db.span_note(earlier_span, "previous macro export is now shadowed");
+            }
+            BuiltinLintDiagnostics::ProcMacroDeriveResolutionFallback(span) => {
+                db.span_label(span, "names from parent modules are not \
+                                     accessible without an explicit import");
+            }
+            BuiltinLintDiagnostics::ElidedLifetimesInPaths(
+                n, path_span, incl_angl_brckt, insertion_span, anon_lts
+            ) => {
+                let (replace_span, suggestion) = if incl_angl_brckt {
+                    (insertion_span, anon_lts)
+                } else {
+                    // When possible, prefer a suggestion that replaces the whole
+                    // `Path<T>` expression with `Path<'_, T>`, rather than inserting `'_, `
+                    // at a point (which makes for an ugly/confusing label)
+                    if let Ok(snippet) = sess.codemap().span_to_snippet(path_span) {
+                        // But our spans can get out of whack due to macros; if the place we think
+                        // we want to insert `'_` isn't even within the path expression's span, we
+                        // should bail out of making any suggestion rather than panicking on a
+                        // subtract-with-overflow or string-slice-out-out-bounds (!)
+                        // FIXME: can we do better?
+                        if insertion_span.lo().0 < path_span.lo().0 {
+                            return;
+                        }
+                        let insertion_index = (insertion_span.lo().0 - path_span.lo().0) as usize;
+                        if insertion_index > snippet.len() {
+                            return;
+                        }
+                        let (before, after) = snippet.split_at(insertion_index);
+                        (path_span, format!("{}{}{}", before, anon_lts, after))
+                    } else {
+                        (insertion_span, anon_lts)
+                    }
+                };
+                db.span_suggestion_with_applicability(
+                    replace_span,
+                    &format!("indicate the anonymous lifetime{}", if n >= 2 { "s" } else { "" }),
+                    suggestion,
+                    Applicability::MachineApplicable
+                );
             }
         }
     }

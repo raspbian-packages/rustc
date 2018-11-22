@@ -84,6 +84,9 @@ unsafe fn configure_llvm(sess: &Session) {
 // array, leading to crashes.
 
 const ARM_WHITELIST: &[(&str, Option<&str>)] = &[
+    ("mclass", Some("arm_target_feature")),
+    ("rclass", Some("arm_target_feature")),
+    ("dsp", Some("arm_target_feature")),
     ("neon", Some("arm_target_feature")),
     ("v7", Some("arm_target_feature")),
     ("vfp2", Some("arm_target_feature")),

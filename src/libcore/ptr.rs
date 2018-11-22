@@ -188,6 +188,19 @@ pub unsafe fn swap_nonoverlapping<T>(x: *mut T, y: *mut T, count: usize) {
 }
 
 #[inline]
+pub(crate) unsafe fn swap_nonoverlapping_one<T>(x: *mut T, y: *mut T) {
+    // For types smaller than the block optimization below,
+    // just swap directly to avoid pessimizing codegen.
+    if mem::size_of::<T>() < 32 {
+        let z = read(x);
+        copy_nonoverlapping(y, x, 1);
+        write(y, z);
+    } else {
+        swap_nonoverlapping(x, y, 1);
+    }
+}
+
+#[inline]
 unsafe fn swap_nonoverlapping_bytes(x: *mut u8, y: *mut u8, len: usize) {
     // The approach here is to utilize simd to swap x & y efficiently. Testing reveals
     // that swapping either 32 bytes or 64 bytes at a time is most efficient for intel
@@ -578,7 +591,7 @@ impl<T: ?Sized> *const T {
     /// Behavior:
     ///
     /// * Both the starting and resulting pointer must be either in bounds or one
-    ///   byte past the end of an allocated object.
+    ///   byte past the end of *the same* allocated object.
     ///
     /// * The computed offset, **in bytes**, cannot overflow an `isize`.
     ///
@@ -630,9 +643,15 @@ impl<T: ?Sized> *const T {
     ///
     /// The resulting pointer does not need to be in bounds, but it is
     /// potentially hazardous to dereference (which requires `unsafe`).
+    /// In particular, the resulting pointer may *not* be used to access a
+    /// different allocated object than the one `self` points to. In other
+    /// words, `x.wrapping_offset(y.wrapping_offset_from(x))` is
+    /// *not* the same as `y`, and dereferencing it is undefined behavior
+    /// unless `x` and `y` point into the same allocated object.
     ///
     /// Always use `.offset(count)` instead when possible, because `offset`
-    /// allows the compiler to optimize better.
+    /// allows the compiler to optimize better.  If you need to cross object
+    /// boundaries, cast the pointer to an integer and do the arithmetic there.
     ///
     /// # Examples
     ///
@@ -1143,8 +1162,8 @@ impl<T: ?Sized> *const T {
     ///
     /// Care must be taken with the ownership of `self` and `dest`.
     /// This method semantically moves the values of `self` into `dest`.
-    /// However it does not drop the contents of `self`, or prevent the contents
-    /// of `dest` from being dropped or used.
+    /// However it does not drop the contents of `dest`, or prevent the contents
+    /// of `self` from being dropped or used.
     ///
     /// # Examples
     ///
@@ -1243,25 +1262,12 @@ impl<T: ?Sized> *const T {
     /// # } }
     /// ```
     #[unstable(feature = "align_offset", issue = "44488")]
-    #[cfg(not(stage0))]
     pub fn align_offset(self, align: usize) -> usize where T: Sized {
         if !align.is_power_of_two() {
             panic!("align_offset: align is not a power-of-two");
         }
         unsafe {
             align_offset(self, align)
-        }
-    }
-
-    /// definitely docs.
-    #[unstable(feature = "align_offset", issue = "44488")]
-    #[cfg(stage0)]
-    pub fn align_offset(self, align: usize) -> usize where T: Sized {
-        if !align.is_power_of_two() {
-            panic!("align_offset: align is not a power-of-two");
-        }
-        unsafe {
-            intrinsics::align_offset(self as *const (), align)
         }
     }
 }
@@ -1340,7 +1346,7 @@ impl<T: ?Sized> *mut T {
     /// Behavior:
     ///
     /// * Both the starting and resulting pointer must be either in bounds or one
-    ///   byte past the end of an allocated object.
+    ///   byte past the end of *the same* allocated object.
     ///
     /// * The computed offset, **in bytes**, cannot overflow an `isize`.
     ///
@@ -1391,9 +1397,15 @@ impl<T: ?Sized> *mut T {
     ///
     /// The resulting pointer does not need to be in bounds, but it is
     /// potentially hazardous to dereference (which requires `unsafe`).
+    /// In particular, the resulting pointer may *not* be used to access a
+    /// different allocated object than the one `self` points to. In other
+    /// words, `x.wrapping_offset(y.wrapping_offset_from(x))` is
+    /// *not* the same as `y`, and dereferencing it is undefined behavior
+    /// unless `x` and `y` point into the same allocated object.
     ///
     /// Always use `.offset(count)` instead when possible, because `offset`
-    /// allows the compiler to optimize better.
+    /// allows the compiler to optimize better.  If you need to cross object
+    /// boundaries, cast the pointer to an integer and do the arithmetic there.
     ///
     /// # Examples
     ///
@@ -2308,25 +2320,12 @@ impl<T: ?Sized> *mut T {
     /// # } }
     /// ```
     #[unstable(feature = "align_offset", issue = "44488")]
-    #[cfg(not(stage0))]
     pub fn align_offset(self, align: usize) -> usize where T: Sized {
         if !align.is_power_of_two() {
             panic!("align_offset: align is not a power-of-two");
         }
         unsafe {
             align_offset(self, align)
-        }
-    }
-
-    /// definitely docs.
-    #[unstable(feature = "align_offset", issue = "44488")]
-    #[cfg(stage0)]
-    pub fn align_offset(self, align: usize) -> usize where T: Sized {
-        if !align.is_power_of_two() {
-            panic!("align_offset: align is not a power-of-two");
-        }
-        unsafe {
-            intrinsics::align_offset(self as *const (), align)
         }
     }
 }
@@ -2346,7 +2345,6 @@ impl<T: ?Sized> *mut T {
 ///
 /// Any questions go to @nagisa.
 #[lang="align_offset"]
-#[cfg(not(stage0))]
 pub(crate) unsafe fn align_offset<T: Sized>(p: *const T, a: usize) -> usize {
     /// Calculate multiplicative modular inverse of `x` modulo `m`.
     ///
@@ -2692,6 +2690,7 @@ impl<T: ?Sized> PartialOrd for *mut T {
            reason = "use NonNull instead and consider PhantomData<T> \
                      (if you also use #[may_dangle]), Send, and/or Sync")]
 #[doc(hidden)]
+#[repr(transparent)]
 pub struct Unique<T: ?Sized> {
     pointer: NonZero<*const T>,
     // NOTE: this marker has no consequences for variance, but is necessary
@@ -2729,6 +2728,11 @@ impl<T: Sized> Unique<T> {
     ///
     /// This is useful for initializing types which lazily allocate, like
     /// `Vec::new` does.
+    ///
+    /// Note that the pointer value may potentially represent a valid pointer to
+    /// a `T`, which means this must not be used as a "not yet initialized"
+    /// sentinel value. Types that lazily allocate must track initialization by
+    /// some other means.
     // FIXME: rename to dangling() to match NonNull?
     pub const fn empty() -> Self {
         unsafe {
@@ -2840,6 +2844,7 @@ impl<'a, T: ?Sized> From<NonNull<T>> for Unique<T> {
 /// such as Box, Rc, Arc, Vec, and LinkedList. This is the case because they
 /// provide a public API that follows the normal shared XOR mutable rules of Rust.
 #[stable(feature = "nonnull", since = "1.25.0")]
+#[repr(transparent)]
 pub struct NonNull<T: ?Sized> {
     pointer: NonZero<*const T>,
 }
@@ -2859,6 +2864,11 @@ impl<T: Sized> NonNull<T> {
     ///
     /// This is useful for initializing types which lazily allocate, like
     /// `Vec::new` does.
+    ///
+    /// Note that the pointer value may potentially represent a valid pointer to
+    /// a `T`, which means this must not be used as a "not yet initialized"
+    /// sentinel value. Types that lazily allocate must track initialization by
+    /// some other means.
     #[stable(feature = "nonnull", since = "1.25.0")]
     pub fn dangling() -> Self {
         unsafe {

@@ -1,7 +1,8 @@
 //! Run-time feature detection on PowerPC64.
 
 #[macro_export]
-#[unstable(feature = "stdsimd", issue = "0")]
+#[unstable(feature = "stdsimd", issue = "27731")]
+#[allow_internal_unstable]
 macro_rules! is_powerpc64_feature_detected {
     ("altivec") => {
         cfg!(target_feature = "altivec") ||
@@ -19,13 +20,14 @@ macro_rules! is_powerpc64_feature_detected {
 }
 
 
-/// PowerPC CPU Feature enum. Each variant denotes a position in a bitset
+/// PowerPC64 CPU Feature enum. Each variant denotes a position in a bitset
 /// for a particular feature.
 ///
 /// PLEASE: do not use this, it is an implementation detail subject to change.
 #[doc(hidden)]
 #[allow(non_camel_case_types)]
 #[repr(u8)]
+#[unstable(feature = "stdsimd_internal", issue = "0")]
 pub enum Feature {
     /// Altivec
     altivec,

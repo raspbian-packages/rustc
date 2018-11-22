@@ -12,22 +12,22 @@
 
 [package]
 name = "failure"
-version = "0.1.1"
+version = "0.1.2"
 authors = ["Without Boats <boats@mozilla.com>"]
 description = "Experimental error handling abstraction."
 homepage = "https://boats.gitlab.io/failure"
 documentation = "https://docs.rs/failure"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/withoutboats/failure"
+repository = "https://github.com/rust-lang-nursery/failure"
 [dependencies.backtrace]
 version = "0.3.3"
 optional = true
 
 [dependencies.failure_derive]
-version = "0.1.1"
+version = "0.1.2"
 optional = true
 
 [features]
-std = ["backtrace"]
-derive = ["failure_derive"]
 default = ["std", "derive"]
+derive = ["failure_derive"]
+std = ["backtrace"]

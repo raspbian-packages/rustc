@@ -71,16 +71,6 @@ s! {
         __unused5: *mut ::c_void,
     }
 
-    pub struct ifaddrs {
-        pub ifa_next: *mut ifaddrs,
-        pub ifa_name: *mut c_char,
-        pub ifa_flags: ::c_uint,
-        pub ifa_addr: *mut ::sockaddr,
-        pub ifa_netmask: *mut ::sockaddr,
-        pub ifa_ifu: *mut ::sockaddr, // FIXME This should be a union
-        pub ifa_data: *mut ::c_void
-    }
-
     pub struct pthread_mutex_t {
         #[cfg(any(target_arch = "mips",
                   target_arch = "arm",
@@ -170,26 +160,6 @@ s! {
         pub sp_inact: ::c_long,
         pub sp_expire: ::c_long,
         pub sp_flag: ::c_ulong,
-    }
-
-    pub struct statvfs {
-        pub f_bsize: ::c_ulong,
-        pub f_frsize: ::c_ulong,
-        pub f_blocks: ::fsblkcnt_t,
-        pub f_bfree: ::fsblkcnt_t,
-        pub f_bavail: ::fsblkcnt_t,
-        pub f_files: ::fsfilcnt_t,
-        pub f_ffree: ::fsfilcnt_t,
-        pub f_favail: ::fsfilcnt_t,
-        #[cfg(target_endian = "little")]
-        pub f_fsid: ::c_ulong,
-        #[cfg(all(target_pointer_width = "32", not(target_arch = "x86_64")))]
-        __f_unused: ::c_int,
-        #[cfg(target_endian = "big")]
-        pub f_fsid: ::c_ulong,
-        pub f_flag: ::c_ulong,
-        pub f_namemax: ::c_ulong,
-        __f_spare: [::c_int; 6],
     }
 
     pub struct dqblk {
@@ -485,9 +455,14 @@ s! {
     }
 
     pub struct genlmsghdr {
-        cmd: u8,
-        version: u8,
-        reserved: u16,
+        pub cmd: u8,
+        pub version: u8,
+        pub reserved: u16,
+    }
+
+    pub struct in6_pktinfo {
+        pub ipi6_addr: ::in6_addr,
+        pub ipi6_ifindex: ::c_uint,
     }
 }
 
@@ -1394,6 +1369,104 @@ pub const NF_IP6_PRI_SELINUX_LAST: ::c_int = 225;
 pub const NF_IP6_PRI_CONNTRACK_HELPER: ::c_int = 300;
 pub const NF_IP6_PRI_LAST: ::c_int = ::INT_MAX;
 
+pub const SIOCADDRT: ::c_ulong = 0x0000890B;
+pub const SIOCDELRT: ::c_ulong = 0x0000890C;
+pub const SIOCGIFNAME: ::c_ulong = 0x00008910;
+pub const SIOCSIFLINK: ::c_ulong = 0x00008911;
+pub const SIOCGIFCONF: ::c_ulong = 0x00008912;
+pub const SIOCGIFFLAGS: ::c_ulong = 0x00008913;
+pub const SIOCSIFFLAGS: ::c_ulong = 0x00008914;
+pub const SIOCGIFADDR: ::c_ulong = 0x00008915;
+pub const SIOCSIFADDR: ::c_ulong = 0x00008916;
+pub const SIOCGIFDSTADDR: ::c_ulong = 0x00008917;
+pub const SIOCSIFDSTADDR: ::c_ulong = 0x00008918;
+pub const SIOCGIFBRDADDR: ::c_ulong = 0x00008919;
+pub const SIOCSIFBRDADDR: ::c_ulong = 0x0000891A;
+pub const SIOCGIFNETMASK: ::c_ulong = 0x0000891B;
+pub const SIOCSIFNETMASK: ::c_ulong = 0x0000891C;
+pub const SIOCGIFMETRIC: ::c_ulong = 0x0000891D;
+pub const SIOCSIFMETRIC: ::c_ulong = 0x0000891E;
+pub const SIOCGIFMEM: ::c_ulong = 0x0000891F;
+pub const SIOCSIFMEM: ::c_ulong = 0x00008920;
+pub const SIOCGIFMTU: ::c_ulong = 0x00008921;
+pub const SIOCSIFMTU: ::c_ulong = 0x00008922;
+pub const SIOCSIFHWADDR: ::c_ulong = 0x00008924;
+pub const SIOCGIFENCAP: ::c_ulong = 0x00008925;
+pub const SIOCSIFENCAP: ::c_ulong = 0x00008926;
+pub const SIOCGIFHWADDR: ::c_ulong = 0x00008927;
+pub const SIOCGIFSLAVE: ::c_ulong = 0x00008929;
+pub const SIOCSIFSLAVE: ::c_ulong = 0x00008930;
+pub const SIOCADDMULTI: ::c_ulong = 0x00008931;
+pub const SIOCDELMULTI: ::c_ulong = 0x00008932;
+pub const SIOCDARP: ::c_ulong = 0x00008953;
+pub const SIOCGARP: ::c_ulong = 0x00008954;
+pub const SIOCSARP: ::c_ulong = 0x00008955;
+pub const SIOCDRARP: ::c_ulong = 0x00008960;
+pub const SIOCGRARP: ::c_ulong = 0x00008961;
+pub const SIOCSRARP: ::c_ulong = 0x00008962;
+pub const SIOCGIFMAP: ::c_ulong = 0x00008970;
+pub const SIOCSIFMAP: ::c_ulong = 0x00008971;
+
+pub const IPTOS_TOS_MASK: u8 = 0x1E;
+pub const IPTOS_PREC_MASK: u8 = 0xE0;
+
+pub const RTF_UP: ::c_ushort = 0x0001;
+pub const RTF_GATEWAY: ::c_ushort = 0x0002;
+
+pub const RTF_HOST: ::c_ushort = 0x0004;
+pub const RTF_REINSTATE: ::c_ushort = 0x0008;
+pub const RTF_DYNAMIC: ::c_ushort = 0x0010;
+pub const RTF_MODIFIED: ::c_ushort = 0x0020;
+pub const RTF_MTU: ::c_ushort = 0x0040;
+pub const RTF_MSS: ::c_ushort = RTF_MTU;
+pub const RTF_WINDOW: ::c_ushort = 0x0080;
+pub const RTF_IRTT: ::c_ushort = 0x0100;
+pub const RTF_REJECT: ::c_ushort = 0x0200;
+pub const RTF_STATIC: ::c_ushort = 0x0400;
+pub const RTF_XRESOLVE: ::c_ushort = 0x0800;
+pub const RTF_NOFORWARD: ::c_ushort = 0x1000;
+pub const RTF_THROW: ::c_ushort = 0x2000;
+pub const RTF_NOPMTUDISC: ::c_ushort = 0x4000;
+
+pub const RTF_DEFAULT: u32 = 0x00010000;
+pub const RTF_ALLONLINK: u32 = 0x00020000;
+pub const RTF_ADDRCONF: u32 = 0x00040000;
+pub const RTF_LINKRT: u32 = 0x00100000;
+pub const RTF_NONEXTHOP: u32 = 0x00200000;
+pub const RTF_CACHE: u32 = 0x01000000;
+pub const RTF_FLOW: u32 = 0x02000000;
+pub const RTF_POLICY: u32 = 0x04000000;
+
+pub const RTCF_VALVE: u32 = 0x00200000;
+pub const RTCF_MASQ: u32 = 0x00400000;
+pub const RTCF_NAT: u32 = 0x00800000;
+pub const RTCF_DOREDIRECT: u32 = 0x01000000;
+pub const RTCF_LOG: u32 = 0x02000000;
+pub const RTCF_DIRECTSRC: u32 = 0x04000000;
+
+pub const RTF_LOCAL: u32 = 0x80000000;
+pub const RTF_INTERFACE: u32 = 0x40000000;
+pub const RTF_MULTICAST: u32 = 0x20000000;
+pub const RTF_BROADCAST: u32 = 0x10000000;
+pub const RTF_NAT: u32 = 0x08000000;
+pub const RTF_ADDRCLASSMASK: u32 = 0xF8000000;
+
+pub const RT_CLASS_UNSPEC: u8 = 0;
+pub const RT_CLASS_DEFAULT: u8 = 253;
+pub const RT_CLASS_MAIN: u8 = 254;
+pub const RT_CLASS_LOCAL: u8 = 255;
+pub const RT_CLASS_MAX: u8 = 255;
+
+pub const RTMSG_OVERRUN: u32 = ::NLMSG_OVERRUN as u32;
+pub const RTMSG_NEWDEVICE: u32 = 0x11;
+pub const RTMSG_DELDEVICE: u32 = 0x12;
+pub const RTMSG_NEWROUTE: u32 = 0x21;
+pub const RTMSG_DELROUTE: u32 = 0x22;
+pub const RTMSG_NEWRULE: u32 = 0x31;
+pub const RTMSG_DELRULE: u32 = 0x32;
+pub const RTMSG_CONTROL: u32 = 0x40;
+pub const RTMSG_AR_FAILED: u32 = 0x51;
+
 f! {
     pub fn CPU_ZERO(cpuset: &mut cpu_set_t) -> () {
         for slot in cpuset.bits.iter_mut() {
@@ -1448,6 +1521,26 @@ f! {
         dev |= (minor & 0x000000ff) << 0;
         dev |= (minor & 0xffffff00) << 12;
         dev
+    }
+
+    pub fn IPTOS_TOS(tos: u8) -> u8 {
+        tos & IPTOS_TOS_MASK
+    }
+
+    pub fn IPTOS_PREC(tos: u8) -> u8 {
+        tos & IPTOS_PREC_MASK
+    }
+
+    pub fn RT_TOS(tos: u8) -> u8 {
+        tos & ::IPTOS_TOS_MASK
+    }
+
+    pub fn RT_ADDRCLASS(flags: u32) -> u32 {
+        flags >> 23
+    }
+
+    pub fn RT_LOCALADDR(flags: u32) -> bool {
+        (flags & RTF_ADDRCLASSMASK) == (RTF_LOCAL | RTF_INTERFACE)
     }
 }
 
@@ -1639,8 +1732,6 @@ extern {
     pub fn if_freenameindex(ptr: *mut if_nameindex);
     pub fn sync_file_range(fd: ::c_int, offset: ::off64_t,
                            nbytes: ::off64_t, flags: ::c_uint) -> ::c_int;
-    pub fn getifaddrs(ifap: *mut *mut ::ifaddrs) -> ::c_int;
-    pub fn freeifaddrs(ifa: *mut ::ifaddrs);
     pub fn mremap(addr: *mut ::c_void,
                   len: ::size_t,
                   new_len: ::size_t,
@@ -1675,21 +1766,6 @@ extern {
     pub fn futimes(fd: ::c_int, times: *const ::timeval) -> ::c_int;
     pub fn nl_langinfo(item: ::nl_item) -> *mut ::c_char;
 
-    pub fn bind(socket: ::c_int, address: *const ::sockaddr,
-                address_len: ::socklen_t) -> ::c_int;
-
-    pub fn writev(fd: ::c_int,
-                  iov: *const ::iovec,
-                  iovcnt: ::c_int) -> ::ssize_t;
-    pub fn readv(fd: ::c_int,
-                 iov: *const ::iovec,
-                 iovcnt: ::c_int) -> ::ssize_t;
-
-    pub fn sendmsg(fd: ::c_int,
-                   msg: *const ::msghdr,
-                   flags: ::c_int) -> ::ssize_t;
-    pub fn recvmsg(fd: ::c_int, msg: *mut ::msghdr, flags: ::c_int)
-                   -> ::ssize_t;
     pub fn getdomainname(name: *mut ::c_char, len: ::size_t) -> ::c_int;
     pub fn setdomainname(name: *const ::c_char, len: ::size_t) -> ::c_int;
     pub fn vhangup() -> ::c_int;
@@ -1736,6 +1812,8 @@ extern {
     pub fn sched_rr_get_interval(pid: ::pid_t, tp: *mut ::timespec) -> ::c_int;
     pub fn sem_timedwait(sem: *mut sem_t,
                          abstime: *const ::timespec) -> ::c_int;
+    pub fn sem_getvalue(sem: *mut sem_t,
+                        sval: *mut ::c_int) -> ::c_int;
     pub fn sched_setparam(pid: ::pid_t, param: *const ::sched_param) -> ::c_int;
     pub fn setns(fd: ::c_int, nstype: ::c_int) -> ::c_int;
     pub fn swapoff(puath: *const ::c_char) -> ::c_int;
@@ -1937,6 +2015,11 @@ extern {
         fd: ::c_int,
         newfd: ::c_int,
     ) -> ::c_int;
+    pub fn fread_unlocked(ptr: *mut ::c_void,
+        size: ::size_t,
+        nobj: ::size_t,
+        stream: *mut ::FILE
+    ) -> ::size_t;
 }
 
 cfg_if! {

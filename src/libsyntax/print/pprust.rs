@@ -12,13 +12,13 @@ pub use self::AnnNode::*;
 
 use rustc_target::spec::abi::{self, Abi};
 use ast::{self, BlockCheckMode, PatKind, RangeEnd, RangeSyntax};
-use ast::{SelfKind, RegionTyParamBound, TraitTyParamBound, TraitBoundModifier};
-use ast::{Attribute, MacDelimiter};
+use ast::{SelfKind, GenericBound, TraitBoundModifier};
+use ast::{Attribute, MacDelimiter, GenericArg};
 use util::parser::{self, AssocOp, Fixity};
 use attr;
-use codemap::{self, CodeMap};
+use codemap::{self, CodeMap, Spanned};
 use syntax_pos::{self, BytePos};
-use syntax_pos::hygiene::{Mark, MarkKind, SyntaxContext};
+use syntax_pos::hygiene::{Mark, SyntaxContext};
 use parse::token::{self, BinOpToken, Token};
 use parse::lexer::comments;
 use parse::{self, ParseSess};
@@ -32,7 +32,7 @@ use tokenstream::{self, TokenStream, TokenTree};
 
 use std::ascii;
 use std::io::{self, Write, Read};
-use std::iter::{self, Peekable};
+use std::iter::Peekable;
 use std::vec;
 
 pub enum AnnNode<'a> {
@@ -62,10 +62,10 @@ pub struct State<'a> {
     literals: Peekable<vec::IntoIter<comments::Literal>>,
     cur_cmnt: usize,
     boxes: Vec<pp::Breaks>,
-    ann: &'a (PpAnn+'a),
+    ann: &'a (dyn PpAnn+'a),
 }
 
-fn rust_printer<'a>(writer: Box<Write+'a>, ann: &'a PpAnn) -> State<'a> {
+fn rust_printer<'a>(writer: Box<dyn Write+'a>, ann: &'a dyn PpAnn) -> State<'a> {
     State {
         s: pp::mk_printer(writer, DEFAULT_COLUMNS),
         cm: None,
@@ -88,9 +88,9 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
                        sess: &ParseSess,
                        krate: &ast::Crate,
                        filename: FileName,
-                       input: &mut Read,
-                       out: Box<Write+'a>,
-                       ann: &'a PpAnn,
+                       input: &mut dyn Read,
+                       out: Box<dyn Write+'a>,
+                       ann: &'a dyn PpAnn,
                        is_expanded: bool) -> io::Result<()> {
     let mut s = State::new_from_input(cm, sess, filename, input, out, ann, is_expanded);
 
@@ -121,9 +121,9 @@ impl<'a> State<'a> {
     pub fn new_from_input(cm: &'a CodeMap,
                           sess: &ParseSess,
                           filename: FileName,
-                          input: &mut Read,
-                          out: Box<Write+'a>,
-                          ann: &'a PpAnn,
+                          input: &mut dyn Read,
+                          out: Box<dyn Write+'a>,
+                          ann: &'a dyn PpAnn,
                           is_expanded: bool) -> State<'a> {
         let (cmnts, lits) = comments::gather_comments_and_literals(sess, filename, input);
 
@@ -139,8 +139,8 @@ impl<'a> State<'a> {
     }
 
     pub fn new(cm: &'a CodeMap,
-               out: Box<Write+'a>,
-               ann: &'a PpAnn,
+               out: Box<dyn Write+'a>,
+               ann: &'a dyn PpAnn,
                comments: Option<Vec<comments::Comment>>,
                literals: Option<Vec<comments::Literal>>) -> State<'a> {
         State {
@@ -235,11 +235,11 @@ pub fn token_to_string(tok: &Token) -> String {
                 token::Integer(c)        => c.to_string(),
                 token::Str_(s)           => format!("\"{}\"", s),
                 token::StrRaw(s, n)      => format!("r{delim}\"{string}\"{delim}",
-                                                    delim=repeat("#", n as usize),
+                                                    delim="#".repeat(n as usize),
                                                     string=s),
                 token::ByteStr(v)         => format!("b\"{}\"", v),
                 token::ByteStrRaw(s, n)   => format!("br{delim}\"{string}\"{delim}",
-                                                    delim=repeat("#", n as usize),
+                                                    delim="#".repeat(n as usize),
                                                     string=s),
             };
 
@@ -292,8 +292,8 @@ pub fn ty_to_string(ty: &ast::Ty) -> String {
     to_string(|s| s.print_type(ty))
 }
 
-pub fn bounds_to_string(bounds: &[ast::TyParamBound]) -> String {
-    to_string(|s| s.print_bounds("", bounds))
+pub fn bounds_to_string(bounds: &[ast::GenericBound]) -> String {
+    to_string(|s| s.print_type_bounds("", bounds))
 }
 
 pub fn pat_to_string(pat: &ast::Pat) -> String {
@@ -308,8 +308,8 @@ pub fn expr_to_string(e: &ast::Expr) -> String {
     to_string(|s| s.print_expr(e))
 }
 
-pub fn lifetime_to_string(e: &ast::Lifetime) -> String {
-    to_string(|s| s.print_lifetime(e))
+pub fn lifetime_to_string(lt: &ast::Lifetime) -> String {
+    to_string(|s| s.print_lifetime(*lt))
 }
 
 pub fn tt_to_string(tt: tokenstream::TokenTree) -> String {
@@ -373,14 +373,13 @@ pub fn vis_to_string(v: &ast::Visibility) -> String {
 }
 
 pub fn fun_to_string(decl: &ast::FnDecl,
-                     unsafety: ast::Unsafety,
-                     constness: ast::Constness,
+                     header: ast::FnHeader,
                      name: ast::Ident,
                      generics: &ast::Generics)
                      -> String {
     to_string(|s| {
         s.head("")?;
-        s.print_fn(decl, unsafety, constness, Abi::Rust, Some(name),
+        s.print_fn(decl, header, Some(name),
                    generics, &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
         s.end()?; // Close the head box
         s.end() // Close the outer box
@@ -632,7 +631,7 @@ pub trait PrintState<'a> {
                         self.writer().word(&ut.val_to_string(i))
                     }
                     ast::LitIntType::Unsuffixed => {
-                        self.writer().word(&format!("{}", i))
+                        self.writer().word(&i.to_string())
                     }
                 }
             }
@@ -662,7 +661,7 @@ pub trait PrintState<'a> {
             }
             ast::StrStyle::Raw(n) => {
                 (format!("r{delim}\"{string}\"{delim}",
-                         delim=repeat("#", n as usize),
+                         delim="#".repeat(n as usize),
                          string=st))
             }
         };
@@ -843,7 +842,7 @@ pub trait PrintState<'a> {
     fn print_dollar_crate(&mut self, mut ctxt: SyntaxContext) -> io::Result<()> {
         if let Some(mark) = ctxt.adjust(Mark::root()) {
             // Make a best effort to print something that complies
-            if mark.kind() == MarkKind::Builtin {
+            if mark.is_builtin() {
                 if let Some(name) = std_inject::injected_crate_name() {
                     self.writer().word("::")?;
                     self.writer().word(name)?;
@@ -1008,13 +1007,19 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    pub fn print_opt_lifetime(&mut self,
-                              lifetime: &Option<ast::Lifetime>) -> io::Result<()> {
-        if let Some(l) = *lifetime {
-            self.print_lifetime(&l)?;
+    pub fn print_opt_lifetime(&mut self, lifetime: &Option<ast::Lifetime>) -> io::Result<()> {
+        if let Some(lt) = *lifetime {
+            self.print_lifetime(lt)?;
             self.nbsp()?;
         }
         Ok(())
+    }
+
+    pub fn print_generic_arg(&mut self, generic_arg: &GenericArg) -> io::Result<()> {
+        match generic_arg {
+            GenericArg::Lifetime(lt) => self.print_lifetime(*lt),
+            GenericArg::Type(ty) => self.print_type(ty),
+        }
     }
 
     pub fn print_type(&mut self, ty: &ast::Ty) -> io::Result<()> {
@@ -1071,10 +1076,10 @@ impl<'a> State<'a> {
             }
             ast::TyKind::TraitObject(ref bounds, syntax) => {
                 let prefix = if syntax == ast::TraitObjectSyntax::Dyn { "dyn" } else { "" };
-                self.print_bounds(prefix, &bounds[..])?;
+                self.print_type_bounds(prefix, &bounds[..])?;
             }
-            ast::TyKind::ImplTrait(ref bounds) => {
-                self.print_bounds("impl", &bounds[..])?;
+            ast::TyKind::ImplTrait(_, ref bounds) => {
+                self.print_type_bounds("impl", &bounds[..])?;
             }
             ast::TyKind::Array(ref ty, ref length) => {
                 self.s.word("[")?;
@@ -1112,9 +1117,8 @@ impl<'a> State<'a> {
         match item.node {
             ast::ForeignItemKind::Fn(ref decl, ref generics) => {
                 self.head("")?;
-                self.print_fn(decl, ast::Unsafety::Normal,
-                              ast::Constness::NotConst,
-                              Abi::Rust, Some(item.ident),
+                self.print_fn(decl, ast::FnHeader::default(),
+                              Some(item.ident),
                               generics, &item.vis)?;
                 self.end()?; // end head-ibox
                 self.s.word(";")?;
@@ -1171,13 +1175,13 @@ impl<'a> State<'a> {
 
     fn print_associated_type(&mut self,
                              ident: ast::Ident,
-                             bounds: Option<&ast::TyParamBounds>,
+                             bounds: Option<&ast::GenericBounds>,
                              ty: Option<&ast::Ty>)
                              -> io::Result<()> {
         self.word_space("type")?;
         self.print_ident(ident)?;
         if let Some(bounds) = bounds {
-            self.print_bounds(":", bounds)?;
+            self.print_type_bounds(":", bounds)?;
         }
         if let Some(ty) = ty {
             self.s.space()?;
@@ -1243,13 +1247,11 @@ impl<'a> State<'a> {
                 self.s.word(";")?;
                 self.end()?; // end the outer cbox
             }
-            ast::ItemKind::Fn(ref decl, unsafety, constness, abi, ref typarams, ref body) => {
+            ast::ItemKind::Fn(ref decl, header, ref typarams, ref body) => {
                 self.head("")?;
                 self.print_fn(
                     decl,
-                    unsafety,
-                    constness.node,
-                    abi,
+                    header,
                     Some(item.ident),
                     typarams,
                     &item.vis
@@ -1278,9 +1280,7 @@ impl<'a> State<'a> {
                 self.end()?;
             }
             ast::ItemKind::Ty(ref ty, ref generics) => {
-                self.ibox(INDENT_UNIT)?;
-                self.ibox(0)?;
-                self.word_nbsp(&visibility_qualified(&item.vis, "type"))?;
+                self.head(&visibility_qualified(&item.vis, "type"))?;
                 self.print_ident(item.ident)?;
                 self.print_generic_params(&generics.params)?;
                 self.end()?; // end the inner ibox
@@ -1289,6 +1289,18 @@ impl<'a> State<'a> {
                 self.s.space()?;
                 self.word_space("=")?;
                 self.print_type(ty)?;
+                self.s.word(";")?;
+                self.end()?; // end the outer ibox
+            }
+            ast::ItemKind::Existential(ref bounds, ref generics) => {
+                self.head(&visibility_qualified(&item.vis, "existential type"))?;
+                self.print_ident(item.ident)?;
+                self.print_generic_params(&generics.params)?;
+                self.end()?; // end the inner ibox
+
+                self.print_where_clause(&generics.where_clause)?;
+                self.s.space()?;
+                self.print_type_bounds(":", bounds)?;
                 self.s.word(";")?;
                 self.end()?; // end the outer ibox
             }
@@ -1322,7 +1334,7 @@ impl<'a> State<'a> {
                 self.print_unsafety(unsafety)?;
                 self.word_nbsp("impl")?;
 
-                if generics.is_parameterized() {
+                if !generics.params.is_empty() {
                     self.print_generic_params(&generics.params)?;
                     self.s.space()?;
                 }
@@ -1358,7 +1370,7 @@ impl<'a> State<'a> {
                 self.print_generic_params(&generics.params)?;
                 let mut real_bounds = Vec::with_capacity(bounds.len());
                 for b in bounds.iter() {
-                    if let TraitTyParamBound(ref ptr, ast::TraitBoundModifier::Maybe) = *b {
+                    if let GenericBound::Trait(ref ptr, ast::TraitBoundModifier::Maybe) = *b {
                         self.s.space()?;
                         self.word_space("for ?")?;
                         self.print_trait_ref(&ptr.trait_ref)?;
@@ -1366,7 +1378,7 @@ impl<'a> State<'a> {
                         real_bounds.push(b.clone());
                     }
                 }
-                self.print_bounds(":", &real_bounds[..])?;
+                self.print_type_bounds(":", &real_bounds[..])?;
                 self.print_where_clause(&generics.where_clause)?;
                 self.s.word(" ")?;
                 self.bopen()?;
@@ -1384,7 +1396,7 @@ impl<'a> State<'a> {
                 let mut real_bounds = Vec::with_capacity(bounds.len());
                 // FIXME(durka) this seems to be some quite outdated syntax
                 for b in bounds.iter() {
-                    if let TraitTyParamBound(ref ptr, ast::TraitBoundModifier::Maybe) = *b {
+                    if let GenericBound::Trait(ref ptr, ast::TraitBoundModifier::Maybe) = *b {
                         self.s.space()?;
                         self.word_space("for ?")?;
                         self.print_trait_ref(&ptr.trait_ref)?;
@@ -1393,7 +1405,7 @@ impl<'a> State<'a> {
                     }
                 }
                 self.nbsp()?;
-                self.print_bounds("=", &real_bounds[..])?;
+                self.print_type_bounds("=", &real_bounds[..])?;
                 self.print_where_clause(&generics.where_clause)?;
                 self.s.word(";")?;
             }
@@ -1499,8 +1511,8 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn print_defaultness(&mut self, defatulness: ast::Defaultness) -> io::Result<()> {
-        if let ast::Defaultness::Default = defatulness {
+    pub fn print_defaultness(&mut self, defaultness: ast::Defaultness) -> io::Result<()> {
+        if let ast::Defaultness::Default = defaultness {
             try!(self.word_nbsp("default"));
         }
         Ok(())
@@ -1576,9 +1588,7 @@ impl<'a> State<'a> {
                             vis: &ast::Visibility)
                             -> io::Result<()> {
         self.print_fn(&m.decl,
-                      m.unsafety,
-                      m.constness.node,
-                      m.abi,
+                      m.header,
                       Some(ident),
                       &generics,
                       vis)
@@ -1649,6 +1659,10 @@ impl<'a> State<'a> {
             }
             ast::ImplItemKind::Type(ref ty) => {
                 self.print_associated_type(ii.ident, None, Some(ty))?;
+            }
+            ast::ImplItemKind::Existential(ref bounds) => {
+                self.word_space("existential")?;
+                self.print_associated_type(ii.ident, Some(bounds), None)?;
             }
             ast::ImplItemKind::Macro(ref mac) => {
                 self.print_mac(mac)?;
@@ -1984,8 +1998,8 @@ impl<'a> State<'a> {
         self.print_expr_maybe_paren(&args[0], parser::PREC_POSTFIX)?;
         self.s.word(".")?;
         self.print_ident(segment.ident)?;
-        if let Some(ref parameters) = segment.parameters {
-            self.print_path_parameters(parameters, true)?;
+        if let Some(ref args) = segment.args {
+            self.print_generic_args(args, true)?;
         }
         self.print_call_post(base_args)
     }
@@ -2171,8 +2185,10 @@ impl<'a> State<'a> {
                 }
                 self.bclose_(expr.span, INDENT_UNIT)?;
             }
-            ast::ExprKind::Closure(capture_clause, movability, ref decl, ref body, _) => {
+            ast::ExprKind::Closure(
+                capture_clause, asyncness, movability, ref decl, ref body, _) => {
                 self.print_movability(movability)?;
+                self.print_asyncness(asyncness)?;
                 self.print_capture_clause(capture_clause)?;
 
                 self.print_fn_block_args(decl)?;
@@ -2194,6 +2210,12 @@ impl<'a> State<'a> {
                 self.cbox(INDENT_UNIT)?;
                 // head-box, will be closed by print-block after {
                 self.ibox(0)?;
+                self.print_block_with_attrs(blk, attrs)?;
+            }
+            ast::ExprKind::Async(capture_clause, _, ref blk) => {
+                self.word_nbsp("async")?;
+                self.print_capture_clause(capture_clause)?;
+                self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?;
             }
             ast::ExprKind::Assign(ref lhs, ref rhs) => {
@@ -2428,8 +2450,8 @@ impl<'a> State<'a> {
         if segment.ident.name != keywords::CrateRoot.name() &&
            segment.ident.name != keywords::DollarCrate.name() {
             self.print_ident(segment.ident)?;
-            if let Some(ref parameters) = segment.parameters {
-                self.print_path_parameters(parameters, colons_before_params)?;
+            if let Some(ref args) = segment.args {
+                self.print_generic_args(args, colons_before_params)?;
             }
         } else if segment.ident.name == keywords::DollarCrate.name() {
             self.print_dollar_crate(segment.ident.span.ctxt())?;
@@ -2455,44 +2477,30 @@ impl<'a> State<'a> {
         self.s.word("::")?;
         let item_segment = path.segments.last().unwrap();
         self.print_ident(item_segment.ident)?;
-        match item_segment.parameters {
-            Some(ref parameters) => self.print_path_parameters(parameters, colons_before_params),
+        match item_segment.args {
+            Some(ref args) => self.print_generic_args(args, colons_before_params),
             None => Ok(()),
         }
     }
 
-    fn print_path_parameters(&mut self,
-                             parameters: &ast::PathParameters,
-                             colons_before_params: bool)
-                             -> io::Result<()>
+    fn print_generic_args(&mut self,
+                          args: &ast::GenericArgs,
+                          colons_before_params: bool)
+                          -> io::Result<()>
     {
         if colons_before_params {
             self.s.word("::")?
         }
 
-        match *parameters {
-            ast::PathParameters::AngleBracketed(ref data) => {
+        match *args {
+            ast::GenericArgs::AngleBracketed(ref data) => {
                 self.s.word("<")?;
 
-                let mut comma = false;
-                for lifetime in &data.lifetimes {
-                    if comma {
-                        self.word_space(",")?
-                    }
-                    self.print_lifetime(lifetime)?;
-                    comma = true;
-                }
+                self.commasep(Inconsistent, &data.args, |s, generic_arg| {
+                    s.print_generic_arg(generic_arg)
+                })?;
 
-                if !data.types.is_empty() {
-                    if comma {
-                        self.word_space(",")?
-                    }
-                    self.commasep(
-                        Inconsistent,
-                        &data.types,
-                        |s, ty| s.print_type(ty))?;
-                        comma = true;
-                }
+                let mut comma = data.args.len() != 0;
 
                 for binding in data.bindings.iter() {
                     if comma {
@@ -2508,7 +2516,7 @@ impl<'a> State<'a> {
                 self.s.word(">")?
             }
 
-            ast::PathParameters::Parenthesized(ref data) => {
+            ast::GenericArgs::Parenthesized(ref data) => {
                 self.s.word("(")?;
                 self.commasep(
                     Inconsistent,
@@ -2630,7 +2638,7 @@ impl<'a> State<'a> {
                 self.print_pat(inner)?;
             }
             PatKind::Lit(ref e) => self.print_expr(&**e)?,
-            PatKind::Range(ref begin, ref end, ref end_kind) => {
+            PatKind::Range(ref begin, ref end, Spanned { node: ref end_kind, .. }) => {
                 self.print_expr(begin)?;
                 self.s.space()?;
                 match *end_kind {
@@ -2647,7 +2655,9 @@ impl<'a> State<'a> {
                                    |s, p| s.print_pat(p))?;
                 if let Some(ref p) = *slice {
                     if !before.is_empty() { self.word_space(",")?; }
-                    if p.node != PatKind::Wild {
+                    if let PatKind::Wild = p.node {
+                        // Print nothing
+                    } else {
                         self.print_pat(p)?;
                     }
                     self.s.word("..")?;
@@ -2748,13 +2758,11 @@ impl<'a> State<'a> {
 
     pub fn print_fn(&mut self,
                     decl: &ast::FnDecl,
-                    unsafety: ast::Unsafety,
-                    constness: ast::Constness,
-                    abi: abi::Abi,
+                    header: ast::FnHeader,
                     name: Option<ast::Ident>,
                     generics: &ast::Generics,
                     vis: &ast::Visibility) -> io::Result<()> {
-        self.print_fn_header_info(unsafety, constness, abi, vis)?;
+        self.print_fn_header_info(header, vis)?;
 
         if let Some(name) = name {
             self.nbsp()?;
@@ -2808,6 +2816,14 @@ impl<'a> State<'a> {
         }
     }
 
+    pub fn print_asyncness(&mut self, asyncness: ast::IsAsync)
+                                -> io::Result<()> {
+        if asyncness.is_async() {
+            self.word_nbsp("async")?;
+        }
+        Ok(())
+    }
+
     pub fn print_capture_clause(&mut self, capture_clause: ast::CaptureBy)
                                 -> io::Result<()> {
         match capture_clause {
@@ -2816,9 +2832,9 @@ impl<'a> State<'a> {
         }
     }
 
-    pub fn print_bounds(&mut self,
+    pub fn print_type_bounds(&mut self,
                         prefix: &str,
-                        bounds: &[ast::TyParamBound])
+                        bounds: &[ast::GenericBound])
                         -> io::Result<()> {
         if !bounds.is_empty() {
             self.s.word(prefix)?;
@@ -2834,32 +2850,25 @@ impl<'a> State<'a> {
                 }
 
                 match bound {
-                    TraitTyParamBound(tref, modifier) => {
+                    GenericBound::Trait(tref, modifier) => {
                         if modifier == &TraitBoundModifier::Maybe {
                             self.s.word("?")?;
                         }
                         self.print_poly_trait_ref(tref)?;
                     }
-                    RegionTyParamBound(lt) => {
-                        self.print_lifetime(lt)?;
-                    }
+                    GenericBound::Outlives(lt) => self.print_lifetime(*lt)?,
                 }
             }
         }
         Ok(())
     }
 
-    pub fn print_lifetime(&mut self,
-                          lifetime: &ast::Lifetime)
-                          -> io::Result<()>
-    {
+    pub fn print_lifetime(&mut self, lifetime: ast::Lifetime) -> io::Result<()> {
         self.print_name(lifetime.ident.name)
     }
 
-    pub fn print_lifetime_bounds(&mut self,
-                                 lifetime: &ast::Lifetime,
-                                 bounds: &[ast::Lifetime])
-                                 -> io::Result<()>
+    pub fn print_lifetime_bounds(&mut self, lifetime: ast::Lifetime, bounds: &ast::GenericBounds)
+        -> io::Result<()>
     {
         self.print_lifetime(lifetime)?;
         if !bounds.is_empty() {
@@ -2868,7 +2877,10 @@ impl<'a> State<'a> {
                 if i != 0 {
                     self.s.word(" + ")?;
                 }
-                self.print_lifetime(bound)?;
+                match bound {
+                    ast::GenericBound::Outlives(lt) => self.print_lifetime(*lt)?,
+                    _ => panic!(),
+                }
             }
         }
         Ok(())
@@ -2885,31 +2897,30 @@ impl<'a> State<'a> {
         self.s.word("<")?;
 
         self.commasep(Inconsistent, &generic_params, |s, param| {
-            match *param {
-                ast::GenericParam::Lifetime(ref lifetime_def) => {
-                    s.print_outer_attributes_inline(&lifetime_def.attrs)?;
-                    s.print_lifetime_bounds(&lifetime_def.lifetime, &lifetime_def.bounds)
+            match param.kind {
+                ast::GenericParamKind::Lifetime => {
+                    s.print_outer_attributes_inline(&param.attrs)?;
+                    let lt = ast::Lifetime { id: param.id, ident: param.ident };
+                    s.print_lifetime_bounds(lt, &param.bounds)
                 },
-                ast::GenericParam::Type(ref ty_param) => s.print_ty_param(ty_param),
+                ast::GenericParamKind::Type { ref default } => {
+                    s.print_outer_attributes_inline(&param.attrs)?;
+                    s.print_ident(param.ident)?;
+                    s.print_type_bounds(":", &param.bounds)?;
+                    match default {
+                        Some(ref default) => {
+                            s.s.space()?;
+                            s.word_space("=")?;
+                            s.print_type(default)
+                        }
+                        _ => Ok(())
+                    }
+                }
             }
         })?;
 
         self.s.word(">")?;
         Ok(())
-    }
-
-    pub fn print_ty_param(&mut self, param: &ast::TyParam) -> io::Result<()> {
-        self.print_outer_attributes_inline(&param.attrs)?;
-        self.print_ident(param.ident)?;
-        self.print_bounds(":", &param.bounds)?;
-        match param.default {
-            Some(ref default) => {
-                self.s.space()?;
-                self.word_space("=")?;
-                self.print_type(default)
-            }
-            _ => Ok(())
-        }
     }
 
     pub fn print_where_clause(&mut self, where_clause: &ast::WhereClause)
@@ -2935,12 +2946,12 @@ impl<'a> State<'a> {
                 }) => {
                     self.print_formal_generic_params(bound_generic_params)?;
                     self.print_type(bounded_ty)?;
-                    self.print_bounds(":", bounds)?;
+                    self.print_type_bounds(":", bounds)?;
                 }
                 ast::WherePredicate::RegionPredicate(ast::WhereRegionPredicate{ref lifetime,
                                                                                ref bounds,
                                                                                ..}) => {
-                    self.print_lifetime_bounds(lifetime, bounds)?;
+                    self.print_lifetime_bounds(*lifetime, bounds)?;
                 }
                 ast::WherePredicate::EqPredicate(ast::WhereEqPredicate{ref lhs_ty,
                                                                        ref rhs_ty,
@@ -3054,7 +3065,7 @@ impl<'a> State<'a> {
                        unsafety: ast::Unsafety,
                        decl: &ast::FnDecl,
                        name: Option<ast::Ident>,
-                       generic_params: &Vec<ast::GenericParam>)
+                       generic_params: &[ast::GenericParam])
                        -> io::Result<()> {
         self.ibox(INDENT_UNIT)?;
         if !generic_params.is_empty() {
@@ -3071,9 +3082,7 @@ impl<'a> State<'a> {
             span: syntax_pos::DUMMY_SP,
         };
         self.print_fn(decl,
-                      unsafety,
-                      ast::Constness::NotConst,
-                      abi,
+                      ast::FnHeader { unsafety, abi, ..ast::FnHeader::default() },
                       name,
                       &generics,
                       &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
@@ -3136,22 +3145,21 @@ impl<'a> State<'a> {
     }
 
     pub fn print_fn_header_info(&mut self,
-                                unsafety: ast::Unsafety,
-                                constness: ast::Constness,
-                                abi: Abi,
+                                header: ast::FnHeader,
                                 vis: &ast::Visibility) -> io::Result<()> {
         self.s.word(&visibility_qualified(vis, ""))?;
 
-        match constness {
+        match header.constness.node {
             ast::Constness::NotConst => {}
             ast::Constness::Const => self.word_nbsp("const")?
         }
 
-        self.print_unsafety(unsafety)?;
+        self.print_asyncness(header.asyncness)?;
+        self.print_unsafety(header.unsafety)?;
 
-        if abi != Abi::Rust {
+        if header.abi != Abi::Rust {
             self.word_nbsp("extern")?;
-            self.word_nbsp(&abi.to_string())?;
+            self.word_nbsp(&header.abi.to_string())?;
         }
 
         self.s.word("fn")
@@ -3171,8 +3179,6 @@ impl<'a> State<'a> {
         }
     }
 }
-
-fn repeat(s: &str, n: usize) -> String { iter::repeat(s).take(n).collect() }
 
 #[cfg(test)]
 mod tests {
@@ -3194,10 +3200,20 @@ mod tests {
                 variadic: false
             };
             let generics = ast::Generics::default();
-            assert_eq!(fun_to_string(&decl, ast::Unsafety::Normal,
-                                    ast::Constness::NotConst,
-                                    abba_ident, &generics),
-                    "fn abba()");
+            assert_eq!(
+                fun_to_string(
+                    &decl,
+                    ast::FnHeader {
+                        unsafety: ast::Unsafety::Normal,
+                        constness: codemap::dummy_spanned(ast::Constness::NotConst),
+                        asyncness: ast::IsAsync::NotAsync,
+                        abi: Abi::Rust,
+                    },
+                    abba_ident,
+                    &generics
+                ),
+                "fn abba()"
+            );
         })
     }
 

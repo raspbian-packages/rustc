@@ -1,4 +1,4 @@
-//const _GRAMMAR: &'static str = include_str!("grammar.pest");
+// const _GRAMMAR: &'static str = include_str!("grammar.pest");
 
 #[derive(Parser)]
 #[grammar = "grammar.pest"]
@@ -9,34 +9,56 @@ use pest::Parser;
 
 #[cfg(test)]
 macro_rules! assert_rule {
-    ($rule: expr, $in: expr) => {
-        assert_eq!(HandlebarsParser::parse($rule, $in).unwrap()
-                   .last()
-                   .unwrap()
-                   .into_span()
-                   .end(),
+    ($rule:expr, $in:expr) => {
+        assert_eq!(
+            HandlebarsParser::parse($rule, $in)
+                .unwrap()
+                .last()
+                .unwrap()
+                .into_span()
+                .end(),
             $in.len()
         );
-    }
+    };
+}
+
+#[cfg(test)]
+macro_rules! assert_not_rule {
+    ($rule:expr, $in:expr) => {
+        assert!(
+            HandlebarsParser::parse($rule, $in).is_err()
+                || HandlebarsParser::parse($rule, $in)
+                    .unwrap()
+                    .last()
+                    .unwrap()
+                    .into_span()
+                    .end() != $in.len()
+        );
+    };
 }
 
 #[cfg(test)]
 macro_rules! assert_rule_match {
-    ($rule: expr, $in: expr) => {
+    ($rule:expr, $in:expr) => {
         assert!(HandlebarsParser::parse($rule, $in).is_ok());
-    }
+    };
 }
 
 #[test]
 fn test_raw_text() {
     let s = vec![
         "<h1> helloworld </h1>    ",
-        "hello\\{{world}}",
-        "hello\\{{#if world}}nice\\{{/if}}",
-        "hello \\{{{{raw}}}}hello\\{{{{/raw}}}}",
+        r"hello\{{world}}",
+        r"hello\{{#if world}}nice\{{/if}}",
+        r"hello \{{{{raw}}}}hello\{{{{/raw}}}}",
     ];
     for i in s.iter() {
         assert_rule!(Rule::raw_text, i);
+    }
+
+    let s_not_escape = vec![r"\\{{hello}}"];
+    for i in s_not_escape.iter() {
+        assert_not_rule!(Rule::raw_text, i);
     }
 }
 
@@ -122,7 +144,7 @@ fn test_comment() {
     }
     let s2 = vec!["{{! hello }}", "{{! test me }}"];
     for i in s2.iter() {
-        assert_rule!(Rule::hbs_html_comment, i);
+        assert_rule!(Rule::hbs_comment_compact, i);
     }
 }
 

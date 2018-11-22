@@ -1,5 +1,5 @@
-use regex::Regex;
 use pipeline::Pipeline;
+use regex::Regex;
 
 pub fn make_pipeline() -> Pipeline {
     Pipeline {
@@ -96,29 +96,38 @@ struct Stemmer {
     re3_5: Regex,
 }
 
-#[allow(non_upper_case_globals)]
-const v: &str = "[aeiouy]"; // vowel
-#[allow(non_upper_case_globals)]
-const C: &str = "[^aeiou][^aeiouy]*"; // consonant sequence
-#[allow(non_upper_case_globals)]
-const V: &str = "[aeiouy][aeiou]*"; // vowel sequence
+// vowel
+macro_rules! V {
+    () => {
+        "[aeiouy]"
+    };
+}
 
-macro_rules! concat_buf {
-    ($($st:expr),*) => {
-        {
-            let mut temp_str = String::new();
-            $(temp_str.push_str($st);)*
-            temp_str
-        }
-    }
+// consonant sequence
+macro_rules! CS {
+    () => {
+        "[^aeiou][^aeiouy]*"
+    };
+}
+
+// vowel sequence
+macro_rules! VS {
+    () => {
+        "[aeiouy][aeiou]*"
+    };
+}
+
+#[inline]
+fn concat_string(strs: &[&str]) -> String {
+    strs.iter().cloned().collect()
 }
 
 impl Stemmer {
     fn new() -> Self {
-        let mgr0 = concat_buf!("^(", C, ")?", V, C);
-        let meq1 = concat_buf!("^(", C, ")?", V, C, "(", V, ")?$");
-        let mgr1 = concat_buf!("^(", C, ")?", V, C, V, C);
-        let s_v = concat_buf!("^(", C, ")?", v);
+        let mgr0 = concat!("^(", CS!(), ")?", VS!(), CS!());
+        let meq1 = concat!("^(", CS!(), ")?", VS!(), CS!(), "(", VS!(), ")?$");
+        let mgr1 = concat!("^(", CS!(), ")?", VS!(), CS!(), VS!(), CS!());
+        let s_v = concat!("^(", CS!(), ")?", V!());
 
         let re_mgr0 = Regex::new(&mgr0).unwrap();
         let re_mgr1 = Regex::new(&mgr1).unwrap();
@@ -131,7 +140,7 @@ impl Stemmer {
         let re2_1b = Regex::new("^(.+?)(ed|ing)$").unwrap();
         let re2_1b_2 = Regex::new("(at|bl|iz)$").unwrap();
         let re3_1b_2 = Regex::new("([^aeiouylsz]{2})$").unwrap();
-        let re4_1b_2 = Regex::new(&concat_buf!("^", C, v, "[^aeiouwxy]$")).unwrap();
+        let re4_1b_2 = Regex::new(concat!("^", CS!(), V!(), "[^aeiouwxy]$")).unwrap();
 
         let re_1c = Regex::new("^(.+?[^aeiou])y$").unwrap();
         let re_2 = Regex::new(
@@ -147,7 +156,7 @@ impl Stemmer {
         let re2_4 = Regex::new("^(.+?)(s|t)(ion)$").unwrap();
 
         let re_5 = Regex::new("^(.+?)e$").unwrap();
-        let re3_5 = Regex::new(&concat_buf!("^", C, v, "[^aeiouwxy]$")).unwrap();
+        let re3_5 = Regex::new(concat!("^", CS!(), V!(), "[^aeiouwxy]$")).unwrap();
 
         Stemmer {
             re_mgr0,
@@ -177,8 +186,8 @@ impl Stemmer {
             return w;
         }
 
-        let firstch = &w[..1].to_string();
-        if firstch == "y" {
+        let starts_with_y = w.as_bytes()[0] == b'y';
+        if starts_with_y {
             w.remove(0);
             w.insert(0, 'Y');
         }
@@ -188,10 +197,10 @@ impl Stemmer {
 
         // Step 1a
         if let Some(caps) = self.re_1a.captures(&w.clone()) {
-            w = concat_buf!(&caps[1], &caps[2]);
+            w = concat_string(&[&caps[1], &caps[2]]);
         }
         if let Some(caps) = self.re2_1a.captures(&w.clone()) {
-            w = concat_buf!(&caps[1], &caps[2]);
+            w = concat_string(&[&caps[1], &caps[2]]);
         }
 
         // Step 1b
@@ -212,6 +221,7 @@ impl Stemmer {
                 } else if let Some(m) = self.re3_1b_2.find(&w.clone()) {
                     let suffix = m.as_str();
                     // Make sure the two characters are the same since we can't use backreferences
+                    // these indexing operations can't panic since the regex only matches ascii characters
                     if suffix[0..1] == suffix[1..2] {
                         re3_1b_2_matched = true;
                         w.pop();
@@ -230,7 +240,7 @@ impl Stemmer {
         // letter of the word (so cry -> cri, by -> by, say -> say)
         if let Some(caps) = self.re_1c.captures(&w.clone()) {
             let stem = &caps[1];
-            w = concat_buf!(stem, "i");
+            w = concat_string(&[stem, "i"]);
         }
 
         // Step 2
@@ -238,7 +248,7 @@ impl Stemmer {
             let stem = &caps[1];
             let suffix = &caps[2];
             if self.re_mgr0.is_match(&stem) {
-                w = concat_buf!(stem, STEP_2.iter().find(|&&(k, _)| k == suffix).unwrap().1);
+                w = concat_string(&[stem, STEP_2.iter().find(|&&(k, _)| k == suffix).unwrap().1]);
             }
         }
 
@@ -247,7 +257,7 @@ impl Stemmer {
             let stem = &caps[1];
             let suffix = &caps[2];
             if self.re_mgr0.is_match(&stem) {
-                w = concat_buf!(stem, STEP_3.iter().find(|&&(k, _)| k == suffix).unwrap().1);
+                w = concat_string(&[stem, STEP_3.iter().find(|&&(k, _)| k == suffix).unwrap().1]);
             }
         }
 
@@ -258,9 +268,9 @@ impl Stemmer {
                 w = stem.into();
             }
         } else if let Some(caps) = self.re2_4.captures(&w.clone()) {
-            let stem = concat_buf!(&caps[1], &caps[2]);
+            let stem = concat_string(&[&caps[1], &caps[2]]);
             if self.re_mgr1.is_match(&stem) {
-                w = stem.into();
+                w = stem;
             }
         }
 
@@ -278,8 +288,8 @@ impl Stemmer {
             w.pop();
         }
 
-        // and turn initial Y back to y
-        if firstch == "y" {
+        // replace the original 'y'
+        if starts_with_y {
             w.remove(0);
             w.insert(0, 'y');
         }
@@ -332,7 +342,7 @@ mod tests {
     macro_rules! pipeline_eq {
         ($func:expr, $input:expr, $output:expr) => {
             assert_eq!(&$func($input.to_string()).unwrap(), $output);
-        }
+        };
     }
 
     #[test]
@@ -451,39 +461,13 @@ mod tests {
     #[cfg(feature = "bench")]
     #[bench]
     fn bench_stem(b: &mut test::Bencher) {
-        let data = ::pipeline::tokenize(TEXT);
+        let text = include_str!("../../tests/data/en.in.txt");
+        let tokens = ::pipeline::tokenize(text);
         b.iter(|| {
-            let d = data.clone();
-            for word in d {
-                test::black_box(stemmer(word));
+            let tokens = tokens.clone();
+            for token in tokens {
+                test::black_box(stemmer(token));
             }
         });
-
-        const TEXT: &str = "
-            I am already far north of London, and as I walk in the streets of Petersburgh, I feel a cold 
-            northern breeze play upon my cheeks, which braces my nerves and fills me with delight. Do you 
-            understand this feeling? This breeze, which has travelled from the regions towards which I am 
-            advancing, gives me a foretaste of those icy climes. Inspirited by this wind of promise, my 
-            daydreams become more fervent and vivid. I try in vain to be persuaded that the pole is the seat of 
-            frost and desolation; it ever presents itself to my imagination as the region of beauty and delight.
-            There, Margaret, the sun is forever visible, its broad disk just skirting the horizon and diffusing
-            a perpetual splendour. There—for with your leave, my sister, I will put some trust in preceding 
-            navigators—there snow and frost are banished; and, sailing over a calm sea, we may be wafted to a 
-            land surpassing in wonders and in beauty every region hitherto discovered on the habitable globe. 
-            productions and features may be without example, as the phenomena of the heavenly bodies 
-            undoubtedly are in those undiscovered solitudes. What may not be expected in a country of eternal 
-            light? I may there discover the wondrous power which attracts the needle and may regulate a 
-            thousand celestial observations that require only this voyage to render their seeming 
-            eccentricities consistent forever. I shall satiate my ardent curiosity with the sight of a part of
-            the world never before visited, and may tread a land never before imprinted by the foot of man. 
-            These are my enticements, and they are sufficient to conquer all fear of danger or death and to 
-            induce me to commence this laborious voyage with the joy a child feels when he embarks in a 
-            little boat, with his holiday mates, on an expedition of discovery up his native river. But 
-            supposing all these conjectures to be false, you cannot contest the inestimable benefit which I 
-            shall confer on all mankind, to the last generation, by discovering a passage near the pole to 
-            those countries, to reach which at present so many months are requisite; or by ascertaining the 
-            secret of the magnet, which, if at all possible, can only be effected by an undertaking such as 
-            mine. 
-            ";
     }
 }

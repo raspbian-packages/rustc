@@ -23,7 +23,6 @@
 #![feature(flt2dec)]
 #![feature(fmt_internals)]
 #![feature(hashmap_internals)]
-#![feature(iterator_flatten)]
 #![feature(pattern)]
 #![feature(range_is_empty)]
 #![feature(raw)]
@@ -45,6 +44,7 @@
 #![feature(reverse_bits)]
 #![feature(iterator_find_map)]
 #![feature(slice_internals)]
+#![feature(option_replace)]
 
 extern crate core;
 extern crate test;
@@ -62,6 +62,7 @@ mod fmt;
 mod hash;
 mod intrinsics;
 mod iter;
+mod manually_drop;
 mod mem;
 mod nonzero;
 mod num;

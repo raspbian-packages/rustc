@@ -8,27 +8,26 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use llvm::{ValueRef, LLVMConstInBoundsGEP};
-use rustc::middle::const_val::ConstEvalErr;
+use llvm::ValueRef;
+use rustc::mir::interpret::ConstEvalErr;
 use rustc::mir;
 use rustc::mir::interpret::ConstValue;
 use rustc::ty;
 use rustc::ty::layout::{self, Align, LayoutOf, TyLayout};
 use rustc_data_structures::indexed_vec::Idx;
+use rustc_data_structures::sync::Lrc;
 
 use base;
-use common::{self, CodegenCx, C_undef, C_usize};
+use common::{CodegenCx, C_undef, C_usize};
 use builder::{Builder, MemFlags};
 use value::Value;
 use type_of::LayoutLlvmExt;
-use type_::Type;
-use consts;
 
 use std::fmt;
 use std::ptr;
 
 use super::{FunctionCx, LocalRef};
-use super::constant::{scalar_to_llvm, const_alloc_to_llvm};
+use super::constant::scalar_to_llvm;
 use super::place::PlaceRef;
 
 /// The representation of a Rust value. The enum variant is in fact
@@ -95,16 +94,16 @@ impl<'a, 'tcx> OperandRef<'tcx> {
     }
 
     pub fn from_const(bx: &Builder<'a, 'tcx>,
-                      val: ConstValue<'tcx>,
-                      ty: ty::Ty<'tcx>)
-                      -> Result<OperandRef<'tcx>, ConstEvalErr<'tcx>> {
-        let layout = bx.cx.layout_of(ty);
+                      val: &'tcx ty::Const<'tcx>)
+                      -> Result<OperandRef<'tcx>, Lrc<ConstEvalErr<'tcx>>> {
+        let layout = bx.cx.layout_of(val.ty);
 
         if layout.is_zst() {
             return Ok(OperandRef::new_zst(bx.cx, layout));
         }
 
-        let val = match val {
+        let val = match val.val {
+            ConstValue::Unevaluated(..) => bug!(),
             ConstValue::Scalar(x) => {
                 let scalar = match layout.abi {
                     layout::Abi::Scalar(ref x) => x,
@@ -127,27 +126,18 @@ impl<'a, 'tcx> OperandRef<'tcx> {
                     bx.cx,
                     a,
                     a_scalar,
-                    layout.scalar_pair_element_llvm_type(bx.cx, 0),
+                    layout.scalar_pair_element_llvm_type(bx.cx, 0, true),
                 );
                 let b_llval = scalar_to_llvm(
                     bx.cx,
                     b,
                     b_scalar,
-                    layout.scalar_pair_element_llvm_type(bx.cx, 1),
+                    layout.scalar_pair_element_llvm_type(bx.cx, 1, true),
                 );
                 OperandValue::Pair(a_llval, b_llval)
             },
             ConstValue::ByRef(alloc, offset) => {
-                let init = const_alloc_to_llvm(bx.cx, alloc);
-                let base_addr = consts::addr_of(bx.cx, init, layout.align, "byte_str");
-
-                let llval = unsafe { LLVMConstInBoundsGEP(
-                    consts::bitcast(base_addr, Type::i8p(bx.cx)),
-                    &C_usize(bx.cx, offset.bytes()),
-                    1,
-                )};
-                let llval = consts::bitcast(llval, layout.llvm_type(bx.cx).ptr_to());
-                return Ok(PlaceRef::new_sized(llval, layout, alloc.align).load(bx));
+                return Ok(PlaceRef::from_const_alloc(bx, layout, alloc, offset).load(bx));
             },
         };
 
@@ -192,8 +182,8 @@ impl<'a, 'tcx> OperandRef<'tcx> {
                    self, llty);
             // Reconstruct the immediate aggregate.
             let mut llpair = C_undef(llty);
-            llpair = bx.insert_value(llpair, a, 0);
-            llpair = bx.insert_value(llpair, b, 1);
+            llpair = bx.insert_value(llpair, base::from_immediate(bx, a), 0);
+            llpair = bx.insert_value(llpair, base::from_immediate(bx, b), 1);
             llpair
         } else {
             self.immediate()
@@ -205,13 +195,14 @@ impl<'a, 'tcx> OperandRef<'tcx> {
                                          llval: ValueRef,
                                          layout: TyLayout<'tcx>)
                                          -> OperandRef<'tcx> {
-        let val = if layout.is_llvm_scalar_pair() {
+        let val = if let layout::Abi::ScalarPair(ref a, ref b) = layout.abi {
             debug!("Operand::from_immediate_or_packed_pair: unpacking {:?} @ {:?}",
                     llval, layout);
 
             // Deconstruct the immediate aggregate.
-            OperandValue::Pair(bx.extract_value(llval, 0),
-                               bx.extract_value(llval, 1))
+            let a_llval = base::to_immediate_scalar(bx, bx.extract_value(llval, 0), a);
+            let b_llval = base::to_immediate_scalar(bx, bx.extract_value(llval, 1), b);
+            OperandValue::Pair(a_llval, b_llval)
         } else {
             OperandValue::Immediate(llval)
         };
@@ -263,8 +254,8 @@ impl<'a, 'tcx> OperandRef<'tcx> {
                 *llval = bx.bitcast(*llval, field.immediate_llvm_type(bx.cx));
             }
             OperandValue::Pair(ref mut a, ref mut b) => {
-                *a = bx.bitcast(*a, field.scalar_pair_element_llvm_type(bx.cx, 0));
-                *b = bx.bitcast(*b, field.scalar_pair_element_llvm_type(bx.cx, 1));
+                *a = bx.bitcast(*a, field.scalar_pair_element_llvm_type(bx.cx, 0, true));
+                *b = bx.bitcast(*b, field.scalar_pair_element_llvm_type(bx.cx, 1, true));
             }
             OperandValue::Ref(..) => bug!()
         }
@@ -283,6 +274,10 @@ impl<'a, 'tcx> OperandValue {
 
     pub fn volatile_store(self, bx: &Builder<'a, 'tcx>, dest: PlaceRef<'tcx>) {
         self.store_with_flags(bx, dest, MemFlags::VOLATILE);
+    }
+
+    pub fn unaligned_volatile_store(self, bx: &Builder<'a, 'tcx>, dest: PlaceRef<'tcx>) {
+        self.store_with_flags(bx, dest, MemFlags::VOLATILE | MemFlags::UNALIGNED);
     }
 
     pub fn nontemporal_store(self, bx: &Builder<'a, 'tcx>, dest: PlaceRef<'tcx>) {
@@ -307,11 +302,7 @@ impl<'a, 'tcx> OperandValue {
             }
             OperandValue::Pair(a, b) => {
                 for (i, &x) in [a, b].iter().enumerate() {
-                    let mut llptr = bx.struct_gep(dest.llval, i as u64);
-                    // Make sure to always store i1 as i8.
-                    if common::val_ty(x) == Type::i1(bx.cx) {
-                        llptr = bx.pointercast(llptr, Type::i8p(bx.cx));
-                    }
+                    let llptr = bx.struct_gep(dest.llval, i as u64);
                     let val = base::from_immediate(bx, x);
                     bx.store_with_flags(val, llptr, dest.align, flags);
                 }
@@ -408,23 +399,15 @@ impl<'a, 'tcx> FunctionCx<'a, 'tcx> {
 
             mir::Operand::Constant(ref constant) => {
                 let ty = self.monomorphize(&constant.ty);
-                self.mir_constant_to_const_value(bx, constant)
-                    .and_then(|c| OperandRef::from_const(bx, c, ty))
+                self.eval_mir_constant(bx, constant)
+                    .and_then(|c| OperandRef::from_const(bx, c))
                     .unwrap_or_else(|err| {
-                        match constant.literal {
-                            mir::Literal::Promoted { .. } => {
-                                // this is unreachable as long as runtime
-                                // and compile-time agree on values
-                                // With floats that won't always be true
-                                // so we generate an abort below
-                            },
-                            mir::Literal::Value { .. } => {
-                                err.report_as_error(
-                                    bx.tcx().at(constant.span),
-                                    "could not evaluate constant operand",
-                                );
-                            },
-                        }
+                        err.report_as_error(
+                            bx.tcx().at(constant.span),
+                            "could not evaluate constant operand",
+                        );
+                        // Allow RalfJ to sleep soundly knowing that even refactorings that remove
+                        // the above error (or silence it under some conditions) will not cause UB
                         let fnname = bx.cx.get_intrinsic(&("llvm.trap"));
                         bx.call(fnname, &[], None);
                         // We've errored, so we don't have to produce working code.

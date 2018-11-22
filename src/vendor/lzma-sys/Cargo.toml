@@ -12,7 +12,7 @@
 
 [package]
 name = "lzma-sys"
-version = "0.1.9"
+version = "0.1.10"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 build = "build.rs"
 links = "lzma"
@@ -24,11 +24,11 @@ license = "MIT/Apache-2.0"
 repository = "https://github.com/alexcrichton/xz2-rs"
 [dependencies.libc]
 version = "0.2"
-[build-dependencies.filetime]
-version = "0.1"
-
 [build-dependencies.cc]
 version = "1.0"
+
+[build-dependencies.filetime]
+version = "0.2"
 
 [build-dependencies.pkg-config]
 version = "0.3"

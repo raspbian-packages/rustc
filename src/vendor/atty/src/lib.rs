@@ -26,6 +26,8 @@ extern crate termion;
 
 #[cfg(windows)]
 use winapi::shared::minwindef::DWORD;
+#[cfg(windows)]
+use winapi::shared::ntdef::WCHAR;
 
 /// possible stream sources
 #[derive(Clone, Copy, Debug)]
@@ -36,7 +38,7 @@ pub enum Stream {
 }
 
 /// returns true if this is a tty
-#[cfg(unix)]
+#[cfg(all(unix, not(target_arch = "wasm32")))]
 pub fn is(stream: Stream) -> bool {
     extern crate libc;
 
@@ -102,9 +104,7 @@ unsafe fn console_on_any(fds: &[DWORD]) -> bool {
 /// Returns true if there is an MSYS tty on the given handle.
 #[cfg(windows)]
 unsafe fn msys_tty_on(fd: DWORD) -> bool {
-    use std::ffi::OsString;
     use std::mem;
-    use std::os::windows::ffi::OsStringExt;
     use std::slice;
 
     use winapi::ctypes::c_void;
@@ -115,7 +115,7 @@ unsafe fn msys_tty_on(fd: DWORD) -> bool {
     use winapi::shared::minwindef::MAX_PATH;
 
     let size = mem::size_of::<FILE_NAME_INFO>();
-    let mut name_info_bytes = vec![0u8; size + MAX_PATH];
+    let mut name_info_bytes = vec![0u8; size + MAX_PATH * mem::size_of::<WCHAR>()];
     let res = GetFileInformationByHandleEx(
         GetStdHandle(fd),
         FileNameInfo,
@@ -125,19 +125,19 @@ unsafe fn msys_tty_on(fd: DWORD) -> bool {
     if res == 0 {
         return false;
     }
-    let name_info: FILE_NAME_INFO = *(name_info_bytes[0..size].as_ptr() as
-                                          *const FILE_NAME_INFO);
-    let name_bytes =
-        &name_info_bytes[size..size + name_info.FileNameLength as usize];
-    let name_u16 = slice::from_raw_parts(
-        name_bytes.as_ptr() as *const u16,
-        name_bytes.len() / 2,
+    let name_info: &FILE_NAME_INFO = &*(name_info_bytes.as_ptr() as *const FILE_NAME_INFO);
+    let s = slice::from_raw_parts(
+        name_info.FileName.as_ptr(),
+        name_info.FileNameLength as usize / 2,
     );
-    let name = OsString::from_wide(name_u16)
-        .as_os_str()
-        .to_string_lossy()
-        .into_owned();
-    name.contains("msys-") && name.contains("-pty")
+    let name = String::from_utf16_lossy(s);
+    // This checks whether 'pty' exists in the file name, which indicates that
+    // a pseudo-terminal is attached. To mitigate against false positives
+    // (e.g., an actual file name that contains 'pty'), we also require that
+    // either the strings 'msys-' or 'cygwin-' are in the file name as well.)
+    let is_msys = name.contains("msys-") || name.contains("cygwin-");
+    let is_pty = name.contains("-pty");
+    is_msys && is_pty
 }
 
 /// returns true if this is a tty

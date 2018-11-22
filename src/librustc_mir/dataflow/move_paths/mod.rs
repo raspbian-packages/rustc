@@ -209,7 +209,7 @@ pub enum InitKind {
     Deep,
     /// Only does a shallow init
     Shallow,
-    /// This doesn't initialize the variabe on panic (and a panic is possible).
+    /// This doesn't initialize the variable on panic (and a panic is possible).
     NonPanicPathOnly,
 }
 
@@ -249,6 +249,7 @@ impl<'tcx> MovePathLookup<'tcx> {
     pub fn find(&self, place: &Place<'tcx>) -> LookupResult {
         match *place {
             Place::Local(local) => LookupResult::Exact(self.locals[local]),
+            Place::Promoted(_) |
             Place::Static(..) => LookupResult::Parent(None),
             Place::Projection(ref proj) => {
                 match self.find(&proj.base) {
@@ -271,7 +272,7 @@ impl<'tcx> MovePathLookup<'tcx> {
 
 #[derive(Debug)]
 pub struct IllegalMoveOrigin<'tcx> {
-    pub(crate) span: Span,
+    pub(crate) location: Location,
     pub(crate) kind: IllegalMoveOriginKind<'tcx>,
 }
 
@@ -282,9 +283,9 @@ pub(crate) enum IllegalMoveOriginKind<'tcx> {
 
     /// Illegal move due to attempt to move from behind a reference.
     BorrowedContent {
-        /// The content's type: if erroneous code was trying to move
-        /// from `*x` where `x: &T`, then this will be `T`.
-        target_ty: ty::Ty<'tcx>,
+        /// The place the reference refers to: if erroneous code was trying to
+        /// move from `(*x).f` this will be `*x`.
+        target_place: Place<'tcx>,
     },
 
     /// Illegal move due to attempt to move from field of an ADT that
@@ -304,8 +305,8 @@ pub enum MoveError<'tcx> {
 }
 
 impl<'tcx> MoveError<'tcx> {
-    fn cannot_move_out_of(span: Span, kind: IllegalMoveOriginKind<'tcx>) -> Self {
-        let origin = IllegalMoveOrigin { span, kind };
+    fn cannot_move_out_of(location: Location, kind: IllegalMoveOriginKind<'tcx>) -> Self {
+        let origin = IllegalMoveOrigin { location, kind };
         MoveError::IllegalMove { cannot_move_out_of: origin }
     }
 }

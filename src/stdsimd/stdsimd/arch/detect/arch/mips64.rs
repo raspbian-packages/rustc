@@ -1,7 +1,8 @@
 //! Run-time feature detection on MIPS64.
 
 #[macro_export]
-#[unstable(feature = "stdsimd", issue = "0")]
+#[unstable(feature = "stdsimd", issue = "27731")]
+#[allow_internal_unstable]
 macro_rules! is_mips64_feature_detected {
     ("msa") => {
         cfg!(target_feature = "msa") ||
@@ -17,6 +18,7 @@ macro_rules! is_mips64_feature_detected {
 #[doc(hidden)]
 #[allow(non_camel_case_types)]
 #[repr(u8)]
+#[unstable(feature = "stdsimd_internal", issue = "0")]
 pub enum Feature {
     /// MIPS SIMD Architecture (MSA)
     msa,

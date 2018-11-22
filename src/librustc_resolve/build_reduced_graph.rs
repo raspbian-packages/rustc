@@ -34,7 +34,7 @@ use syntax::attr;
 
 use syntax::ast::{self, Block, ForeignItem, ForeignItemKind, Item, ItemKind, NodeId};
 use syntax::ast::{Mutability, StmtKind, TraitItem, TraitItemKind, Variant};
-use syntax::ext::base::SyntaxExtension;
+use syntax::ext::base::{MacroKind, SyntaxExtension};
 use syntax::ext::base::Determinacy::Undetermined;
 use syntax::ext::hygiene::Mark;
 use syntax::ext::tt::macro_rules;
@@ -156,7 +156,7 @@ impl<'a> Resolver<'a> {
 
                     // Disallow `use $crate;`
                     if source.name == keywords::DollarCrate.name() && path.segments.len() == 1 {
-                        let crate_root = self.resolve_crate_root(source.span.ctxt(), true);
+                        let crate_root = self.resolve_crate_root(source);
                         let crate_name = match crate_root.kind {
                             ModuleKind::Def(_, name) => name,
                             ModuleKind::Block(..) => unreachable!(),
@@ -335,11 +335,34 @@ impl<'a> Resolver<'a> {
             ItemKind::Fn(..) => {
                 let def = Def::Fn(self.definitions.local_def_id(item.id));
                 self.define(parent, ident, ValueNS, (def, vis, sp, expansion));
+
+                // Functions introducing procedural macros reserve a slot
+                // in the macro namespace as well (see #52225).
+                if attr::contains_name(&item.attrs, "proc_macro") ||
+                   attr::contains_name(&item.attrs, "proc_macro_attribute") {
+                    let def = Def::Macro(def.def_id(), MacroKind::ProcMacroStub);
+                    self.define(parent, ident, MacroNS, (def, vis, sp, expansion));
+                }
+                if let Some(attr) = attr::find_by_name(&item.attrs, "proc_macro_derive") {
+                    if let Some(trait_attr) =
+                            attr.meta_item_list().and_then(|list| list.get(0).cloned()) {
+                        if let Some(ident) = trait_attr.name().map(Ident::with_empty_ctxt) {
+                            let sp = trait_attr.span;
+                            let def = Def::Macro(def.def_id(), MacroKind::ProcMacroStub);
+                            self.define(parent, ident, MacroNS, (def, vis, sp, expansion));
+                        }
+                    }
+                }
             }
 
             // These items live in the type namespace.
             ItemKind::Ty(..) => {
                 let def = Def::TyAlias(self.definitions.local_def_id(item.id));
+                self.define(parent, ident, TypeNS, (def, vis, sp, expansion));
+            }
+
+            ItemKind::Existential(_, _) => {
+                let def = Def::Existential(self.definitions.local_def_id(item.id));
                 self.define(parent, ident, TypeNS, (def, vis, sp, expansion));
             }
 
@@ -628,7 +651,7 @@ impl<'a> Resolver<'a> {
                            binding: &'a NameBinding<'a>,
                            span: Span,
                            allow_shadowing: bool) {
-        if self.global_macros.insert(name, binding).is_some() && !allow_shadowing {
+        if self.macro_prelude.insert(name, binding).is_some() && !allow_shadowing {
             let msg = format!("`{}` is already in scope", name);
             let note =
                 "macro-expanded `#[macro_use]`s may not shadow existing macros (see RFC 1560)";
@@ -681,8 +704,7 @@ impl<'a> Resolver<'a> {
         } else {
             for (name, span) in legacy_imports.imports {
                 let ident = Ident::with_empty_ctxt(name);
-                let result = self.resolve_ident_in_module(module, ident, MacroNS,
-                                                          false, false, span);
+                let result = self.resolve_ident_in_module(module, ident, MacroNS, false, span);
                 if let Ok(binding) = result {
                     let directive = macro_use_directive(span);
                     self.potentially_unused_imports.push(directive);

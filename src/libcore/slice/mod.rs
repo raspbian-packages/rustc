@@ -729,7 +729,8 @@ impl<T> [T] {
     /// Returns an iterator over `chunk_size` elements of the slice at a
     /// time. The chunks are slices and do not overlap. If `chunk_size` does
     /// not divide the length of the slice, then the last up to `chunk_size-1`
-    /// elements will be omitted.
+    /// elements will be omitted and can be retrieved from the `remainder`
+    /// function of the iterator.
     ///
     /// Due to each chunk having exactly `chunk_size` elements, the compiler
     /// can often optimize the resulting code better than in the case of
@@ -758,14 +759,15 @@ impl<T> [T] {
         assert!(chunk_size != 0);
         let rem = self.len() % chunk_size;
         let len = self.len() - rem;
-        ExactChunks { v: &self[..len], chunk_size: chunk_size}
+        let (fst, snd) = self.split_at(len);
+        ExactChunks { v: fst, rem: snd, chunk_size: chunk_size}
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a time.
     /// The chunks are mutable slices, and do not overlap. If `chunk_size` does
     /// not divide the length of the slice, then the last up to `chunk_size-1`
-    /// elements will be omitted.
-    ///
+    /// elements will be omitted and can be retrieved from the `into_remainder`
+    /// function of the iterator.
     ///
     /// Due to each chunk having exactly `chunk_size` elements, the compiler
     /// can often optimize the resulting code better than in the case of
@@ -799,7 +801,8 @@ impl<T> [T] {
         assert!(chunk_size != 0);
         let rem = self.len() % chunk_size;
         let len = self.len() - rem;
-        ExactChunksMut { v: &mut self[..len], chunk_size: chunk_size}
+        let (fst, snd) = self.split_at_mut(len);
+        ExactChunksMut { v: fst, rem: snd, chunk_size: chunk_size}
     }
 
     /// Divides one slice into two at an index.
@@ -1230,7 +1233,7 @@ impl<T> [T] {
     /// assert_eq!(s.binary_search(&4),   Err(7));
     /// assert_eq!(s.binary_search(&100), Err(13));
     /// let r = s.binary_search(&1);
-    /// assert!(match r { Ok(1...4) => true, _ => false, });
+    /// assert!(match r { Ok(1..=4) => true, _ => false, });
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     pub fn binary_search(&self, x: &T) -> Result<usize, usize>
@@ -1268,7 +1271,7 @@ impl<T> [T] {
     /// assert_eq!(s.binary_search_by(|probe| probe.cmp(&seek)), Err(13));
     /// let seek = 1;
     /// let r = s.binary_search_by(|probe| probe.cmp(&seek));
-    /// assert!(match r { Ok(1...4) => true, _ => false, });
+    /// assert!(match r { Ok(1..=4) => true, _ => false, });
     /// ```
     #[stable(feature = "rust1", since = "1.0.0")]
     #[inline]
@@ -1325,7 +1328,7 @@ impl<T> [T] {
     /// assert_eq!(s.binary_search_by_key(&4, |&(a,b)| b),   Err(7));
     /// assert_eq!(s.binary_search_by_key(&100, |&(a,b)| b), Err(13));
     /// let r = s.binary_search_by_key(&1, |&(a,b)| b);
-    /// assert!(match r { Ok(1...4) => true, _ => false, });
+    /// assert!(match r { Ok(1..=4) => true, _ => false, });
     /// ```
     #[stable(feature = "slice_binary_search_by_key", since = "1.10.0")]
     #[inline]
@@ -1541,6 +1544,9 @@ impl<T> [T] {
     /// let src = [1, 2, 3, 4];
     /// let mut dst = [0, 0];
     ///
+    /// // Because the slices have to be the same length,
+    /// // we slice the source slice from four elements
+    /// // to two. It will panic if we don't do this.
     /// dst.clone_from_slice(&src[2..]);
     ///
     /// assert_eq!(src, [1, 2, 3, 4]);
@@ -1607,6 +1613,9 @@ impl<T> [T] {
     /// let src = [1, 2, 3, 4];
     /// let mut dst = [0, 0];
     ///
+    /// // Because the slices have to be the same length,
+    /// // we slice the source slice from four elements
+    /// // to two. It will panic if we don't do this.
     /// dst.copy_from_slice(&src[2..]);
     ///
     /// assert_eq!(src, [1, 2, 3, 4]);
@@ -1642,8 +1651,8 @@ impl<T> [T] {
     /// [`split_at_mut`]: #method.split_at_mut
     #[stable(feature = "copy_from_slice", since = "1.9.0")]
     pub fn copy_from_slice(&mut self, src: &[T]) where T: Copy {
-        assert!(self.len() == src.len(),
-                "destination and source slices have different lengths");
+        assert_eq!(self.len(), src.len(),
+                   "destination and source slices have different lengths");
         unsafe {
             ptr::copy_nonoverlapping(
                 src.as_ptr(), self.as_mut_ptr(), self.len());
@@ -1708,7 +1717,6 @@ impl<T> [T] {
     }
 
     /// Function to calculate lenghts of the middle and trailing slice for `align_to{,_mut}`.
-    #[cfg(not(stage0))]
     fn align_to_offsets<U>(&self) -> (usize, usize) {
         // What we gonna do about `rest` is figure out what multiple of `U`s we can put in a
         // lowest number of `T`s. And how many `T`s we need for each such "multiple".
@@ -1798,7 +1806,6 @@ impl<T> [T] {
     /// }
     /// ```
     #[unstable(feature = "slice_align_to", issue = "44488")]
-    #[cfg(not(stage0))]
     pub unsafe fn align_to<U>(&self) -> (&[T], &[U], &[T]) {
         // Note that most of this function will be constant-evaluated,
         if ::mem::size_of::<U>() == 0 || ::mem::size_of::<T>() == 0 {
@@ -1851,7 +1858,6 @@ impl<T> [T] {
     /// }
     /// ```
     #[unstable(feature = "slice_align_to", issue = "44488")]
-    #[cfg(not(stage0))]
     pub unsafe fn align_to_mut<U>(&mut self) -> (&mut [T], &mut [U], &mut [T]) {
         // Note that most of this function will be constant-evaluated,
         if ::mem::size_of::<U>() == 0 || ::mem::size_of::<T>() == 0 {
@@ -2259,36 +2265,36 @@ impl<T> SliceIndex<[T]> for ops::RangeInclusive<usize> {
 
     #[inline]
     fn get(self, slice: &[T]) -> Option<&[T]> {
-        if self.end == usize::max_value() { None }
-        else { (self.start..self.end + 1).get(slice) }
+        if *self.end() == usize::max_value() { None }
+        else { (*self.start()..self.end() + 1).get(slice) }
     }
 
     #[inline]
     fn get_mut(self, slice: &mut [T]) -> Option<&mut [T]> {
-        if self.end == usize::max_value() { None }
-        else { (self.start..self.end + 1).get_mut(slice) }
+        if *self.end() == usize::max_value() { None }
+        else { (*self.start()..self.end() + 1).get_mut(slice) }
     }
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &[T] {
-        (self.start..self.end + 1).get_unchecked(slice)
+        (*self.start()..self.end() + 1).get_unchecked(slice)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut [T] {
-        (self.start..self.end + 1).get_unchecked_mut(slice)
+        (*self.start()..self.end() + 1).get_unchecked_mut(slice)
     }
 
     #[inline]
     fn index(self, slice: &[T]) -> &[T] {
-        if self.end == usize::max_value() { slice_index_overflow_fail(); }
-        (self.start..self.end + 1).index(slice)
+        if *self.end() == usize::max_value() { slice_index_overflow_fail(); }
+        (*self.start()..self.end() + 1).index(slice)
     }
 
     #[inline]
     fn index_mut(self, slice: &mut [T]) -> &mut [T] {
-        if self.end == usize::max_value() { slice_index_overflow_fail(); }
-        (self.start..self.end + 1).index_mut(slice)
+        if *self.end() == usize::max_value() { slice_index_overflow_fail(); }
+        (*self.start()..self.end() + 1).index_mut(slice)
     }
 }
 
@@ -3654,17 +3660,30 @@ unsafe impl<'a, T> TrustedRandomAccess for ChunksMut<'a, T> {
 /// time).
 ///
 /// When the slice len is not evenly divided by the chunk size, the last
-/// up to `chunk_size-1` elements will be omitted.
+/// up to `chunk_size-1` elements will be omitted but can be retrieved from
+/// the [`remainder`] function from the iterator.
 ///
 /// This struct is created by the [`exact_chunks`] method on [slices].
 ///
 /// [`exact_chunks`]: ../../std/primitive.slice.html#method.exact_chunks
+/// [`remainder`]: ../../std/slice/struct.ExactChunks.html#method.remainder
 /// [slices]: ../../std/primitive.slice.html
 #[derive(Debug)]
 #[unstable(feature = "exact_chunks", issue = "47115")]
 pub struct ExactChunks<'a, T:'a> {
     v: &'a [T],
+    rem: &'a [T],
     chunk_size: usize
+}
+
+#[unstable(feature = "exact_chunks", issue = "47115")]
+impl<'a, T> ExactChunks<'a, T> {
+    /// Return the remainder of the original slice that is not going to be
+    /// returned by the iterator. The returned slice has at most `chunk_size-1`
+    /// elements.
+    pub fn remainder(&self) -> &'a [T] {
+        self.rem
+    }
 }
 
 // FIXME(#26925) Remove in favor of `#[derive(Clone)]`
@@ -3673,6 +3692,7 @@ impl<'a, T> Clone for ExactChunks<'a, T> {
     fn clone(&self) -> ExactChunks<'a, T> {
         ExactChunks {
             v: self.v,
+            rem: self.rem,
             chunk_size: self.chunk_size,
         }
     }
@@ -3760,18 +3780,33 @@ unsafe impl<'a, T> TrustedRandomAccess for ExactChunks<'a, T> {
 }
 
 /// An iterator over a slice in (non-overlapping) mutable chunks (`chunk_size`
-/// elements at a time). When the slice len is not evenly divided by the chunk
-/// size, the last up to `chunk_size-1` elements will be omitted.
+/// elements at a time).
+///
+/// When the slice len is not evenly divided by the chunk size, the last up to
+/// `chunk_size-1` elements will be omitted but can be retrieved from the
+/// [`into_remainder`] function from the iterator.
 ///
 /// This struct is created by the [`exact_chunks_mut`] method on [slices].
 ///
 /// [`exact_chunks_mut`]: ../../std/primitive.slice.html#method.exact_chunks_mut
+/// [`into_remainder`]: ../../std/slice/struct.ExactChunksMut.html#method.into_remainder
 /// [slices]: ../../std/primitive.slice.html
 #[derive(Debug)]
 #[unstable(feature = "exact_chunks", issue = "47115")]
 pub struct ExactChunksMut<'a, T:'a> {
     v: &'a mut [T],
+    rem: &'a mut [T],
     chunk_size: usize
+}
+
+#[unstable(feature = "exact_chunks", issue = "47115")]
+impl<'a, T> ExactChunksMut<'a, T> {
+    /// Return the remainder of the original slice that is not going to be
+    /// returned by the iterator. The returned slice has at most `chunk_size-1`
+    /// elements.
+    pub fn into_remainder(self) -> &'a mut [T] {
+        self.rem
+    }
 }
 
 #[unstable(feature = "exact_chunks", issue = "47115")]

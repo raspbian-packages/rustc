@@ -8,11 +8,12 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition=2015
+// edition:2015
 // aux-build:edition-kw-macro-2015.rs
 // compile-pass
 
 #![feature(raw_identifiers)]
+#![allow(async_idents)]
 
 #[macro_use]
 extern crate edition_kw_macro_2015;

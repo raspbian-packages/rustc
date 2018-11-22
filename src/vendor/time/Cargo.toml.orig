@@ -1,7 +1,7 @@
 [package]
 
 name = "time"
-version = "0.1.39"
+version = "0.1.40"
 authors = ["The Rust Project Developers"]
 license = "MIT/Apache-2.0"
 homepage = "https://github.com/rust-lang/time"
@@ -26,5 +26,5 @@ redox_syscall = "0.1"
 winapi = { version = "0.3.0", features = ["std", "minwinbase", "minwindef", "ntdef", "profileapi", "sysinfoapi", "timezoneapi"] }
 
 [dev-dependencies]
-log = "0.3"
+log = "0.4"
 winapi = { version = "0.3.0", features = ["std", "processthreadsapi", "winbase"] }

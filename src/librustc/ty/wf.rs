@@ -9,7 +9,7 @@
 // except according to those terms.
 
 use hir::def_id::DefId;
-use middle::const_val::ConstVal;
+use mir::interpret::ConstValue;
 use infer::InferCtxt;
 use ty::subst::Substs;
 use traits;
@@ -216,18 +216,15 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
     /// into `self.out`.
     fn compute_const(&mut self, constant: &'tcx ty::Const<'tcx>) {
         self.require_sized(constant.ty, traits::ConstSized);
-        match constant.val {
-            ConstVal::Value(_) => {}
-            ConstVal::Unevaluated(def_id, substs) => {
-                let obligations = self.nominal_obligations(def_id, substs);
-                self.out.extend(obligations);
+        if let ConstValue::Unevaluated(def_id, substs) = constant.val {
+            let obligations = self.nominal_obligations(def_id, substs);
+            self.out.extend(obligations);
 
-                let predicate = ty::Predicate::ConstEvaluatable(def_id, substs);
-                let cause = self.cause(traits::MiscObligation);
-                self.out.push(traits::Obligation::new(cause,
-                                                      self.param_env,
-                                                      predicate));
-            }
+            let predicate = ty::Predicate::ConstEvaluatable(def_id, substs);
+            let cause = self.cause(traits::MiscObligation);
+            self.out.push(traits::Obligation::new(cause,
+                                                    self.param_env,
+                                                    predicate));
         }
     }
 
@@ -363,10 +360,16 @@ impl<'a, 'gcx, 'tcx> WfPredicates<'a, 'gcx, 'tcx> {
                     // types appearing in the fn signature
                 }
 
-                ty::TyAnon(..) => {
+                ty::TyAnon(did, substs) => {
                     // all of the requirements on type parameters
                     // should've been checked by the instantiation
                     // of whatever returned this exact `impl Trait`.
+
+                    // for named existential types we still need to check them
+                    if super::is_impl_trait_defn(self.infcx.tcx, did).is_none() {
+                        let obligations = self.nominal_obligations(did, substs);
+                        self.out.extend(obligations);
+                    }
                 }
 
                 ty::TyDynamic(data, r) => {

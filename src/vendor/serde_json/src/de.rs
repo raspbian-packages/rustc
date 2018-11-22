@@ -10,6 +10,8 @@
 
 use std::io;
 use std::marker::PhantomData;
+use std::result;
+use std::str::FromStr;
 use std::{i32, u64};
 
 use serde::de::{self, Expected, Unexpected};
@@ -20,6 +22,7 @@ use read::{self, Reference};
 
 pub use read::{IoRead, Read, SliceRead, StrRead};
 
+use number::Number;
 #[cfg(feature = "arbitrary_precision")]
 use number::NumberDeserializer;
 
@@ -85,7 +88,7 @@ macro_rules! overflow {
 
 // Not public API. Should be pub(crate).
 #[doc(hidden)]
-pub enum Number {
+pub enum ParserNumber {
     F64(f64),
     U64(u64),
     I64(i64),
@@ -93,27 +96,27 @@ pub enum Number {
     String(String),
 }
 
-impl Number {
+impl ParserNumber {
     fn visit<'de, V>(self, visitor: V) -> Result<V::Value>
     where
         V: de::Visitor<'de>,
     {
         match self {
-            Number::F64(x) => visitor.visit_f64(x),
-            Number::U64(x) => visitor.visit_u64(x),
-            Number::I64(x) => visitor.visit_i64(x),
+            ParserNumber::F64(x) => visitor.visit_f64(x),
+            ParserNumber::U64(x) => visitor.visit_u64(x),
+            ParserNumber::I64(x) => visitor.visit_i64(x),
             #[cfg(feature = "arbitrary_precision")]
-            Number::String(x) => visitor.visit_map(NumberDeserializer { number: x.into() }),
+            ParserNumber::String(x) => visitor.visit_map(NumberDeserializer { number: x.into() }),
         }
     }
 
     fn invalid_type(self, exp: &Expected) -> Error {
         match self {
-            Number::F64(x) => de::Error::invalid_type(Unexpected::Float(x), exp),
-            Number::U64(x) => de::Error::invalid_type(Unexpected::Unsigned(x), exp),
-            Number::I64(x) => de::Error::invalid_type(Unexpected::Signed(x), exp),
+            ParserNumber::F64(x) => de::Error::invalid_type(Unexpected::Float(x), exp),
+            ParserNumber::U64(x) => de::Error::invalid_type(Unexpected::Unsigned(x), exp),
+            ParserNumber::I64(x) => de::Error::invalid_type(Unexpected::Signed(x), exp),
             #[cfg(feature = "arbitrary_precision")]
-            Number::String(_) => de::Error::invalid_type(Unexpected::Other("number"), exp),
+            ParserNumber::String(_) => de::Error::invalid_type(Unexpected::Other("number"), exp),
         }
     }
 }
@@ -271,22 +274,57 @@ impl<'de, R: Read<'de>> Deserializer<R> {
         }
     }
 
+    serde_if_integer128! {
+        fn scan_integer128(&mut self, buf: &mut String) -> Result<()> {
+            match try!(self.next_char_or_null()) {
+                b'0' => {
+                    buf.push('0');
+                    // There can be only one leading '0'.
+                    match try!(self.peek_or_null()) {
+                        b'0'...b'9' => {
+                            Err(self.peek_error(ErrorCode::InvalidNumber))
+                        }
+                        _ => Ok(()),
+                    }
+                }
+                c @ b'1'...b'9' => {
+                    buf.push(c as char);
+                    while let c @ b'0'...b'9' = try!(self.peek_or_null()) {
+                        self.eat_char();
+                        buf.push(c as char);
+                    }
+                    Ok(())
+                }
+                _ => {
+                    Err(self.error(ErrorCode::InvalidNumber))
+                }
+            }
+        }
+    }
+
     #[cold]
     fn fix_position(&self, err: Error) -> Error {
         err.fix_position(move |code| self.error(code))
     }
 
     fn parse_ident(&mut self, ident: &[u8]) -> Result<()> {
-        for c in ident {
-            if Some(*c) != try!(self.next_char()) {
-                return Err(self.error(ErrorCode::ExpectedSomeIdent));
+        for expected in ident {
+            match try!(self.next_char()) {
+                None => {
+                    return Err(self.error(ErrorCode::EofWhileParsingValue));
+                }
+                Some(next) => {
+                    if next != *expected {
+                        return Err(self.error(ErrorCode::ExpectedSomeIdent));
+                    }
+                }
             }
         }
 
         Ok(())
     }
 
-    fn parse_integer(&mut self, positive: bool) -> Result<Number> {
+    fn parse_integer(&mut self, positive: bool) -> Result<ParserNumber> {
         match try!(self.next_char_or_null()) {
             b'0' => {
                 // There can be only one leading '0'.
@@ -308,11 +346,13 @@ impl<'de, R: Read<'de>> Deserializer<R> {
                             // number as a `u64` until we grow too large. At that point, switch to
                             // parsing the value as a `f64`.
                             if overflow!(res * 10 + digit, u64::max_value()) {
-                                return Ok(Number::F64(try!(self.parse_long_integer(
-                                    positive,
-                                    res,
-                                    1, // res * 10^1
-                                ))));
+                                return Ok(ParserNumber::F64(try!(
+                                    self.parse_long_integer(
+                                        positive,
+                                        res,
+                                        1, // res * 10^1
+                                    )
+                                )));
                             }
 
                             res = res * 10 + digit;
@@ -354,21 +394,21 @@ impl<'de, R: Read<'de>> Deserializer<R> {
         }
     }
 
-    fn parse_number(&mut self, positive: bool, significand: u64) -> Result<Number> {
+    fn parse_number(&mut self, positive: bool, significand: u64) -> Result<ParserNumber> {
         Ok(match try!(self.peek_or_null()) {
-            b'.' => Number::F64(try!(self.parse_decimal(positive, significand, 0))),
-            b'e' | b'E' => Number::F64(try!(self.parse_exponent(positive, significand, 0))),
+            b'.' => ParserNumber::F64(try!(self.parse_decimal(positive, significand, 0))),
+            b'e' | b'E' => ParserNumber::F64(try!(self.parse_exponent(positive, significand, 0))),
             _ => {
                 if positive {
-                    Number::U64(significand)
+                    ParserNumber::U64(significand)
                 } else {
                     let neg = (significand as i64).wrapping_neg();
 
                     // Convert into a float if we underflow.
                     if neg > 0 {
-                        Number::F64(-(significand as f64))
+                        ParserNumber::F64(-(significand as f64))
                     } else {
-                        Number::I64(neg)
+                        ParserNumber::I64(neg)
                     }
                 }
             }
@@ -481,9 +521,7 @@ impl<'de, R: Read<'de>> Deserializer<R> {
         Ok(if positive { 0.0 } else { -0.0 })
     }
 
-    // Not public API. Should be pub(crate).
-    #[doc(hidden)]
-    pub fn parse_any_signed_number(&mut self) -> Result<Number> {
+    fn parse_any_signed_number(&mut self) -> Result<ParserNumber> {
         let peek = match try!(self.peek()) {
             Some(b) => b,
             None => {
@@ -517,18 +555,18 @@ impl<'de, R: Read<'de>> Deserializer<R> {
     }
 
     #[cfg(not(feature = "arbitrary_precision"))]
-    fn parse_any_number(&mut self, positive: bool) -> Result<Number> {
+    fn parse_any_number(&mut self, positive: bool) -> Result<ParserNumber> {
         self.parse_integer(positive)
     }
 
     #[cfg(feature = "arbitrary_precision")]
-    fn parse_any_number(&mut self, positive: bool) -> Result<Number> {
+    fn parse_any_number(&mut self, positive: bool) -> Result<ParserNumber> {
         let mut buf = String::with_capacity(16);
         if !positive {
             buf.push('-');
         }
         self.scan_integer(&mut buf)?;
-        Ok(Number::String(buf))
+        Ok(ParserNumber::String(buf))
     }
 
     #[cfg(feature = "arbitrary_precision")]
@@ -910,6 +948,16 @@ impl<'de, R: Read<'de>> Deserializer<R> {
     }
 }
 
+impl FromStr for Number {
+    type Err = Error;
+
+    fn from_str(s: &str) -> result::Result<Self, Self::Err> {
+        Deserializer::from_str(s)
+            .parse_any_signed_number()
+            .map(Into::into)
+    }
+}
+
 #[cfg_attr(rustfmt, rustfmt_skip)]
 static POW10: [f64; 309] =
     [1e000, 1e001, 1e002, 1e003, 1e004, 1e005, 1e006, 1e007, 1e008, 1e009,
@@ -1086,6 +1134,70 @@ impl<'de, 'a, R: Read<'de>> de::Deserializer<'de> for &'a mut Deserializer<R> {
     deserialize_prim_number!(deserialize_u64);
     deserialize_prim_number!(deserialize_f32);
     deserialize_prim_number!(deserialize_f64);
+
+    serde_if_integer128! {
+        fn deserialize_i128<V>(self, visitor: V) -> Result<V::Value>
+        where
+            V: de::Visitor<'de>,
+        {
+            let mut buf = String::new();
+
+            match try!(self.parse_whitespace()) {
+                Some(b'-') => {
+                    self.eat_char();
+                    buf.push('-');
+                }
+                Some(_) => {}
+                None => {
+                    return Err(self.peek_error(ErrorCode::EofWhileParsingValue));
+                }
+            };
+
+            try!(self.scan_integer128(&mut buf));
+
+            let value = match buf.parse() {
+                Ok(int) => visitor.visit_i128(int),
+                Err(_) => {
+                    return Err(self.error(ErrorCode::NumberOutOfRange));
+                }
+            };
+
+            match value {
+                Ok(value) => Ok(value),
+                Err(err) => Err(self.fix_position(err)),
+            }
+        }
+
+        fn deserialize_u128<V>(self, visitor: V) -> Result<V::Value>
+        where
+            V: de::Visitor<'de>,
+        {
+            match try!(self.parse_whitespace()) {
+                Some(b'-') => {
+                    return Err(self.peek_error(ErrorCode::NumberOutOfRange));
+                }
+                Some(_) => {}
+                None => {
+                    return Err(self.peek_error(ErrorCode::EofWhileParsingValue));
+                }
+            }
+
+            let mut buf = String::new();
+            try!(self.scan_integer128(&mut buf));
+
+            let value = match buf.parse() {
+                Ok(int) => visitor.visit_u128(int),
+                Err(_) => {
+                    return Err(self.error(ErrorCode::NumberOutOfRange));
+                }
+            };
+
+            match value {
+                Ok(value) => Ok(value),
+                Err(err) => Err(self.fix_position(err)),
+            }
+        }
+    }
 
     fn deserialize_char<V>(self, visitor: V) -> Result<V::Value>
     where
@@ -1788,6 +1900,11 @@ where
     deserialize_integer_key!(deserialize_u16 => visit_u16);
     deserialize_integer_key!(deserialize_u32 => visit_u32);
     deserialize_integer_key!(deserialize_u64 => visit_u64);
+
+    serde_if_integer128! {
+        deserialize_integer_key!(deserialize_i128 => visit_i128);
+        deserialize_integer_key!(deserialize_u128 => visit_u128);
+    }
 
     #[inline]
     fn deserialize_option<V>(self, visitor: V) -> Result<V::Value>

@@ -20,7 +20,7 @@ tests, as shown in Listing 12-20:
 
 ```rust
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
 
     #[test]
@@ -103,7 +103,7 @@ function to lowercase the query and the line before comparing them</span>
 
 First, we lowercase the `query` string and store it in a shadowed variable with
 the same name. Calling `to_lowercase` on the query is necessary so no matter
-whether the user’s query is `"rust"`, `"RUST"`, `"Rust:"`, or `"rUsT"`, we’ll
+whether the user’s query is `"rust"`, `"RUST"`, `"Rust"`, or `"rUsT"`, we’ll
 treat the query as if it were `"rust"` and be insensitive to the case.
 
 Note that `query` is now a `String` rather than a string slice, because calling
@@ -123,8 +123,8 @@ Let’s see if this implementation passes the tests:
 
 ```text
 running 2 tests
-test test::case_insensitive ... ok
-test test::case_sensitive ... ok
+test tests::case_insensitive ... ok
+test tests::case_sensitive ... ok
 
 test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 ```

@@ -2,7 +2,7 @@
 
 name = "url"
 # When updating version, also modify html_root_url in the lib.rs
-version = "1.7.0"
+version = "1.7.1"
 authors = ["The rust-url developers"]
 
 description = "URL library for Rust, based on the WHATWG URL Standard"
@@ -31,9 +31,11 @@ harness = false
 test = false
 
 [dev-dependencies]
-rustc-test = "0.2"
+rustc-test = "0.3"
 rustc-serialize = "0.3"
 serde_json = ">=0.6.1, <0.9"
+
+bencher = "0.1"
 
 [features]
 query_encoding = ["encoding"]
@@ -47,6 +49,10 @@ matches = "0.1"
 percent-encoding = { version = "1.0.0", path = "./percent_encoding" }
 rustc-serialize = {version = "0.3", optional = true}
 serde = {version = ">=0.6.1, <0.9", optional = true}
+
+[[bench]]
+name = "parse_url"
+harness = false
 
 [package.metadata.docs.rs]
 features = ["query_encoding"]

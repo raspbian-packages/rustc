@@ -419,10 +419,10 @@ impl<'a, 'b> App<'a, 'b> {
     ///            Does awesome things\n\
     ///            (C) me@mail.com\n\n\
     ///
-    ///            USAGE: myapp <opts> <comamnd>\n\n\
+    ///            USAGE: myapp <opts> <command>\n\n\
     ///
     ///            Options:\n\
-    ///            -h, --helpe      Dispay this message\n\
+    ///            -h, --help       Display this message\n\
     ///            -V, --version    Display version info\n\
     ///            -s <stuff>       Do something with stuff\n\
     ///            -v               Be verbose\n\n\
@@ -560,7 +560,7 @@ impl<'a, 'b> App<'a, 'b> {
     ///     .template("{bin} ({version}) - {usage}")
     /// # ;
     /// ```
-    /// **NOTE:**The template system is, on purpose, very simple. Therefore the tags have to writen
+    /// **NOTE:**The template system is, on purpose, very simple. Therefore the tags have to written
     /// in the lowercase and without spacing.
     /// [`App::about`]: ./struct.App.html#method.about
     /// [`App::after_help`]: ./struct.App.html#method.after_help
@@ -704,7 +704,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// Sets the terminal width at which to wrap help messages. Defaults to `120`. Using `0` will
     /// ignore terminal widths and use source formatting.
     ///
-    /// `clap` automatically tries to determine the terminal width on Unix, Linux, OSX and Windows
+    /// `clap` automatically tries to determine the terminal width on Unix, Linux, macOS and Windows
     /// if the `wrap_help` cargo "feature" has been used while compiling. If the terminal width
     /// cannot be determined, `clap` defaults to `120`.
     ///
@@ -714,7 +714,7 @@ impl<'a, 'b> App<'a, 'b> {
     ///
     /// # Platform Specific
     ///
-    /// Only Unix, Linux, OSX and Windows support automatic determination of terminal width.
+    /// Only Unix, Linux, macOS and Windows support automatic determination of terminal width.
     /// Even on those platforms, this setting is useful if for any reason the terminal width
     /// cannot be determined.
     ///
@@ -734,7 +734,7 @@ impl<'a, 'b> App<'a, 'b> {
     /// Sets the max terminal width at which to wrap help messages. Using `0` will ignore terminal
     /// widths and use source formatting.
     ///
-    /// `clap` automatically tries to determine the terminal width on Unix, Linux, OSX and Windows
+    /// `clap` automatically tries to determine the terminal width on Unix, Linux, macOS and Windows
     /// if the `wrap_help` cargo "feature" has been used while compiling, but one might want to
     /// limit the size (e.g. when the terminal is running fullscreen).
     ///
@@ -744,7 +744,7 @@ impl<'a, 'b> App<'a, 'b> {
     ///
     /// # Platform Specific
     ///
-    /// Only Unix, Linux, OSX and Windows support automatic determination of terminal width.
+    /// Only Unix, Linux, macOS and Windows support automatic determination of terminal width.
     ///
     /// # Examples
     ///
@@ -1671,6 +1671,7 @@ impl<'a> From<&'a Yaml> for App<'a, 'a> {
         yaml_str!(a, yaml, author);
         yaml_str!(a, yaml, bin_name);
         yaml_str!(a, yaml, about);
+        yaml_str!(a, yaml, long_about);
         yaml_str!(a, yaml, before_help);
         yaml_str!(a, yaml, after_help);
         yaml_str!(a, yaml, template);
@@ -1788,7 +1789,7 @@ impl<'a, 'b> Clone for App<'a, 'b> {
 
 impl<'n, 'e> AnyArg<'n, 'e> for App<'n, 'e> {
     fn name(&self) -> &'n str {
-        unreachable!("App struct does not support AnyArg::name, this is a bug!")
+        ""
     }
     fn overrides(&self) -> Option<&[&'e str]> { None }
     fn requires(&self) -> Option<&[(Option<&'e str>, &'n str)]> { None }

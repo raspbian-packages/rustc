@@ -16,12 +16,13 @@ use rustc_data_structures::obligation_forest::{Error, ForestObligation, Obligati
 use rustc_data_structures::obligation_forest::{ObligationProcessor, ProcessResult};
 use std::marker::PhantomData;
 use hir::def_id::DefId;
-use middle::const_val::{ConstEvalErr, ErrKind};
+use mir::interpret::ConstEvalErr;
+use mir::interpret::EvalErrorKind;
 
 use super::CodeAmbiguity;
 use super::CodeProjectionError;
 use super::CodeSelectionError;
-use super::engine::TraitEngine;
+use super::engine::{TraitEngine, TraitEngineExt};
 use super::{FulfillmentError, FulfillmentErrorCode};
 use super::{ObligationCause, PredicateObligation, Obligation};
 use super::project;
@@ -86,18 +87,7 @@ impl<'a, 'gcx, 'tcx> FulfillmentContext<'tcx> {
         }
     }
 
-    pub fn register_predicate_obligations<I>(&mut self,
-                                             infcx: &InferCtxt<'a, 'gcx, 'tcx>,
-                                             obligations: I)
-        where I: IntoIterator<Item = PredicateObligation<'tcx>>
-    {
-        for obligation in obligations {
-            self.register_predicate_obligation(infcx, obligation);
-        }
-    }
-
-    /// Attempts to select obligations using `selcx`. If `only_new_obligations` is true, then it
-    /// only attempts to select obligations that haven't been seen before.
+    /// Attempts to select obligations using `selcx`.
     fn select(&mut self, selcx: &mut SelectionContext<'a, 'gcx, 'tcx>)
               -> Result<(),Vec<FulfillmentError<'tcx>>> {
         debug!("select(obligation-forest-size={})", self.predicates.len());
@@ -511,8 +501,9 @@ impl<'a, 'b, 'gcx, 'tcx> ObligationProcessor for FulfillProcessor<'a, 'b, 'gcx, 
                                     ProcessResult::Error(
                                         CodeSelectionError(ConstEvalFailure(ConstEvalErr {
                                             span: obligation.cause.span,
-                                            kind: ErrKind::CouldNotResolve.into(),
-                                        }))
+                                            error: EvalErrorKind::TooGeneric.into(),
+                                            stacktrace: vec![],
+                                        }.into()))
                                     )
                                 }
                             },

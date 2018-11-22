@@ -10,15 +10,14 @@
 
 use rustc::middle::allocator::AllocatorKind;
 use rustc_errors;
-use rustc_target::spec::abi::Abi;
 use syntax::{
     ast::{
-        self, Arg, Attribute, Constness, Crate, Expr, Generics, Ident, Item, ItemKind,
+        self, Arg, Attribute, Crate, Expr, FnHeader, Generics, Ident, Item, ItemKind,
         LitKind, Mac, Mod, Mutability, StrStyle, Ty, TyKind, Unsafety, VisibilityKind,
     },
     attr,
     codemap::{
-        dummy_spanned, respan, ExpnInfo, MacroAttribute, NameAndSpan,
+        respan, ExpnInfo, MacroAttribute,
     },
     ext::{
         base::{ExtCtxt, Resolver},
@@ -38,7 +37,7 @@ use {AllocatorMethod, AllocatorTy, ALLOCATOR_METHODS};
 
 pub fn modify(
     sess: &ParseSess,
-    resolver: &mut Resolver,
+    resolver: &mut dyn Resolver,
     krate: Crate,
     crate_name: String,
     handler: &rustc_errors::Handler,
@@ -57,7 +56,7 @@ struct ExpandAllocatorDirectives<'a> {
     found: bool,
     handler: &'a rustc_errors::Handler,
     sess: &'a ParseSess,
-    resolver: &'a mut Resolver,
+    resolver: &'a mut dyn Resolver,
     crate_name: Option<String>,
 
     // For now, we disallow `global_allocator` in submodules because hygiene is hard. Keep track of
@@ -100,13 +99,12 @@ impl<'a> Folder for ExpandAllocatorDirectives<'a> {
         let mark = Mark::fresh(Mark::root());
         mark.set_expn_info(ExpnInfo {
             call_site: item.span, // use the call site of the static
-            callee: NameAndSpan {
-                format: MacroAttribute(Symbol::intern(name)),
-                span: None,
-                allow_internal_unstable: true,
-                allow_internal_unsafe: false,
-                edition: hygiene::default_edition(),
-            },
+            def_site: None,
+            format: MacroAttribute(Symbol::intern(name)),
+            allow_internal_unstable: true,
+            allow_internal_unsafe: false,
+            local_inner_macros: false,
+            edition: hygiene::default_edition(),
         });
 
         // Tie the span to the macro expansion info we just created
@@ -203,9 +201,10 @@ impl<'a> AllocFnFactory<'a> {
         let (output_ty, output_expr) = self.ret_ty(&method.output, result);
         let kind = ItemKind::Fn(
             self.cx.fn_decl(abi_args, ast::FunctionRetTy::Ty(output_ty)),
-            Unsafety::Unsafe,
-            dummy_spanned(Constness::NotConst),
-            Abi::Rust,
+            FnHeader {
+                unsafety: Unsafety::Unsafe,
+                ..FnHeader::default()
+            },
             Generics::default(),
             self.cx.block_expr(output_expr),
         );
@@ -257,7 +256,7 @@ impl<'a> AllocFnFactory<'a> {
         &self,
         ty: &AllocatorTy,
         args: &mut Vec<Arg>,
-        ident: &mut FnMut() -> Ident,
+        ident: &mut dyn FnMut() -> Ident,
     ) -> P<Expr> {
         match *ty {
             AllocatorTy::Layout => {

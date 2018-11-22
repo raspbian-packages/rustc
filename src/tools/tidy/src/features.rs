@@ -257,7 +257,7 @@ pub fn collect_lang_features(base_src_path: &Path, bad: &mut bool) -> Features {
                 None
             } else {
                 next_feature_is_rustc_internal = false;
-                let s = issue_str.split("(").nth(1).unwrap().split(")").nth(0).unwrap();
+                let s = issue_str.split('(').nth(1).unwrap().split(')').nth(0).unwrap();
                 Some(s.parse().unwrap())
             };
             Some((name.to_owned(),
@@ -334,7 +334,7 @@ fn get_and_check_lib_features(base_src_path: &Path,
 }
 
 fn map_lib_features(base_src_path: &Path,
-                    mf: &mut FnMut(Result<(&str, Feature), &str>, &Path, usize)) {
+                    mf: &mut dyn FnMut(Result<(&str, Feature), &str>, &Path, usize)) {
     let mut contents = String::new();
     super::walk(base_src_path,
                 &mut |path| super::filter_dirs(path) || path.ends_with("src/test"),

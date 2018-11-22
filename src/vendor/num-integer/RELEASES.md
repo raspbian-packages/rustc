@@ -1,3 +1,31 @@
+# Release 0.1.39
+
+- [The new `Roots` trait provides `sqrt`, `cbrt`, and `nth_root` methods][9],
+  calculating an `Integer`'s principal roots rounded toward zero.
+
+**Contributors**: @cuviper
+
+[9]: https://github.com/rust-num/num-integer/pull/9
+
+# Release 0.1.38
+
+- [Support for 128-bit integers is now automatically detected and enabled.][8]
+  Setting the `i128` crate feature now causes the build script to panic if such
+  support is not detected.
+
+**Contributors**: @cuviper
+
+[8]: https://github.com/rust-num/num-integer/pull/8
+
+# Release 0.1.37
+
+- [`Integer` is now implemented for `i128` and `u128`][7] starting with Rust
+  1.26, enabled by the new `i128` crate feature.
+
+**Contributors**: @cuviper
+
+[7]: https://github.com/rust-num/num-integer/pull/7
+
 # Release 0.1.36
 
 - [num-integer now has its own source repository][num-356] at [rust-num/num-integer][home].

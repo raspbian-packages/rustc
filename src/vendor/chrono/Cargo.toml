@@ -12,8 +12,8 @@
 
 [package]
 name = "chrono"
-version = "0.4.1"
-authors = ["Kang Seonghoon <public+rust@mearie.org>"]
+version = "0.4.4"
+authors = ["Kang Seonghoon <public+rust@mearie.org>", "Brandon W Maister <quodlibetor@gmail.com>"]
 description = "Date and time library for Rust"
 homepage = "https://github.com/chronotope/chrono"
 documentation = "https://docs.rs/chrono/"
@@ -45,6 +45,7 @@ optional = true
 
 [dependencies.time]
 version = "^0.1.36"
+optional = true
 [dev-dependencies.bincode]
 version = "0.8.0"
 
@@ -57,6 +58,10 @@ version = "1"
 
 [dev-dependencies.serde_json]
 version = "1"
+
+[features]
+clock = ["time"]
+default = ["clock"]
 [badges.appveyor]
 repository = "chronotope/chrono"
 

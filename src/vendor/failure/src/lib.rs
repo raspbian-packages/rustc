@@ -1,4 +1,5 @@
-//! An experimental new error-handling library.
+//! An experimental new error-handling library. Guide-style introduction
+//! is available [here](https://boats.gitlab.io/failure/).
 //!
 //! The primary items exported by this library are:
 //!
@@ -11,13 +12,30 @@
 //! deal with the `Error` type. There are exceptions to this rule, though, in
 //! both directions, and users should do whatever seems most appropriate to
 //! their situation.
+//!
+//! ## Backtraces
+//!
+//! Backtraces are disabled by default. To turn backtraces on, enable
+//! the `backtrace` Cargo feature and set the `RUST_BACKTRACE` environment
+//! variable to a non-zero value (this also enables backtraces for panics).
+//! Use the `RUST_FAILURE_BACKTRACE` variable to enable or disable backtraces
+//! for `failure` specifically.
 #![cfg_attr(not(feature = "std"), no_std)]
 #![deny(missing_docs)]
+#![deny(warnings)]
+#![cfg_attr(feature = "small-error", feature(extern_types, allocator_api))]
 
 macro_rules! with_std { ($($i:item)*) => ($(#[cfg(feature = "std")]$i)*) }
 macro_rules! without_std { ($($i:item)*) => ($(#[cfg(not(feature = "std"))]$i)*) }
 
+// Re-export libcore using an alias so that the macros can work without
+// requiring `extern crate core` downstream.
+#[doc(hidden)]
+pub extern crate core as _core;
+
 mod backtrace;
+#[cfg(feature = "std")]
+mod box_std;
 mod compat;
 mod context;
 mod result_ext;
@@ -30,12 +48,12 @@ pub use compat::Compat;
 pub use context::Context;
 pub use result_ext::ResultExt;
 
-#[cfg(feature = "derive")]
+#[cfg(feature = "failure_derive")]
 #[allow(unused_imports)]
 #[macro_use]
 extern crate failure_derive;
 
-#[cfg(feature = "derive")]
+#[cfg(feature = "failure_derive")]
 #[doc(hidden)]
 pub use failure_derive::*;
 
@@ -51,11 +69,13 @@ with_std! {
 
     pub use error::Error;
 
+    /// A common result with an `Error`.
+    pub type Fallible<T> = Result<T, Error>;
+
     mod macros;
     mod error_message;
     pub use error_message::err_msg;
 }
-
 
 /// The `Fail` trait.
 ///
@@ -120,7 +140,8 @@ pub trait Fail: Display + Debug + Send + Sync + 'static {
     /// `Send`/`Sync`/`'static`. In practice, this means it can take a `String`
     /// or a string literal, or another failure, or some other custom context-carrying
     /// type.
-    fn context<D>(self, context: D) -> Context<D> where
+    fn context<D>(self, context: D) -> Context<D>
+    where
         D: Display + Send + Sync + 'static,
         Self: Sized,
     {
@@ -132,24 +153,26 @@ pub trait Fail: Display + Debug + Send + Sync + 'static {
     ///
     /// This allows failures  to be compatible with older crates that
     /// expect types that implement the `Error` trait from `std::error`.
-    fn compat(self) -> Compat<Self> where
+    fn compat(self) -> Compat<Self>
+    where
         Self: Sized,
     {
         Compat { error: self }
     }
 
-    /// Returns a iterator over the causes of this `Fail` with itself
-    /// as the first item and the `root_cause` as the final item.
-    fn causes(&self) -> Causes where Self: Sized {
+    #[doc(hidden)]
+    #[deprecated(since = "0.1.2", note = "please use the 'iter_causes()' method instead")]
+    fn causes(&self) -> Causes
+    where
+        Self: Sized,
+    {
         Causes { fail: Some(self) }
     }
 
-    /// Returns the "root cause" of this `Fail` - the last value in the
-    /// cause chain which does not return an underlying `cause`.
-    ///
-    /// If this type does not have a cause, `self` is returned, because
-    /// it is its own root cause.
-    fn root_cause(&self) -> &Fail where
+    #[doc(hidden)]
+    #[deprecated(since = "0.1.2", note = "please use the 'find_root_cause()' method instead")]
+    fn root_cause(&self) -> &Fail
+    where
         Self: Sized,
     {
         find_root_cause(self)
@@ -185,18 +208,44 @@ impl Fail {
         }
     }
 
-
     /// Returns the "root cause" of this `Fail` - the last value in the
     /// cause chain which does not return an underlying `cause`.
     ///
     /// If this type does not have a cause, `self` is returned, because
     /// it is its own root cause.
+    ///
+    /// This is equivalent to iterating over `iter_causes()` and taking
+    /// the last item.
+    pub fn find_root_cause(&self) -> &Fail {
+        find_root_cause(self)
+    }
+
+    /// Returns a iterator over the causes of this `Fail` with the cause
+    /// of this fail as the first item and the `root_cause` as the final item.
+    ///
+    /// Use `iter_chain` to also include the fail itself.
+    pub fn iter_causes(&self) -> Causes {
+        Causes { fail: self.cause() }
+    }
+
+    /// Returns a iterator over all fails up the chain from the current
+    /// as the first item up to the `root_cause` as the final item.
+    ///
+    /// This means that the chain also includes the fail itself which
+    /// means that it does *not* start with `cause`.  To skip the outermost
+    /// fail use `iter_causes` instead.
+    pub fn iter_chain(&self) -> Causes {
+        Causes { fail: Some(self) }
+    }
+
+    /// Deprecated alias to `find_root_cause`.
+    #[deprecated(since = "0.1.2", note = "please use the 'find_root_cause()' method instead")]
     pub fn root_cause(&self) -> &Fail {
         find_root_cause(self)
     }
 
-    /// Returns a iterator over the causes of this `Fail` with itself
-    /// as the first item and the `root_cause` as the final item.
+    /// Deprecated alias to `iter_causes`.
+    #[deprecated(since = "0.1.2", note = "please use the 'iter_chain()' method instead")]
     pub fn causes(&self) -> Causes {
         Causes { fail: Some(self) }
     }
@@ -204,6 +253,17 @@ impl Fail {
 
 #[cfg(feature = "std")]
 impl<E: StdError + Send + Sync + 'static> Fail for E {}
+
+#[cfg(feature = "std")]
+impl Fail for Box<Fail> {
+    fn cause(&self) -> Option<&Fail> {
+        (**self).cause()
+    }
+
+    fn backtrace(&self) -> Option<&Backtrace> {
+        (**self).backtrace()
+    }
+}
 
 /// A iterator over the causes of a `Fail`
 pub struct Causes<'f> {

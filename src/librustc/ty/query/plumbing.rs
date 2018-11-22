@@ -631,9 +631,19 @@ macro_rules! handle_cycle_error {
 }
 
 macro_rules! define_queries {
+    (<$tcx:tt> $($category:tt {
+        $($(#[$attr:meta])* [$($modifiers:tt)*] fn $name:ident: $node:ident($K:ty) -> $V:ty,)*
+    },)*) => {
+        define_queries_inner! { <$tcx>
+            $($( $(#[$attr])* category<$category> [$($modifiers)*] fn $name: $node($K) -> $V,)*)*
+        }
+    }
+}
+
+macro_rules! define_queries_inner {
     (<$tcx:tt>
-     $($(#[$attr:meta])*
-       [$($modifiers:tt)*] fn $name:ident: $node:ident($K:ty) -> $V:ty,)*) => {
+     $($(#[$attr:meta])* category<$category:tt>
+        [$($modifiers:tt)*] fn $name:ident: $node:ident($K:ty) -> $V:ty,)*) => {
 
         use std::mem;
         #[cfg(parallel_queries)]
@@ -708,7 +718,7 @@ macro_rules! define_queries {
 
             // FIXME(eddyb) Get more valid Span's on queries.
             pub fn default_span(&self, tcx: TyCtxt<'_, $tcx, '_>, span: Span) -> Span {
-                if span != DUMMY_SP {
+                if !span.is_dummy() {
                     return span;
                 }
                 // The def_span query is used to calculate default_span,
@@ -1026,8 +1036,16 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::ConstValueToAllocation |
         DepKind::NormalizeProjectionTy |
         DepKind::NormalizeTyAfterErasingRegions |
+        DepKind::ImpliedOutlivesBounds |
         DepKind::DropckOutlives |
         DepKind::EvaluateObligation |
+        DepKind::TypeOpEq |
+        DepKind::TypeOpSubtype |
+        DepKind::TypeOpProvePredicate |
+        DepKind::TypeOpNormalizeTy |
+        DepKind::TypeOpNormalizePredicate |
+        DepKind::TypeOpNormalizePolyFnSig |
+        DepKind::TypeOpNormalizeFnSig |
         DepKind::SubstituteNormalizeAndTestPredicates |
         DepKind::InstanceDefSizeEstimate |
         DepKind::ProgramClausesForEnv |
@@ -1067,6 +1085,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::TypeOfItem => { force!(type_of, def_id!()); }
         DepKind::GenericsOfItem => { force!(generics_of, def_id!()); }
         DepKind::PredicatesOfItem => { force!(predicates_of, def_id!()); }
+        DepKind::PredicatesDefinedOnItem => { force!(predicates_defined_on, def_id!()); }
         DepKind::ExplicitPredicatesOfItem => { force!(explicit_predicates_of, def_id!()); }
         DepKind::InferredOutlivesOf => { force!(inferred_outlives_of, def_id!()); }
         DepKind::InferredOutlivesCrate => { force!(inferred_outlives_crate, LOCAL_CRATE); }
@@ -1200,7 +1219,6 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::Features => { force!(features_query, LOCAL_CRATE); }
 
         DepKind::ProgramClausesFor => { force!(program_clauses_for, def_id!()); }
-        DepKind::WasmCustomSections => { force!(wasm_custom_sections, krate!()); }
         DepKind::WasmImportModuleMap => { force!(wasm_import_module_map, krate!()); }
         DepKind::ForeignModules => { force!(foreign_modules, krate!()); }
 

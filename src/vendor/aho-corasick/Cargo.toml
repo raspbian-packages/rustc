@@ -12,7 +12,7 @@
 
 [package]
 name = "aho-corasick"
-version = "0.6.4"
+version = "0.6.6"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 exclude = ["benches/sherlock.txt"]
 description = "Fast multiple substring searching with finite state machines."
@@ -35,6 +35,7 @@ name = "aho_corasick"
 
 [[bin]]
 name = "aho-corasick-dot"
+path = "src/main.rs"
 test = false
 bench = false
 doc = false
@@ -47,22 +48,22 @@ bench = true
 [dependencies.memchr]
 version = "2"
 [dev-dependencies.csv]
-version = "0.15"
+version = "1"
 
 [dev-dependencies.docopt]
-version = "0.7"
+version = "1"
 
 [dev-dependencies.memmap]
-version = "0.5"
+version = "0.6"
 
 [dev-dependencies.quickcheck]
-version = "0.5"
+version = "0.6"
 default-features = false
 
-[dev-dependencies.rand]
-version = "0.3"
+[dev-dependencies.serde]
+version = "1"
 
-[dev-dependencies.rustc-serialize]
-version = "0.3"
+[dev-dependencies.serde_derive]
+version = "1"
 [badges.travis-ci]
 repository = "BurntSushi/aho-corasick"

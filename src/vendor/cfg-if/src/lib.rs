@@ -1,10 +1,10 @@
-//! A macro for defining #[cfg] if-else statements.
+//! A macro for defining `#[cfg]` if-else statements.
 //!
 //! The macro provided by this crate, `cfg_if`, is similar to the `if/elif` C
 //! preprocessor macro by allowing definition of a cascade of `#[cfg]` cases,
 //! emitting the implementation which matches first.
 //!
-//! This allows you to conveniently provide a long list #[cfg]'d blocks of code
+//! This allows you to conveniently provide a long list `#[cfg]`'d blocks of code
 //! without having to rewrite each clause multiple times.
 //!
 //! # Example
@@ -28,7 +28,7 @@
 
 #![no_std]
 
-#![doc(html_root_url = "http://alexcrichton.com/cfg-if")]
+#![doc(html_root_url = "https://docs.rs/cfg-if")]
 #![deny(missing_docs)]
 #![cfg_attr(test, deny(warnings))]
 

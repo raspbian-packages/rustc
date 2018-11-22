@@ -215,10 +215,39 @@
 //!     assert_eq!(implemented_default, (Flags::A | Flags::C));
 //! }
 //! ```
+//!
+//! # Zero Flags
+//!
+//! Flags with a value equal to zero will have some strange behavior that one should be aware of.
+//!
+//! ```
+//! #[macro_use]
+//! extern crate bitflags;
+//!
+//! bitflags! {
+//!     struct Flags: u32 {
+//!         const NONE = 0b00000000;
+//!         const SOME = 0b00000001;
+//!     }
+//! }
+//!
+//! fn main() {
+//!     let empty = Flags::empty();
+//!     let none = Flags::NONE;
+//!     let some = Flags::SOME;
+//!
+//!     // Zero flags are treated as always present
+//!     assert!(empty.contains(Flags::NONE));
+//!     assert!(none.contains(Flags::NONE));
+//!     assert!(some.contains(Flags::NONE));
+//!
+//!     // Zero flags will be ignored when testing for emptiness
+//!     assert!(none.is_empty());
+//! }
+//! ```
 
 #![no_std]
-
-#![doc(html_root_url = "https://docs.rs/bitflags/1.0.1")]
+#![doc(html_root_url = "https://docs.rs/bitflags/1.0.3")]
 
 #[cfg(test)]
 #[macro_use]
@@ -424,7 +453,11 @@ macro_rules! __impl_bitflags {
                             #[inline]
                             $(? #[$attr $($args)*])*
                             fn $Flag(&self) -> bool {
-                                self.bits & Self::$Flag.bits == Self::$Flag.bits
+                                if Self::$Flag.bits == 0 && self.bits != 0 {
+                                    false
+                                } else {
+                                    self.bits & Self::$Flag.bits == Self::$Flag.bits
+                                }
                             }
                         }
                     )+
@@ -515,7 +548,7 @@ macro_rules! __impl_bitflags {
             #[inline]
             pub fn from_bits(bits: $T) -> $crate::_core::option::Option<$BitFlags> {
                 if (bits & !$BitFlags::all().bits()) == 0 {
-                    $crate::_core::option::Option::Some($BitFlags { bits: bits })
+                    $crate::_core::option::Option::Some($BitFlags { bits })
                 } else {
                     $crate::_core::option::Option::None
                 }
@@ -525,7 +558,7 @@ macro_rules! __impl_bitflags {
             /// that do not correspond to flags.
             #[inline]
             pub fn from_bits_truncate(bits: $T) -> $BitFlags {
-                $BitFlags { bits: bits } & $BitFlags::all()
+                $BitFlags { bits } & $BitFlags::all()
             }
 
             /// Returns `true` if no flags are currently stored.
@@ -743,8 +776,8 @@ pub mod example_generated;
 
 #[cfg(test)]
 mod tests {
-    use std::hash::{Hash, Hasher};
     use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
 
     bitflags! {
         #[doc = "> The first principle is that you must not fool yourself — and"]
@@ -787,7 +820,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bits(){
+    fn test_bits() {
         assert_eq!(Flags::empty().bits(), 0b00000000);
         assert_eq!(Flags::A.bits(), 0b00000001);
         assert_eq!(Flags::ABC.bits(), 0b00000111);
@@ -804,7 +837,10 @@ mod tests {
         assert_eq!(Flags::from_bits(0b11), Some(Flags::A | Flags::B));
         assert_eq!(Flags::from_bits(0b1000), None);
 
-        assert_eq!(AnotherSetOfFlags::from_bits(!0_i8), Some(AnotherSetOfFlags::ANOTHER_FLAG));
+        assert_eq!(
+            AnotherSetOfFlags::from_bits(!0_i8),
+            Some(AnotherSetOfFlags::ANOTHER_FLAG)
+        );
     }
 
     #[test]
@@ -816,11 +852,14 @@ mod tests {
         assert_eq!(Flags::from_bits_truncate(0b1000), Flags::empty());
         assert_eq!(Flags::from_bits_truncate(0b1001), Flags::A);
 
-        assert_eq!(AnotherSetOfFlags::from_bits_truncate(0_i8), AnotherSetOfFlags::empty());
+        assert_eq!(
+            AnotherSetOfFlags::from_bits_truncate(0_i8),
+            AnotherSetOfFlags::empty()
+        );
     }
 
     #[test]
-    fn test_is_empty(){
+    fn test_is_empty() {
         assert!(Flags::empty().is_empty());
         assert!(!Flags::A.is_empty());
         assert!(!Flags::ABC.is_empty());
@@ -879,7 +918,7 @@ mod tests {
     }
 
     #[test]
-    fn test_insert(){
+    fn test_insert() {
         let mut e1 = Flags::A;
         let e2 = Flags::A | Flags::B;
         e1.insert(e2);
@@ -891,7 +930,7 @@ mod tests {
     }
 
     #[test]
-    fn test_remove(){
+    fn test_remove() {
         let mut e1 = Flags::A | Flags::B;
         let e2 = Flags::A | Flags::C;
         e1.remove(e2);
@@ -906,10 +945,10 @@ mod tests {
     fn test_operators() {
         let e1 = Flags::A | Flags::C;
         let e2 = Flags::B | Flags::C;
-        assert_eq!((e1 | e2), Flags::ABC);     // union
-        assert_eq!((e1 & e2), Flags::C);       // intersection
-        assert_eq!((e1 - e2), Flags::A);       // set difference
-        assert_eq!(!e2, Flags::A);             // set complement
+        assert_eq!((e1 | e2), Flags::ABC); // union
+        assert_eq!((e1 & e2), Flags::C); // intersection
+        assert_eq!((e1 - e2), Flags::A); // set difference
+        assert_eq!(!e2, Flags::A); // set complement
         assert_eq!(e1 ^ e2, Flags::A | Flags::B); // toggle
         let mut e3 = e1;
         e3.toggle(e2);
@@ -971,10 +1010,14 @@ mod tests {
     #[test]
     fn test_from_iterator() {
         assert_eq!([].iter().cloned().collect::<Flags>(), Flags::empty());
-        assert_eq!([Flags::A, Flags::B].iter().cloned().collect::<Flags>(),
-                   Flags::A | Flags::B);
-        assert_eq!([Flags::A, Flags::ABC].iter().cloned().collect::<Flags>(),
-                   Flags::ABC);
+        assert_eq!(
+            [Flags::A, Flags::B].iter().cloned().collect::<Flags>(),
+            Flags::A | Flags::B
+        );
+        assert_eq!(
+            [Flags::A, Flags::ABC].iter().cloned().collect::<Flags>(),
+            Flags::ABC
+        );
     }
 
     #[test]
@@ -1066,7 +1109,6 @@ mod tests {
 
         #[test]
         fn test_private() {
-
             let _ = PrivateFlags::Y;
         }
     }
@@ -1145,7 +1187,7 @@ mod tests {
             mod test {
                 // Note: due to `pub (in super)`,
                 // this cannot be accessed directly by the testing code.
-                pub (in super) fn value() -> u8 {
+                pub(super) fn value() -> u8 {
                     super::submodule::Test::FOO.bits()
                 }
             }
@@ -1156,5 +1198,22 @@ mod tests {
         }
 
         assert_eq!(module::value(), 1)
+    }
+
+    #[test]
+    fn test_zero_value_flags() {
+        bitflags! {
+            struct Flags: u32 {
+                const NONE = 0b0;
+                const SOME = 0b1;
+            }
+        }
+
+        assert!(Flags::empty().contains(Flags::NONE));
+        assert!(Flags::SOME.contains(Flags::NONE));
+        assert!(Flags::NONE.is_empty());
+
+        assert_eq!(format!("{:?}", Flags::empty()), "NONE");
+        assert_eq!(format!("{:?}", Flags::SOME), "SOME");
     }
 }

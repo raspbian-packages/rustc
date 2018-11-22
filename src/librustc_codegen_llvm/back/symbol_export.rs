@@ -105,11 +105,11 @@ fn reachable_non_generics_provider<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
                 // Only consider nodes that actually have exported symbols.
                 hir::map::NodeItem(&hir::Item {
-                    node: hir::ItemStatic(..),
+                    node: hir::ItemKind::Static(..),
                     ..
                 }) |
                 hir::map::NodeItem(&hir::Item {
-                    node: hir::ItemFn(..), ..
+                    node: hir::ItemKind::Fn(..), ..
                 }) |
                 hir::map::NodeImplItem(&hir::ImplItem {
                     node: hir::ImplItemKind::Method(..),
@@ -206,9 +206,8 @@ fn exported_symbols_provider_local<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                  })
                                  .collect();
 
-    if let Some(_) = *tcx.sess.entry_fn.borrow() {
-        let symbol_name = "main".to_string();
-        let exported_symbol = ExportedSymbol::NoDefId(SymbolName::new(&symbol_name));
+    if tcx.sess.entry_fn.borrow().is_some() {
+        let exported_symbol = ExportedSymbol::NoDefId(SymbolName::new("main"));
 
         symbols.push((exported_symbol, SymbolExportLevel::C));
     }

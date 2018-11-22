@@ -182,7 +182,7 @@
 
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "https://docs.rs/env_logger/0.5.8")]
+       html_root_url = "https://docs.rs/env_logger/0.5.10")]
 #![cfg_attr(test, deny(warnings))]
 
 // When compiled for the rustc compiler itself we want to make sure that this is
@@ -526,6 +526,52 @@ impl Builder {
     /// Whether or not to write the timestamp in the default format.
     pub fn default_format_timestamp(&mut self, write: bool) -> &mut Self {
         self.format.default_format_timestamp = write;
+        self
+    }
+
+    /// Adds a directive to the filter for a specific module.
+    ///
+    /// # Examples
+    ///
+    /// Only include messages for warning and above for logs in `path::to::module`:
+    ///
+    /// ```
+    /// # extern crate log;
+    /// # extern crate env_logger;
+    /// # fn main() {
+    /// use log::LevelFilter;
+    /// use env_logger::Builder;
+    ///
+    /// let mut builder = Builder::new();
+    ///
+    /// builder.filter_module("path::to::module", LevelFilter::Info);
+    /// # }
+    /// ```
+    pub fn filter_module(&mut self, module: &str, level: LevelFilter) -> &mut Self {
+        self.filter.filter_module(module, level);
+        self
+    }
+
+    /// Adds a directive to the filter for all modules.
+    ///
+    /// # Examples
+    ///
+    /// Only include messages for warning and above for logs in `path::to::module`:
+    ///
+    /// ```
+    /// # extern crate log;
+    /// # extern crate env_logger;
+    /// # fn main() {
+    /// use log::LevelFilter;
+    /// use env_logger::Builder;
+    ///
+    /// let mut builder = Builder::new();
+    ///
+    /// builder.filter_level(LevelFilter::Info);
+    /// # }
+    /// ```
+    pub fn filter_level(&mut self, level: LevelFilter) -> &mut Self {
+        self.filter.filter_level(level);
         self
     }
 

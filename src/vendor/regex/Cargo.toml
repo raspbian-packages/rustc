@@ -12,8 +12,9 @@
 
 [package]
 name = "regex"
-version = "1.0.0"
+version = "1.0.1"
 authors = ["The Rust Project Developers"]
+autotests = false
 description = "An implementation of regular expressions for Rust. This implementation uses\nfinite automata and guarantees linear time matching on all inputs.\n"
 homepage = "https://github.com/rust-lang/regex"
 documentation = "https://docs.rs/regex"

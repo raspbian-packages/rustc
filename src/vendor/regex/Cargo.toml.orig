@@ -1,6 +1,6 @@
 [package]
 name = "regex"
-version = "1.0.0"  #:version
+version = "1.0.1"  #:version
 authors = ["The Rust Project Developers"]
 license = "MIT/Apache-2.0"
 readme = "README.md"
@@ -12,6 +12,7 @@ An implementation of regular expressions for Rust. This implementation uses
 finite automata and guarantees linear time matching on all inputs.
 """
 categories = ["text-processing"]
+autotests = false
 
 [badges]
 travis-ci = { repository = "rust-lang/regex" }

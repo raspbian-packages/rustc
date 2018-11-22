@@ -3,7 +3,7 @@
 [![](https://img.shields.io/crates/v/textwrap.svg)][crates-io]
 [![](https://docs.rs/textwrap/badge.svg)][api-docs]
 [![](https://travis-ci.org/mgeisler/textwrap.svg?branch=master)][travis-ci]
-[![](https://ci.appveyor.com/api/projects/status/yo6iak55nraupjw3/branch/master?svg=true)][appveyor]
+[![](https://ci.appveyor.com/api/projects/status/github/mgeisler/textwrap?branch=master&svg=true)][appveyor]
 
 Textwrap is a small Rust crate for word wrapping text. You can use it
 to format strings for display in commandline applications. The crate
@@ -15,7 +15,7 @@ the [Python textwrap module][py-textwrap].
 Add this to your `Cargo.toml`:
 ```toml
 [dependencies]
-textwrap = "0.9"
+textwrap = "0.10"
 ```
 
 and this to your crate root:
@@ -27,7 +27,7 @@ If you would like to have automatic hyphenation, specify the
 dependency as:
 ```toml
 [dependencies]
-textwrap = { version = "0.9", features = ["hyphenation"] }
+textwrap = { version = "0.10", features = ["hyphenation"] }
 ```
 
 To conveniently wrap text at the current terminal width, enable the
@@ -35,7 +35,7 @@ To conveniently wrap text at the current terminal width, enable the
 
 ```toml
 [dependencies]
-textwrap = { version = "0.9", features = ["term_size"] }
+textwrap = { version = "0.10", features = ["term_size"] }
 ```
 
 ## Documentation
@@ -181,6 +181,18 @@ cost abstractions.
 
 This section lists the largest changes per release.
 
+### Version 0.10.0 — April 28th, 2018
+
+Due to our dependencies bumping their minimum supported version of
+Rust, the minimum version of Rust we test against is now 1.17.0.
+
+Issues closed:
+
+* Fixed [#99][issue-99]: Word broken even though it would fit on line.
+* Fixed [#107][issue-107]: Automatic hyphenation is off by one.
+* Fixed [#122][issue-122]: Take newlines into account when wrapping.
+* Fixed [#129][issue-129]: Panic on string with em-dash.
+
 ### Version 0.9.0 — October 5th, 2017
 
 The dependency on `term_size` is now optional, and by default this
@@ -188,13 +200,13 @@ feature is not enabled. This is a *breaking change* for users of
 `Wrapper::with_termwidth`. Enable the `term_size` feature to restore
 the old functionality.
 
-Added a regression test for case where width is set to usize::MAX.
-Thanks @Fraser999! All public structs now implement `Debug`.
+Added a regression test for the case where `width` is set to
+`usize::MAX`, thanks @Fraser999! All public structs now implement
+`Debug`, thanks @hcpl!
 
 Issues closed:
 
-* Fixed [#101][issue-101]: Remove `term_size` as a (hard required)
-  dependency.
+* Fixed [#101][issue-101]: Make `term_size` an optional dependency.
 
 ### Version 0.8.0 — September 4th, 2017
 
@@ -319,5 +331,9 @@ Contributions will be accepted under the same license.
 [issue-59]: https://github.com/mgeisler/textwrap/issues/59
 [issue-61]: https://github.com/mgeisler/textwrap/issues/61
 [issue-81]: https://github.com/mgeisler/textwrap/issues/81
+[issue-99]: https://github.com/mgeisler/textwrap/issues/99
 [issue-101]: https://github.com/mgeisler/textwrap/issues/101
+[issue-107]: https://github.com/mgeisler/textwrap/issues/107
+[issue-122]: https://github.com/mgeisler/textwrap/issues/122
+[issue-129]: https://github.com/mgeisler/textwrap/issues/129
 [mit]: LICENSE

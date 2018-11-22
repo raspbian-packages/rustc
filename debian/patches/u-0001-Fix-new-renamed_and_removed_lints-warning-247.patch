@@ -13,8 +13,8 @@ I've verified that this now produces no warnings with Rust 1.26.1 and
 
 diff --git a/src/error_chain.rs b/src/error_chain.rs
 index cbd42cd67eaf..0926c8889278 100644
---- a/src/vendor/error-chain/src/error_chain.rs
-+++ b/src/vendor/error-chain/src/error_chain.rs
+--- a/src/vendor/error-chain-0.11.0/src/error_chain.rs
++++ b/src/vendor/error-chain-0.11.0/src/error_chain.rs
 @@ -173,7 +173,7 @@ macro_rules! impl_error_chain_processed {
                  self.0.description()
              }
@@ -35,8 +35,8 @@ index cbd42cd67eaf..0926c8889278 100644
              if let Some(e) = e.downcast_ref::<$error_name>() {
 diff --git a/src/impl_error_chain_kind.rs b/src/impl_error_chain_kind.rs
 index d6c05c8a882b..d5e266389cd6 100644
---- a/src/vendor/error-chain/src/impl_error_chain_kind.rs
-+++ b/src/vendor/error-chain/src/impl_error_chain_kind.rs
+--- a/src/vendor/error-chain-0.11.0/src/impl_error_chain_kind.rs
++++ b/src/vendor/error-chain-0.11.0/src/impl_error_chain_kind.rs
 @@ -264,7 +264,7 @@ macro_rules! impl_error_chain_kind {
              $item:ident: $imode:tt [$(#[$imeta:meta])*] [$( $var:ident: $typ:ty ),*] {$( $funcs:tt )*}
          )*}
@@ -57,8 +57,8 @@ index d6c05c8a882b..d5e266389cd6 100644
              pub fn description(&self) -> &str {
 diff --git a/src/lib.rs b/src/lib.rs
 index d0881fcef1c1..6421194f8ca8 100644
---- a/src/vendor/error-chain/src/lib.rs
-+++ b/src/vendor/error-chain/src/lib.rs
+--- a/src/vendor/error-chain-0.11.0/src/lib.rs
++++ b/src/vendor/error-chain-0.11.0/src/lib.rs
 @@ -1,5 +1,4 @@
  #![deny(missing_docs)]
 -#![allow(unknown_lints)] // to be removed when unused_doc_comments lints is merged

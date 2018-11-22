@@ -18,7 +18,7 @@ use super::{Inspect, Map, Peekable, Scan, Skip, SkipWhile, StepBy, Take, TakeWhi
 use super::{Zip, Sum, Product};
 use super::{ChainState, FromIterator, ZipImpl};
 
-fn _assert_is_object_safe(_: &Iterator<Item=()>) {}
+fn _assert_is_object_safe(_: &dyn Iterator<Item=()>) {}
 
 /// An interface for dealing with iterators.
 ///
@@ -384,7 +384,9 @@ pub trait Iterator {
     ///
     /// In other words, it zips two iterators together, into a single one.
     ///
-    /// If either iterator returns [`None`], [`next`] will return [`None`].
+    /// If either iterator returns [`None`], [`next`] from the zipped iterator
+    /// will return [`None`]. If the first iterator returns [`None`], `zip` will
+    /// short-circuit and `next` will not be called on the second iterator.
     ///
     /// # Examples
     ///
@@ -1057,8 +1059,6 @@ pub trait Iterator {
     /// Basic usage:
     ///
     /// ```
-    /// #![feature(iterator_flatten)]
-    ///
     /// let data = vec![vec![1, 2, 3, 4], vec![5, 6]];
     /// let flattened = data.into_iter().flatten().collect::<Vec<u8>>();
     /// assert_eq!(flattened, &[1, 2, 3, 4, 5, 6]);
@@ -1067,8 +1067,6 @@ pub trait Iterator {
     /// Mapping and then flattening:
     ///
     /// ```
-    /// #![feature(iterator_flatten)]
-    ///
     /// let words = ["alpha", "beta", "gamma"];
     ///
     /// // chars() returns an iterator
@@ -1095,8 +1093,6 @@ pub trait Iterator {
     /// Flattening once only removes one level of nesting:
     ///
     /// ```
-    /// #![feature(iterator_flatten)]
-    ///
     /// let d3 = [[[1, 2], [3, 4]], [[5, 6], [7, 8]]];
     ///
     /// let d2 = d3.iter().flatten().collect::<Vec<_>>();
@@ -1114,7 +1110,7 @@ pub trait Iterator {
     ///
     /// [`flat_map()`]: #method.flat_map
     #[inline]
-    #[unstable(feature = "iterator_flatten", issue = "48213")]
+    #[stable(feature = "iterator_flatten", since = "1.29")]
     fn flatten(self) -> Flatten<Self>
     where Self: Sized, Self::Item: IntoIterator {
         Flatten { inner: flatten_compat(self) }

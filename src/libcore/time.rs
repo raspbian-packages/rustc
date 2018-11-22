@@ -208,7 +208,7 @@ impl Duration {
     #[inline]
     pub const fn as_secs(&self) -> u64 { self.secs }
 
-    /// Returns the fractional part of this `Duration`, in milliseconds.
+    /// Returns the fractional part of this `Duration`, in whole milliseconds.
     ///
     /// This method does **not** return the length of the duration when
     /// represented by milliseconds. The returned number always represents a
@@ -228,7 +228,7 @@ impl Duration {
     #[inline]
     pub const fn subsec_millis(&self) -> u32 { self.nanos / NANOS_PER_MILLI }
 
-    /// Returns the fractional part of this `Duration`, in microseconds.
+    /// Returns the fractional part of this `Duration`, in whole microseconds.
     ///
     /// This method does **not** return the length of the duration when
     /// represented by microseconds. The returned number always represents a
@@ -268,7 +268,7 @@ impl Duration {
     #[inline]
     pub const fn subsec_nanos(&self) -> u32 { self.nanos }
 
-    /// Returns the total number of milliseconds contained by this `Duration`.
+    /// Returns the total number of whole milliseconds contained by this `Duration`.
     ///
     /// # Examples
     ///
@@ -285,7 +285,7 @@ impl Duration {
         self.secs as u128 * MILLIS_PER_SEC as u128 + (self.nanos / NANOS_PER_MILLI) as u128
     }
 
-    /// Returns the total number of microseconds contained by this `Duration`.
+    /// Returns the total number of whole microseconds contained by this `Duration`.
     ///
     /// # Examples
     ///
@@ -524,17 +524,47 @@ impl DivAssign<u32> for Duration {
     }
 }
 
+macro_rules! sum_durations {
+    ($iter:expr) => {{
+        let mut total_secs: u64 = 0;
+        let mut total_nanos: u64 = 0;
+
+        for entry in $iter {
+            total_secs = total_secs
+                .checked_add(entry.secs)
+                .expect("overflow in iter::sum over durations");
+            total_nanos = match total_nanos.checked_add(entry.nanos as u64) {
+                Some(n) => n,
+                None => {
+                    total_secs = total_secs
+                        .checked_add(total_nanos / NANOS_PER_SEC as u64)
+                        .expect("overflow in iter::sum over durations");
+                    (total_nanos % NANOS_PER_SEC as u64) + entry.nanos as u64
+                }
+            };
+        }
+        total_secs = total_secs
+            .checked_add(total_nanos / NANOS_PER_SEC as u64)
+            .expect("overflow in iter::sum over durations");
+        total_nanos = total_nanos % NANOS_PER_SEC as u64;
+        Duration {
+            secs: total_secs,
+            nanos: total_nanos as u32,
+        }
+    }};
+}
+
 #[stable(feature = "duration_sum", since = "1.16.0")]
 impl Sum for Duration {
     fn sum<I: Iterator<Item=Duration>>(iter: I) -> Duration {
-        iter.fold(Duration::new(0, 0), |a, b| a + b)
+        sum_durations!(iter)
     }
 }
 
 #[stable(feature = "duration_sum", since = "1.16.0")]
 impl<'a> Sum<&'a Duration> for Duration {
     fn sum<I: Iterator<Item=&'a Duration>>(iter: I) -> Duration {
-        iter.fold(Duration::new(0, 0), |a, b| a + *b)
+        sum_durations!(iter)
     }
 }
 

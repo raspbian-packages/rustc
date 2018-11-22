@@ -139,11 +139,11 @@ impl Reg {
             RegKind::Integer => {
                 match self.size.bits() {
                     1 => dl.i1_align,
-                    2...8 => dl.i8_align,
-                    9...16 => dl.i16_align,
-                    17...32 => dl.i32_align,
-                    33...64 => dl.i64_align,
-                    65...128 => dl.i128_align,
+                    2..=8 => dl.i8_align,
+                    9..=16 => dl.i16_align,
+                    17..=32 => dl.i32_align,
+                    33..=64 => dl.i64_align,
+                    65..=128 => dl.i128_align,
                     _ => panic!("unsupported integer: {:?}", self)
                 }
             }
@@ -436,6 +436,8 @@ pub enum Conv {
 
     X86_64SysV,
     X86_64Win64,
+
+    AmdGpuKernel,
 }
 
 /// Metadata describing how the arguments to a native function

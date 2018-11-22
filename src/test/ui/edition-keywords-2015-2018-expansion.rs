@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition=2015
+// edition:2015
 // aux-build:edition-kw-macro-2018.rs
 
 #![feature(raw_identifiers)]
@@ -17,7 +17,7 @@
 extern crate edition_kw_macro_2018;
 
 mod one_async {
-    produces_async! {} // ERROR expected identifier, found reserved keyword
+    produces_async! {} //~ ERROR expected identifier, found reserved keyword
 }
 mod two_async {
     produces_async_raw! {} // OK

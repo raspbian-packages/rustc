@@ -1,4 +1,3 @@
-extern crate pkg_config;
 extern crate cc;
 
 use std::env;
@@ -26,7 +25,6 @@ fn main() {
         .include(&out_dir)
         .warnings(false)
         .file("src/libbacktrace/alloc.c")
-        .file("src/libbacktrace/backtrace.c")
         .file("src/libbacktrace/dwarf.c")
         .file("src/libbacktrace/fileline.c")
         .file("src/libbacktrace/posix.c")
@@ -42,16 +40,11 @@ fn main() {
         build.flag("-fvisibility=hidden");
         build.file("src/libbacktrace/elf.c");
 
-        if target.contains("64") {
+        let pointer_width = env::var("CARGO_CFG_TARGET_POINTER_WIDTH").unwrap();
+        if pointer_width == "64" {
             build.define("BACKTRACE_ELF_SIZE", "64");
         } else {
             build.define("BACKTRACE_ELF_SIZE", "32");
-        }
-    }
-
-    if let Ok(unwind) = pkg_config::Config::new().probe("libunwind") {
-        for path in unwind.include_paths {
-            build.include(path);
         }
     }
 
@@ -62,7 +55,11 @@ fn main() {
     build.define("BACKTRACE_SUPPORTS_DATA", "0");
 
     File::create(out_dir.join("config.h")).unwrap();
-    if !target.contains("apple-ios") {
+    if !target.contains("apple-ios") &&
+       !target.contains("solaris") &&
+       !target.contains("redox") &&
+       !target.contains("android") &&
+       !target.contains("haiku") {
         build.define("HAVE_DL_ITERATE_PHDR", "1");
     }
     build.define("_GNU_SOURCE", "1");

@@ -59,8 +59,22 @@ impl Ident {
         Ident::new(Symbol::intern(self.as_str().trim_left_matches('\'')), self.span)
     }
 
+    /// "Normalize" ident for use in comparisons using "item hygiene".
+    /// Identifiers with same string value become same if they came from the same "modern" macro
+    /// (e.g. `macro` item, but not `macro_rules` item) and stay different if they came from
+    /// different "modern" macros.
+    /// Technically, this operation strips all non-opaque marks from ident's syntactic context.
     pub fn modern(self) -> Ident {
         Ident::new(self.name, self.span.modern())
+    }
+
+    /// "Normalize" ident for use in comparisons using "local variable hygiene".
+    /// Identifiers with same string value become same if they came from the same non-transparent
+    /// macro (e.g. `macro` or `macro_rules!` items) and stay different if they came from different
+    /// non-transparent macros.
+    /// Technically, this operation strips all transparent marks from ident's syntactic context.
+    pub fn modern_and_legacy(self) -> Ident {
+        Ident::new(self.name, self.span.modern_and_legacy())
     }
 
     pub fn gensym(self) -> Ident {
@@ -69,6 +83,10 @@ impl Ident {
 
     pub fn as_str(self) -> LocalInternedString {
         self.name.as_str()
+    }
+
+    pub fn as_interned_str(self) -> InternedString {
+        self.name.as_interned_str()
     }
 }
 
@@ -408,6 +426,7 @@ declare_keywords! {
     (56, Default,            "default")
     (57, Dyn,                "dyn")
     (58, Union,              "union")
+    (59, Existential,        "existential")
 }
 
 impl Symbol {

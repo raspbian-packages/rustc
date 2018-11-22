@@ -1,3 +1,46 @@
+# Release 0.2.5
+
+- [Documentation for `mul_add` now clarifies that it's not always faster.][70]
+- [The default methods in `FromPrimitive` and `ToPrimitive` are more robust.][73]
+
+**Contributors**: @cuviper, @frewsxcv
+
+[70]: https://github.com/rust-num/num-traits/pull/70
+[73]: https://github.com/rust-num/num-traits/pull/73
+
+# Release 0.2.4
+
+- [Support for 128-bit integers is now automatically detected and enabled.][69]
+  Setting the `i128` crate feature now causes the build script to panic if such
+  support is not detected.
+
+**Contributors**: @cuviper
+
+[69]: https://github.com/rust-num/num-traits/pull/69
+
+# Release 0.2.3
+
+- [The new `CheckedNeg` and `CheckedRem` traits][63] perform checked `Neg` and
+  `Rem`, returning `Some(output)` or `None` on overflow.
+- [The `no_std` implementation of `FloatCore::to_degrees` for `f32`][61] now
+  uses a constant for greater accuracy, mirroring [rust#47919].  (With `std` it
+  just calls the inherent `f32::to_degrees` in the standard library.)
+- [The new `MulAdd` and `MulAddAssign` traits][59] perform a fused multiply-
+  add.  For integer types this is just a convenience, but for floating point
+  types this produces a more accurate result than the separate operations.
+- [All applicable traits are now implemented for 128-bit integers][60] starting
+  with Rust 1.26, enabled by the new `i128` crate feature.  The `FromPrimitive`
+  and `ToPrimitive` traits now also have corresponding 128-bit methods, which
+  default to converting via 64-bit integers for compatibility.
+
+**Contributors**: @cuviper, @LEXUGE, @regexident, @vks
+
+[59]: https://github.com/rust-num/num-traits/pull/59
+[60]: https://github.com/rust-num/num-traits/pull/60
+[61]: https://github.com/rust-num/num-traits/pull/61
+[63]: https://github.com/rust-num/num-traits/pull/63
+[rust#47919]: https://github.com/rust-lang/rust/pull/47919
+
 # Release 0.2.2
 
 - [Casting from floating point to integers now returns `None` on overflow][52],

@@ -30,7 +30,7 @@ use compile;
 use dist;
 use flags::Subcommand;
 use native;
-use tool::{self, Tool};
+use tool::{self, Tool, SourceType};
 use toolstate::ToolState;
 use util::{self, dylib_path, dylib_path_var};
 use Crate as CargoCrate;
@@ -222,16 +222,17 @@ impl Step for Cargo {
             compiler,
             target: self.host,
         });
-        let mut cargo = builder.cargo(compiler, Mode::ToolRustc, self.host, "test");
-        cargo
-            .arg("--manifest-path")
-            .arg(builder.src.join("src/tools/cargo/Cargo.toml"));
+        let mut cargo = tool::prepare_tool_cargo(builder,
+                                                 compiler,
+                                                 Mode::ToolRustc,
+                                                 self.host,
+                                                 "test",
+                                                 "src/tools/cargo",
+                                                 SourceType::Submodule);
+
         if !builder.fail_fast {
             cargo.arg("--no-fail-fast");
         }
-
-        // Don't build tests dynamically, just a pain to work with
-        cargo.env("RUSTC_NO_PREFER_DYNAMIC", "1");
 
         // Don't run cross-compile tests, we may not have cross-compiled libstd libs
         // available.
@@ -286,10 +287,15 @@ impl Step for Rls {
                                                  Mode::ToolRustc,
                                                  host,
                                                  "test",
-                                                 "src/tools/rls");
+                                                 "src/tools/rls",
+                                                 SourceType::Submodule);
 
-        // Don't build tests dynamically, just a pain to work with
-        cargo.env("RUSTC_NO_PREFER_DYNAMIC", "1");
+        // Copy `src/tools/rls/test_data` to a writable drive.
+        let test_workspace_path = builder.out.join("rls-test-data");
+        let test_data_path = test_workspace_path.join("test_data");
+        builder.create_dir(&test_data_path);
+        builder.cp_r(&builder.src.join("src/tools/rls/test_data"), &test_data_path);
+        cargo.env("RLS_TEST_WORKSPACE_DIR", test_workspace_path);
 
         builder.add_rustc_lib_path(compiler, &mut cargo);
 
@@ -341,10 +347,9 @@ impl Step for Rustfmt {
                                                  Mode::ToolRustc,
                                                  host,
                                                  "test",
-                                                 "src/tools/rustfmt");
+                                                 "src/tools/rustfmt",
+                                                 SourceType::Submodule);
 
-        // Don't build tests dynamically, just a pain to work with
-        cargo.env("RUSTC_NO_PREFER_DYNAMIC", "1");
         let dir = testdir(builder, compiler.host);
         t!(fs::create_dir_all(&dir));
         cargo.env("RUSTFMT_TEST_DIR", dir);
@@ -392,13 +397,14 @@ impl Step for Miri {
             extra_features: Vec::new(),
         });
         if let Some(miri) = miri {
-            let mut cargo = builder.cargo(compiler, Mode::ToolRustc, host, "test");
-            cargo
-                .arg("--manifest-path")
-                .arg(builder.src.join("src/tools/miri/Cargo.toml"));
+            let mut cargo = tool::prepare_tool_cargo(builder,
+                                                 compiler,
+                                                 Mode::ToolRustc,
+                                                 host,
+                                                 "test",
+                                                 "src/tools/miri",
+                                                 SourceType::Submodule);
 
-            // Don't build tests dynamically, just a pain to work with
-            cargo.env("RUSTC_NO_PREFER_DYNAMIC", "1");
             // miri tests need to know about the stage sysroot
             cargo.env("MIRI_SYSROOT", builder.sysroot(compiler));
             cargo.env("RUSTC_TEST_SUITE", builder.rustc(compiler));
@@ -450,13 +456,14 @@ impl Step for Clippy {
             extra_features: Vec::new(),
         });
         if let Some(clippy) = clippy {
-            let mut cargo = builder.cargo(compiler, Mode::ToolRustc, host, "test");
-            cargo
-                .arg("--manifest-path")
-                .arg(builder.src.join("src/tools/clippy/Cargo.toml"));
+            let mut cargo = tool::prepare_tool_cargo(builder,
+                                                 compiler,
+                                                 Mode::ToolRustc,
+                                                 host,
+                                                 "test",
+                                                 "src/tools/clippy",
+                                                 SourceType::Submodule);
 
-            // Don't build tests dynamically, just a pain to work with
-            cargo.env("RUSTC_NO_PREFER_DYNAMIC", "1");
             // clippy tests need to know about the stage sysroot
             cargo.env("SYSROOT", builder.sysroot(compiler));
             cargo.env("RUSTC_TEST_SUITE", builder.rustc(compiler));
@@ -966,7 +973,9 @@ impl Step for Compiletest {
             builder.ensure(compile::Rustc { compiler, target });
         }
 
-        builder.ensure(compile::Test { compiler, target });
+        if builder.no_std(target) != Some(true) {
+            builder.ensure(compile::Test { compiler, target });
+        }
         builder.ensure(native::TestHelpers { target });
         builder.ensure(RemoteCopyLibs { compiler, target });
 
@@ -1074,6 +1083,12 @@ impl Step for Compiletest {
         // Get test-args by striping suite path
         let mut test_args: Vec<&str> = paths
             .iter()
+            .map(|p| {
+                match p.strip_prefix(".") {
+                    Ok(path) => path,
+                    Err(_) => p,
+                }
+            })
             .filter(|p| p.starts_with(suite_path) && p.is_file())
             .map(|p| p.strip_prefix(suite_path).unwrap().to_str().unwrap())
             .collect();
@@ -1263,16 +1278,14 @@ impl Step for DocTest {
 
         files.sort();
 
+        let mut toolstate = ToolState::TestPass;
         for file in files {
-            let test_result = markdown_test(builder, compiler, &file);
-            if self.is_ext_doc {
-                let toolstate = if test_result {
-                    ToolState::TestPass
-                } else {
-                    ToolState::TestFail
-                };
-                builder.save_toolstate(self.name, toolstate);
+            if !markdown_test(builder, compiler, &file) {
+                toolstate = ToolState::TestFail;
             }
+        }
+        if self.is_ext_doc {
+            builder.save_toolstate(self.name, toolstate);
         }
     }
 }
@@ -1726,13 +1739,15 @@ impl Step for CrateRustdoc {
 
         let compiler = builder.compiler(builder.top_stage, self.host);
         let target = compiler.host;
+        builder.ensure(compile::Rustc { compiler, target });
 
         let mut cargo = tool::prepare_tool_cargo(builder,
                                                  compiler,
                                                  Mode::ToolRustc,
                                                  target,
                                                  test_kind.subcommand(),
-                                                 "src/tools/rustdoc");
+                                                 "src/tools/rustdoc",
+                                                 SourceType::InTree);
         if test_kind.subcommand() == "test" && !builder.fail_fast {
             cargo.arg("--no-fail-fast");
         }
@@ -1802,7 +1817,10 @@ impl Step for RemoteCopyLibs {
         builder.info(&format!("REMOTE copy libs to emulator ({})", target));
         t!(fs::create_dir_all(builder.out.join("tmp")));
 
-        let server = builder.ensure(tool::RemoteTestServer { compiler, target });
+        let server = builder.ensure(tool::RemoteTestServer {
+            compiler: compiler.with_stage(0),
+            target,
+        });
 
         // Spawn the emulator and wait for it to come online
         let tool = builder.tool_exe(Tool::RemoteTestClient);

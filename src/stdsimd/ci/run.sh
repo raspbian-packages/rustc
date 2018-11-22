@@ -14,9 +14,30 @@ RUSTFLAGS="$RUSTFLAGS --cfg stdsimd_strict"
 
 # FIXME: on armv7 neon intrinsics require the neon target-feature to be
 # unconditionally enabled.
+# FIXME: on powerpc (32-bit) and powerpc64 (big endian) disable
+# the instr tests.
 case ${TARGET} in
     armv7*)
         export RUSTFLAGS="${RUSTFLAGS} -C target-feature=+neon"
+        ;;
+    powerpc-*)
+        export STDSIMD_DISABLE_ASSERT_INSTR=1
+        ;;
+    powerpc64-*)
+        export STDSIMD_DISABLE_ASSERT_INSTR=1
+        export STDSIMD_TEST_NORUN=1
+        ;;
+
+    # On 32-bit use a static relocation model which avoids some extra
+    # instructions when dealing with static data, notably allowing some
+    # instruction assertion checks to pass below the 20 instruction limit. If
+    # this is the default, dynamic, then too many instructions are generated
+    # when we assert the instruction for a function and it causes tests to fail.
+    i686-* | i586-*)
+        export RUSTFLAGS="${RUSTFLAGS} -C relocation-model=static"
+        ;;
+    *android*)
+        export STDSIMD_DISABLE_ASSERT_INSTR=1
         ;;
     *)
         ;;
@@ -25,6 +46,8 @@ esac
 echo "RUSTFLAGS=${RUSTFLAGS}"
 echo "FEATURES=${FEATURES}"
 echo "OBJDUMP=${OBJDUMP}"
+echo "STDSIMD_DISABLE_ASSERT_INSTR=${STDSIMD_DISABLE_ASSERT_INSTR}"
+echo "STDSIMD_TEST_EVERYTHING=${STDSIMD_TEST_EVERYTHING}"
 
 cargo_test() {
     cmd="cargo test --target=$TARGET $1"

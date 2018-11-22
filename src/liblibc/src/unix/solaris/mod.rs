@@ -1208,7 +1208,7 @@ pub const EPOLLET: ::c_int = 0x80000000;
 pub const EPOLLRDHUP: ::c_int = 0x2000;
 pub const EPOLLEXCLUSIVE: ::c_int = 0x10000000;
 pub const EPOLLONESHOT: ::c_int = 0x40000000;
-pub const EPOLL_CLOEXEC: ::c_int = 0x02000000;
+pub const EPOLL_CLOEXEC: ::c_int = 0x80000;
 pub const EPOLL_CTL_ADD: ::c_int = 1;
 pub const EPOLL_CTL_MOD: ::c_int = 3;
 pub const EPOLL_CTL_DEL: ::c_int = 2;
@@ -1297,8 +1297,6 @@ extern {
     pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
 
-    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
-
     pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
                    mode: ::mode_t, dev: dev_t) -> ::c_int;
     pub fn mkfifoat(dirfd: ::c_int, pathname: *const ::c_char,
@@ -1316,6 +1314,8 @@ extern {
                                      clock_id: ::clockid_t) -> ::c_int;
     pub fn sem_timedwait(sem: *mut sem_t,
                          abstime: *const ::timespec) -> ::c_int;
+    pub fn sem_getvalue(sem: *mut sem_t,
+                        sval: *mut ::c_int) -> ::c_int;
     pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
                                    abstime: *const ::timespec) -> ::c_int;
     pub fn waitid(idtype: idtype_t, id: id_t, infop: *mut ::siginfo_t,

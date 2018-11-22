@@ -1020,13 +1020,8 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 let mut abi = Abi::Aggregate { sized: true };
                 if tag.value.size(dl) == size {
                     abi = Abi::Scalar(tag.clone());
-                } else if !tag.is_bool() {
-                    // HACK(nox): Blindly using ScalarPair for all tagged enums
-                    // where applicable leads to Option<u8> being handled as {i1, i8},
-                    // which later confuses SROA and some loop optimisations,
-                    // ultimately leading to the repeat-trusted-len test
-                    // failing. We make the trade-off of using ScalarPair only
-                    // for types where the tag isn't a boolean.
+                } else {
+                    // Try to use a ScalarPair for all tagged enums.
                     let mut common_prim = None;
                     for (field_layouts, layout_variant) in variants.iter().zip(&layout_variants) {
                         let offsets = match layout_variant.fields {
@@ -1115,11 +1110,11 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 }
                 tcx.layout_raw(param_env.and(normalized))?
             }
-            ty::TyParam(_) => {
-                return Err(LayoutError::Unknown(ty));
-            }
-            ty::TyGeneratorWitness(..) | ty::TyInfer(_) | ty::TyError => {
+            ty::TyGeneratorWitness(..) | ty::TyInfer(_) => {
                 bug!("LayoutDetails::compute: unexpected type `{}`", ty)
+            }
+            ty::TyParam(_) | ty::TyError => {
+                return Err(LayoutError::Unknown(ty));
             }
         })
     }
@@ -1604,7 +1599,7 @@ impl<'a, 'tcx, C> TyLayoutMethods<'tcx, C> for Ty<'tcx>
             // Potentially-fat pointers.
             ty::TyRef(_, pointee, _) |
             ty::TyRawPtr(ty::TypeAndMut { ty: pointee, .. }) => {
-                assert!(i < 2);
+                assert!(i < this.fields.count());
 
                 // Reuse the fat *T type as its own thin pointer data field.
                 // This provides information about e.g. DST struct pointees
@@ -1626,10 +1621,11 @@ impl<'a, 'tcx, C> TyLayoutMethods<'tcx, C> for Ty<'tcx>
                 match tcx.struct_tail(pointee).sty {
                     ty::TySlice(_) |
                     ty::TyStr => tcx.types.usize,
-                    ty::TyDynamic(..) => {
-                        // FIXME(eddyb) use an usize/fn() array with
-                        // the correct number of vtables slots.
-                        tcx.mk_imm_ref(tcx.types.re_static, tcx.mk_nil())
+                    ty::TyDynamic(_, _) => {
+                        tcx.mk_imm_ref(
+                            tcx.types.re_static,
+                            tcx.mk_array(tcx.types.usize, 3),
+                        )
                     }
                     _ => bug!("TyLayout::field_type({:?}): not applicable", this)
                 }

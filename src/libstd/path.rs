@@ -1065,10 +1065,7 @@ impl<'a> Iterator for Ancestors<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let next = self.next;
-        self.next = match next {
-            Some(path) => path.parent(),
-            None => None,
-        };
+        self.next = next.and_then(Path::parent);
         next
     }
 }
@@ -1407,6 +1404,14 @@ impl From<Box<Path>> for PathBuf {
 impl From<PathBuf> for Box<Path> {
     fn from(p: PathBuf) -> Box<Path> {
         p.into_boxed_path()
+    }
+}
+
+#[stable(feature = "more_box_slice_clone", since = "1.29.0")]
+impl Clone for Box<Path> {
+    #[inline]
+    fn clone(&self) -> Self {
+        self.to_path_buf().into_boxed_path()
     }
 }
 
@@ -1828,7 +1833,7 @@ impl Path {
     /// * On Unix, a path has a root if it begins with `/`.
     ///
     /// * On Windows, a path has a root if it:
-    ///     * has no prefix and begins with a separator, e.g. `\\windows`
+    ///     * has no prefix and begins with a separator, e.g. `\windows`
     ///     * has a prefix followed by a separator, e.g. `c:\windows` but not `c:windows`
     ///     * has any non-disk prefix, e.g. `\\server\share`
     ///

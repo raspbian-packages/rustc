@@ -27,7 +27,6 @@ use tokenizer::states as tok_state;
 use util::str::is_ascii_whitespace;
 
 use std::{slice, fmt};
-#[allow(unused_imports)] use std::ascii::AsciiExt;
 use std::borrow::Cow::Borrowed;
 use std::collections::VecDeque;
 use std::default::Default;
@@ -574,7 +573,6 @@ impl<Handle, Sink> TreeBuilder<Handle, Sink>
     }
 
     fn stop_parsing(&mut self) -> ProcessResult<Handle> {
-        warn!("stop_parsing not implemented, full speed ahead!");
         Done
     }
 

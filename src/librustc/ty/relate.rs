@@ -14,12 +14,13 @@
 //! type equality, etc.
 
 use hir::def_id::DefId;
-use middle::const_val::ConstVal;
+use mir::interpret::ConstValue;
 use ty::subst::{Kind, UnpackedKind, Substs};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::error::{ExpectedFound, TypeError};
 use mir::interpret::GlobalId;
 use util::common::ErrorReported;
+use syntax_pos::DUMMY_SP;
 use std::rc::Rc;
 use std::iter;
 use rustc_target::spec::abi;
@@ -474,7 +475,7 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
                     return Ok(s);
                 }
                 match x.val {
-                    ConstVal::Unevaluated(def_id, substs) => {
+                    ConstValue::Unevaluated(def_id, substs) => {
                         // FIXME(eddyb) get the right param_env.
                         let param_env = ty::ParamEnv::empty();
                         match tcx.lift_to_global(&substs) {
@@ -503,7 +504,11 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
                             "array length could not be evaluated");
                         Err(ErrorReported)
                     }
-                    _ => bug!("arrays should not have {:?} as length", x)
+                    _ => {
+                        tcx.sess.delay_span_bug(DUMMY_SP,
+                            &format!("arrays should not have {:?} as length", x));
+                        Err(ErrorReported)
+                    }
                 }
             };
             match (to_u64(sz_a), to_u64(sz_b)) {

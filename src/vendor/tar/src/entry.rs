@@ -4,7 +4,7 @@ use std::fs;
 use std::io::prelude::*;
 use std::io::{self, Error, ErrorKind, SeekFrom};
 use std::marker;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use filetime::{self, FileTime};
 
@@ -267,7 +267,18 @@ impl<'a> EntryFields<'a> {
                     Cow::Borrowed(bytes)
                 }
             }
-            None => self.header.path_bytes(),
+            None => {
+                if let Some(ref pax) = self.pax_extensions {
+                    let pax = pax_extensions(pax)
+                        .filter_map(|f| f.ok())
+                        .find(|f| f.key_bytes() == b"path")
+                        .map(|f| f.value_bytes());
+                    if let Some(field) = pax {
+                        return Cow::Borrowed(field)
+                    }
+                }
+                self.header.path_bytes()
+            }
         }
     }
 
@@ -302,7 +313,7 @@ impl<'a> EntryFields<'a> {
                !self.header.entry_type().is_pax_local_extensions() {
                 return Ok(None)
             }
-            self.pax_extensions = Some(try!(self.read_all()));
+            self.pax_extensions = Some(self.read_all()?);
         }
         Ok(Some(pax_extensions(self.pax_extensions.as_ref().unwrap())))
     }
@@ -323,9 +334,9 @@ impl<'a> EntryFields<'a> {
 
         let mut file_dst = dst.to_path_buf();
         {
-            let path = try!(self.path().map_err(|e| {
+            let path = self.path().map_err(|e| {
                 TarError::new(&format!("invalid path in entry header: {}", self.path_lossy()), e)
-            }));
+            })?;
             for part in path.components() {
                 match part {
                     // Leading '/' characters, root paths, and '.'
@@ -358,41 +369,18 @@ impl<'a> EntryFields<'a> {
             None    => return Ok(false),
         };
 
-        if !parent.exists() {
-            try!(fs::create_dir_all(&parent).map_err(|e| {
+        if parent.symlink_metadata().is_err() {
+            fs::create_dir_all(&parent).map_err(|e| {
                 TarError::new(&format!("failed to create `{}`",
                                        parent.display()), e)
-            }));
+            })?;
         }
 
-        // Abort if target (canonical) parent is outside of `dst`
-        let canon_parent = try!(parent.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, parent.display()),
-            )
-        }));
-        let canon_target = try!(dst.canonicalize().map_err(|err| {
-            Error::new(
-                err.kind(),
-                format!("{} while canonicalizing {}", err, dst.display()),
-            )
-        }));
-        if !canon_parent.starts_with(&canon_target) {
-            let err = TarError::new(
-                &format!(
-                    "trying to unpack outside of destination path: {}",
-                    canon_target.display()
-                ),
-                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
-                Error::new(ErrorKind::Other, "Invalid argument"),
-            );
-            return Err(err.into());
-        }
+        let canon_target = self.validate_inside_dst(&dst, parent)?;
 
-        try!(self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
+        self.unpack(Some(&canon_target), &file_dst).map_err(|e| {
             TarError::new(&format!("failed to unpack `{}`", file_dst.display()), e)
-        }));
+        })?;
 
         Ok(true)
     }
@@ -413,7 +401,7 @@ impl<'a> EntryFields<'a> {
                 format!("{} when creating dir {}", err, dst.display())
             ));
         } else if kind.is_hard_link() || kind.is_symlink() {
-            let src = match try!(self.link_name()) {
+            let src = match self.link_name()? {
                 Some(name) => name,
                 None => return Err(other(&format!(
                     "hard link listed for {} but no link name found",
@@ -430,8 +418,23 @@ impl<'a> EntryFields<'a> {
 
             return if kind.is_hard_link() {
                 let link_src = match target_base {
+                    // If we're unpacking within a directory then ensure that
+                    // the destination of this hard link is both present and
+                    // inside our own directory. This is needed because we want
+                    // to make sure to not overwrite anything outside the root.
+                    //
+                    // Note that this logic is only needed for hard links
+                    // currently. With symlinks the `validate_inside_dst` which
+                    // happens before this method as part of `unpack_in` will
+                    // use canonicalization to ensure this guarantee. For hard
+                    // links though they're canonicalized to their existing path
+                    // so we need to validate at this time.
+                    Some(ref p) => {
+                        let link_src = p.join(src);
+                        self.validate_inside_dst(p, &link_src)?;
+                        link_src
+                    }
                     None => src.into_owned(),
-                    Some(ref p) => p.join(src),
                 };
                 fs::hard_link(&link_src, dst).map_err(|err| Error::new(
                     err.kind(),
@@ -479,46 +482,55 @@ impl<'a> EntryFields<'a> {
         // As a result if we don't recognize the kind we just write out the file
         // as we would normally.
 
-        try!(fs::File::create(dst).and_then(|mut f| {
+        // Remove an existing file, if any, to avoid writing through
+        // symlinks/hardlinks to weird locations. The tar archive says this is a
+        // regular file, so let's make it a regular file.
+        (|| -> io::Result<()> {
+            match fs::remove_file(dst) {
+                Ok(()) => {}
+                Err(ref e) if e.kind() == io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e)
+            }
+            let mut f = fs::File::create(dst)?;
             for io in self.data.drain(..) {
                 match io {
                     EntryIo::Data(mut d) => {
                         let expected = d.limit();
-                        if try!(io::copy(&mut d, &mut f)) != expected {
+                        if io::copy(&mut d, &mut f)? != expected {
                             return Err(other("failed to write entire file"));
                         }
                     }
                     EntryIo::Pad(d) => {
                         // TODO: checked cast to i64
                         let to = SeekFrom::Current(d.limit() as i64);
-                        let size = try!(f.seek(to));
-                        try!(f.set_len(size));
+                        let size = f.seek(to)?;
+                        f.set_len(size)?;
                     }
                 }
             }
             Ok(())
-        }).map_err(|e| {
+        })().map_err(|e| {
             let header = self.header.path_bytes();
             TarError::new(&format!("failed to unpack `{}` into `{}`",
                                    String::from_utf8_lossy(&header),
                                    dst.display()), e)
-        }));
+        })?;
 
         if let Ok(mtime) = self.header.mtime() {
             let mtime = FileTime::from_unix_time(mtime as i64, 0);
-            try!(filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
+            filetime::set_file_times(dst, mtime, mtime).map_err(|e| {
                 TarError::new(&format!("failed to set mtime for `{}`",
                                        dst.display()), e)
-            }));
+            })?;
         }
         if let Ok(mode) = self.header.mode() {
-            try!(set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
+            set_perms(dst, mode, self.preserve_permissions).map_err(|e| {
                 TarError::new(&format!("failed to set permissions to {:o} \
                                         for `{}`", mode, dst.display()), e)
-            }));
+            })?;
         }
         if self.unpack_xattrs {
-            try!(set_xattrs(self, dst));
+            set_xattrs(self, dst)?;
         }
         return Ok(());
 
@@ -565,7 +577,7 @@ impl<'a> EntryFields<'a> {
             });
 
             for (key, value) in exts {
-                try!(xattr::set(dst, key, value).map_err(|e| {
+                xattr::set(dst, key, value).map_err(|e| {
                     TarError::new(&format!("failed to set extended \
                                             attributes to {}. \
                                             Xattrs: key={:?}, value={:?}.",
@@ -573,7 +585,7 @@ impl<'a> EntryFields<'a> {
                                            key,
                                            String::from_utf8_lossy(value)),
                                   e)
-                }));
+                })?;
             }
 
             Ok(())
@@ -584,6 +596,34 @@ impl<'a> EntryFields<'a> {
         fn set_xattrs(_: &mut EntryFields, _: &Path) -> io::Result<()> {
             Ok(())
         }
+    }
+
+    fn validate_inside_dst(&self, dst: &Path, file_dst: &Path) -> io::Result<PathBuf> {
+        // Abort if target (canonical) parent is outside of `dst`
+        let canon_parent = file_dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, file_dst.display()),
+            )
+        })?;
+        let canon_target = dst.canonicalize().map_err(|err| {
+            Error::new(
+                err.kind(),
+                format!("{} while canonicalizing {}", err, dst.display()),
+            )
+        })?;
+        if !canon_parent.starts_with(&canon_target) {
+            let err = TarError::new(
+                &format!(
+                    "trying to unpack outside of destination path: {}",
+                    canon_target.display()
+                ),
+                // TODO: use ErrorKind::InvalidInput here? (minor breaking change)
+                Error::new(ErrorKind::Other, "Invalid argument"),
+            );
+            return Err(err.into());
+        }
+        Ok(canon_target)
     }
 }
 

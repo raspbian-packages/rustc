@@ -8,7 +8,6 @@ src/doc/book/*/tools/docx-to-md.xsl
 src/doc/rustc/src/lints/groups.md
 src/doc/rust-by-example/CODE_OF_CONDUCT.md
 src/etc/third-party/README.txt
-src/libcompiler_builtins/compiler-rt/lib/tsan/go/build.bat
 src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
 src/libbacktrace/configure
 src/libbacktrace/config/libtool.m4
@@ -28,7 +27,9 @@ src/vendor/*/*/LICENSE
 src/vendor/*/*/*/LICENSE
 src/vendor/ammonia/src/lib.rs
 src/vendor/clap/.github/CONTRIBUTING.md
-# author likes to omit line breaks in their comments
+# ^ author likes to omit line breaks in their comments
+src/vendor/failure/book/src/bail-and-ensure.md
+# ^ same with this one
 src/vendor/handlebars/src/lib.rs
 src/vendor/maplit/README.rst
 src/vendor/lazy_static/src/lib.rs
@@ -38,6 +39,7 @@ src/vendor/pulldown-cmark-*/tests/footnotes.rs
 src/vendor/pulldown-cmark-*/specs/footnotes.txt
 src/vendor/stable_deref_trait/src/lib.rs
 src/vendor/winapi-*/src/winnt.rs
+src/vendor/winapi/src/lib.rs
 
 # Embedded libraries, justified in README.source
 # None atm
@@ -72,6 +74,7 @@ src/stdsimd/crates/stdsimd-verify/x86-intel.xml
 src/stdsimd/stdsimd/arch/detect/test_data
 src/test/compile-fail/not-utf8.bin
 src/test/*/*.rs
+src/test/*/*.stderr
 src/test/*/*/*.stderr
 src/test/*/*/*/*.stderr
 src/tools/*/tests/*/*.stderr

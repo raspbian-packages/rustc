@@ -19,7 +19,7 @@ grep -v '^#' ${SUS_WHITELIST} | xargs  -I% sh -c 'rm -r ./% || true'
 echo "Checking for suspicious files..."
 
 # TODO: merge the -m stuff into suspicious-source(1).
-suspicious-source -v -m text/x-objective-c
+suspicious-source -v -m text/x-objective-c -m text/x-awk
 # The following shell snippet is a bit more strict than suspicious-source(1)
 find . -type f -and -not -name '.cargo-checksum.json' -exec file '{}' \; | \
   sed -e 's/\btext\b\(.*\), with very long lines/verylongtext\1/g' | \

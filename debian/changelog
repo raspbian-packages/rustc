@@ -1,11 +1,41 @@
-rustc (1.28.0+dfsg1-2+rpi1) buster-staging; urgency=medium
+rustc (1.29.0+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Sun, 26 Aug 2018 13:36:11 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Thu, 22 Nov 2018 06:15:29 +0000
+
+rustc (1.29.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Drop d-armel-disable-kernel-helpers.patch as a necessary part of the
+    fix to #906520, so it is actually fixed.
+  * Backport a patch to fix the rand crate on powerpc. (Closes: #909400)
+  * Lower the s390x allowed failures back to 25.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 23 Sep 2018 10:16:53 -0700
+
+rustc (1.29.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Include patch for armel atomics. (Closes: #906520)
+  * Update to latest Standards-Version; no changes required.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 20 Sep 2018 22:33:20 -0700
+
+rustc (1.28.0+dfsg1-3) unstable; urgency=medium
+
+  * Team upload.
+
+  [ Ximin Luo ]
+  * More sparc64 fixes, and increase allowed-test-failures there to 180.
+
+  [ Julien Cristau ]
+  * Don't use pentium4 as i686 baseline (closes: #908561)
+
+ -- Julien Cristau <jcristau@debian.org>  Tue, 11 Sep 2018 15:54:27 +0200
 
 rustc (1.28.0+dfsg1-2) unstable; urgency=medium
 

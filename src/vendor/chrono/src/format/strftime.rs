@@ -58,6 +58,9 @@ The following specifiers are available both to formatting and parsing.
 | `%.3f`| `.026`        | Similar to `.%f` but left-aligned but fixed to a length of 3. [8]     |
 | `%.6f`| `.026490`     | Similar to `.%f` but left-aligned but fixed to a length of 6. [8]     |
 | `%.9f`| `.026490000`  | Similar to `.%f` but left-aligned but fixed to a length of 9. [8]     |
+| `%3f` | `026`         | Similar to `%.3f` but without the leading dot. [8]                    |
+| `%6f` | `026490`      | Similar to `%.6f` but without the leading dot. [8]                    |
+| `%9f` | `026490000`   | Similar to `%.9f` but without the leading dot. [8]                    |
 |       |               |                                                                       |
 | `%R`  | `00:34`       | Hour-minute format. Same to `%H:%M`.                                  |
 | `%T`  | `00:34:60`    | Hour-minute-second format. Same to `%H:%M:%S`.                        |
@@ -68,6 +71,7 @@ The following specifiers are available both to formatting and parsing.
 | `%Z`  | `ACST`   | *Formatting only:* Local time zone name.                                   |
 | `%z`  | `+0930`  | Offset from the local time to UTC (with UTC being `+0000`).                |
 | `%:z` | `+09:30` | Same to `%z` but with a colon.                                             |
+| `%#z` | `+09`    | *Parsing only:* Same to `%z` but allows minutes to be missing or present.  |
 |       |          |                                                                            |
 |       |          | **DATE & TIME SPECIFIERS:**                                                |
 |`%c`|`Sun Jul  8 00:34:60 2001`|`ctime` date & time format. Same to `%a %b %e %T %Y` sans `\n`.|
@@ -122,7 +126,7 @@ Notes:
    For the purpose of Chrono, it only accounts for non-leap seconds
    so it slightly differs from ISO C `strftime` behavior.
 
-8. `%f`, `%.f`, `%.3f`, `%.6f`, `%.9f`:
+8. `%f`, `%.f`, `%.3f`, `%.6f`, `%.9f`, `%3f`, `%6f`, `%9f`:
 
    The default `%f` is right-aligned and always zero-padded to 9 digits
    for the compatibility with glibc and others,
@@ -144,9 +148,15 @@ Notes:
    Note that they can read nothing if the fractional part is zero or
    the next character is not `.` however will print with the specified length.
 
+   The variant `%3f`, `%6f` and `%9f` are left-aligned and print 3, 6 or 9 fractional digits
+   according to the number preceding `f`, but without the leading dot.
+   E.g. 70ms after the last second under `%3f` will print `070` (note: not `07`),
+   and parsing `07`, `070000` etc. will yield the same.
+   Note that they can read nothing if the fractional part is zero.
+
 */
 
-use super::{Item, Numeric, Fixed, Pad};
+use super::{Item, Numeric, Fixed, InternalFixed, InternalInternal, Pad};
 
 /// Parsing iterator for `strftime`-like format strings.
 #[derive(Clone, Debug)]
@@ -166,6 +176,8 @@ impl<'a> StrftimeItems<'a> {
         StrftimeItems { remainder: s, recons: &FMT_NONE }
     }
 }
+
+const HAVE_ALTERNATES: &'static str = "z";
 
 impl<'a> Iterator for StrftimeItems<'a> {
     type Item = Item<'a>;
@@ -205,7 +217,11 @@ impl<'a> Iterator for StrftimeItems<'a> {
                     '_' => Some(Pad::Space),
                     _ => None,
                 };
-                let spec = if pad_override.is_some() { next!() } else { spec };
+                let is_alternate = spec == '#';
+                let spec = if pad_override.is_some() || is_alternate { next!() } else { spec };
+                if is_alternate && !HAVE_ALTERNATES.contains(spec) {
+                    return Some(Item::Error);
+                }
 
                 macro_rules! recons {
                     [$head:expr, $($tail:expr),+] => ({
@@ -262,7 +278,11 @@ impl<'a> Iterator for StrftimeItems<'a> {
                     'x' => recons![num0!(Month), lit!("/"), num0!(Day), lit!("/"),
                                    num0!(YearMod100)],
                     'y' => num0!(YearMod100),
-                    'z' => fix!(TimezoneOffset),
+                    'z' => if is_alternate {
+                        internal_fix!(TimezoneOffsetPermissive)
+                    } else {
+                        fix!(TimezoneOffset)
+                    },
                     '+' => fix!(RFC3339),
                     ':' => match next!() {
                         'z' => fix!(TimezoneOffsetColon),
@@ -282,6 +302,18 @@ impl<'a> Iterator for StrftimeItems<'a> {
                             _ => Item::Error,
                         },
                         'f' => fix!(Nanosecond),
+                        _ => Item::Error,
+                    },
+                    '3' => match next!() {
+                        'f' => internal_fix!(Nanosecond3NoDot),
+                        _ => Item::Error,
+                    },
+                    '6' => match next!() {
+                        'f' => internal_fix!(Nanosecond6NoDot),
+                        _ => Item::Error,
+                    },
+                    '9' => match next!() {
+                        'f' => internal_fix!(Nanosecond9NoDot),
                         _ => Item::Error,
                     },
                     '%' => lit!("%"),
@@ -368,14 +400,17 @@ fn test_strftime_items() {
     assert_eq!(parse_and_collect("%-e"), [num!(Day)]);
     assert_eq!(parse_and_collect("%0e"), [num0!(Day)]);
     assert_eq!(parse_and_collect("%_e"), [nums!(Day)]);
+    assert_eq!(parse_and_collect("%z"), [fix!(TimezoneOffset)]);
+    assert_eq!(parse_and_collect("%#z"), [internal_fix!(TimezoneOffsetPermissive)]);
+    assert_eq!(parse_and_collect("%#m"), [Item::Error]);
 }
 
 #[cfg(test)]
 #[test]
 fn test_strftime_docs() {
-    use {FixedOffset, TimeZone};
+    use {FixedOffset, TimeZone, Timelike};
 
-    let dt = FixedOffset::east(34200).ymd(2001, 7, 8).and_hms_nano(0, 34, 59, 1_026_490_000);
+    let dt = FixedOffset::east(34200).ymd(2001, 7, 8).and_hms_nano(0, 34, 59, 1_026_490_708);
 
     // date specifiers
     assert_eq!(dt.format("%Y").to_string(), "2001");
@@ -414,11 +449,16 @@ fn test_strftime_docs() {
     assert_eq!(dt.format("%p").to_string(), "AM");
     assert_eq!(dt.format("%M").to_string(), "34");
     assert_eq!(dt.format("%S").to_string(), "60");
-    assert_eq!(dt.format("%f").to_string(), "026490000");
-    assert_eq!(dt.format("%.f").to_string(), ".026490");
+    assert_eq!(dt.format("%f").to_string(), "026490708");
+    assert_eq!(dt.format("%.f").to_string(), ".026490708");
+    assert_eq!(dt.with_nanosecond(1_026_490_000).unwrap().format("%.f").to_string(),
+               ".026490");
     assert_eq!(dt.format("%.3f").to_string(), ".026");
     assert_eq!(dt.format("%.6f").to_string(), ".026490");
-    assert_eq!(dt.format("%.9f").to_string(), ".026490000");
+    assert_eq!(dt.format("%.9f").to_string(), ".026490708");
+    assert_eq!(dt.format("%3f").to_string(), "026");
+    assert_eq!(dt.format("%6f").to_string(), "026490");
+    assert_eq!(dt.format("%9f").to_string(), "026490708");
     assert_eq!(dt.format("%R").to_string(), "00:34");
     assert_eq!(dt.format("%T").to_string(), "00:34:60");
     assert_eq!(dt.format("%X").to_string(), "00:34:60");
@@ -431,7 +471,9 @@ fn test_strftime_docs() {
 
     // date & time specifiers
     assert_eq!(dt.format("%c").to_string(), "Sun Jul  8 00:34:60 2001");
-    assert_eq!(dt.format("%+").to_string(), "2001-07-08T00:34:60.026490+09:30");
+    assert_eq!(dt.format("%+").to_string(), "2001-07-08T00:34:60.026490708+09:30");
+    assert_eq!(dt.with_nanosecond(1_026_490_000).unwrap().format("%+").to_string(),
+               "2001-07-08T00:34:60.026490+09:30");
     assert_eq!(dt.format("%s").to_string(), "994518299");
 
     // special specifiers

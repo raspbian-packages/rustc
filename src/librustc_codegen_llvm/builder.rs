@@ -13,7 +13,7 @@
 use llvm;
 use llvm::{AtomicRmwBinOp, AtomicOrdering, SynchronizationScope, AsmDialect};
 use llvm::{Opcode, IntPredicate, RealPredicate, False, OperandBundleDef};
-use llvm::{ValueRef, BasicBlockRef, BuilderRef, ModuleRef};
+use llvm::{ValueRef, BasicBlockRef, BuilderRef};
 use common::*;
 use type_::Type;
 use value::Value;
@@ -54,6 +54,7 @@ bitflags! {
     pub struct MemFlags: u8 {
         const VOLATILE = 1 << 0;
         const NONTEMPORAL = 1 << 1;
+        const UNALIGNED = 1 << 2;
     }
 }
 
@@ -277,7 +278,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn nswsub(&self, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
-        self.count_insn("nwsub");
+        self.count_insn("nswsub");
         unsafe {
             llvm::LLVMBuildNSWSub(self.llbuilder, lhs, rhs, noname())
         }
@@ -291,14 +292,14 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn fsub(&self, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
-        self.count_insn("sub");
+        self.count_insn("fsub");
         unsafe {
             llvm::LLVMBuildFSub(self.llbuilder, lhs, rhs, noname())
         }
     }
 
     pub fn fsub_fast(&self, lhs: ValueRef, rhs: ValueRef) -> ValueRef {
-        self.count_insn("sub");
+        self.count_insn("fsub");
         unsafe {
             let instr = llvm::LLVMBuildFSub(self.llbuilder, lhs, rhs, noname());
             llvm::LLVMRustSetHasUnsafeAlgebra(instr);
@@ -602,7 +603,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let ptr = self.check_store(val, ptr);
         unsafe {
             let store = llvm::LLVMBuildStore(self.llbuilder, val, ptr);
-            llvm::LLVMSetAlignment(store, align.abi() as c_uint);
+            let align = if flags.contains(MemFlags::UNALIGNED) {
+                1
+            } else {
+                align.abi() as c_uint
+            };
+            llvm::LLVMSetAlignment(store, align);
             if flags.contains(MemFlags::VOLATILE) {
                 llvm::LLVMSetVolatile(store, llvm::True);
             }
@@ -1157,23 +1163,6 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
     }
 
-    pub fn trap(&self) {
-        unsafe {
-            let bb: BasicBlockRef = llvm::LLVMGetInsertBlock(self.llbuilder);
-            let fn_: ValueRef = llvm::LLVMGetBasicBlockParent(bb);
-            let m: ModuleRef = llvm::LLVMGetGlobalParent(fn_);
-            let p = "llvm.trap\0".as_ptr();
-            let t: ValueRef = llvm::LLVMGetNamedFunction(m, p as *const _);
-            assert!((t as isize != 0));
-            let args: &[ValueRef] = &[];
-            self.count_insn("trap");
-            llvm::LLVMRustBuildCall(self.llbuilder, t,
-                                    args.as_ptr(), args.len() as c_uint,
-                                    ptr::null_mut(),
-                                    noname());
-        }
-    }
-
     pub fn landing_pad(&self, ty: Type, pers_fn: ValueRef,
                        num_clauses: usize) -> ValueRef {
         self.count_insn("landingpad");
@@ -1315,6 +1304,7 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     }
 
     pub fn add_incoming_to_phi(&self, phi: ValueRef, val: ValueRef, bb: BasicBlockRef) {
+        self.count_insn("addincoming");
         unsafe {
             llvm::LLVMAddIncoming(phi, &val, &bb, 1 as c_uint);
         }

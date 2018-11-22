@@ -60,8 +60,8 @@ fn test_binary_search() {
     assert_eq!(b.binary_search(&0), Err(0));
     assert_eq!(b.binary_search(&1), Ok(0));
     assert_eq!(b.binary_search(&2), Err(1));
-    assert!(match b.binary_search(&3) { Ok(1...3) => true, _ => false });
-    assert!(match b.binary_search(&3) { Ok(1...3) => true, _ => false });
+    assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false });
+    assert!(match b.binary_search(&3) { Ok(1..=3) => true, _ => false });
     assert_eq!(b.binary_search(&4), Err(4));
     assert_eq!(b.binary_search(&5), Err(4));
     assert_eq!(b.binary_search(&6), Err(4));
@@ -260,6 +260,13 @@ fn test_exact_chunks_last() {
 }
 
 #[test]
+fn test_exact_chunks_remainder() {
+    let v: &[i32] = &[0, 1, 2, 3, 4];
+    let c = v.exact_chunks(2);
+    assert_eq!(c.remainder(), &[4]);
+}
+
+#[test]
 fn test_exact_chunks_zip() {
     let v1: &[i32] = &[0, 1, 2, 3, 4];
     let v2: &[i32] = &[6, 7, 8, 9, 10];
@@ -308,6 +315,13 @@ fn test_exact_chunks_mut_last() {
     let v2: &mut [i32] = &mut [0, 1, 2, 3, 4];
     let c2 = v2.exact_chunks_mut(2);
     assert_eq!(c2.last().unwrap(), &[2, 3]);
+}
+
+#[test]
+fn test_exact_chunks_mut_remainder() {
+    let v: &mut [i32] = &mut [0, 1, 2, 3, 4];
+    let c = v.exact_chunks_mut(2);
+    assert_eq!(c.into_remainder(), &[4]);
 }
 
 #[test]

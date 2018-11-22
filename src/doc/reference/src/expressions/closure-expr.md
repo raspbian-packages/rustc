@@ -1,10 +1,10 @@
 # Closure expressions
 
-> **<sup>Syntax</sup>**  
-> _ClosureExpression_ :  
-> &nbsp;&nbsp; `move`<sup>?</sup>  
-> &nbsp;&nbsp; ( `||` | `|` [_FunctionParameters_]<sup>?</sup> `|` )  
-> &nbsp;&nbsp; ([_Expression_] | `->` [_TypeNoBounds_]&nbsp;[_BlockExpression_])  
+> **<sup>Syntax</sup>**\
+> _ClosureExpression_ :\
+> &nbsp;&nbsp; `move`<sup>?</sup>\
+> &nbsp;&nbsp; ( `||` | `|` [_FunctionParameters_]<sup>?</sup> `|` )\
+> &nbsp;&nbsp; ([_Expression_] | `->` [_TypeNoBounds_]&nbsp;[_BlockExpression_])
 
 A _closure expression_ defines a closure and denotes it as a value, in a single
 expression. A closure expression is a pipe-symbol-delimited (`|`) list of
@@ -24,9 +24,9 @@ Closure expressions are most useful when passing functions as arguments to other
 functions, as an abbreviation for defining and capturing a separate function.
 
 Significantly, closure expressions _capture their environment_, which regular
-[function definitions] do not. Without the `move`
-keyword, the closure expression infers how it captures each variable from its
-environment, preferring to capture by shared reference, effectively borrowing
+[function definitions] do not. Without the `move` keyword, the closure expression
+[infers how it captures each variable from its environment](types.html#capture-modes),
+preferring to capture by shared reference, effectively borrowing
 all outer variables mentioned inside the closure's body. If needed the compiler
 will infer that instead mutable references should be taken, or that the values
 should be moved or copied (depending on their type) from the environment. A
@@ -35,7 +35,7 @@ prefixing it with the `move` keyword. This is often used to ensure that the
 closure's type is `'static`.
 
 The compiler will determine which of the [closure
-traits](types.html#closure-types) the closure's type will implement by how it
+traits](types.html#call-traits-and-coercions) the closure's type will implement by how it
 acts on its captured variables. The closure will also implement
 [`Send`](special-types-and-traits.html#send) and/or
 [`Sync`](special-types-and-traits.html#sync) if all of its captured types do.

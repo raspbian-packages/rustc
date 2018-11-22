@@ -8,8 +8,6 @@
 //! `#[test]` function to the original token stream which asserts that the
 //! function itself contains the relevant instruction.
 
-#![feature(proc_macro)]
-
 extern crate proc_macro;
 extern crate proc_macro2;
 #[macro_use]
@@ -21,7 +19,7 @@ use proc_macro2::TokenStream;
 
 #[proc_macro_attribute]
 pub fn assert_instr(
-    attr: proc_macro::TokenStream, item: proc_macro::TokenStream
+    attr: proc_macro::TokenStream, item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
     let invoc = syn::parse::<Invoc>(attr)
         .expect("expected #[assert_instr(instr, a = b, ...)]");
@@ -36,11 +34,12 @@ pub fn assert_instr(
     let name = &func.ident;
 
     // Disable assert_instr for x86 targets compiled with avx enabled, which
-    // causes LLVM to generate different intrinsics that the ones we are testing
-    // for.
-    let disable_assert_instr = std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
+    // causes LLVM to generate different intrinsics that the ones we are
+    // testing for.
+    let disable_assert_instr =
+        std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
     let maybe_ignore = if cfg!(optimized) && !disable_assert_instr {
-        TokenStream::empty()
+        TokenStream::new()
     } else {
         (quote! { #[ignore] }).into()
     };
@@ -48,31 +47,31 @@ pub fn assert_instr(
     use quote::ToTokens;
     let instr_str = instr
         .clone()
-        .into_tokens()
+        .into_token_stream()
         .to_string()
         .replace('.', "_")
         .replace(|c: char| c.is_whitespace(), "");
-    let assert_name = syn::Ident::from(
-        &format!("assert_{}_{}", name.as_ref(), instr_str)[..],
+    let assert_name = syn::Ident::new(
+        &format!("assert_{}_{}", name, instr_str),
+        name.span(),
     );
-    let shim_name = syn::Ident::from(format!("{}_shim", name.as_ref()));
+    let shim_name = syn::Ident::new(&format!("{}_shim", name), name.span());
     let mut inputs = Vec::new();
     let mut input_vals = Vec::new();
     let ret = &func.decl.output;
     for arg in func.decl.inputs.iter() {
         let capture = match *arg {
             syn::FnArg::Captured(ref c) => c,
-            _ => panic!("arguments must not have patterns"),
+            ref v => panic!(
+                "arguments must not have patterns: `{:?}`",
+                v.clone().into_token_stream()
+            ),
         };
         let ident = match capture.pat {
             syn::Pat::Ident(ref i) => &i.ident,
             _ => panic!("must have bare arguments"),
         };
-        match invoc
-            .args
-            .iter()
-            .find(|a| a.0 == ident.as_ref())
-        {
+        match invoc.args.iter().find(|a| *ident == a.0) {
             Some(&(_, ref tts)) => {
                 input_vals.push(quote! { #tts });
             }
@@ -83,7 +82,8 @@ pub fn assert_instr(
         };
     }
 
-    let attrs = func.attrs
+    let attrs = func
+        .attrs
         .iter()
         .filter(|attr| {
             attr.path
@@ -92,7 +92,7 @@ pub fn assert_instr(
                 .expect("attr.path.segments.first() failed")
                 .value()
                 .ident
-                .as_ref()
+                .to_string()
                 .starts_with("target")
         })
         .collect::<Vec<_>>();
@@ -105,15 +105,27 @@ pub fn assert_instr(
     } else {
         syn::LitStr::new("C", proc_macro2::Span::call_site())
     };
+    let shim_name_str = format!("{}{}", shim_name, assert_name);
     let to_test = quote! {
         #attrs
         unsafe extern #abi fn #shim_name(#(#inputs),*) #ret {
+            // The compiler in optimized mode by default runs a pass called
+            // "mergefunc" where it'll merge functions that look identical.
+            // Turns out some intrinsics produce identical code and they're
+            // folded together, meaning that one just jumps to another. This
+            // messes up our inspection of the disassembly of this function and
+            // we're not a huge fan of that.
+            //
+            // To thwart this pass and prevent functions from being merged we
+            // generate some code that's hopefully very tight in terms of
+            // codegen but is otherwise unique to prevent code from being
+            // folded.
+            ::stdsimd_test::_DONT_DEDUP = #shim_name_str;
             #name(#(#input_vals),*)
         }
     };
 
-    let tts: TokenStream = quote_spanned! {
-        proc_macro2::Span::call_site() =>
+    let tts: TokenStream = quote! {
         #[test]
         #[allow(non_snake_case)]
         #maybe_ignore
@@ -126,9 +138,8 @@ pub fn assert_instr(
         }
     }.into();
     // why? necessary now to get tests to work?
-    let tts: TokenStream = tts.to_string()
-        .parse()
-        .expect("cannot parse tokenstream");
+    let tts: TokenStream =
+        tts.to_string().parse().expect("cannot parse tokenstream");
 
     let tts: TokenStream = quote! {
         #item
@@ -166,7 +177,7 @@ where
     T: Clone + IntoIterator,
     T::Item: quote::ToTokens,
 {
-    fn to_tokens(&self, tokens: &mut quote::Tokens) {
+    fn to_tokens(&self, tokens: &mut proc_macro2::TokenStream) {
         for item in self.0.clone() {
             item.to_tokens(tokens);
         }

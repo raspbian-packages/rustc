@@ -12,7 +12,7 @@ use lint;
 use rustc::ty::TyCtxt;
 
 use syntax::ast;
-use syntax_pos::{Span, DUMMY_SP};
+use syntax_pos::Span;
 
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
@@ -39,10 +39,10 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
 
 impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CheckVisitor<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
-        if item.vis == hir::Public || item.span == DUMMY_SP {
+        if item.vis.node.is_pub() || item.span.is_dummy() {
             return;
         }
-        if let hir::ItemUse(ref path, _) = item.node {
+        if let hir::ItemKind::Use(ref path, _) = item.node {
             self.check_import(item.id, path.span);
         }
     }
@@ -196,7 +196,7 @@ struct ExternCrateToLint {
 
 impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CollectExternCrateVisitor<'a, 'tcx> {
     fn visit_item(&mut self, item: &hir::Item) {
-        if let hir::ItemExternCrate(orig_name) = item.node {
+        if let hir::ItemKind::ExternCrate(orig_name) = item.node {
             let extern_crate_def_id = self.tcx.hir.local_def_id(item.id);
             self.crates_to_lint.push(
                 ExternCrateToLint {
@@ -214,4 +214,3 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CollectExternCrateVisitor<'a, 'tcx> {
     fn visit_impl_item(&mut self, _impl_item: &hir::ImplItem) {
     }
 }
-

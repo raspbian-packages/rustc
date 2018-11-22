@@ -46,26 +46,24 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
         let tcx = self.bccx.tcx;
         let mut mutables = FxHashMap();
         for p in pats {
-            p.each_binding(|_, hir_id, span, path1| {
-                let name = path1.node;
-
+            p.each_binding(|_, hir_id, span, ident| {
                 // Skip anything that looks like `_foo`
-                if name.as_str().starts_with("_") {
+                if ident.as_str().starts_with("_") {
                     return;
                 }
 
                 // Skip anything that looks like `&foo` or `&mut foo`, only look
                 // for by-value bindings
-                let bm = match self.bccx.tables.pat_binding_modes().get(hir_id) {
-                    Some(&bm) => bm,
-                    None => span_bug!(span, "missing binding mode"),
-                };
-                match bm {
-                    ty::BindByValue(hir::MutMutable) => {}
-                    _ => return,
-                }
+                if let Some(&bm) = self.bccx.tables.pat_binding_modes().get(hir_id) {
+                    match bm {
+                        ty::BindByValue(hir::MutMutable) => {}
+                        _ => return,
+                    }
 
-                mutables.entry(name).or_insert(Vec::new()).push((hir_id, span));
+                    mutables.entry(ident.name).or_insert(Vec::new()).push((hir_id, span));
+                } else {
+                    tcx.sess.delay_span_bug(span, "missing binding mode");
+                }
             });
         }
 

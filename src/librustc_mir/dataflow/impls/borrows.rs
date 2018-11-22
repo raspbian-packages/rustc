@@ -20,7 +20,7 @@ use rustc::ty::TyCtxt;
 use rustc::ty::{RegionKind, RegionVid};
 use rustc::ty::RegionKind::ReScope;
 
-use rustc_data_structures::bitslice::BitwiseOperator;
+use rustc_data_structures::bitslice::{BitwiseOperator, Word};
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_data_structures::indexed_set::IdxSet;
 use rustc_data_structures::indexed_vec::IndexVec;
@@ -53,8 +53,8 @@ pub struct Borrows<'a, 'gcx: 'tcx, 'tcx: 'a> {
     _nonlexical_regioncx: Rc<RegionInferenceContext<'tcx>>,
 }
 
-fn precompute_borrows_out_of_scope<'a, 'tcx>(
-    mir: &'a Mir<'tcx>,
+fn precompute_borrows_out_of_scope<'tcx>(
+    mir: &Mir<'tcx>,
     regioncx: &Rc<RegionInferenceContext<'tcx>>,
     borrows_out_of_scope_at_location: &mut FxHashMap<Location, Vec<BorrowIndex>>,
     borrow_index: BorrowIndex,
@@ -76,7 +76,7 @@ fn precompute_borrows_out_of_scope<'a, 'tcx>(
     while let Some(location) = stack.pop() {
         // If region does not contain a point at the location, then add to list and skip
         // successor locations.
-        if !regioncx.region_contains_point(borrow_region, location) {
+        if !regioncx.region_contains(borrow_region, location) {
             debug!("borrow {:?} gets killed at {:?}", borrow_index, location);
             borrows_out_of_scope_at_location
                 .entry(location)
@@ -259,6 +259,7 @@ impl<'a, 'gcx, 'tcx> BitDenotation for Borrows<'a, 'gcx, 'tcx> {
                     // Issue #46746: Two-phase borrows handles
                     // stmts of form `Tmp = &mut Borrow` ...
                     match lhs {
+                        Place::Promoted(_) |
                         Place::Local(..) | Place::Static(..) => {} // okay
                         Place::Projection(..) => {
                             // ... can assign into projections,
@@ -370,7 +371,7 @@ impl<'a, 'gcx, 'tcx> BitDenotation for Borrows<'a, 'gcx, 'tcx> {
 
 impl<'a, 'gcx, 'tcx> BitwiseOperator for Borrows<'a, 'gcx, 'tcx> {
     #[inline]
-    fn join(&self, pred1: usize, pred2: usize) -> usize {
+    fn join(&self, pred1: Word, pred2: Word) -> Word {
         pred1 | pred2 // union effects of preds when computing reservations
     }
 }

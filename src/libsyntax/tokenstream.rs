@@ -33,10 +33,9 @@ use util::RcSlice;
 
 use std::borrow::Cow;
 use std::{fmt, iter, mem};
-use std::hash::{self, Hash};
 
 /// A delimited sequence of token trees
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+#[derive(Clone, PartialEq, RustcEncodable, RustcDecodable, Debug)]
 pub struct Delimited {
     /// The type of delimiter
     pub delim: token::DelimToken,
@@ -57,8 +56,8 @@ impl Delimited {
 
     /// Returns the opening delimiter as a token tree.
     pub fn open_tt(&self, span: Span) -> TokenTree {
-        let open_span = if span == DUMMY_SP {
-            DUMMY_SP
+        let open_span = if span.is_dummy() {
+            span
         } else {
             span.with_hi(span.lo() + BytePos(self.delim.len() as u32))
         };
@@ -67,8 +66,8 @@ impl Delimited {
 
     /// Returns the closing delimiter as a token tree.
     pub fn close_tt(&self, span: Span) -> TokenTree {
-        let close_span = if span == DUMMY_SP {
-            DUMMY_SP
+        let close_span = if span.is_dummy() {
+            span
         } else {
             span.with_lo(span.hi() - BytePos(self.delim.len() as u32))
         };
@@ -93,7 +92,7 @@ impl Delimited {
 ///
 /// The RHS of an MBE macro is the only place `SubstNt`s are substituted.
 /// Nothing special happens to misnamed or misplaced `SubstNt`s.
-#[derive(Debug, Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash)]
+#[derive(Debug, Clone, PartialEq, RustcEncodable, RustcDecodable)]
 pub enum TokenTree {
     /// A single token
     Token(Span, token::Token),
@@ -341,6 +340,7 @@ impl TokenStream {
     }
 }
 
+#[derive(Clone)]
 pub struct TokenStreamBuilder(Vec<TokenStream>);
 
 impl TokenStreamBuilder {
@@ -605,14 +605,6 @@ impl Decodable for TokenStream {
     }
 }
 
-impl Hash for TokenStream {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        for tree in self.trees() {
-            tree.hash(state);
-        }
-    }
-}
-
 impl Encodable for ThinTokenStream {
     fn encode<E: Encoder>(&self, encoder: &mut E) -> Result<(), E::Error> {
         TokenStream::from(self.clone()).encode(encoder)
@@ -624,13 +616,6 @@ impl Decodable for ThinTokenStream {
         TokenStream::decode(decoder).map(Into::into)
     }
 }
-
-impl Hash for ThinTokenStream {
-    fn hash<H: hash::Hasher>(&self, state: &mut H) {
-        TokenStream::from(self.clone()).hash(state);
-    }
-}
-
 
 #[cfg(test)]
 mod tests {

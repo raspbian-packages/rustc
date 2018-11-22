@@ -76,6 +76,7 @@ This API is completely unstable and subject to change.
 #![feature(crate_visibility_modifier)]
 #![feature(from_ref)]
 #![feature(exhaustive_patterns)]
+#![feature(iterator_find_map)]
 #![feature(quote)]
 #![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
@@ -107,7 +108,7 @@ use rustc::infer::InferOk;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::query::Providers;
-use rustc::traits::{ObligationCause, ObligationCauseCode, TraitEngine};
+use rustc::traits::{ObligationCause, ObligationCauseCode, TraitEngine, TraitEngineExt};
 use session::{CompileIncomplete, config};
 use util::common::time;
 
@@ -187,19 +188,12 @@ fn check_main_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             match tcx.hir.find(main_id) {
                 Some(hir_map::NodeItem(it)) => {
                     match it.node {
-                        hir::ItemFn(.., ref generics, _) => {
+                        hir::ItemKind::Fn(.., ref generics, _) => {
                             let mut error = false;
                             if !generics.params.is_empty() {
-                                let param_type = if generics.is_lt_parameterized() {
-                                    "lifetime"
-                                } else {
-                                    "type"
-                                };
-                                let msg =
-                                    format!("`main` function is not allowed to have {} parameters",
-                                            param_type);
-                                let label =
-                                    format!("`main` cannot have {} parameters", param_type);
+                                let msg = "`main` function is not allowed to have generic \
+                                           parameters".to_string();
+                                let label = "`main` cannot have generic parameters".to_string();
                                 struct_span_err!(tcx.sess, generics.span, E0131, "{}", msg)
                                     .span_label(generics.span, label)
                                     .emit();
@@ -266,7 +260,7 @@ fn check_start_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             match tcx.hir.find(start_id) {
                 Some(hir_map::NodeItem(it)) => {
                     match it.node {
-                        hir::ItemFn(.., ref generics, _) => {
+                        hir::ItemKind::Fn(.., ref generics, _) => {
                             let mut error = false;
                             if !generics.params.is_empty() {
                                 struct_span_err!(tcx.sess, generics.span, E0132,

@@ -5,6 +5,7 @@
     - [The Fail trait](./fail.md)
     - [Deriving Fail](./derive-fail.md)
     - [The Error type](./error.md)
+    - [`bail!` and `ensure!`](./bail-and-ensure.md)
 - [Patterns & Guidance](./guidance.md)
     - [Strings as errors](./error-msg.md)
     - [A Custom Fail type](./custom-fail.md)

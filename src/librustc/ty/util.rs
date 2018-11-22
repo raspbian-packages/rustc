@@ -518,8 +518,29 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         result
     }
 
+    /// True if `def_id` refers to a closure (e.g., `|x| x * 2`). Note
+    /// that closures have a def-id, but the closure *expression* also
+    /// has a `HirId` that is located within the context where the
+    /// closure appears (and, sadly, a corresponding `NodeId`, since
+    /// those are not yet phased out). The parent of the closure's
+    /// def-id will also be the context where it appears.
     pub fn is_closure(self, def_id: DefId) -> bool {
         self.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr
+    }
+
+    /// True if `def_id` refers to a trait (e.g., `trait Foo { ... }`).
+    pub fn is_trait(self, def_id: DefId) -> bool {
+        if let DefPathData::Trait(_) = self.def_key(def_id).disambiguated_data.data {
+            true
+        } else {
+            false
+        }
+    }
+
+    /// True if this def-id refers to the implicit constructor for
+    /// a tuple struct like `struct Foo(u32)`.
+    pub fn is_struct_constructor(self, def_id: DefId) -> bool {
+        self.def_key(def_id).disambiguated_data.data == DefPathData::StructCtor
     }
 
     /// Given the `DefId` of a fn or closure, returns the `DefId` of
@@ -584,10 +605,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         if let Some(node) = self.hir.get_if_local(def_id) {
             match node {
                 Node::NodeItem(&hir::Item {
-                    node: hir::ItemStatic(_, mutbl, _), ..
+                    node: hir::ItemKind::Static(_, mutbl, _), ..
                 }) => Some(mutbl),
                 Node::NodeForeignItem(&hir::ForeignItem {
-                    node: hir::ForeignItemStatic(_, is_mutbl), ..
+                    node: hir::ForeignItemKind::Static(_, is_mutbl), ..
                 }) =>
                     Some(if is_mutbl {
                         hir::Mutability::MutMutable
@@ -911,6 +932,9 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         // Foreign types can never have destructors
         ty::TyForeign(..) => false,
 
+        // `ManuallyDrop` doesn't have a destructor regardless of field types.
+        ty::TyAdt(def, _) if Some(def.did) == tcx.lang_items().manually_drop() => false,
+
         // Issue #22536: We first query type_moves_by_default.  It sees a
         // normalized version of the type, and therefore will definitely
         // know whether the type implements Copy (and thus needs no
@@ -946,7 +970,8 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         ty::TyTuple(ref tys) => tys.iter().cloned().any(needs_drop),
 
-        // unions don't have destructors regardless of the child types
+        // unions don't have destructors because of the child types,
+        // only if they manually implement `Drop` (handled above).
         ty::TyAdt(def, _) if def.is_union() => false,
 
         ty::TyAdt(def, substs) =>

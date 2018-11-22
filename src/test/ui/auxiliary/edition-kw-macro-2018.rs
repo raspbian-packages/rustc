@@ -8,9 +8,10 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition=2018
+// edition:2018
 
 #![feature(raw_identifiers)]
+#![allow(async_idents)]
 
 #[macro_export]
 macro_rules! produces_async {

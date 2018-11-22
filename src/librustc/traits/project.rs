@@ -28,10 +28,10 @@ use super::util;
 use hir::def_id::DefId;
 use infer::{InferCtxt, InferOk};
 use infer::type_variable::TypeVariableOrigin;
-use middle::const_val::ConstVal;
+use mir::interpret::ConstValue;
 use mir::interpret::{GlobalId};
 use rustc_data_structures::snapshot_map::{Snapshot, SnapshotMap};
-use syntax::symbol::Symbol;
+use syntax::ast::Ident;
 use ty::subst::{Subst, Substs};
 use ty::{self, ToPredicate, ToPolyTraitRef, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder};
@@ -426,7 +426,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
     }
 
     fn fold_const(&mut self, constant: &'tcx ty::Const<'tcx>) -> &'tcx ty::Const<'tcx> {
-        if let ConstVal::Unevaluated(def_id, substs) = constant.val {
+        if let ConstValue::Unevaluated(def_id, substs) = constant.val {
             let tcx = self.selcx.tcx().global_tcx();
             if let Some(param_env) = self.tcx().lift_to_global(&self.param_env) {
                 if substs.needs_infer() || substs.has_skol() {
@@ -1349,10 +1349,10 @@ fn confirm_generator_candidate<'cx, 'gcx, 'tcx>(
                                             obligation.predicate.self_ty(),
                                             gen_sig)
         .map_bound(|(trait_ref, yield_ty, return_ty)| {
-            let name = tcx.associated_item(obligation.predicate.item_def_id).name;
-            let ty = if name == Symbol::intern("Return") {
+            let name = tcx.associated_item(obligation.predicate.item_def_id).ident.name;
+            let ty = if name == "Return" {
                 return_ty
-            } else if name == Symbol::intern("Yield") {
+            } else if name == "Yield" {
                 yield_ty
             } else {
                 bug!()
@@ -1452,7 +1452,7 @@ fn confirm_callable_candidate<'cx, 'gcx, 'tcx>(
                 projection_ty: ty::ProjectionTy::from_ref_and_name(
                     tcx,
                     trait_ref,
-                    Symbol::intern(FN_OUTPUT_NAME),
+                    Ident::from_str(FN_OUTPUT_NAME),
                 ),
                 ty: ret_type
             }
@@ -1502,19 +1502,26 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
     let param_env = obligation.param_env;
     let assoc_ty = assoc_ty_def(selcx, impl_def_id, obligation.predicate.item_def_id);
 
-    let ty = if !assoc_ty.item.defaultness.has_value() {
+    if !assoc_ty.item.defaultness.has_value() {
         // This means that the impl is missing a definition for the
         // associated type. This error will be reported by the type
         // checker method `check_impl_items_against_trait`, so here we
         // just return TyError.
         debug!("confirm_impl_candidate: no associated type {:?} for {:?}",
-               assoc_ty.item.name,
+               assoc_ty.item.ident,
                obligation.predicate);
-        tcx.types.err
+        return Progress {
+            ty: tcx.types.err,
+            obligations: nested,
+        };
+    }
+    let substs = translate_substs(selcx.infcx(), param_env, impl_def_id, substs, assoc_ty.node);
+    let ty = if let ty::AssociatedKind::Existential = assoc_ty.item.kind {
+        let item_substs = Substs::identity_for_item(tcx, assoc_ty.item.def_id);
+        tcx.mk_anon(assoc_ty.item.def_id, item_substs)
     } else {
         tcx.type_of(assoc_ty.item.def_id)
     };
-    let substs = translate_substs(selcx.infcx(), param_env, impl_def_id, substs, assoc_ty.node);
     Progress {
         ty: ty.subst(tcx, substs),
         obligations: nested,
@@ -1533,7 +1540,7 @@ fn assoc_ty_def<'cx, 'gcx, 'tcx>(
     -> specialization_graph::NodeItem<ty::AssociatedItem>
 {
     let tcx = selcx.tcx();
-    let assoc_ty_name = tcx.associated_item(assoc_ty_def_id).name;
+    let assoc_ty_name = tcx.associated_item(assoc_ty_def_id).ident;
     let trait_def_id = tcx.impl_trait_ref(impl_def_id).unwrap().def_id;
     let trait_def = tcx.trait_def(trait_def_id);
 
@@ -1546,7 +1553,7 @@ fn assoc_ty_def<'cx, 'gcx, 'tcx>(
     let impl_node = specialization_graph::Node::Impl(impl_def_id);
     for item in impl_node.items(tcx) {
         if item.kind == ty::AssociatedKind::Type &&
-                tcx.hygienic_eq(item.name, assoc_ty_name, trait_def_id) {
+                tcx.hygienic_eq(item.ident, assoc_ty_name, trait_def_id) {
             return specialization_graph::NodeItem {
                 node: specialization_graph::Node::Impl(impl_def_id),
                 item,

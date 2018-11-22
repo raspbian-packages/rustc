@@ -6,7 +6,6 @@ members = [
   "libtest",
   "librustc_codegen_llvm",
   "tools/cargotest",
-  "tools/clippy",
   "tools/compiletest",
   "tools/error_index_generator",
   "tools/linkchecker",
@@ -14,15 +13,16 @@ members = [
   "tools/unstable-book-gen",
   "tools/tidy",
   "tools/build-manifest",
-  "tools/remote-test-client",
-  "tools/remote-test-server",
   "tools/rust-installer",
   "tools/rustdoc",
   "tools/rustdoc-themes",
 ]
+exclude = [
+  "tools/rls/test_data",
+]
 
-# Curiously, libtest will segfault if compiled with opt-level=3
-# with some versions of XCode: https://github.com/rust-lang/rust/issues/50867
+# Curiously, LLVM 7.0 will segfault if compiled with opt-level=3
+# See issue https://github.com/rust-lang/rust/issues/52378
 [profile.release]
 opt-level = 2
 [profile.bench]
@@ -37,3 +37,7 @@ debug-assertions = false
 debug = false
 debug-assertions = false
 
+[patch.crates-io]
+# See comments in `tools/rustc-workspace-hack/README.md` for what's going on
+# here
+rustc-workspace-hack = { path = 'tools/rustc-workspace-hack' }

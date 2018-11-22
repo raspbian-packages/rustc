@@ -33,6 +33,8 @@ fn main() {
         cfg.define("_GNU_SOURCE", None);
     } else if netbsd {
         cfg.define("_NETBSD_SOURCE", Some("1"));
+    } else if apple {
+        cfg.define("__APPLE_USE_RFC_3542", None);
     } else if windows {
         cfg.define("_WIN32_WINNT", Some("0x8000"));
     } else if solaris {
@@ -82,6 +84,8 @@ fn main() {
             cfg.header("sys/socket.h");
         }
         cfg.header("net/if.h");
+        cfg.header("net/route.h");
+        cfg.header("net/if_arp.h");
         cfg.header("netdb.h");
         cfg.header("netinet/in.h");
         cfg.header("netinet/ip.h");
@@ -132,6 +136,7 @@ fn main() {
         cfg.header("arpa/inet.h");
         cfg.header("xlocale.h");
         cfg.header("utmp.h");
+        cfg.header("ifaddrs.h");
         if i686 || x86_64 {
             cfg.header("sys/reg.h");
         }
@@ -178,6 +183,7 @@ fn main() {
         }
         cfg.header("net/route.h");
         cfg.header("netinet/if_ether.h");
+        cfg.header("netinet/in.h");
         cfg.header("sys/proc_info.h");
         cfg.header("sys/kern_control.h");
         cfg.header("sys/ipc.h");
@@ -242,6 +248,7 @@ fn main() {
         }
         cfg.header("sys/reboot.h");
         if !emscripten {
+            cfg.header("linux/sockios.h");
             cfg.header("linux/netlink.h");
             cfg.header("linux/genetlink.h");
             cfg.header("linux/netfilter_ipv4.h");
@@ -416,7 +423,9 @@ fn main() {
             // which is absent in glibc, has to be defined.
             "__timeval" if linux => true,
 
-            // The alignment of this is 4 on 64-bit OSX...
+            // Fixed on stdbuild with repr(packed(4))
+            // Once repr_packed stabilizes we can fix this unconditionally
+            // and remove this check.
             "kevent" | "shmid_ds" if apple && x86_64 => true,
 
             // This is actually a union, not a struct
@@ -516,6 +525,9 @@ fn main() {
             "EVFILT_PROCDESC" | "EVFILT_SENDFILE" | "EVFILT_EMPTY" |
             "PD_CLOEXEC" | "PD_ALLOWED_AT_FORK" if freebsd => true,
 
+            // These constants were added in FreeBSD 12
+            "SF_USER_READAHEAD" if freebsd => true,
+
             // These OSX constants are removed in Sierra.
             // https://developer.apple.com/library/content/releasenotes/General/APIDiffsMacOS10_12/Swift/Darwin.html
             "KERN_KDENABLE_BG_TRACE" if apple => true,
@@ -526,8 +538,11 @@ fn main() {
             "KERN_USERMOUNT" |
             "KERN_ARND" if openbsd => true,
 
-            // These constats were added in OpenBSD 6.2
+            // These constants were added in OpenBSD 6.2
             "EV_RECEIPT" | "EV_DISPATCH" if openbsd => true,
+
+            // These constants were added in OpenBSD 6.3
+            "MAP_STACK" if openbsd => true,
 
             // These are either unimplemented or optionally built into uClibc
             "LC_CTYPE_MASK" | "LC_NUMERIC_MASK" | "LC_TIME_MASK" | "LC_COLLATE_MASK" | "LC_MONETARY_MASK" | "LC_MESSAGES_MASK" |

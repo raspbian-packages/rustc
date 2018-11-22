@@ -156,7 +156,7 @@ $ debian/check-orig-suspicious.sh $ver
 
 $ git checkout debian/experimental
 $ gbp import-orig ../rustc_$ver+dfsg1.orig.tar.xz
-$ dch -v $ver+dfsg1-1~exp1 -m "New upstream release."
+$ dch -v $ver+dfsg1-1~exp1 "New upstream release."
 $ debian/rules update-version
 # might also need to bump the version of the cargo Build-Depends
 # then refresh patches, etc etc

@@ -99,6 +99,7 @@ objdir=$root_dir/obj
 
 mkdir -p $HOME/.cargo
 mkdir -p $objdir/tmp
+mkdir -p $objdir/cores
 
 args=
 if [ "$SCCACHE_BUCKET" != "" ]; then

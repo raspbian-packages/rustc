@@ -10,20 +10,19 @@
 
 //! MIR datatypes and passes. See the [rustc guide] for more info.
 //!
-//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/mir.html
+//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/mir/index.html
 
 use graphviz::IntoCow;
 use hir::def::CtorKind;
 use hir::def_id::DefId;
-use hir::{self, InlineAsm};
+use hir::{self, HirId, InlineAsm};
 use middle::region;
 use mir::interpret::{EvalErrorKind, Scalar, Value};
 use mir::visit::MirVisitable;
 use rustc_apfloat::ieee::{Double, Single};
 use rustc_apfloat::Float;
-use rustc_data_structures::control_flow_graph::dominators::{dominators, Dominators};
-use rustc_data_structures::control_flow_graph::ControlFlowGraph;
-use rustc_data_structures::control_flow_graph::{GraphPredecessors, GraphSuccessors};
+use rustc_data_structures::graph::dominators::{dominators, Dominators};
+use rustc_data_structures::graph::{self, GraphPredecessors, GraphSuccessors};
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 use rustc_data_structures::small_vec::SmallVec;
 use rustc_data_structures::sync::Lrc;
@@ -380,6 +379,15 @@ pub enum ClearCrossCrate<T> {
     Set(T),
 }
 
+impl<T> ClearCrossCrate<T> {
+    pub fn assert_crate_local(self) -> T {
+        match self {
+            ClearCrossCrate::Clear => bug!("unwrapping cross-crate data"),
+            ClearCrossCrate::Set(v) => v,
+        }
+    }
+}
+
 impl<T: serialize::Encodable> serialize::UseSpecializedEncodable for ClearCrossCrate<T> {}
 impl<T: serialize::Decodable> serialize::UseSpecializedDecodable for ClearCrossCrate<T> {}
 
@@ -497,8 +505,8 @@ pub enum LocalKind {
     ReturnPointer,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
-pub struct VarBindingForm {
+#[derive(Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
+pub struct VarBindingForm<'tcx> {
     /// Is variable bound via `x`, `mut x`, `ref x`, or `ref mut x`?
     pub binding_mode: ty::BindingMode,
     /// If an explicit type was provided for this variable binding,
@@ -508,21 +516,52 @@ pub struct VarBindingForm {
     /// doing so breaks incremental compilation (as of this writing),
     /// while a `Span` does not cause our tests to fail.
     pub opt_ty_info: Option<Span>,
+    /// Place of the RHS of the =, or the subject of the `match` where this
+    /// variable is initialized. None in the case of `let PATTERN;`.
+    /// Some((None, ..)) in the case of and `let [mut] x = ...` because
+    /// (a) the right-hand side isn't evaluated as a place expression.
+    /// (b) it gives a way to separate this case from the remaining cases
+    ///     for diagnostics.
+    pub opt_match_place: Option<(Option<Place<'tcx>>, Span)>,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
-pub enum BindingForm {
+#[derive(Clone, PartialEq, Eq, Hash, Debug, RustcEncodable, RustcDecodable)]
+pub enum BindingForm<'tcx> {
     /// This is a binding for a non-`self` binding, or a `self` that has an explicit type.
-    Var(VarBindingForm),
+    Var(VarBindingForm<'tcx>),
     /// Binding for a `self`/`&self`/`&mut self` binding where the type is implicit.
     ImplicitSelf,
+    /// Reference used in a guard expression to ensure immutability.
+    RefForGuard,
 }
 
-CloneTypeFoldableAndLiftImpls! { BindingForm, }
+CloneTypeFoldableAndLiftImpls! { BindingForm<'tcx>, }
 
-impl_stable_hash_for!(struct self::VarBindingForm { binding_mode, opt_ty_info });
+impl_stable_hash_for!(struct self::VarBindingForm<'tcx> {
+    binding_mode,
+    opt_ty_info,
+    opt_match_place
+});
 
-impl_stable_hash_for!(enum self::BindingForm { Var(binding), ImplicitSelf, });
+mod binding_form_impl {
+    use rustc_data_structures::stable_hasher::{HashStable, StableHasher, StableHasherResult};
+    use ich::StableHashingContext;
+
+    impl<'a, 'tcx> HashStable<StableHashingContext<'a>> for super::BindingForm<'tcx> {
+        fn hash_stable<W: StableHasherResult>(&self,
+                                            hcx: &mut StableHashingContext<'a>,
+                                            hasher: &mut StableHasher<W>) {
+            use super::BindingForm::*;
+            ::std::mem::discriminant(self).hash_stable(hcx, hasher);
+
+            match self {
+                Var(binding) => binding.hash_stable(hcx, hasher),
+                ImplicitSelf => (),
+                RefForGuard => (),
+            }
+        }
+    }
+}
 
 /// A MIR local.
 ///
@@ -542,7 +581,7 @@ pub struct LocalDecl<'tcx> {
     /// therefore it need not be visible across crates. pnkfelix
     /// currently hypothesized we *need* to wrap this in a
     /// `ClearCrossCrate` as long as it carries as `HirId`.
-    pub is_user_variable: Option<ClearCrossCrate<BindingForm>>,
+    pub is_user_variable: Option<ClearCrossCrate<BindingForm<'tcx>>>,
 
     /// True if this is an internal local
     ///
@@ -670,6 +709,7 @@ impl<'tcx> LocalDecl<'tcx> {
             Some(ClearCrossCrate::Set(BindingForm::Var(VarBindingForm {
                 binding_mode: ty::BindingMode::BindByValue(_),
                 opt_ty_info: _,
+                opt_match_place: _,
             }))) => true,
 
             // FIXME: might be able to thread the distinction between
@@ -688,6 +728,7 @@ impl<'tcx> LocalDecl<'tcx> {
             Some(ClearCrossCrate::Set(BindingForm::Var(VarBindingForm {
                 binding_mode: ty::BindingMode::BindByValue(_),
                 opt_ty_info: _,
+                opt_match_place: _,
             }))) => true,
 
             Some(ClearCrossCrate::Set(BindingForm::ImplicitSelf)) => true,
@@ -754,6 +795,9 @@ impl<'tcx> LocalDecl<'tcx> {
 #[derive(Clone, Debug, RustcEncodable, RustcDecodable)]
 pub struct UpvarDecl {
     pub debug_name: Name,
+
+    /// `HirId` of the captured variable
+    pub var_hir_id: ClearCrossCrate<HirId>,
 
     /// If true, the capture is behind a reference.
     pub by_ref: bool,
@@ -970,6 +1014,10 @@ impl<'tcx> Terminator<'tcx> {
         self.kind.successors_mut()
     }
 
+    pub fn unwind(&self) -> Option<&Option<BasicBlock>> {
+        self.kind.unwind()
+    }
+
     pub fn unwind_mut(&mut self) -> Option<&mut Option<BasicBlock>> {
         self.kind.unwind_mut()
     }
@@ -1162,6 +1210,31 @@ impl<'tcx> TerminatorKind<'tcx> {
             } => Some(real_target)
                 .into_iter()
                 .chain(&mut imaginary_targets[..]),
+        }
+    }
+
+    pub fn unwind(&self) -> Option<&Option<BasicBlock>> {
+        match *self {
+            TerminatorKind::Goto { .. }
+            | TerminatorKind::Resume
+            | TerminatorKind::Abort
+            | TerminatorKind::Return
+            | TerminatorKind::Unreachable
+            | TerminatorKind::GeneratorDrop
+            | TerminatorKind::Yield { .. }
+            | TerminatorKind::SwitchInt { .. }
+            | TerminatorKind::FalseEdges { .. } => None,
+            TerminatorKind::Call {
+                cleanup: ref unwind,
+                ..
+            }
+            | TerminatorKind::Assert {
+                cleanup: ref unwind,
+                ..
+            }
+            | TerminatorKind::DropAndReplace { ref unwind, .. }
+            | TerminatorKind::Drop { ref unwind, .. }
+            | TerminatorKind::FalseUnwind { ref unwind, .. } => Some(unwind),
         }
     }
 
@@ -1565,7 +1638,7 @@ impl Debug for ValidationOp {
 }
 
 // This is generic so that it can be reused by miri
-#[derive(Clone, RustcEncodable, RustcDecodable)]
+#[derive(Clone, Hash, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub struct ValidationOperand<'tcx, T> {
     pub place: T,
     pub ty: Ty<'tcx>,
@@ -1627,6 +1700,9 @@ pub enum Place<'tcx> {
 
     /// static or static mut variable
     Static(Box<Static<'tcx>>),
+
+    /// Constant code promoted to an injected static
+    Promoted(Box<(Promoted, Ty<'tcx>)>),
 
     /// projection out of a place (access a field, deref a pointer, etc)
     Projection(Box<PlaceProjection<'tcx>>),
@@ -1737,6 +1813,7 @@ impl<'tcx> Debug for Place<'tcx> {
                 ty::tls::with(|tcx| tcx.item_path_str(def_id)),
                 ty
             ),
+            Promoted(ref promoted) => write!(fmt, "({:?}: {:?})", promoted.0, promoted.1),
             Projection(ref data) => match data.elem {
                 ProjectionElem::Downcast(ref adt_def, index) => {
                     write!(fmt, "({:?} as {})", data.base, adt_def.variants[index].name)
@@ -1837,9 +1914,7 @@ impl<'tcx> Operand<'tcx> {
         Operand::Constant(box Constant {
             span,
             ty,
-            literal: Literal::Value {
-                value: ty::Const::zero_sized(tcx, ty),
-            },
+            literal: ty::Const::zero_sized(tcx, ty),
         })
     }
 
@@ -2018,7 +2093,7 @@ impl<'tcx> Debug for Rvalue<'tcx> {
 
                 // When printing regions, add trailing space if necessary.
                 let region = if ppaux::verbose() || ppaux::identify_regions() {
-                    let mut region = format!("{}", region);
+                    let mut region = region.to_string();
                     if region.len() > 0 {
                         region.push(' ');
                     }
@@ -2127,53 +2202,24 @@ impl<'tcx> Debug for Rvalue<'tcx> {
 pub struct Constant<'tcx> {
     pub span: Span,
     pub ty: Ty<'tcx>,
-    pub literal: Literal<'tcx>,
+    pub literal: &'tcx ty::Const<'tcx>,
 }
 
 newtype_index!(Promoted { DEBUG_FORMAT = "promoted[{}]" });
 
-#[derive(Clone, PartialEq, Eq, Hash, RustcEncodable, RustcDecodable)]
-pub enum Literal<'tcx> {
-    Value {
-        value: &'tcx ty::Const<'tcx>,
-    },
-    Promoted {
-        // Index into the `promoted` vector of `Mir`.
-        index: Promoted,
-    },
-}
-
 impl<'tcx> Debug for Constant<'tcx> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        write!(fmt, "{:?}", self.literal)
+        write!(fmt, "const ")?;
+        fmt_const_val(fmt, self.literal)
     }
 }
 
-impl<'tcx> Debug for Literal<'tcx> {
-    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        use self::Literal::*;
-        match *self {
-            Value { value } => {
-                write!(fmt, "const ")?;
-                fmt_const_val(fmt, value)
-            }
-            Promoted { index } => write!(fmt, "{:?}", index),
-        }
-    }
-}
-
-/// Write a `ConstVal` in a way closer to the original source code than the `Debug` output.
+/// Write a `ConstValue` in a way closer to the original source code than the `Debug` output.
 pub fn fmt_const_val<W: Write>(fmt: &mut W, const_val: &ty::Const) -> fmt::Result {
-    use middle::const_val::ConstVal;
-    match const_val.val {
-        ConstVal::Unevaluated(..) => write!(fmt, "{:?}", const_val),
-        ConstVal::Value(val) => {
-            if let Some(value) = val.to_byval_value() {
-                print_miri_value(value, const_val.ty, fmt)
-            } else {
-                write!(fmt, "{:?}:{}", val, const_val.ty)
-            }
-        }
+    if let Some(value) = const_val.to_byval_value() {
+        print_miri_value(value, const_val.ty, fmt)
+    } else {
+        write!(fmt, "{:?}:{}", const_val.val, const_val.ty)
     }
 }
 
@@ -2224,23 +2270,32 @@ fn item_path_str(def_id: DefId) -> String {
     ty::tls::with(|tcx| tcx.item_path_str(def_id))
 }
 
-impl<'tcx> ControlFlowGraph for Mir<'tcx> {
+impl<'tcx> graph::DirectedGraph for Mir<'tcx> {
     type Node = BasicBlock;
+}
 
+impl<'tcx> graph::WithNumNodes for Mir<'tcx> {
     fn num_nodes(&self) -> usize {
         self.basic_blocks.len()
     }
+}
 
+impl<'tcx> graph::WithStartNode for Mir<'tcx> {
     fn start_node(&self) -> Self::Node {
         START_BLOCK
     }
+}
 
+impl<'tcx> graph::WithPredecessors for Mir<'tcx> {
     fn predecessors<'graph>(
         &'graph self,
         node: Self::Node,
     ) -> <Self as GraphPredecessors<'graph>>::Iter {
         self.predecessors_for(node).clone().into_iter()
     }
+}
+
+impl<'tcx> graph::WithSuccessors for Mir<'tcx> {
     fn successors<'graph>(
         &'graph self,
         node: Self::Node,
@@ -2249,12 +2304,12 @@ impl<'tcx> ControlFlowGraph for Mir<'tcx> {
     }
 }
 
-impl<'a, 'b> GraphPredecessors<'b> for Mir<'a> {
+impl<'a, 'b> graph::GraphPredecessors<'b> for Mir<'a> {
     type Item = BasicBlock;
     type Iter = IntoIter<BasicBlock>;
 }
 
-impl<'a, 'b> GraphSuccessors<'b> for Mir<'a> {
+impl<'a, 'b> graph::GraphSuccessors<'b> for Mir<'a> {
     type Item = BasicBlock;
     type Iter = iter::Cloned<Successors<'b>>;
 }
@@ -2312,6 +2367,7 @@ pub enum UnsafetyViolationKind {
 pub struct UnsafetyViolation {
     pub source_info: SourceInfo,
     pub description: InternedString,
+    pub details: InternedString,
     pub kind: UnsafetyViolationKind,
 }
 
@@ -2839,22 +2895,5 @@ impl<'tcx> TypeFoldable<'tcx> for Constant<'tcx> {
     }
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         self.ty.visit_with(visitor) || self.literal.visit_with(visitor)
-    }
-}
-
-impl<'tcx> TypeFoldable<'tcx> for Literal<'tcx> {
-    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        match *self {
-            Literal::Value { value } => Literal::Value {
-                value: value.fold_with(folder),
-            },
-            Literal::Promoted { index } => Literal::Promoted { index },
-        }
-    }
-    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
-        match *self {
-            Literal::Value { value } => value.visit_with(visitor),
-            Literal::Promoted { .. } => false,
-        }
     }
 }

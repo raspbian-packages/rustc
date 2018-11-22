@@ -56,7 +56,7 @@ extern crate syntax_pos;
 extern crate rustc_errors as errors;
 extern crate serialize;
 extern crate cc; // Used to locate MSVC
-extern crate tempdir;
+extern crate tempfile;
 
 use back::bytecode::RLIB_BYTECODE_EXTENSION;
 
@@ -65,7 +65,6 @@ pub use llvm_util::target_features;
 use std::any::Any;
 use std::path::PathBuf;
 use std::sync::mpsc;
-use std::collections::BTreeMap;
 use rustc_data_structures::sync::Lrc;
 
 use rustc::dep_graph::DepGraph;
@@ -76,6 +75,7 @@ use rustc::middle::lang_items::LangItem;
 use rustc::session::{Session, CompileIncomplete};
 use rustc::session::config::{OutputFilenames, OutputType, PrintRequest};
 use rustc::ty::{self, TyCtxt};
+use rustc::util::time_graph;
 use rustc::util::nodemap::{FxHashSet, FxHashMap};
 use rustc_mir::monomorphize;
 use rustc_codegen_utils::codegen_backend::CodegenBackend;
@@ -93,7 +93,7 @@ mod back {
     pub mod symbol_export;
     pub mod write;
     mod rpath;
-    mod wasm;
+    pub mod wasm;
 }
 
 mod abi;
@@ -114,7 +114,6 @@ mod llvm_util;
 mod metadata;
 mod meth;
 mod mir;
-mod time_graph;
 mod mono_item;
 mod type_;
 mod type_of;
@@ -126,7 +125,7 @@ impl !Send for LlvmCodegenBackend {} // Llvm is on a per-thread basis
 impl !Sync for LlvmCodegenBackend {}
 
 impl LlvmCodegenBackend {
-    pub fn new() -> Box<CodegenBackend> {
+    pub fn new() -> Box<dyn CodegenBackend> {
         box LlvmCodegenBackend(())
     }
 }
@@ -179,7 +178,7 @@ impl CodegenBackend for LlvmCodegenBackend {
         target_features(sess)
     }
 
-    fn metadata_loader(&self) -> Box<MetadataLoader + Sync> {
+    fn metadata_loader(&self) -> Box<dyn MetadataLoader + Sync> {
         box metadata::LlvmMetadataLoader
     }
 
@@ -199,14 +198,14 @@ impl CodegenBackend for LlvmCodegenBackend {
     fn codegen_crate<'a, 'tcx>(
         &self,
         tcx: TyCtxt<'a, 'tcx, 'tcx>,
-        rx: mpsc::Receiver<Box<Any + Send>>
-    ) -> Box<Any> {
+        rx: mpsc::Receiver<Box<dyn Any + Send>>
+    ) -> Box<dyn Any> {
         box base::codegen_crate(tcx, rx)
     }
 
     fn join_codegen_and_link(
         &self,
-        ongoing_codegen: Box<Any>,
+        ongoing_codegen: Box<dyn Any>,
         sess: &Session,
         dep_graph: &DepGraph,
         outputs: &OutputFilenames,
@@ -248,7 +247,7 @@ impl CodegenBackend for LlvmCodegenBackend {
 
 /// This is the entrypoint for a hot plugged rustc_codegen_llvm
 #[no_mangle]
-pub fn __rustc_codegen_backend() -> Box<CodegenBackend> {
+pub fn __rustc_codegen_backend() -> Box<dyn CodegenBackend> {
     LlvmCodegenBackend::new()
 }
 
@@ -368,7 +367,7 @@ struct CodegenResults {
     crate_info: CrateInfo,
 }
 
-// Misc info we load from metadata to persist beyond the tcx
+/// Misc info we load from metadata to persist beyond the tcx
 struct CrateInfo {
     panic_runtime: Option<CrateNum>,
     compiler_builtins: Option<CrateNum>,
@@ -382,7 +381,6 @@ struct CrateInfo {
     used_crate_source: FxHashMap<CrateNum, Lrc<CrateSource>>,
     used_crates_static: Vec<(CrateNum, LibSource)>,
     used_crates_dynamic: Vec<(CrateNum, LibSource)>,
-    wasm_custom_sections: BTreeMap<String, Vec<u8>>,
     wasm_imports: FxHashMap<String, String>,
     lang_item_to_crate: FxHashMap<LangItem, CrateNum>,
     missing_lang_items: FxHashMap<CrateNum, Vec<LangItem>>,

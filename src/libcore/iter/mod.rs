@@ -319,9 +319,10 @@
 use cmp;
 use fmt;
 use iter_private::TrustedRandomAccess;
-use ops::Try;
+use ops::{self, Try};
 use usize;
 use intrinsics;
+use mem;
 
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use self::iterator::Iterator;
@@ -672,12 +673,7 @@ impl<I> Iterator for StepBy<I> where I: Iterator {
 
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
-        if self.first_take {
-            self.first_take = false;
-            self.iter.next()
-        } else {
-            self.iter.nth(self.step)
-        }
+        <Self as StepBySpecIterator>::spec_next(self)
     }
 
     #[inline]
@@ -733,6 +729,78 @@ impl<I> Iterator for StepBy<I> where I: Iterator {
                 nth_step
             };
             self.iter.nth(nth - 1);
+        }
+    }
+}
+
+// hidden trait for specializing iterator methods
+// could be generalized but is currently only used for StepBy
+trait StepBySpecIterator {
+    type Item;
+    fn spec_next(&mut self) -> Option<Self::Item>;
+}
+
+impl<I> StepBySpecIterator for StepBy<I>
+where
+    I: Iterator,
+{
+    type Item = I::Item;
+
+    #[inline]
+    default fn spec_next(&mut self) -> Option<I::Item> {
+        if self.first_take {
+            self.first_take = false;
+            self.iter.next()
+        } else {
+            self.iter.nth(self.step)
+        }
+    }
+}
+
+impl<T> StepBySpecIterator for StepBy<ops::Range<T>>
+where
+    T: Step,
+{
+    #[inline]
+    fn spec_next(&mut self) -> Option<Self::Item> {
+        self.first_take = false;
+        if !(self.iter.start < self.iter.end) {
+            return None;
+        }
+        // add 1 to self.step to get original step size back
+        // it was decremented for the general case on construction
+        if let Some(n) = self.iter.start.add_usize(self.step+1) {
+            let next = mem::replace(&mut self.iter.start, n);
+            Some(next)
+        } else {
+            let last = self.iter.start.clone();
+            self.iter.start = self.iter.end.clone();
+            Some(last)
+        }
+    }
+}
+
+impl<T> StepBySpecIterator for StepBy<ops::RangeInclusive<T>>
+where
+    T: Step,
+{
+    #[inline]
+    fn spec_next(&mut self) -> Option<Self::Item> {
+        self.first_take = false;
+        self.iter.compute_is_empty();
+        if self.iter.is_empty.unwrap_or_default() {
+            return None;
+        }
+        // add 1 to self.step to get original step size back
+        // it was decremented for the general case on construction
+        if let Some(n) = self.iter.start.add_usize(self.step+1) {
+            self.iter.is_empty = Some(!(n <= self.iter.end));
+            let next = mem::replace(&mut self.iter.start, n);
+            Some(next)
+        } else {
+            let last = self.iter.start.clone();
+            self.iter.is_empty = Some(true);
+            Some(last)
         }
     }
 }
@@ -2509,13 +2577,13 @@ impl<I, U, F> FusedIterator for FlatMap<I, U, F>
 /// [`flatten`]: trait.Iterator.html#method.flatten
 /// [`Iterator`]: trait.Iterator.html
 #[must_use = "iterator adaptors are lazy and do nothing unless consumed"]
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 pub struct Flatten<I: Iterator>
 where I::Item: IntoIterator {
     inner: FlattenCompat<I, <I::Item as IntoIterator>::IntoIter>,
 }
 
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 impl<I, U> fmt::Debug for Flatten<I>
     where I: Iterator + fmt::Debug, U: Iterator + fmt::Debug,
           I::Item: IntoIterator<IntoIter = U, Item = U::Item>,
@@ -2525,7 +2593,7 @@ impl<I, U> fmt::Debug for Flatten<I>
     }
 }
 
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 impl<I, U> Clone for Flatten<I>
     where I: Iterator + Clone, U: Iterator + Clone,
           I::Item: IntoIterator<IntoIter = U, Item = U::Item>,
@@ -2533,7 +2601,7 @@ impl<I, U> Clone for Flatten<I>
     fn clone(&self) -> Self { Flatten { inner: self.inner.clone() } }
 }
 
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 impl<I, U> Iterator for Flatten<I>
     where I: Iterator, U: Iterator,
           I::Item: IntoIterator<IntoIter = U, Item = U::Item>
@@ -2561,7 +2629,7 @@ impl<I, U> Iterator for Flatten<I>
     }
 }
 
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 impl<I, U> DoubleEndedIterator for Flatten<I>
     where I: DoubleEndedIterator, U: DoubleEndedIterator,
           I::Item: IntoIterator<IntoIter = U, Item = U::Item>
@@ -2584,7 +2652,7 @@ impl<I, U> DoubleEndedIterator for Flatten<I>
     }
 }
 
-#[unstable(feature = "iterator_flatten", issue = "48213")]
+#[stable(feature = "iterator_flatten", since = "1.29")]
 impl<I, U> FusedIterator for Flatten<I>
     where I: FusedIterator, U: Iterator,
           I::Item: IntoIterator<IntoIter = U, Item = U::Item> {}

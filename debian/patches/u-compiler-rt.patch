@@ -9,9 +9,9 @@ Subject: [PATCH] Re-add workaround for LLVM bug 11663
 
 --- a/src/libcompiler_builtins/compiler-rt/lib/builtins/int_lib.h
 +++ b/src/libcompiler_builtins/compiler-rt/lib/builtins/int_lib.h
-@@ -77,6 +77,28 @@
- /* Include internal utility function declarations. */
- #include "int_util.h"
+@@ -99,6 +99,28 @@
+ #define	__builtin_ctz __ctzsi2
+ #endif /* sparc64 || mips_n64 || mips_o64 || riscv */
  
 +/*
 + * Workaround for LLVM bug 11663.  Prevent endless recursion in

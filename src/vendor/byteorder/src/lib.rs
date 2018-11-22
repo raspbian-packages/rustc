@@ -63,8 +63,6 @@ This crate can also be used without the standard library.
 
 #![deny(missing_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "i128", feature(i128_type))]
-#![cfg_attr(all(feature = "i128", test), feature(i128))]
 #![doc(html_root_url = "https://docs.rs/byteorder/1.2.1")]
 
 #[cfg(feature = "std")]
@@ -1442,11 +1440,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_u16(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5u16.swap_bytes(), 65000u16.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5u16.to_be(), 65000u16.to_be()]);
     /// ```
     fn from_slice_u16(numbers: &mut [u16]);
 
@@ -1465,11 +1459,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_u32(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5u32.swap_bytes(), 65000u32.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5u32.to_be(), 65000u32.to_be()]);
     /// ```
     fn from_slice_u32(numbers: &mut [u32]);
 
@@ -1488,11 +1478,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_u64(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5u64.swap_bytes(), 65000u64.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5u64.to_be(), 65000u64.to_be()]);
     /// ```
     fn from_slice_u64(numbers: &mut [u64]);
 
@@ -1507,17 +1493,11 @@ pub trait ByteOrder
     /// Convert the host platform's endianness to big-endian:
     ///
     /// ```rust
-    /// #![feature(i128_type)]
-    ///
     /// use byteorder::{ByteOrder, BigEndian};
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_u128(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5u128.swap_bytes(), 65000u128.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5u128.to_be(), 65000u128.to_be()]);
     /// ```
     #[cfg(feature = "i128")]
     fn from_slice_u128(numbers: &mut [u128]);
@@ -1537,11 +1517,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_i16(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5i16.swap_bytes(), 65000i16.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5i16.to_be(), 65000i16.to_be()]);
     /// ```
     #[inline]
     fn from_slice_i16(src: &mut [i16]) {
@@ -1566,11 +1542,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_i32(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5i32.swap_bytes(), 65000i32.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5i32.to_be(), 65000i32.to_be()]);
     /// ```
     #[inline]
     fn from_slice_i32(src: &mut [i32]) {
@@ -1595,11 +1567,7 @@ pub trait ByteOrder
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_i64(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5i64.swap_bytes(), 65000i64.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5i64.to_be(), 65000i64.to_be()]);
     /// ```
     #[inline]
     fn from_slice_i64(src: &mut [i64]) {
@@ -1620,17 +1588,11 @@ pub trait ByteOrder
     /// Convert the host platform's endianness to big-endian:
     ///
     /// ```rust
-    /// #![feature(i128_type)]
-    ///
     /// use byteorder::{ByteOrder, BigEndian};
     ///
     /// let mut numbers = [5, 65000];
     /// BigEndian::from_slice_i128(&mut numbers);
-    /// if cfg!(target_endian = "little") {
-    ///     assert_eq!(numbers, [5i128.swap_bytes(), 65000i128.swap_bytes()]);
-    /// } else {
-    ///     assert_eq!(numbers, [5, 65000]);
-    /// }
+    /// assert_eq!(numbers, [5i128.to_be(), 65000i128.to_be()]);
     /// ```
     #[cfg(feature = "i128")]
     #[inline]

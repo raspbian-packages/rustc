@@ -12,7 +12,7 @@
 
 [package]
 name = "atty"
-version = "0.2.8"
+version = "0.2.11"
 authors = ["softprops <d.tangren@gmail.com>"]
 description = "A simple interface for querying atty"
 homepage = "https://github.com/softprops/atty"

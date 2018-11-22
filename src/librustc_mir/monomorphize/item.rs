@@ -121,9 +121,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
                     }
                 }
             }
-            MonoItem::Static(..) => {
-                InstantiationMode::GloballyShared { may_conflict: false }
-            }
+            MonoItem::Static(..) |
             MonoItem::GlobalAsm(..) => {
                 InstantiationMode::GloballyShared { may_conflict: false }
             }
@@ -441,7 +439,7 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
 
         for projection in projections {
             let projection = projection.skip_binder();
-            let name = &self.tcx.associated_item(projection.item_def_id).name.as_str();
+            let name = &self.tcx.associated_item(projection.item_def_id).ident.as_str();
             output.push_str(name);
             output.push_str("=");
             self.push_type_name(projection.ty, output);

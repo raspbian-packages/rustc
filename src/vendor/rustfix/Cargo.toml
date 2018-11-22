@@ -12,12 +12,12 @@
 
 [package]
 name = "rustfix"
-version = "0.3.1"
+version = "0.4.2"
 authors = ["Pascal Hertleif <killercup@gmail.com>", "Oliver Schneider <oli-obk@users.noreply.github.com>"]
 exclude = ["etc/*", "examples/*", "tests/*"]
 description = "Automatically apply the suggestions made by rustc"
 documentation = "https://docs.rs/rustfix"
-readme = "README.md"
+readme = "Readme.md"
 license = "Apache-2.0/MIT"
 repository = "https://github.com/rust-lang-nursery/rustfix"
 [dependencies.failure]

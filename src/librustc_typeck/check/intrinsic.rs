@@ -35,7 +35,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let def_id = tcx.hir.local_def_id(it.id);
 
     match it.node {
-        hir::ForeignItemFn(..) => {}
+        hir::ForeignItemKind::Fn(..) => {}
         _ => {
             struct_span_err!(tcx.sess, it.span, E0622,
                              "intrinsic must be a function")
@@ -48,7 +48,7 @@ fn equate_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let i_n_tps = tcx.generics_of(def_id).own_counts().types;
     if i_n_tps != n_tps {
         let span = match it.node {
-            hir::ForeignItemFn(_, _, ref generics) => generics.span,
+            hir::ForeignItemKind::Fn(_, _, ref generics) => generics.span,
             _ => bug!()
         };
 
@@ -270,9 +270,9 @@ pub fn check_intrinsic_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             "roundf32"     => (0, vec![ tcx.types.f32 ], tcx.types.f32),
             "roundf64"     => (0, vec![ tcx.types.f64 ], tcx.types.f64),
 
-            "volatile_load" =>
+            "volatile_load" | "unaligned_volatile_load" =>
                 (1, vec![ tcx.mk_imm_ptr(param(0)) ], param(0)),
-            "volatile_store" =>
+            "volatile_store" | "unaligned_volatile_store" =>
                 (1, vec![ tcx.mk_mut_ptr(param(0)), param(0) ], tcx.mk_nil()),
 
             "ctpop" | "ctlz" | "ctlz_nonzero" | "cttz" | "cttz_nonzero" |

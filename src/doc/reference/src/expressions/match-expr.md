@@ -1,26 +1,26 @@
 # `match` expressions
 
-> **<sup>Syntax</sup>**  
-> _MatchExpression_ :  
-> &nbsp;&nbsp; `match` [_Expression_]<sub>_except struct expression_</sub> `{`  
-> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>  
-> &nbsp;&nbsp; &nbsp;&nbsp; _MatchArms_<sup>?</sup>  
-> &nbsp;&nbsp; `}`  
+> **<sup>Syntax</sup>**\
+> _MatchExpression_ :\
+> &nbsp;&nbsp; `match` [_Expression_]<sub>_except struct expression_</sub> `{`\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; _MatchArms_<sup>?</sup>\
+> &nbsp;&nbsp; `}`
 >
-> _MatchArms_ :  
+> _MatchArms_ :\
 > &nbsp;&nbsp; ( _MatchArm_ `=>`
 >                             ( [_BlockExpression_] `,`<sup>?</sup>
 >                             | [_Expression_] `,` )
->                           )<sup>\*</sup>  
-> &nbsp;&nbsp; _MatchArm_ `=>` ( [_BlockExpression_] | [_Expression_] ) `,`<sup>?</sup>  
+>                           )<sup>\*</sup>\
+> &nbsp;&nbsp; _MatchArm_ `=>` ( [_BlockExpression_] | [_Expression_] ) `,`<sup>?</sup>
 >
-> _MatchArm_ :  
-> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> _MatchArmPatterns_ _MatchArmGuard_<sup>?</sup>  
+> _MatchArm_ :\
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> _MatchArmPatterns_ _MatchArmGuard_<sup>?</sup>
 >
-> _MatchArmPatterns_ :  
-> &nbsp;&nbsp; `|`<sup>?</sup> _Pattern_ ( `|` _Pattern_ )<sup>\*</sup>  
+> _MatchArmPatterns_ :\
+> &nbsp;&nbsp; `|`<sup>?</sup> _Pattern_ ( `|` _Pattern_ )<sup>\*</sup>
 >
-> _MatchArmGuard_ :  
+> _MatchArmGuard_ :\
 > &nbsp;&nbsp; `if` [_Expression_]
 
 A `match` expression branches on a *pattern*. The exact form of matching that
@@ -175,6 +175,11 @@ let message = match maybe_digit {
 };
 ```
 
+## Attributes on match arms
+
+Outer attributes are allowed on match arms. The only attributes that have
+meaning on match arms are [`cfg`], `cold`, and the [lint check attributes].
+
 [_Expression_]: expressions.html
 [_BlockExpression_]: expressions/block-expr.html#block-expressions
 [place expression]: expressions.html#place-expressions-and-value-expressions
@@ -183,3 +188,5 @@ let message = match maybe_digit {
 [numeric types]: types.html#numeric-types
 [_InnerAttribute_]: attributes.html
 [_OuterAttribute_]: attributes.html
+[`cfg`]: attributes.html#conditional-compilation
+[lint check attributes]: attributes.html#lint-check-attributes

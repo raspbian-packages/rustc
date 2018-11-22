@@ -706,6 +706,14 @@ impl From<Box<CStr>> for CString {
     }
 }
 
+#[stable(feature = "more_box_slice_clone", since = "1.29.0")]
+impl Clone for Box<CStr> {
+    #[inline]
+    fn clone(&self) -> Self {
+        (**self).into()
+    }
+}
+
 #[stable(feature = "box_from_c_string", since = "1.20.0")]
 impl From<CString> for Box<CStr> {
     #[inline]
@@ -883,7 +891,7 @@ impl Error for IntoStringError {
         "C string contained non-utf8 bytes"
     }
 
-    fn cause(&self) -> Option<&Error> {
+    fn cause(&self) -> Option<&dyn Error> {
         Some(&self.error)
     }
 }

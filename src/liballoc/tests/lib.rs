@@ -24,6 +24,7 @@
 #![feature(try_reserve)]
 #![feature(unboxed_closures)]
 #![feature(exact_chunks)]
+#![feature(repeat_generic_slice)]
 
 extern crate alloc_system;
 extern crate core;
@@ -32,12 +33,14 @@ extern crate rand;
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 
+mod arc;
 mod binary_heap;
 mod btree;
 mod cow_str;
 mod fmt;
 mod heap;
 mod linked_list;
+mod rc;
 mod slice;
 mod str;
 mod string;
@@ -61,7 +64,7 @@ fn test_boxed_hasher() {
     5u32.hash(&mut hasher_1);
     assert_eq!(ordinary_hash, hasher_1.finish());
 
-    let mut hasher_2 = Box::new(DefaultHasher::new()) as Box<Hasher>;
+    let mut hasher_2 = Box::new(DefaultHasher::new()) as Box<dyn Hasher>;
     5u32.hash(&mut hasher_2);
     assert_eq!(ordinary_hash, hasher_2.finish());
 }

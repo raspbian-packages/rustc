@@ -110,8 +110,10 @@ pub use core::panic::{PanicInfo, Location};
 ///
 /// [`AssertUnwindSafe`]: ./struct.AssertUnwindSafe.html
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-#[rustc_on_unimplemented = "the type {Self} may not be safely transferred \
-                            across an unwind boundary"]
+#[rustc_on_unimplemented(
+    message="the type `{Self}` may not be safely transferred across an unwind boundary",
+    label="`{Self}` may not be safely transferred across an unwind boundary",
+)]
 pub auto trait UnwindSafe {}
 
 /// A marker trait representing types where a shared reference is considered
@@ -126,9 +128,12 @@ pub auto trait UnwindSafe {}
 /// [`UnsafeCell`]: ../cell/struct.UnsafeCell.html
 /// [`UnwindSafe`]: ./trait.UnwindSafe.html
 #[stable(feature = "catch_unwind", since = "1.9.0")]
-#[rustc_on_unimplemented = "the type {Self} may contain interior mutability \
-                            and a reference may not be safely transferrable \
-                            across a catch_unwind boundary"]
+#[rustc_on_unimplemented(
+    message="the type `{Self}` may contain interior mutability and a reference may not be safely \
+             transferrable across a catch_unwind boundary",
+    label="`{Self}` may contain interior mutability and a reference may not be safely \
+           transferrable across a catch_unwind boundary",
+)]
 pub auto trait RefUnwindSafe {}
 
 /// A simple wrapper around a type to assert that it is unwind safe.
@@ -322,14 +327,9 @@ impl<T: fmt::Debug> fmt::Debug for AssertUnwindSafe<T> {
 impl<'a, F: Future> Future for AssertUnwindSafe<F> {
     type Output = F::Output;
 
-    fn poll(mut self: PinMut<Self>, cx: &mut task::Context) -> Poll<Self::Output> {
-        unsafe {
-            let pinned_field = PinMut::new_unchecked(
-                &mut PinMut::get_mut(self.reborrow()).0
-            );
-
-            pinned_field.poll(cx)
-        }
+    fn poll(self: PinMut<Self>, cx: &mut task::Context) -> Poll<Self::Output> {
+        let pinned_field = unsafe { PinMut::map_unchecked(self, |x| &mut x.0) };
+        pinned_field.poll(cx)
     }
 }
 
@@ -421,6 +421,6 @@ pub fn catch_unwind<F: FnOnce() -> R + UnwindSafe, R>(f: F) -> Result<R> {
 /// }
 /// ```
 #[stable(feature = "resume_unwind", since = "1.9.0")]
-pub fn resume_unwind(payload: Box<Any + Send>) -> ! {
+pub fn resume_unwind(payload: Box<dyn Any + Send>) -> ! {
     panicking::update_count_then_panic(payload)
 }

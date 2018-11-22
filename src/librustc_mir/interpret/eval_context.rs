@@ -1,27 +1,53 @@
 use std::fmt::Write;
+use std::hash::{Hash, Hasher};
+use std::mem;
 
 use rustc::hir::def_id::DefId;
 use rustc::hir::def::Def;
 use rustc::hir::map::definitions::DefPathData;
-use rustc::middle::const_val::ConstVal;
 use rustc::mir;
-use rustc::ty::layout::{self, Size, Align, HasDataLayout, IntegerExt, LayoutOf, TyLayout};
+use rustc::ty::layout::{self, Size, Align, HasDataLayout, IntegerExt, LayoutOf, TyLayout, Primitive};
 use rustc::ty::subst::{Subst, Substs};
 use rustc::ty::{self, Ty, TyCtxt, TypeAndMut};
 use rustc::ty::query::TyCtxtAt;
+use rustc_data_structures::fx::{FxHashSet, FxHasher};
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
-use rustc::middle::const_val::FrameInfo;
-use syntax::codemap::{self, Span};
-use syntax::ast::Mutability;
 use rustc::mir::interpret::{
-    GlobalId, Value, Scalar,
+    GlobalId, Value, Scalar, FrameInfo, AllocType,
     EvalResult, EvalErrorKind, Pointer, ConstValue,
 };
-use std::mem;
+
+use syntax::codemap::{self, Span};
+use syntax::ast::Mutability;
 
 use super::{Place, PlaceExtra, Memory,
             HasMemory, MemoryKind,
             Machine};
+
+macro_rules! validation_failure{
+    ($what:expr, $where:expr, $details:expr) => {{
+        let where_ = if $where.is_empty() {
+            String::new()
+        } else {
+            format!(" at {}", $where)
+        };
+        err!(ValidationFailure(format!(
+            "encountered {}{}, but expected {}",
+            $what, where_, $details,
+        )))
+    }};
+    ($what:expr, $where:expr) => {{
+        let where_ = if $where.is_empty() {
+            String::new()
+        } else {
+            format!(" at {}", $where)
+        };
+        err!(ValidationFailure(format!(
+            "encountered {}{}",
+            $what, where_,
+        )))
+    }};
+}
 
 pub struct EvalContext<'a, 'mir, 'tcx: 'a + 'mir, M: Machine<'mir, 'tcx>> {
     /// Stores the `Machine` instance.
@@ -42,13 +68,17 @@ pub struct EvalContext<'a, 'mir, 'tcx: 'a + 'mir, M: Machine<'mir, 'tcx>> {
     /// The maximum number of stack frames allowed
     pub(crate) stack_limit: usize,
 
-    /// The maximum number of terminators that may be evaluated.
-    /// This prevents infinite loops and huge computations from freezing up const eval.
-    /// Remove once halting problem is solved.
-    pub(crate) terminators_remaining: usize,
+    /// When this value is negative, it indicates the number of interpreter
+    /// steps *until* the loop detector is enabled. When it is positive, it is
+    /// the number of steps after the detector has been enabled modulo the loop
+    /// detector period.
+    pub(crate) steps_since_detector_enabled: isize,
+
+    pub(crate) loop_detector: InfiniteLoopDetector<'a, 'mir, 'tcx, M>,
 }
 
 /// A stack frame.
+#[derive(Clone)]
 pub struct Frame<'mir, 'tcx: 'mir> {
     ////////////////////////////////////////////////////////////////////////////////
     // Function and callsite information
@@ -88,6 +118,121 @@ pub struct Frame<'mir, 'tcx: 'mir> {
 
     /// The index of the currently evaluated statement.
     pub stmt: usize,
+}
+
+impl<'mir, 'tcx: 'mir> Eq for Frame<'mir, 'tcx> {}
+
+impl<'mir, 'tcx: 'mir> PartialEq for Frame<'mir, 'tcx> {
+    fn eq(&self, other: &Self) -> bool {
+        let Frame {
+            mir: _,
+            instance,
+            span: _,
+            return_to_block,
+            return_place,
+            locals,
+            block,
+            stmt,
+        } = self;
+
+        // Some of these are constant during evaluation, but are included
+        // anyways for correctness.
+        *instance == other.instance
+            && *return_to_block == other.return_to_block
+            && *return_place == other.return_place
+            && *locals == other.locals
+            && *block == other.block
+            && *stmt == other.stmt
+    }
+}
+
+impl<'mir, 'tcx: 'mir> Hash for Frame<'mir, 'tcx> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        let Frame {
+            mir: _,
+            instance,
+            span: _,
+            return_to_block,
+            return_place,
+            locals,
+            block,
+            stmt,
+        } = self;
+
+        instance.hash(state);
+        return_to_block.hash(state);
+        return_place.hash(state);
+        locals.hash(state);
+        block.hash(state);
+        stmt.hash(state);
+    }
+}
+
+/// The virtual machine state during const-evaluation at a given point in time.
+type EvalSnapshot<'a, 'mir, 'tcx, M>
+    = (M, Vec<Frame<'mir, 'tcx>>, Memory<'a, 'mir, 'tcx, M>);
+
+pub(crate) struct InfiniteLoopDetector<'a, 'mir, 'tcx: 'a + 'mir, M: Machine<'mir, 'tcx>> {
+    /// The set of all `EvalSnapshot` *hashes* observed by this detector.
+    ///
+    /// When a collision occurs in this table, we store the full snapshot in
+    /// `snapshots`.
+    hashes: FxHashSet<u64>,
+
+    /// The set of all `EvalSnapshot`s observed by this detector.
+    ///
+    /// An `EvalSnapshot` will only be fully cloned once it has caused a
+    /// collision in `hashes`. As a result, the detector must observe at least
+    /// *two* full cycles of an infinite loop before it triggers.
+    snapshots: FxHashSet<EvalSnapshot<'a, 'mir, 'tcx, M>>,
+}
+
+impl<'a, 'mir, 'tcx, M> Default for InfiniteLoopDetector<'a, 'mir, 'tcx, M>
+    where M: Machine<'mir, 'tcx>,
+          'tcx: 'a + 'mir,
+{
+    fn default() -> Self {
+        InfiniteLoopDetector {
+            hashes: FxHashSet::default(),
+            snapshots: FxHashSet::default(),
+        }
+    }
+}
+
+impl<'a, 'mir, 'tcx, M> InfiniteLoopDetector<'a, 'mir, 'tcx, M>
+    where M: Machine<'mir, 'tcx>,
+          'tcx: 'a + 'mir,
+{
+    /// Returns `true` if the loop detector has not yet observed a snapshot.
+    pub fn is_empty(&self) -> bool {
+        self.hashes.is_empty()
+    }
+
+    pub fn observe_and_analyze(
+        &mut self,
+        machine: &M,
+        stack: &Vec<Frame<'mir, 'tcx>>,
+        memory: &Memory<'a, 'mir, 'tcx, M>,
+    ) -> EvalResult<'tcx, ()> {
+        let mut fx = FxHasher::default();
+        // don't hash the memory, that takes too much time, just compare when you hit a collision
+        // should be rare enough
+        (machine, stack).hash(&mut fx);
+        let hash = fx.finish();
+
+        if self.hashes.insert(hash) {
+            // No collision
+            return Ok(())
+        }
+
+        if self.snapshots.insert((machine.clone(), stack.clone(), memory.clone())) {
+            // Spurious collision or first cycle
+            return Ok(())
+        }
+
+        // Second cycle
+        Err(EvalErrorKind::InfiniteLoop.into())
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
@@ -174,7 +319,7 @@ impl<'c, 'b, 'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> LayoutOf
     }
 }
 
-const MAX_TERMINATORS: usize = 1_000_000;
+const STEPS_UNTIL_DETECTOR_ENABLED: isize = 1_000_000;
 
 impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
     pub fn new(
@@ -190,24 +335,24 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             memory: Memory::new(tcx, memory_data),
             stack: Vec::new(),
             stack_limit: tcx.sess.const_eval_stack_frame_limit,
-            terminators_remaining: MAX_TERMINATORS,
+            loop_detector: Default::default(),
+            steps_since_detector_enabled: -STEPS_UNTIL_DETECTOR_ENABLED,
         }
     }
 
     pub(crate) fn with_fresh_body<F: FnOnce(&mut Self) -> R, R>(&mut self, f: F) -> R {
         let stack = mem::replace(&mut self.stack, Vec::new());
-        let terminators_remaining = mem::replace(&mut self.terminators_remaining, MAX_TERMINATORS);
+        let steps = mem::replace(&mut self.steps_since_detector_enabled, -STEPS_UNTIL_DETECTOR_ENABLED);
         let r = f(self);
         self.stack = stack;
-        self.terminators_remaining = terminators_remaining;
+        self.steps_since_detector_enabled = steps;
         r
     }
 
-    pub fn alloc_ptr(&mut self, ty: Ty<'tcx>) -> EvalResult<'tcx, Pointer> {
-        let layout = self.layout_of(ty)?;
+    pub fn alloc_ptr(&mut self, layout: TyLayout<'tcx>) -> EvalResult<'tcx, Pointer> {
         assert!(!layout.is_unsized(), "cannot alloc memory for unsized type");
 
-        self.memory.allocate(layout.size, layout.align, Some(MemoryKind::Stack))
+        self.memory.allocate(layout.size, layout.align, MemoryKind::Stack)
     }
 
     pub fn memory(&self) -> &Memory<'a, 'mir, 'tcx, M> {
@@ -233,36 +378,25 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         Ok(Scalar::Ptr(ptr).to_value_with_len(s.len() as u64, self.tcx.tcx))
     }
 
-    pub fn const_value_to_value(
+    pub fn const_to_value(
         &mut self,
         val: ConstValue<'tcx>,
-        _ty: Ty<'tcx>,
     ) -> EvalResult<'tcx, Value> {
         match val {
-            ConstValue::ByRef(alloc, offset) => {
-                // FIXME: Allocate new AllocId for all constants inside
-                let id = self.memory.allocate_value(alloc.clone(), Some(MemoryKind::Stack))?;
-                Ok(Value::ByRef(Pointer::new(id, offset).into(), alloc.align))
-            },
-            ConstValue::ScalarPair(a, b) => Ok(Value::ScalarPair(a, b)),
-            ConstValue::Scalar(val) => Ok(Value::Scalar(val)),
-        }
-    }
-
-    pub(super) fn const_to_value(
-        &mut self,
-        const_val: &ConstVal<'tcx>,
-        ty: Ty<'tcx>
-    ) -> EvalResult<'tcx, Value> {
-        match *const_val {
-            ConstVal::Unevaluated(def_id, substs) => {
+            ConstValue::Unevaluated(def_id, substs) => {
                 let instance = self.resolve(def_id, substs)?;
                 self.read_global_as_value(GlobalId {
                     instance,
                     promoted: None,
-                }, ty)
+                })
             }
-            ConstVal::Value(val) => self.const_value_to_value(val, ty)
+            ConstValue::ByRef(alloc, offset) => {
+                // FIXME: Allocate new AllocId for all constants inside
+                let id = self.memory.allocate_value(alloc.clone(), MemoryKind::Stack)?;
+                Ok(Value::ByRef(Pointer::new(id, offset).into(), alloc.align))
+            },
+            ConstValue::ScalarPair(a, b) => Ok(Value::ScalarPair(a, b)),
+            ConstValue::Scalar(val) => Ok(Value::Scalar(val)),
         }
     }
 
@@ -280,7 +414,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             self.param_env,
             def_id,
             substs,
-        ).ok_or_else(|| EvalErrorKind::TypeckError.into()) // turn error prop into a panic to expose associated type in const issue
+        ).ok_or_else(|| EvalErrorKind::TooGeneric.into())
     }
 
     pub(super) fn type_is_sized(&self, ty: Ty<'tcx>) -> bool {
@@ -550,8 +684,6 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             }
 
             Aggregate(ref kind, ref operands) => {
-                self.inc_step_counter_and_check_limit(operands.len());
-
                 let (dest, active_field_index) = match **kind {
                     mir::AggregateKind::Adt(adt_def, variant_index, _, active_field_index) => {
                         self.write_discriminant_value(dest_ty, dest, variant_index)?;
@@ -591,10 +723,14 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
 
                 let (dest, dest_align) = self.force_allocation(dest)?.to_ptr_align();
 
-                // FIXME: speed up repeat filling
-                for i in 0..length {
-                    let elem_dest = dest.ptr_offset(elem_size * i as u64, &self)?;
-                    self.write_value_to_ptr(value, elem_dest, dest_align, elem_ty)?;
+                if length > 0 {
+                    //write the first value
+                    self.write_value_to_ptr(value, dest, dest_align, elem_ty)?;
+
+                    if length > 1 {
+                        let rest = dest.ptr_offset(elem_size * 1 as u64, &self)?;
+                        self.memory.copy_repeatedly(dest, dest_align, rest, dest_align, elem_size, length - 1, false)?;
+                    }
                 }
             }
 
@@ -658,141 +794,15 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
 
             Cast(kind, ref operand, cast_ty) => {
                 debug_assert_eq!(self.monomorphize(cast_ty, self.substs()), dest_ty);
-                use rustc::mir::CastKind::*;
-                match kind {
-                    Unsize => {
-                        let src = self.eval_operand(operand)?;
-                        let src_layout = self.layout_of(src.ty)?;
-                        let dst_layout = self.layout_of(dest_ty)?;
-                        self.unsize_into(src.value, src_layout, dest, dst_layout)?;
-                    }
-
-                    Misc => {
-                        let src = self.eval_operand(operand)?;
-                        if self.type_is_fat_ptr(src.ty) {
-                            match (src.value, self.type_is_fat_ptr(dest_ty)) {
-                                (Value::ByRef { .. }, _) |
-                                // pointers to extern types
-                                (Value::Scalar(_),_) |
-                                // slices and trait objects to other slices/trait objects
-                                (Value::ScalarPair(..), true) => {
-                                    let valty = ValTy {
-                                        value: src.value,
-                                        ty: dest_ty,
-                                    };
-                                    self.write_value(valty, dest)?;
-                                }
-                                // slices and trait objects to thin pointers (dropping the metadata)
-                                (Value::ScalarPair(data, _), false) => {
-                                    let valty = ValTy {
-                                        value: Value::Scalar(data),
-                                        ty: dest_ty,
-                                    };
-                                    self.write_value(valty, dest)?;
-                                }
-                            }
-                        } else {
-                            let src_layout = self.layout_of(src.ty)?;
-                            match src_layout.variants {
-                                layout::Variants::Single { index } => {
-                                    if let Some(def) = src.ty.ty_adt_def() {
-                                        let discr_val = def
-                                            .discriminant_for_variant(*self.tcx, index)
-                                            .val;
-                                        let defined = self
-                                            .layout_of(dest_ty)
-                                            .unwrap()
-                                            .size
-                                            .bits() as u8;
-                                        return self.write_scalar(
-                                            dest,
-                                            Scalar::Bits {
-                                                bits: discr_val,
-                                                defined,
-                                            },
-                                            dest_ty);
-                                    }
-                                }
-                                layout::Variants::Tagged { .. } |
-                                layout::Variants::NicheFilling { .. } => {},
-                            }
-
-                            let src_val = self.value_to_scalar(src)?;
-                            let dest_val = self.cast_scalar(src_val, src.ty, dest_ty)?;
-                            let valty = ValTy {
-                                value: Value::Scalar(dest_val),
-                                ty: dest_ty,
-                            };
-                            self.write_value(valty, dest)?;
-                        }
-                    }
-
-                    ReifyFnPointer => {
-                        match self.eval_operand(operand)?.ty.sty {
-                            ty::TyFnDef(def_id, substs) => {
-                                if self.tcx.has_attr(def_id, "rustc_args_required_const") {
-                                    bug!("reifying a fn ptr that requires \
-                                          const arguments");
-                                }
-                                let instance: EvalResult<'tcx, _> = ty::Instance::resolve(
-                                    *self.tcx,
-                                    self.param_env,
-                                    def_id,
-                                    substs,
-                                ).ok_or_else(|| EvalErrorKind::TypeckError.into());
-                                let fn_ptr = self.memory.create_fn_alloc(instance?);
-                                let valty = ValTy {
-                                    value: Value::Scalar(fn_ptr.into()),
-                                    ty: dest_ty,
-                                };
-                                self.write_value(valty, dest)?;
-                            }
-                            ref other => bug!("reify fn pointer on {:?}", other),
-                        }
-                    }
-
-                    UnsafeFnPointer => {
-                        match dest_ty.sty {
-                            ty::TyFnPtr(_) => {
-                                let mut src = self.eval_operand(operand)?;
-                                src.ty = dest_ty;
-                                self.write_value(src, dest)?;
-                            }
-                            ref other => bug!("fn to unsafe fn cast on {:?}", other),
-                        }
-                    }
-
-                    ClosureFnPointer => {
-                        match self.eval_operand(operand)?.ty.sty {
-                            ty::TyClosure(def_id, substs) => {
-                                let substs = self.tcx.subst_and_normalize_erasing_regions(
-                                    self.substs(),
-                                    ty::ParamEnv::reveal_all(),
-                                    &substs,
-                                );
-                                let instance = ty::Instance::resolve_closure(
-                                    *self.tcx,
-                                    def_id,
-                                    substs,
-                                    ty::ClosureKind::FnOnce,
-                                );
-                                let fn_ptr = self.memory.create_fn_alloc(instance);
-                                let valty = ValTy {
-                                    value: Value::Scalar(fn_ptr.into()),
-                                    ty: dest_ty,
-                                };
-                                self.write_value(valty, dest)?;
-                            }
-                            ref other => bug!("closure fn pointer on {:?}", other),
-                        }
-                    }
-                }
+                let src = self.eval_operand(operand)?;
+                self.cast(src, kind, dest_ty, dest)?;
             }
 
             Discriminant(ref place) => {
                 let ty = self.place_ty(place);
+                let layout = self.layout_of(ty)?;
                 let place = self.eval_place(place)?;
-                let discr_val = self.read_discriminant_value(place, ty)?;
+                let discr_val = self.read_discriminant_value(place, layout)?;
                 let defined = self.layout_of(dest_ty).unwrap().size.bits() as u8;
                 self.write_scalar(dest, Scalar::Bits {
                     bits: discr_val,
@@ -846,19 +856,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             },
 
             Constant(ref constant) => {
-                use rustc::mir::Literal;
-                let mir::Constant { ref literal, .. } = **constant;
-                let value = match *literal {
-                    Literal::Value { ref value } => self.const_to_value(&value.val, ty)?,
-
-                    Literal::Promoted { index } => {
-                        let instance = self.frame().instance;
-                        self.read_global_as_value(GlobalId {
-                            instance,
-                            promoted: Some(index),
-                        }, ty)?
-                    }
-                };
+                let value = self.const_to_value(constant.literal.val)?;
 
                 Ok(ValTy {
                     value,
@@ -870,16 +868,16 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
 
     /// reads a tag and produces the corresponding variant index
     pub fn read_discriminant_as_variant_index(
-        &mut self,
+        &self,
         place: Place,
-        ty: Ty<'tcx>,
+        layout: TyLayout<'tcx>,
     ) -> EvalResult<'tcx, usize> {
-        let layout = self.layout_of(ty)?;
         match layout.variants {
             ty::layout::Variants::Single { index } => Ok(index),
             ty::layout::Variants::Tagged { .. } => {
-                let discr_val = self.read_discriminant_value(place, ty)?;
-                ty
+                let discr_val = self.read_discriminant_value(place, layout)?;
+                layout
+                    .ty
                     .ty_adt_def()
                     .expect("tagged layout for non adt")
                     .discriminants(self.tcx.tcx)
@@ -887,7 +885,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
                     .ok_or_else(|| EvalErrorKind::InvalidDiscriminant.into())
             }
             ty::layout::Variants::NicheFilling { .. } => {
-                let discr_val = self.read_discriminant_value(place, ty)?;
+                let discr_val = self.read_discriminant_value(place, layout)?;
                 assert_eq!(discr_val as usize as u128, discr_val);
                 Ok(discr_val as usize)
             },
@@ -895,11 +893,10 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
     }
 
     pub fn read_discriminant_value(
-        &mut self,
+        &self,
         place: Place,
-        ty: Ty<'tcx>,
+        layout: TyLayout<'tcx>,
     ) -> EvalResult<'tcx, u128> {
-        let layout = self.layout_of(ty)?;
         trace!("read_discriminant_value {:#?}", layout);
         if layout.abi == layout::Abi::Uninhabited {
             return Ok(0);
@@ -907,7 +904,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
 
         match layout.variants {
             layout::Variants::Single { index } => {
-                let discr_val = ty.ty_adt_def().map_or(
+                let discr_val = layout.ty.ty_adt_def().map_or(
                     index as u128,
                     |def| def.discriminant_for_variant(*self.tcx, index).val);
                 return Ok(discr_val);
@@ -915,11 +912,11 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             layout::Variants::Tagged { .. } |
             layout::Variants::NicheFilling { .. } => {},
         }
-
-        let (discr_place, discr) = self.place_field(place, mir::Field::new(0), layout)?;
-        trace!("discr place: {:?}, {:?}", discr_place, discr);
+        let discr_place_val = self.read_place(place)?;
+        let (discr_val, discr) = self.read_field(discr_place_val, None, mir::Field::new(0), layout)?;
+        trace!("discr value: {:?}, {:?}", discr_val, discr);
         let raw_discr = self.value_to_scalar(ValTy {
-            value: self.read_place(discr_place)?,
+            value: discr_val,
             ty: discr.ty
         })?;
         let discr_val = match layout.variants {
@@ -933,7 +930,8 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
                     let shift = 128 - discr.size.bits();
                     let sexted = (i << shift) >> shift;
                     // and then zeroing with the typeck discriminant type
-                    let discr_ty = ty
+                    let discr_ty = layout
+                        .ty
                         .ty_adt_def().expect("tagged layout corresponds to adt")
                         .repr
                         .discr_type();
@@ -1036,18 +1034,9 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         Ok(())
     }
 
-    pub fn read_global_as_value(&mut self, gid: GlobalId<'tcx>, ty: Ty<'tcx>) -> EvalResult<'tcx, Value> {
-        if self.tcx.is_static(gid.instance.def_id()).is_some() {
-            let alloc_id = self
-                .tcx
-                .alloc_map
-                .lock()
-                .intern_static(gid.instance.def_id());
-            let layout = self.layout_of(ty)?;
-            return Ok(Value::ByRef(Scalar::Ptr(alloc_id.into()), layout.align))
-        }
+    pub fn read_global_as_value(&mut self, gid: GlobalId<'tcx>) -> EvalResult<'tcx, Value> {
         let cv = self.const_eval(gid)?;
-        self.const_to_value(&cv.val, ty)
+        self.const_to_value(cv.val)
     }
 
     pub fn const_eval(&self, gid: GlobalId<'tcx>) -> EvalResult<'tcx, &'tcx ty::Const<'tcx>> {
@@ -1057,6 +1046,27 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             self.param_env
         };
         self.tcx.const_eval(param_env.and(gid)).map_err(|err| EvalErrorKind::ReferencedConstant(err).into())
+    }
+
+    pub fn allocate_place_for_value(
+        &mut self,
+        value: Value,
+        layout: TyLayout<'tcx>,
+        variant: Option<usize>,
+    ) -> EvalResult<'tcx, Place> {
+        let (ptr, align) = match value {
+            Value::ByRef(ptr, align) => (ptr, align),
+            Value::ScalarPair(..) | Value::Scalar(_) => {
+                let ptr = self.alloc_ptr(layout)?.into();
+                self.write_value_to_ptr(value, ptr, layout.align, layout.ty)?;
+                (ptr, layout.align)
+            },
+        };
+        Ok(Place::Ptr {
+            ptr,
+            align,
+            extra: variant.map_or(PlaceExtra::None, PlaceExtra::DowncastVariant),
+        })
     }
 
     pub fn force_allocation(&mut self, place: Place) -> EvalResult<'tcx, Place> {
@@ -1075,7 +1085,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
                         let ty = self.stack[frame].mir.local_decls[local].ty;
                         let ty = self.monomorphize(ty, self.stack[frame].instance.substs);
                         let layout = self.layout_of(ty)?;
-                        let ptr = self.alloc_ptr(ty)?;
+                        let ptr = self.alloc_ptr(layout)?;
                         self.stack[frame].locals[local] =
                             Some(Value::ByRef(ptr.into(), layout.align)); // it stays live
                         let place = Place::from_ptr(ptr, layout.align);
@@ -1110,11 +1120,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         match self.follow_by_ref_value(value, ty)? {
             Value::ByRef { .. } => bug!("follow_by_ref_value can't result in `ByRef`"),
 
-            Value::Scalar(scalar) => {
-                // TODO: Do we really want insta-UB here?
-                self.ensure_valid_value(scalar, ty)?;
-                Ok(scalar)
-            }
+            Value::Scalar(scalar) => Ok(scalar),
 
             Value::ScalarPair(..) => bug!("value_to_scalar can't work with fat pointers"),
         }
@@ -1201,8 +1207,8 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
             if let Ok(Some(src_val)) = self.try_read_value(src_ptr, align, dest_ty) {
                 write_dest(self, src_val)?;
             } else {
-                let dest_ptr = self.alloc_ptr(dest_ty)?.into();
                 let layout = self.layout_of(dest_ty)?;
+                let dest_ptr = self.alloc_ptr(layout)?.into();
                 self.memory.copy(src_ptr, align.min(layout.align), dest_ptr, layout.align, layout.size, false)?;
                 write_dest(self, Value::ByRef(dest_ptr, layout.align))?;
             }
@@ -1257,18 +1263,6 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         }
     }
 
-    fn ensure_valid_value(&self, val: Scalar, ty: Ty<'tcx>) -> EvalResult<'tcx> {
-        match ty.sty {
-            ty::TyBool => val.to_bool().map(|_| ()),
-
-            ty::TyChar if ::std::char::from_u32(val.to_bits(Size::from_bytes(4))? as u32).is_none() => {
-                err!(InvalidChar(val.to_bits(Size::from_bytes(4))? as u32 as u128))
-            }
-
-            _ => Ok(()),
-        }
-    }
-
     pub fn read_value(&self, ptr: Scalar, align: Align, ty: Ty<'tcx>) -> EvalResult<'tcx, Value> {
         if let Some(val) = self.try_read_value(ptr, align, ty)? {
             Ok(val)
@@ -1306,47 +1300,223 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         }
     }
 
+    fn validate_scalar(
+        &self,
+        value: Scalar,
+        size: Size,
+        scalar: &layout::Scalar,
+        path: &str,
+        ty: Ty,
+    ) -> EvalResult<'tcx> {
+        trace!("validate scalar: {:#?}, {:#?}, {:#?}, {}", value, size, scalar, ty);
+        let (lo, hi) = scalar.valid_range.clone().into_inner();
+
+        let (bits, defined) = match value {
+            Scalar::Bits { bits, defined } => (bits, defined),
+            Scalar::Ptr(_) => {
+                let ptr_size = self.memory.pointer_size();
+                let ptr_max = u128::max_value() >> (128 - ptr_size.bits());
+                return if lo > hi {
+                    if lo - hi == 1 {
+                        // no gap, all values are ok
+                        Ok(())
+                    } else if hi < ptr_max || lo > 1 {
+                        let max = u128::max_value() >> (128 - size.bits());
+                        validation_failure!(
+                            "pointer",
+                            path,
+                            format!("something in the range {:?} or {:?}", 0..=lo, hi..=max)
+                        )
+                    } else {
+                        Ok(())
+                    }
+                } else if hi < ptr_max || lo > 1 {
+                    validation_failure!(
+                        "pointer",
+                        path,
+                        format!("something in the range {:?}", scalar.valid_range)
+                    )
+                } else {
+                    Ok(())
+                };
+            },
+        };
+
+        // char gets a special treatment, because its number space is not contiguous so `TyLayout`
+        // has no special checks for chars
+        match ty.sty {
+            ty::TyChar => {
+                assert_eq!(size.bytes(), 4);
+                if ::std::char::from_u32(bits as u32).is_none() {
+                    return err!(InvalidChar(bits));
+                }
+            }
+            _ => {},
+        }
+
+        use std::ops::RangeInclusive;
+        let in_range = |bound: RangeInclusive<u128>| {
+            defined as u64 >= size.bits() && bound.contains(&bits)
+        };
+        if lo > hi {
+            if in_range(0..=hi) || in_range(lo..=u128::max_value()) {
+                Ok(())
+            } else if defined as u64 >= size.bits() {
+                validation_failure!(
+                    bits,
+                    path,
+                    format!("something in the range {:?} or {:?}", ..=hi, lo..)
+                )
+            } else {
+                validation_failure!("undefined bytes", path)
+            }
+        } else {
+            if in_range(scalar.valid_range.clone()) {
+                Ok(())
+            } else if defined as u64 >= size.bits() {
+                validation_failure!(
+                    bits,
+                    path,
+                    format!("something in the range {:?}", scalar.valid_range)
+                )
+            } else {
+                validation_failure!("undefined bytes", path)
+            }
+        }
+    }
+
+    /// This function checks the memory where `ptr` points to.
+    /// It will error if the bits at the destination do not match the ones described by the layout.
     pub fn validate_ptr_target(
         &self,
         ptr: Pointer,
         ptr_align: Align,
-        ty: Ty<'tcx>
+        mut layout: TyLayout<'tcx>,
+        path: String,
+        seen: &mut FxHashSet<(Pointer, Ty<'tcx>)>,
+        todo: &mut Vec<(Pointer, Ty<'tcx>, String)>,
     ) -> EvalResult<'tcx> {
-        match ty.sty {
-            ty::TyBool => {
-                self.memory.read_scalar(ptr, ptr_align, Size::from_bytes(1))?.to_bool()?;
-            }
-            ty::TyChar => {
-                let c = self.memory.read_scalar(ptr, ptr_align, Size::from_bytes(4))?.to_bits(Size::from_bytes(4))? as u32;
-                match ::std::char::from_u32(c) {
-                    Some(..) => (),
-                    None => return err!(InvalidChar(c as u128)),
-                }
-            }
+        self.memory.dump_alloc(ptr.alloc_id);
+        trace!("validate_ptr_target: {:?}, {:#?}", ptr, layout);
 
-            ty::TyFnPtr(_) => {
-                self.memory.read_ptr_sized(ptr, ptr_align)?;
+        let variant;
+        match layout.variants {
+            layout::Variants::NicheFilling { niche: ref tag, .. } |
+            layout::Variants::Tagged { ref tag, .. } => {
+                let size = tag.value.size(self);
+                let (tag_value, tag_layout) = self.read_field(
+                    Value::ByRef(ptr.into(), ptr_align),
+                    None,
+                    mir::Field::new(0),
+                    layout,
+                )?;
+                let tag_value = self.value_to_scalar(ValTy {
+                    value: tag_value,
+                    ty: tag_layout.ty,
+                })?;
+                let path = format!("{}.TAG", path);
+                self.validate_scalar(tag_value, size, tag, &path, tag_layout.ty)?;
+                let variant_index = self.read_discriminant_as_variant_index(
+                    Place::from_ptr(ptr, ptr_align),
+                    layout,
+                )?;
+                variant = variant_index;
+                layout = layout.for_variant(self, variant_index);
+                trace!("variant layout: {:#?}", layout);
             },
-            ty::TyRef(_, rty, _) |
-            ty::TyRawPtr(ty::TypeAndMut { ty: rty, .. }) => {
-                self.read_ptr(ptr, ptr_align, rty)?;
-            }
-
-            ty::TyAdt(def, _) => {
-                if def.is_box() {
-                    self.read_ptr(ptr, ptr_align, ty.boxed_ty())?;
-                    return Ok(());
-                }
-
-                if let layout::Abi::Scalar(ref scalar) = self.layout_of(ty)?.abi {
-                    let size = scalar.value.size(self);
-                    self.memory.read_scalar(ptr, ptr_align, size)?;
-                }
-            }
-
-            _ => (),
+            layout::Variants::Single { index } => variant = index,
         }
-        Ok(())
+        match layout.fields {
+            // primitives are unions with zero fields
+            layout::FieldPlacement::Union(0) => {
+                match layout.abi {
+                    // nothing to do, whatever the pointer points to, it is never going to be read
+                    layout::Abi::Uninhabited => validation_failure!("a value of an uninhabited type", path),
+                    // check that the scalar is a valid pointer or that its bit range matches the
+                    // expectation.
+                    layout::Abi::Scalar(ref scalar) => {
+                        let size = scalar.value.size(self);
+                        let value = self.memory.read_scalar(ptr, ptr_align, size)?;
+                        self.validate_scalar(value, size, scalar, &path, layout.ty)?;
+                        if scalar.value == Primitive::Pointer {
+                            // ignore integer pointers, we can't reason about the final hardware
+                            if let Scalar::Ptr(ptr) = value {
+                                let alloc_kind = self.tcx.alloc_map.lock().get(ptr.alloc_id);
+                                if let Some(AllocType::Static(did)) = alloc_kind {
+                                    // statics from other crates are already checked
+                                    // extern statics should not be validated as they have no body
+                                    if !did.is_local() || self.tcx.is_foreign_item(did) {
+                                        return Ok(());
+                                    }
+                                }
+                                if let Some(tam) = layout.ty.builtin_deref(false) {
+                                    // we have not encountered this pointer+layout combination before
+                                    if seen.insert((ptr, tam.ty)) {
+                                        todo.push((ptr, tam.ty, format!("(*{})", path)))
+                                    }
+                                }
+                            }
+                        }
+                        Ok(())
+                    },
+                    _ => bug!("bad abi for FieldPlacement::Union(0): {:#?}", layout.abi),
+                }
+            }
+            layout::FieldPlacement::Union(_) => {
+                // We can't check unions, their bits are allowed to be anything.
+                // The fields don't need to correspond to any bit pattern of the union's fields.
+                // See https://github.com/rust-lang/rust/issues/32836#issuecomment-406875389
+                Ok(())
+            },
+            layout::FieldPlacement::Array { stride, count } => {
+                let elem_layout = layout.field(self, 0)?;
+                for i in 0..count {
+                    let mut path = path.clone();
+                    self.write_field_name(&mut path, layout.ty, i as usize, variant).unwrap();
+                    self.validate_ptr_target(ptr.offset(stride * i, self)?, ptr_align, elem_layout, path, seen, todo)?;
+                }
+                Ok(())
+            },
+            layout::FieldPlacement::Arbitrary { ref offsets, .. } => {
+
+                // check length field and vtable field
+                match layout.ty.builtin_deref(false).map(|tam| &tam.ty.sty) {
+                    | Some(ty::TyStr)
+                    | Some(ty::TySlice(_)) => {
+                        let (len, len_layout) = self.read_field(
+                            Value::ByRef(ptr.into(), ptr_align),
+                            None,
+                            mir::Field::new(1),
+                            layout,
+                        )?;
+                        let len = self.value_to_scalar(ValTy { value: len, ty: len_layout.ty })?;
+                        if len.to_bits(len_layout.size).is_err() {
+                            return validation_failure!("length is not a valid integer", path);
+                        }
+                    },
+                    Some(ty::TyDynamic(..)) => {
+                        let (vtable, vtable_layout) = self.read_field(
+                            Value::ByRef(ptr.into(), ptr_align),
+                            None,
+                            mir::Field::new(1),
+                            layout,
+                        )?;
+                        let vtable = self.value_to_scalar(ValTy { value: vtable, ty: vtable_layout.ty })?;
+                        if vtable.to_ptr().is_err() {
+                            return validation_failure!("vtable address is not a pointer", path);
+                        }
+                    }
+                    _ => {},
+                }
+                for (i, &offset) in offsets.iter().enumerate() {
+                    let field_layout = layout.field(self, i)?;
+                    let mut path = path.clone();
+                    self.write_field_name(&mut path, layout.ty, i, variant).unwrap();
+                    self.validate_ptr_target(ptr.offset(offset, self)?, ptr_align, field_layout, path, seen, todo)?;
+                }
+                Ok(())
+            }
+        }
     }
 
     pub fn try_read_by_ref(&self, mut val: Value, ty: Ty<'tcx>) -> EvalResult<'tcx, Value> {
@@ -1368,9 +1538,6 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         }
 
         let ptr = ptr.to_ptr()?;
-
-        // Not the right place to do this
-        //self.validate_ptr_target(ptr, ptr_align, ty)?;
 
         match layout.abi {
             layout::Abi::Scalar(..) => {
@@ -1462,7 +1629,7 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
         }
     }
 
-    fn unsize_into(
+    crate fn unsize_into(
         &mut self,
         src: Value,
         src_layout: TyLayout<'tcx>,
@@ -1658,6 +1825,73 @@ impl<'a, 'mir, 'tcx: 'mir, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M
 
     pub fn truncate(&self, value: u128, ty: Ty<'tcx>) -> EvalResult<'tcx, u128> {
         super::truncate(self.tcx.tcx, value, ty)
+    }
+
+    fn write_field_name(&self, s: &mut String, ty: Ty<'tcx>, i: usize, variant: usize) -> ::std::fmt::Result {
+        match ty.sty {
+            ty::TyBool |
+            ty::TyChar |
+            ty::TyInt(_) |
+            ty::TyUint(_) |
+            ty::TyFloat(_) |
+            ty::TyFnPtr(_) |
+            ty::TyNever |
+            ty::TyFnDef(..) |
+            ty::TyGeneratorWitness(..) |
+            ty::TyForeign(..) |
+            ty::TyDynamic(..) => {
+                bug!("field_name({:?}): not applicable", ty)
+            }
+
+            // Potentially-fat pointers.
+            ty::TyRef(_, pointee, _) |
+            ty::TyRawPtr(ty::TypeAndMut { ty: pointee, .. }) => {
+                assert!(i < 2);
+
+                // Reuse the fat *T type as its own thin pointer data field.
+                // This provides information about e.g. DST struct pointees
+                // (which may have no non-DST form), and will work as long
+                // as the `Abi` or `FieldPlacement` is checked by users.
+                if i == 0 {
+                    return write!(s, ".data_ptr");
+                }
+
+                match self.tcx.struct_tail(pointee).sty {
+                    ty::TySlice(_) |
+                    ty::TyStr => write!(s, ".len"),
+                    ty::TyDynamic(..) => write!(s, ".vtable_ptr"),
+                    _ => bug!("field_name({:?}): not applicable", ty)
+                }
+            }
+
+            // Arrays and slices.
+            ty::TyArray(_, _) |
+            ty::TySlice(_) |
+            ty::TyStr => write!(s, "[{}]", i),
+
+            // generators and closures.
+            ty::TyClosure(def_id, _) | ty::TyGenerator(def_id, _, _) => {
+                let node_id = self.tcx.hir.as_local_node_id(def_id).unwrap();
+                let freevar = self.tcx.with_freevars(node_id, |fv| fv[i]);
+                write!(s, ".upvar({})", self.tcx.hir.name(freevar.var_id()))
+            }
+
+            ty::TyTuple(_) => write!(s, ".{}", i),
+
+            // enums
+            ty::TyAdt(def, ..) if def.is_enum() => {
+                let variant = &def.variants[variant];
+                write!(s, ".{}::{}", variant.name, variant.fields[i].ident)
+            }
+
+            // other ADTs.
+            ty::TyAdt(def, _) => write!(s, ".{}", def.non_enum_variant().fields[i].ident),
+
+            ty::TyProjection(_) | ty::TyAnon(..) | ty::TyParam(_) |
+            ty::TyInfer(_) | ty::TyError => {
+                bug!("write_field_name: unexpected type `{}`", ty)
+            }
+        }
     }
 }
 

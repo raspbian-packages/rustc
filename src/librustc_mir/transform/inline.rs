@@ -406,10 +406,9 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                     local_map.push(idx);
                 }
 
-                for p in callee_mir.promoted.iter().cloned() {
-                    let idx = caller_mir.promoted.push(p);
-                    promoted_map.push(idx);
-                }
+                promoted_map.extend(
+                    callee_mir.promoted.iter().cloned().map(|p| caller_mir.promoted.push(p))
+                );
 
                 // If the call is something like `a[*i] = f(i)`, where
                 // `i : &mut usize`, then just duplicating the `a[*i]`
@@ -662,11 +661,18 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
                     place: &mut Place<'tcx>,
                     _ctxt: PlaceContext<'tcx>,
                     _location: Location) {
-        if let Place::Local(RETURN_PLACE) = *place {
-            // Return pointer; update the place itself
-            *place = self.destination.clone();
-        } else {
-            self.super_place(place, _ctxt, _location);
+
+        match place {
+            Place::Local(RETURN_PLACE) => {
+                // Return pointer; update the place itself
+                *place = self.destination.clone();
+            },
+            Place::Promoted(ref mut promoted) => {
+                if let Some(p) = self.promoted_map.get(promoted.0).cloned() {
+                    promoted.0 = p;
+                }
+            },
+            _ => self.super_place(place, _ctxt, _location),
         }
     }
 
@@ -748,15 +754,5 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
 
     fn visit_source_scope(&mut self, scope: &mut SourceScope) {
         *scope = self.scope_map[*scope];
-    }
-
-    fn visit_literal(&mut self, literal: &mut Literal<'tcx>, loc: Location) {
-        if let Literal::Promoted { ref mut index } = *literal {
-            if let Some(p) = self.promoted_map.get(*index).cloned() {
-                *index = p;
-            }
-        } else {
-            self.super_literal(literal, loc);
-        }
     }
 }

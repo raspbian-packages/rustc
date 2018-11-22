@@ -1,12 +1,12 @@
 # Block expressions
 
-> **<sup>Syntax</sup>**  
-> _BlockExpression_ :  
-> &nbsp;&nbsp; `{`  
-> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>  
-> &nbsp;&nbsp; &nbsp;&nbsp; [_Statement_]<sup>\*</sup>  
-> &nbsp;&nbsp; &nbsp;&nbsp; [_Expression_]<sup>?</sup>  
-> &nbsp;&nbsp; `}`  
+> **<sup>Syntax</sup>**\
+> _BlockExpression_ :\
+> &nbsp;&nbsp; `{`\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_Statement_]<sup>\*</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_Expression_]<sup>?</sup>\
+> &nbsp;&nbsp; `}`
 
 A _block expression_ is similar to a module in terms of the declarations that
 are possible, but can also contain [statements] and end with
@@ -30,14 +30,14 @@ let x: i32 = { println!("Hello."); 5 };
 assert_eq!(5, x);
 ```
 
-Blocks are always [value expressions] and evaluate the last expression in 
+Blocks are always [value expressions] and evaluate the last expression in
 value expression context. This can be used to force moving a value if really
 needed.
 
 ## `unsafe` blocks
 
-> **<sup>Syntax</sup>**  
-> _UnsafeBlockExpression_ :  
+> **<sup>Syntax</sup>**\
+> _UnsafeBlockExpression_ :\
 > &nbsp;&nbsp; `unsafe` _BlockExpression_
 
 _See [`unsafe` block](unsafe-blocks.html) for more information on when to use `unsafe`_
@@ -57,9 +57,32 @@ unsafe {
 let a = unsafe { f() };
 ```
 
+## Attributes on block expressions
+
+Block expressions allow [outer attributes] and [inner attributes] directly after
+the opening brace when the block expression is the outer expression of an
+[expression statement] or the final expression of another block expression. The
+attributes that have meaning on a block expression are [`cfg`], and [the lint
+check attributes].
+
+For example, this function returns `true` on unix platforms and `false` on other
+platforms.
+
+```rust
+fn is_unix_platform() -> bool {
+    #[cfg(unix)] { true }
+    #[cfg(not(unix))] { false }
+}
+```
+
 [_InnerAttribute_]: attributes.html
 [_Statement_]: statements.html
 [_Expression_]: expressions.html
 [expression]: expressions.html
 [statements]: statements.html
 [value expressions]: expressions.html#place-expressions-and-value-expressions
+[outer attributes]: attributes.html
+[inner attributes]: attributes.html
+[expression statement]: statements.html#expression-statements
+[`cfg`]: attributes.html#conditional-compilation
+[the lint check attributes]: attributes.html#lint-check-attributes

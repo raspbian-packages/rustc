@@ -3,9 +3,20 @@ Author: Ximin Luo <infinity0@debian.org>
 Forwarded: not-needed
 --- a/src/Cargo.toml
 +++ b/src/Cargo.toml
-@@ -15,27 +15,8 @@
-   "tools/remote-test-client",
-   "tools/remote-test-server",
+@@ -6,7 +6,6 @@
+   "libtest",
+   "librustc_codegen_llvm",
+   "tools/cargotest",
+-  "tools/clippy",
+   "tools/compiletest",
+   "tools/error_index_generator",
+   "tools/linkchecker",
+@@ -14,14 +13,8 @@
+   "tools/unstable-book-gen",
+   "tools/tidy",
+   "tools/build-manifest",
+-  "tools/remote-test-client",
+-  "tools/remote-test-server",
    "tools/rust-installer",
 -  "tools/cargo",
    "tools/rustdoc",
@@ -13,25 +24,9 @@ Forwarded: not-needed
 -  "tools/rustfmt",
 -  "tools/miri",
    "tools/rustdoc-themes",
--  # FIXME(https://github.com/rust-lang/cargo/issues/4089): move these to exclude
--  "tools/rls/test_data/bin_lib",
--  "tools/rls/test_data/borrow_error",
--  "tools/rls/test_data/common",
--  "tools/rls/test_data/deglob",
--  "tools/rls/test_data/features",
--  "tools/rls/test_data/find_all_refs_no_cfg_test",
--  "tools/rls/test_data/find_impls",
--  "tools/rls/test_data/infer_bin",
--  "tools/rls/test_data/infer_custom_bin",
--  "tools/rls/test_data/infer_lib",
--  "tools/rls/test_data/multiple_bins",
--  "tools/rls/test_data/reformat",
--  "tools/rls/test_data/reformat_with_range",
--  "tools/rls/test_data/workspace_symbol",
  ]
- 
- # Curiously, libtest will segfault if compiled with opt-level=3
-@@ -59,16 +40,3 @@
+ exclude = [
+@@ -44,23 +37,7 @@
  debug = false
  debug-assertions = false
  
@@ -43,14 +38,21 @@ Forwarded: not-needed
 -[patch."https://github.com/rust-lang/cargo"]
 -cargo = { path = "tools/cargo" }
 -
--[patch."https://github.com/rust-lang-nursery/rustfmt"]
+ [patch.crates-io]
 -# Similar to Cargo above we want the RLS to use a vendored version of `rustfmt`
 -# that we're shipping as well (to ensure that the rustfmt in RLS and the
--# `rustfmt` executable are the same exact vesion).
+-# `rustfmt` executable are the same exact version).
 -rustfmt-nightly = { path = "tools/rustfmt" }
+-
+ # See comments in `tools/rustc-workspace-hack/README.md` for what's going on
+ # here
+ rustc-workspace-hack = { path = 'tools/rustc-workspace-hack' }
+-
+-[patch."https://github.com/rust-lang-nursery/rust-clippy"]
+-clippy_lints = { path = "tools/clippy/clippy_lints" }
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -618,10 +618,6 @@
+@@ -639,10 +639,6 @@
                  os.path.join(self.rust_root, "src/bootstrap/Cargo.toml")]
          for _ in range(1, self.verbose):
              args.append("--verbose")
@@ -63,7 +65,9 @@ Forwarded: not-needed
      def build_triple(self):
 --- a/src/bootstrap/builder.rs
 +++ b/src/bootstrap/builder.rs
-@@ -589,8 +589,5 @@
+@@ -1058,10 +1058,7 @@
+             }
+         }
  
 -        if self.config.locked_deps {
 -            cargo.arg("--locked");
@@ -75,7 +79,7 @@ Forwarded: not-needed
  
 --- a/src/bootstrap/doc.rs
 +++ b/src/bootstrap/doc.rs
-@@ -141,7 +141,7 @@ pub struct CargoBook {
+@@ -144,7 +144,7 @@
  
  impl Step for CargoBook {
      type Output = ();
@@ -86,7 +90,7 @@ Forwarded: not-needed
          let builder = run.builder;
 --- a/src/doc/index.md
 +++ b/src/doc/index.md
-@@ -49,7 +49,7 @@ accomplishing various tasks.
+@@ -49,7 +49,7 @@
  
  ## The Cargo Book
  

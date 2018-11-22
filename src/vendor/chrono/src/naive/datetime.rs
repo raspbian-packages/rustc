@@ -290,6 +290,33 @@ impl NaiveDateTime {
         as_ms + i64::from(self.timestamp_subsec_millis())
     }
 
+    /// Returns the number of non-leap *nanoseconds* since midnight on January 1, 1970.
+    ///
+    /// Note that this does *not* account for the timezone!
+    /// The true "UNIX timestamp" would count seconds since the midnight *UTC* on the epoch.
+    ///
+    /// Note also that this does reduce the number of years that can be
+    /// represented from ~584 Billion to ~584. (If this is a problem,
+    /// please file an issue to let me know what domain needs nanosecond
+    /// precision over millenia, I'm curious.)
+    ///
+    /// # Example
+    ///
+    /// ~~~~
+    /// use chrono::NaiveDate;
+    ///
+    /// let dt = NaiveDate::from_ymd(1970, 1, 1).and_hms_nano(0, 0, 1, 444);
+    /// assert_eq!(dt.timestamp_nanos(), 1_000_000_444);
+    ///
+    /// let dt = NaiveDate::from_ymd(2001, 9, 9).and_hms_nano(1, 46, 40, 555);
+    /// assert_eq!(dt.timestamp_nanos(), 1_000_000_000_000_000_555);
+    /// ~~~~
+    #[inline]
+    pub fn timestamp_nanos(&self) -> i64 {
+        let as_ns = self.timestamp() * 1_000_000_000;
+        as_ns + i64::from(self.timestamp_subsec_nanos())
+    }
+
     /// Returns the number of milliseconds since the last whole non-leap second.
     ///
     /// The return value ranges from 0 to 999,
@@ -1279,6 +1306,61 @@ impl SubAssign<OldDuration> for NaiveDateTime {
     }
 }
 
+/// Subtracts another `NaiveDateTime` from the current date and time.
+/// This does not overflow or underflow at all.
+///
+/// As a part of Chrono's [leap second handling](./struct.NaiveTime.html#leap-second-handling),
+/// the subtraction assumes that **there is no leap second ever**,
+/// except when any of the `NaiveDateTime`s themselves represents a leap second
+/// in which case the assumption becomes that
+/// **there are exactly one (or two) leap second(s) ever**.
+///
+/// The implementation is a wrapper around
+/// [`NaiveDateTime::signed_duration_since`](#method.signed_duration_since).
+///
+/// # Example
+///
+/// ~~~~
+/// # extern crate chrono; extern crate time; fn main() {
+/// use chrono::NaiveDate;
+/// use time::Duration;
+///
+/// let from_ymd = NaiveDate::from_ymd;
+///
+/// let d = from_ymd(2016, 7, 8);
+/// assert_eq!(d.and_hms(3, 5, 7) - d.and_hms(2, 4, 6), Duration::seconds(3600 + 60 + 1));
+///
+/// // July 8 is 190th day in the year 2016
+/// let d0 = from_ymd(2016, 1, 1);
+/// assert_eq!(d.and_hms_milli(0, 7, 6, 500) - d0.and_hms(0, 0, 0),
+///            Duration::seconds(189 * 86_400 + 7 * 60 + 6) + Duration::milliseconds(500));
+/// # }
+/// ~~~~
+///
+/// Leap seconds are handled, but the subtraction assumes that
+/// there were no other leap seconds happened.
+///
+/// ~~~~
+/// # extern crate chrono; extern crate time; fn main() {
+/// # use chrono::NaiveDate;
+/// # use time::Duration;
+/// # let from_ymd = NaiveDate::from_ymd;
+/// let leap = from_ymd(2015, 6, 30).and_hms_milli(23, 59, 59, 1_500);
+/// assert_eq!(leap - from_ymd(2015, 6, 30).and_hms(23, 0, 0),
+///            Duration::seconds(3600) + Duration::milliseconds(500));
+/// assert_eq!(from_ymd(2015, 7, 1).and_hms(1, 0, 0) - leap,
+///            Duration::seconds(3600) - Duration::milliseconds(500));
+/// # }
+/// ~~~~
+impl Sub<NaiveDateTime> for NaiveDateTime {
+    type Output = OldDuration;
+
+    #[inline]
+    fn sub(self, rhs: NaiveDateTime) -> OldDuration {
+        self.signed_duration_since(rhs)
+    }
+}
+
 /// The `Debug` output of the naive date and time `dt` is same to
 /// [`dt.format("%Y-%m-%dT%H:%M:%S%.f")`](../format/strftime/index.html).
 ///
@@ -1503,24 +1585,32 @@ pub mod rustc_serialize {
 
     /// A `DateTime` that can be deserialized from a seconds-based timestamp
     #[derive(Debug)]
+    #[deprecated(since = "1.4.2",
+                 note = "RustcSerialize will be removed before chrono 1.0, use Serde instead")]
     pub struct TsSeconds(NaiveDateTime);
 
+    #[allow(deprecated)]
     impl From<TsSeconds> for NaiveDateTime {
         /// Pull the internal NaiveDateTime out
+        #[allow(deprecated)]
         fn from(obj: TsSeconds) -> NaiveDateTime {
             obj.0
         }
     }
 
+    #[allow(deprecated)]
     impl Deref for TsSeconds {
         type Target = NaiveDateTime;
 
+        #[allow(deprecated)]
         fn deref(&self) -> &Self::Target {
             &self.0
         }
     }
 
+    #[allow(deprecated)]
     impl Decodable for TsSeconds {
+        #[allow(deprecated)]
         fn decode<D: Decoder>(d: &mut D) -> Result<TsSeconds, D::Error> {
             Ok(TsSeconds(
                 NaiveDateTime::from_timestamp_opt(d.read_i64()?, 0)

@@ -140,7 +140,7 @@ pub fn create_target_machine(sess: &Session, find_features: bool) -> TargetMachi
 // that `is_pie_binary` is false. When we discover LLVM target features
 // `sess.crate_types` is uninitialized so we cannot access it.
 pub fn target_machine_factory(sess: &Session, find_features: bool)
-    -> Arc<Fn() -> Result<TargetMachineRef, String> + Send + Sync>
+    -> Arc<dyn Fn() -> Result<TargetMachineRef, String> + Send + Sync>
 {
     let reloc_model = get_reloc_model(sess);
 
@@ -232,7 +232,7 @@ pub struct ModuleConfig {
     emit_obj: bool,
     // Miscellaneous flags.  These are mostly copied from command-line
     // options.
-    no_verify: bool,
+    pub verify_llvm_ir: bool,
     no_prepopulate_passes: bool,
     no_builtins: bool,
     time_passes: bool,
@@ -271,7 +271,7 @@ impl ModuleConfig {
             embed_bitcode_marker: false,
             no_integrated_as: false,
 
-            no_verify: false,
+            verify_llvm_ir: false,
             no_prepopulate_passes: false,
             no_builtins: false,
             time_passes: false,
@@ -283,15 +283,15 @@ impl ModuleConfig {
     }
 
     fn set_flags(&mut self, sess: &Session, no_builtins: bool) {
-        self.no_verify = sess.no_verify();
+        self.verify_llvm_ir = sess.verify_llvm_ir();
         self.no_prepopulate_passes = sess.opts.cg.no_prepopulate_passes;
         self.no_builtins = no_builtins || sess.target.target.options.no_builtins;
         self.time_passes = sess.time_passes();
         self.inline_threshold = sess.opts.cg.inline_threshold;
-        self.obj_is_bitcode = sess.target.target.options.obj_is_bitcode;
+        self.obj_is_bitcode = sess.target.target.options.obj_is_bitcode ||
+                              sess.opts.debugging_opts.cross_lang_lto.enabled();
         let embed_bitcode = sess.target.target.options.embed_bitcode ||
-                            sess.opts.debugging_opts.embed_bitcode ||
-                            sess.opts.debugging_opts.cross_lang_lto.embed_bitcode();
+                            sess.opts.debugging_opts.embed_bitcode;
         if embed_bitcode {
             match sess.opts.optimize {
                 config::OptLevel::No |
@@ -343,7 +343,7 @@ pub struct CodegenContext {
     regular_module_config: Arc<ModuleConfig>,
     metadata_module_config: Arc<ModuleConfig>,
     allocator_module_config: Arc<ModuleConfig>,
-    pub tm_factory: Arc<Fn() -> Result<TargetMachineRef, String> + Send + Sync>,
+    pub tm_factory: Arc<dyn Fn() -> Result<TargetMachineRef, String> + Send + Sync>,
     pub msvc_imps_needed: bool,
     pub target_pointer_width: String,
     debuginfo: config::DebugInfoLevel,
@@ -362,7 +362,7 @@ pub struct CodegenContext {
     // compiling incrementally
     pub incr_comp_session_dir: Option<PathBuf>,
     // Channel back to the main control thread to send messages to
-    coordinator_send: Sender<Box<Any + Send>>,
+    coordinator_send: Sender<Box<dyn Any + Send>>,
     // A reference to the TimeGraph so we can register timings. None means that
     // measuring is disabled.
     time_graph: Option<TimeGraph>,
@@ -399,7 +399,7 @@ impl CodegenContext {
 }
 
 struct DiagnosticHandlers<'a> {
-    inner: Box<(&'a CodegenContext, &'a Handler)>,
+    data: *mut (&'a CodegenContext, &'a Handler),
     llcx: ContextRef,
 }
 
@@ -407,24 +407,22 @@ impl<'a> DiagnosticHandlers<'a> {
     fn new(cgcx: &'a CodegenContext,
            handler: &'a Handler,
            llcx: ContextRef) -> DiagnosticHandlers<'a> {
-        let data = Box::new((cgcx, handler));
+        let data = Box::into_raw(Box::new((cgcx, handler)));
         unsafe {
-            let arg = &*data as &(_, _) as *const _ as *mut _;
-            llvm::LLVMRustSetInlineAsmDiagnosticHandler(llcx, inline_asm_handler, arg);
-            llvm::LLVMContextSetDiagnosticHandler(llcx, diagnostic_handler, arg);
+            llvm::LLVMRustSetInlineAsmDiagnosticHandler(llcx, inline_asm_handler, data as *mut _);
+            llvm::LLVMContextSetDiagnosticHandler(llcx, diagnostic_handler, data as *mut _);
         }
-        DiagnosticHandlers {
-            inner: data,
-            llcx: llcx,
-        }
+        DiagnosticHandlers { data, llcx }
     }
 }
 
 impl<'a> Drop for DiagnosticHandlers<'a> {
     fn drop(&mut self) {
+        use std::ptr::null_mut;
         unsafe {
-            llvm::LLVMRustSetInlineAsmDiagnosticHandler(self.llcx, inline_asm_handler, 0 as *mut _);
-            llvm::LLVMContextSetDiagnosticHandler(self.llcx, diagnostic_handler, 0 as *mut _);
+            llvm::LLVMRustSetInlineAsmDiagnosticHandler(self.llcx, inline_asm_handler, null_mut());
+            llvm::LLVMContextSetDiagnosticHandler(self.llcx, diagnostic_handler, null_mut());
+            drop(Box::from_raw(self.data));
         }
     }
 }
@@ -542,7 +540,7 @@ unsafe fn optimize(cgcx: &CodegenContext,
             true
         };
 
-        if !config.no_verify { assert!(addpass("verify")); }
+        if config.verify_llvm_ir { assert!(addpass("verify")); }
         if !config.no_prepopulate_passes {
             llvm::LLVMRustAddAnalysisPasses(tm, fpm, llmod);
             llvm::LLVMRustAddAnalysisPasses(tm, mpm, llmod);
@@ -884,7 +882,7 @@ pub fn start_async_codegen(tcx: TyCtxt,
                                time_graph: Option<TimeGraph>,
                                link: LinkMeta,
                                metadata: EncodedMetadata,
-                               coordinator_receive: Receiver<Box<Any + Send>>,
+                               coordinator_receive: Receiver<Box<dyn Any + Send>>,
                                total_cgus: usize)
                                -> OngoingCodegen {
     let sess = tcx.sess;
@@ -1365,7 +1363,7 @@ fn execute_work_item(cgcx: &CodegenContext,
             // Don't run LTO passes when cross-lang LTO is enabled. The linker
             // will do that for us in this case.
             let needs_lto = needs_lto &&
-                !cgcx.opts.debugging_opts.cross_lang_lto.embed_bitcode();
+                !cgcx.opts.debugging_opts.cross_lang_lto.enabled();
 
             if needs_lto {
                 Ok(WorkItemResult::NeedsLTO(module))
@@ -1412,7 +1410,7 @@ fn start_executing_work(tcx: TyCtxt,
                         crate_info: &CrateInfo,
                         shared_emitter: SharedEmitter,
                         codegen_worker_send: Sender<Message>,
-                        coordinator_receive: Receiver<Box<Any + Send>>,
+                        coordinator_receive: Receiver<Box<dyn Any + Send>>,
                         total_cgus: usize,
                         jobserver: Client,
                         time_graph: Option<TimeGraph>,
@@ -1976,7 +1974,7 @@ fn spawn_work(cgcx: CodegenContext, work: WorkItem) {
         // Set up a destructor which will fire off a message that we're done as
         // we exit.
         struct Bomb {
-            coordinator_send: Sender<Box<Any + Send>>,
+            coordinator_send: Sender<Box<dyn Any + Send>>,
             result: Option<WorkItemResult>,
             worker_id: usize,
         }
@@ -2056,7 +2054,7 @@ pub unsafe fn with_llvm_pmb(llmod: ModuleRef,
                             config: &ModuleConfig,
                             opt_level: llvm::CodeGenOptLevel,
                             prepare_for_thin_lto: bool,
-                            f: &mut FnMut(llvm::PassManagerBuilderRef)) {
+                            f: &mut dyn FnMut(llvm::PassManagerBuilderRef)) {
     use std::ptr;
 
     // Create the PassManagerBuilder for LLVM. We configure it with
@@ -2243,7 +2241,7 @@ pub struct OngoingCodegen {
     linker_info: LinkerInfo,
     crate_info: CrateInfo,
     time_graph: Option<TimeGraph>,
-    coordinator_send: Sender<Box<Any + Send>>,
+    coordinator_send: Sender<Box<dyn Any + Send>>,
     codegen_worker_receive: Receiver<Message>,
     shared_emitter_main: SharedEmitterMain,
     future: thread::JoinHandle<Result<CompiledModules, ()>>,

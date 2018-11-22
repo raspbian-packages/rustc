@@ -58,16 +58,16 @@
 use core::any::Any;
 use core::borrow;
 use core::cmp::Ordering;
+use core::convert::From;
 use core::fmt;
-use core::future::Future;
+use core::future::{Future, FutureObj, LocalFutureObj, UnsafeFutureObj};
 use core::hash::{Hash, Hasher};
 use core::iter::FusedIterator;
 use core::marker::{Unpin, Unsize};
 use core::mem::{self, PinMut};
 use core::ops::{CoerceUnsized, Deref, DerefMut, Generator, GeneratorState};
 use core::ptr::{self, NonNull, Unique};
-use core::task::{Context, Poll, UnsafeTask, TaskObj};
-use core::convert::From;
+use core::task::{Context, Poll, Executor, SpawnErrorKind, SpawnObjError};
 
 use raw_vec::RawVec;
 use str::from_boxed_utf8_unchecked;
@@ -194,7 +194,9 @@ impl<T: ?Sized> Box<T> {
     }
 
     /// Consumes and leaks the `Box`, returning a mutable reference,
-    /// `&'a mut T`. Here, the lifetime `'a` may be chosen to be `'static`.
+    /// `&'a mut T`. Note that the type `T` must outlive the chosen lifetime
+    /// `'a`. If the type has only static references, or none at all, then this
+    /// may be chosen to be `'static`.
     ///
     /// This function is mainly useful for data that lives for the remainder of
     /// the program's life. Dropping the returned reference will cause a memory
@@ -446,7 +448,7 @@ impl From<Box<str>> for Box<[u8]> {
     }
 }
 
-impl Box<Any> {
+impl Box<dyn Any> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     /// Attempt to downcast the box to a concrete type.
@@ -468,10 +470,10 @@ impl Box<Any> {
     ///     print_if_string(Box::new(0i8));
     /// }
     /// ```
-    pub fn downcast<T: Any>(self) -> Result<Box<T>, Box<Any>> {
+    pub fn downcast<T: Any>(self) -> Result<Box<T>, Box<dyn Any>> {
         if self.is::<T>() {
             unsafe {
-                let raw: *mut Any = Box::into_raw(self);
+                let raw: *mut dyn Any = Box::into_raw(self);
                 Ok(Box::from_raw(raw as *mut T))
             }
         } else {
@@ -480,7 +482,7 @@ impl Box<Any> {
     }
 }
 
-impl Box<Any + Send> {
+impl Box<dyn Any + Send> {
     #[inline]
     #[stable(feature = "rust1", since = "1.0.0")]
     /// Attempt to downcast the box to a concrete type.
@@ -502,10 +504,10 @@ impl Box<Any + Send> {
     ///     print_if_string(Box::new(0i8));
     /// }
     /// ```
-    pub fn downcast<T: Any>(self) -> Result<Box<T>, Box<Any + Send>> {
-        <Box<Any>>::downcast(self).map_err(|s| unsafe {
+    pub fn downcast<T: Any>(self) -> Result<Box<T>, Box<dyn Any + Send>> {
+        <Box<dyn Any>>::downcast(self).map_err(|s| unsafe {
             // reapply the Send marker
-            Box::from_raw(Box::into_raw(s) as *mut (Any + Send))
+            Box::from_raw(Box::into_raw(s) as *mut (dyn Any + Send))
         })
     }
 }
@@ -643,7 +645,7 @@ impl<A, F> FnBox<A> for F
 
 #[unstable(feature = "fnbox",
            reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
-impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + 'a> {
+impl<'a, A, R> FnOnce<A> for Box<dyn FnBox<A, Output = R> + 'a> {
     type Output = R;
 
     extern "rust-call" fn call_once(self, args: A) -> R {
@@ -653,7 +655,7 @@ impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + 'a> {
 
 #[unstable(feature = "fnbox",
            reason = "will be deprecated if and when `Box<FnOnce>` becomes usable", issue = "28796")]
-impl<'a, A, R> FnOnce<A> for Box<FnBox<A, Output = R> + Send + 'a> {
+impl<'a, A, R> FnOnce<A> for Box<dyn FnBox<A, Output = R> + Send + 'a> {
     type Output = R;
 
     extern "rust-call" fn call_once(self, args: A) -> R {
@@ -915,7 +917,7 @@ impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<PinBox<U>> for PinBox<T> {}
 impl<T: ?Sized> Unpin for PinBox<T> {}
 
 #[unstable(feature = "futures_api", issue = "50547")]
-impl<'a, F: ?Sized + Future + Unpin> Future for Box<F> {
+impl<F: ?Sized + Future + Unpin> Future for Box<F> {
     type Output = F::Output;
 
     fn poll(mut self: PinMut<Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -924,7 +926,7 @@ impl<'a, F: ?Sized + Future + Unpin> Future for Box<F> {
 }
 
 #[unstable(feature = "futures_api", issue = "50547")]
-impl<'a, F: ?Sized + Future> Future for PinBox<F> {
+impl<F: ?Sized + Future> Future for PinBox<F> {
     type Output = F::Output;
 
     fn poll(mut self: PinMut<Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -933,32 +935,80 @@ impl<'a, F: ?Sized + Future> Future for PinBox<F> {
 }
 
 #[unstable(feature = "futures_api", issue = "50547")]
-unsafe impl<F: Future<Output = ()> + Send + 'static> UnsafeTask for PinBox<F> {
+unsafe impl<'a, T, F> UnsafeFutureObj<'a, T> for Box<F>
+    where F: Future<Output = T> + 'a
+{
     fn into_raw(self) -> *mut () {
-        PinBox::into_raw(self) as *mut ()
+        Box::into_raw(self) as *mut ()
     }
 
-    unsafe fn poll(task: *mut (), cx: &mut Context) -> Poll<()> {
-        let ptr = task as *mut F;
+    unsafe fn poll(ptr: *mut (), cx: &mut Context) -> Poll<T> {
+        let ptr = ptr as *mut F;
         let pin: PinMut<F> = PinMut::new_unchecked(&mut *ptr);
         pin.poll(cx)
     }
 
-    unsafe fn drop(task: *mut ()) {
-        drop(PinBox::from_raw(task as *mut F))
+    unsafe fn drop(ptr: *mut ()) {
+        drop(Box::from_raw(ptr as *mut F))
     }
 }
 
 #[unstable(feature = "futures_api", issue = "50547")]
-impl<F: Future<Output = ()> + Send + 'static> From<PinBox<F>> for TaskObj {
+unsafe impl<'a, T, F> UnsafeFutureObj<'a, T> for PinBox<F>
+    where F: Future<Output = T> + 'a
+{
+    fn into_raw(self) -> *mut () {
+        PinBox::into_raw(self) as *mut ()
+    }
+
+    unsafe fn poll(ptr: *mut (), cx: &mut Context) -> Poll<T> {
+        let ptr = ptr as *mut F;
+        let pin: PinMut<F> = PinMut::new_unchecked(&mut *ptr);
+        pin.poll(cx)
+    }
+
+    unsafe fn drop(ptr: *mut ()) {
+        drop(PinBox::from_raw(ptr as *mut F))
+    }
+}
+
+#[unstable(feature = "futures_api", issue = "50547")]
+impl<E> Executor for Box<E>
+    where E: Executor + ?Sized
+{
+    fn spawn_obj(&mut self, task: FutureObj<'static, ()>) -> Result<(), SpawnObjError> {
+        (**self).spawn_obj(task)
+    }
+
+    fn status(&self) -> Result<(), SpawnErrorKind> {
+        (**self).status()
+    }
+}
+
+#[unstable(feature = "futures_api", issue = "50547")]
+impl<'a, F: Future<Output = ()> + Send + 'a> From<PinBox<F>> for FutureObj<'a, ()> {
     fn from(boxed: PinBox<F>) -> Self {
-        TaskObj::new(boxed)
+        FutureObj::new(boxed)
     }
 }
 
 #[unstable(feature = "futures_api", issue = "50547")]
-impl<F: Future<Output = ()> + Send + 'static> From<Box<F>> for TaskObj {
+impl<'a, F: Future<Output = ()> + Send + 'a> From<Box<F>> for FutureObj<'a, ()> {
     fn from(boxed: Box<F>) -> Self {
-        TaskObj::new(PinBox::from(boxed))
+        FutureObj::new(boxed)
+    }
+}
+
+#[unstable(feature = "futures_api", issue = "50547")]
+impl<'a, F: Future<Output = ()> + 'a> From<PinBox<F>> for LocalFutureObj<'a, ()> {
+    fn from(boxed: PinBox<F>) -> Self {
+        LocalFutureObj::new(boxed)
+    }
+}
+
+#[unstable(feature = "futures_api", issue = "50547")]
+impl<'a, F: Future<Output = ()> + 'a> From<Box<F>> for LocalFutureObj<'a, ()> {
+    fn from(boxed: Box<F>) -> Self {
+        LocalFutureObj::new(boxed)
     }
 }

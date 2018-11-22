@@ -30,9 +30,9 @@ impl_stable_hash_for!(struct mir::LocalDecl<'tcx> {
     internal,
     is_user_variable
 });
-impl_stable_hash_for!(struct mir::UpvarDecl { debug_name, by_ref, mutability });
+impl_stable_hash_for!(struct mir::UpvarDecl { debug_name, var_hir_id, by_ref, mutability });
 impl_stable_hash_for!(struct mir::BasicBlockData<'tcx> { statements, terminator, is_cleanup });
-impl_stable_hash_for!(struct mir::UnsafetyViolation { source_info, description, kind });
+impl_stable_hash_for!(struct mir::UnsafetyViolation { source_info, description, details, kind });
 impl_stable_hash_for!(struct mir::UnsafetyCheckResult { violations, unsafe_blocks });
 
 impl<'a> HashStable<StableHashingContext<'a>>
@@ -302,6 +302,9 @@ impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for mir::Place<'gcx> {
             mir::Place::Static(ref statik) => {
                 statik.hash_stable(hcx, hasher);
             }
+            mir::Place::Promoted(ref promoted) => {
+                promoted.hash_stable(hcx, hasher);
+            }
             mir::Place::Projection(ref place_projection) => {
                 place_projection.hash_stable(hcx, hasher);
             }
@@ -526,22 +529,6 @@ impl_stable_hash_for!(enum mir::NullOp {
 });
 
 impl_stable_hash_for!(struct mir::Constant<'tcx> { span, ty, literal });
-
-impl<'a, 'gcx> HashStable<StableHashingContext<'a>> for mir::Literal<'gcx> {
-    fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'a>,
-                                          hasher: &mut StableHasher<W>) {
-        mem::discriminant(self).hash_stable(hcx, hasher);
-        match *self {
-            mir::Literal::Value { ref value } => {
-                value.hash_stable(hcx, hasher);
-            }
-            mir::Literal::Promoted { index } => {
-                index.hash_stable(hcx, hasher);
-            }
-        }
-    }
-}
 
 impl_stable_hash_for!(struct mir::Location { block, statement_index });
 

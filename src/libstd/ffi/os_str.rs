@@ -417,6 +417,20 @@ impl PartialEq<OsString> for str {
     }
 }
 
+#[stable(feature = "os_str_str_ref_eq", since = "1.28.0")]
+impl<'a> PartialEq<&'a str> for OsString {
+    fn eq(&self, other: &&'a str) -> bool {
+        **self == **other
+    }
+}
+
+#[stable(feature = "os_str_str_ref_eq", since = "1.28.0")]
+impl<'a> PartialEq<OsString> for &'a str {
+    fn eq(&self, other: &OsString) -> bool {
+        **other == **self
+    }
+}
+
 #[stable(feature = "rust1", since = "1.0.0")]
 impl Eq for OsString {}
 
@@ -625,6 +639,14 @@ impl From<Box<OsStr>> for OsString {
 impl From<OsString> for Box<OsStr> {
     fn from(s: OsString) -> Box<OsStr> {
         s.into_boxed_os_str()
+    }
+}
+
+#[stable(feature = "more_box_slice_clone", since = "1.29.0")]
+impl Clone for Box<OsStr> {
+    #[inline]
+    fn clone(&self) -> Self {
+        self.to_os_string().into_boxed_os_str()
     }
 }
 

@@ -18,12 +18,14 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(fs_read_write)]
+#![feature(iterator_find_map)]
 #![feature(set_stdio)]
 #![feature(slice_sort_by_cached_key)]
 #![feature(test)]
 #![feature(vec_remove_item)]
 #![feature(entry_and_modify)]
 #![feature(ptr_offset_from)]
+#![feature(crate_visibility_modifier)]
 
 #![recursion_limit="256"]
 
@@ -46,7 +48,7 @@ extern crate test as testing;
 #[macro_use] extern crate log;
 extern crate rustc_errors as errors;
 extern crate pulldown_cmark;
-extern crate tempdir;
+extern crate tempfile;
 extern crate minifier;
 
 extern crate serialize as rustc_serialize; // used by deriving
@@ -56,6 +58,7 @@ use errors::ColorConfig;
 use std::collections::{BTreeMap, BTreeSet};
 use std::default::Default;
 use std::env;
+use std::panic;
 use std::path::{Path, PathBuf};
 use std::process;
 use std::sync::mpsc::channel;
@@ -67,31 +70,31 @@ use rustc::session::search_paths::SearchPaths;
 use rustc::session::config::{ErrorOutputType, RustcOptGroup, Externs, CodegenOptions};
 use rustc::session::config::{nightly_options, build_codegen_options};
 use rustc_target::spec::TargetTriple;
+use rustc::session::config::get_cmd_lint_options;
 
 #[macro_use]
-pub mod externalfiles;
+mod externalfiles;
 
-pub mod clean;
-pub mod core;
-pub mod doctree;
-pub mod fold;
+mod clean;
+mod core;
+mod doctree;
+mod fold;
 pub mod html {
-    pub mod highlight;
-    pub mod escape;
-    pub mod item_type;
-    pub mod format;
-    pub mod layout;
+    crate mod highlight;
+    crate mod escape;
+    crate mod item_type;
+    crate mod format;
+    crate mod layout;
     pub mod markdown;
-    pub mod render;
-    pub mod toc;
+    crate mod render;
+    crate mod toc;
 }
-pub mod markdown;
-pub mod passes;
-pub mod plugins;
-pub mod visit_ast;
-pub mod visit_lib;
-pub mod test;
-pub mod theme;
+mod markdown;
+mod passes;
+mod visit_ast;
+mod visit_lib;
+mod test;
+mod theme;
 
 use clean::AttributesExt;
 
@@ -102,14 +105,18 @@ struct Output {
 }
 
 pub fn main() {
-    const STACK_SIZE: usize = 32_000_000; // 32MB
+    let thread_stack_size: usize = if cfg!(target_os = "haiku") {
+        16_000_000 // 16MB on Haiku
+    } else {
+        32_000_000 // 32MB on other platforms
+    };
     rustc_driver::set_sigpipe_handler();
     env_logger::init();
-    let res = std::thread::Builder::new().stack_size(STACK_SIZE).spawn(move || {
+    let res = std::thread::Builder::new().stack_size(thread_stack_size).spawn(move || {
         syntax::with_globals(move || {
             get_args().map(|args| main_args(&args)).unwrap_or(1)
         })
-    }).unwrap().join().unwrap_or(101);
+    }).unwrap().join().unwrap_or(rustc_driver::EXIT_FAILURE);
     process::exit(res as i32);
 }
 
@@ -134,7 +141,7 @@ fn unstable<F>(name: &'static str, f: F) -> RustcOptGroup
     RustcOptGroup::unstable(name, f)
 }
 
-pub fn opts() -> Vec<RustcOptGroup> {
+fn opts() -> Vec<RustcOptGroup> {
     vec![
         stable("h", |o| o.optflag("h", "help", "show this help message")),
         stable("V", |o| o.optflag("V", "version", "print rustdoc's version")),
@@ -303,10 +310,32 @@ pub fn opts() -> Vec<RustcOptGroup> {
                        "disable-minification",
                        "Disable minification applied on JS files")
         }),
+        stable("warn", |o| {
+            o.optmulti("W", "warn", "Set lint warnings", "OPT")
+        }),
+        stable("allow", |o| {
+            o.optmulti("A", "allow", "Set lint allowed", "OPT")
+        }),
+        stable("deny", |o| {
+            o.optmulti("D", "deny", "Set lint denied", "OPT")
+        }),
+        stable("forbid", |o| {
+            o.optmulti("F", "forbid", "Set lint forbidden", "OPT")
+        }),
+        stable("cap-lints", |o| {
+            o.optmulti(
+                "",
+                "cap-lints",
+                "Set the most restrictive lint level. \
+                 More restrictive lints are capped at this \
+                 level. By default, it is at `forbid` level.",
+                "LEVEL",
+            )
+        }),
     ]
 }
 
-pub fn usage(argv0: &str) {
+fn usage(argv0: &str) {
     let mut options = getopts::Options::new();
     for option in opts() {
         (option.apply)(&mut options);
@@ -314,7 +343,7 @@ pub fn usage(argv0: &str) {
     println!("{}", options.usage(&format!("{} [options] <input>", argv0)));
 }
 
-pub fn main_args(args: &[String]) -> isize {
+fn main_args(args: &[String]) -> isize {
     let mut options = getopts::Options::new();
     for option in opts() {
         (option.apply)(&mut options);
@@ -343,6 +372,10 @@ pub fn main_args(args: &[String]) -> isize {
         }
         println!("\nDefault passes for rustdoc:");
         for &name in passes::DEFAULT_PASSES {
+            println!("{:>20}", name);
+        }
+        println!("\nPasses run with `--document-private-items`:");
+        for &name in passes::DEFAULT_PRIVATE_PASSES {
             println!("{:>20}", name);
         }
         return 0;
@@ -595,20 +628,16 @@ fn rust_input<R, F>(cratefile: PathBuf,
 where R: 'static + Send,
       F: 'static + Send + FnOnce(Output) -> R
 {
-    let mut default_passes = !matches.opt_present("no-defaults");
-    let mut passes = matches.opt_strs("passes");
+    let mut default_passes = if matches.opt_present("no-defaults") {
+        passes::DefaultPassOption::None
+    } else if matches.opt_present("document-private-items") {
+        passes::DefaultPassOption::Private
+    } else {
+        passes::DefaultPassOption::Default
+    };
+
+    let mut manual_passes = matches.opt_strs("passes");
     let mut plugins = matches.opt_strs("plugins");
-
-    // We hardcode in the passes here, as this is a new flag and we
-    // are generally deprecating passes.
-    if matches.opt_present("document-private-items") {
-        default_passes = false;
-
-        passes = vec![
-            String::from("collapse-docs"),
-            String::from("unindent-comments"),
-        ];
-    }
 
     // First, parse the crate and extract all relevant information.
     let mut paths = SearchPaths::new();
@@ -635,15 +664,18 @@ where R: 'static + Send,
         *x == "force-unstable-if-unmarked"
     });
 
+    let (lint_opts, describe_lints, lint_cap) = get_cmd_lint_options(matches, error_format);
+
     let (tx, rx) = channel();
 
-    rustc_driver::monitor(move || syntax::with_globals(move || {
+    let result = rustc_driver::monitor(move || syntax::with_globals(move || {
         use rustc::session::config::Input;
 
         let (mut krate, renderinfo) =
             core::run_core(paths, cfgs, externs, Input::File(cratefile), triple, maybe_sysroot,
                            display_warnings, crate_name.clone(),
-                           force_unstable_if_unmarked, edition, cg, error_format);
+                           force_unstable_if_unmarked, edition, cg, error_format,
+                           lint_opts, lint_cap, describe_lints);
 
         info!("finished with rustc");
 
@@ -675,13 +707,15 @@ where R: 'static + Send,
             if attr.is_word() {
                 if name == Some("no_default_passes") {
                     report_deprecated_attr("no_default_passes", &diag);
-                    default_passes = false;
+                    if default_passes == passes::DefaultPassOption::Default {
+                        default_passes = passes::DefaultPassOption::None;
+                    }
                 }
             } else if let Some(value) = attr.value_str() {
                 let sink = match name {
                     Some("passes") => {
                         report_deprecated_attr("passes = \"...\"", &diag);
-                        &mut passes
+                        &mut manual_passes
                     },
                     Some("plugins") => {
                         report_deprecated_attr("plugins = \"...\"", &diag);
@@ -689,26 +723,19 @@ where R: 'static + Send,
                     },
                     _ => continue,
                 };
-                for p in value.as_str().split_whitespace() {
-                    sink.push(p.to_string());
-                }
+                sink.extend(value.as_str().split_whitespace().map(|p| p.to_string()));
             }
 
             if attr.is_word() && name == Some("document_private_items") {
-                default_passes = false;
-
-                passes = vec![
-                    String::from("collapse-docs"),
-                    String::from("unindent-comments"),
-                ];
+                if default_passes == passes::DefaultPassOption::Default {
+                    default_passes = passes::DefaultPassOption::Private;
+                }
             }
         }
 
-        if default_passes {
-            for name in passes::DEFAULT_PASSES.iter().rev() {
-                passes.insert(0, name.to_string());
-            }
-        }
+        let mut passes: Vec<String> =
+            passes::defaults(default_passes).iter().map(|p| p.to_string()).collect();
+        passes.extend(manual_passes);
 
         if !plugins.is_empty() {
             eprintln!("WARNING: --plugins no longer functions; see CVE-2018-1000622");
@@ -718,29 +745,30 @@ where R: 'static + Send,
             eprintln!("WARNING: --plugin-path no longer functions; see CVE-2018-1000622");
         }
 
-        // Load all plugins/passes into a PluginManager
-        let mut pm = plugins::PluginManager::new();
+        info!("Executing passes");
+
         for pass in &passes {
-            let plugin = match passes::PASSES.iter()
-                                             .position(|&(p, ..)| {
-                                                 p == *pass
-                                             }) {
-                Some(i) => passes::PASSES[i].1,
+            // determine if we know about this pass
+            let pass = match passes::PASSES.iter().find(|(p, ..)| p == pass) {
+                Some(pass) => pass.1,
                 None => {
                     error!("unknown pass {}, skipping", *pass);
+
                     continue
                 },
             };
-            pm.add_plugin(plugin);
-        }
 
-        // Run everything!
-        info!("Executing passes/plugins");
-        let krate = pm.run_plugins(krate);
+            // run it
+            krate = pass(krate);
+        }
 
         tx.send(f(Output { krate: krate, renderinfo: renderinfo, passes: passes })).unwrap();
     }));
-    rx.recv().unwrap()
+
+    match result {
+        Ok(()) => rx.recv().unwrap(),
+        Err(_) => panic::resume_unwind(Box::new(errors::FatalErrorMarker)),
+    }
 }
 
 /// Prints deprecation warnings for deprecated options

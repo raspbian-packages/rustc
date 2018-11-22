@@ -234,21 +234,31 @@ pub fn codegen_intrinsic_call<'a, 'tcx>(bx: &Builder<'a, 'tcx>,
             memset_intrinsic(bx, true, substs.type_at(0),
                              args[0].immediate(), args[1].immediate(), args[2].immediate())
         }
-        "volatile_load" => {
+        "volatile_load" | "unaligned_volatile_load" => {
             let tp_ty = substs.type_at(0);
             let mut ptr = args[0].immediate();
             if let PassMode::Cast(ty) = fn_ty.ret.mode {
                 ptr = bx.pointercast(ptr, ty.llvm_type(cx).ptr_to());
             }
             let load = bx.volatile_load(ptr);
+            let align = if name == "unaligned_volatile_load" {
+                1
+            } else {
+                cx.align_of(tp_ty).abi() as u32
+            };
             unsafe {
-                llvm::LLVMSetAlignment(load, cx.align_of(tp_ty).abi() as u32);
+                llvm::LLVMSetAlignment(load, align);
             }
             to_immediate(bx, load, cx.layout_of(tp_ty))
         },
         "volatile_store" => {
             let dst = args[0].deref(bx.cx);
             args[1].val.volatile_store(bx, dst);
+            return;
+        },
+        "unaligned_volatile_store" => {
+            let dst = args[0].deref(bx.cx);
+            args[1].val.unaligned_volatile_store(bx, dst);
             return;
         },
         "prefetch_read_data" | "prefetch_write_data" |
@@ -916,7 +926,7 @@ fn gen_fn<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
                     name: &str,
                     inputs: Vec<Ty<'tcx>>,
                     output: Ty<'tcx>,
-                    codegen: &mut for<'b> FnMut(Builder<'b, 'tcx>))
+                    codegen: &mut dyn for<'b> FnMut(Builder<'b, 'tcx>))
                     -> ValueRef {
     let rust_fn_ty = cx.tcx.mk_fn_ptr(ty::Binder::bind(cx.tcx.mk_fn_sig(
         inputs.into_iter(),
@@ -936,7 +946,7 @@ fn gen_fn<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
 //
 // This function is only generated once and is then cached.
 fn get_rust_try_fn<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
-                             codegen: &mut for<'b> FnMut(Builder<'b, 'tcx>))
+                             codegen: &mut dyn for<'b> FnMut(Builder<'b, 'tcx>))
                              -> ValueRef {
     if let Some(llfn) = cx.rust_try_fn.get() {
         return llfn;
@@ -1022,12 +1032,12 @@ fn generic_simd_intrinsic<'a, 'tcx>(
     let in_len = arg_tys[0].simd_size(tcx);
 
     let comparison = match name {
-        "simd_eq" => Some(hir::BiEq),
-        "simd_ne" => Some(hir::BiNe),
-        "simd_lt" => Some(hir::BiLt),
-        "simd_le" => Some(hir::BiLe),
-        "simd_gt" => Some(hir::BiGt),
-        "simd_ge" => Some(hir::BiGe),
+        "simd_eq" => Some(hir::BinOpKind::Eq),
+        "simd_ne" => Some(hir::BinOpKind::Ne),
+        "simd_lt" => Some(hir::BinOpKind::Lt),
+        "simd_le" => Some(hir::BinOpKind::Le),
+        "simd_gt" => Some(hir::BinOpKind::Gt),
+        "simd_ge" => Some(hir::BinOpKind::Ge),
         _ => None
     };
 

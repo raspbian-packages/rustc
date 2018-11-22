@@ -190,6 +190,23 @@ pub fn minify(source: &str) -> String {
     }*/
 }
 
+pub fn minify_and_replace_keywords(source: &str,
+                                   keywords_to_replace: &[(token::Keyword, &str)]) -> String {
+    let mut v = token::tokenize(source);
+    token::clean_tokens(&mut v);
+    for &(keyword, replacement) in keywords_to_replace {
+        for token in v.0.iter_mut() {
+            if match token.get_keyword() {
+                Some(ref k) => *k == keyword,
+                _ => false,
+            } {
+                *token = token::Token::Other(replacement);
+            }
+        }
+    }
+    v.to_string()
+}
+
 #[test]
 fn simple_quote() {
     let source = r#"var x = "\\";"#;
@@ -284,64 +301,6 @@ search_input.onchange = function(e) {
 }
 
 #[test]
-fn check_regex() {
-    let source = r#"var x = /"\.x/g;"#;
-    let expected_result = r#"var x=/"\.x/g;"#;
-    assert_eq!(minify(source), expected_result);
-
-    let mut v = ::js::token::tokenize(source);
-    ::js::token::clean_tokens(&mut v);
-    assert_eq!(v.0[3],
-               ::js::token::Token::Regex {
-                   regex: "\"\\.x",
-                   is_global: true,
-                   is_interactive: false,
-               });
-
-    let source = r#"var x = /"\.x/gigigigig;var x = "hello";"#;
-    let expected_result = r#"var x=/"\.x/gi;var x="hello";"#;
-    assert_eq!(minify(source), expected_result);
-
-    let mut v = ::js::token::tokenize(source);
-    ::js::token::clean_tokens(&mut v);
-    assert_eq!(v.0[3],
-               ::js::token::Token::Regex {
-                   regex: "\"\\.x",
-                   is_global: true,
-                   is_interactive: true,
-               });
-}
-
-#[test]
-fn more_regex() {
-    let source = r#"var x = /"\.x\/a/i;"#;
-    let expected_result = r#"var x=/"\.x\/a/i;"#;
-    assert_eq!(minify(source), expected_result);
-
-    let mut v = ::js::token::tokenize(source);
-    ::js::token::clean_tokens(&mut v);
-    assert_eq!(v.0[3],
-               ::js::token::Token::Regex {
-                   regex: "\"\\.x\\/a",
-                   is_global: false,
-                   is_interactive: true,
-               });
-
-    let source = r#"var x = /\\/i;"#;
-    let expected_result = r#"var x=/\\/i;"#;
-    assert_eq!(minify(source), expected_result);
-
-    let mut v = ::js::token::tokenize(source);
-    ::js::token::clean_tokens(&mut v);
-    assert_eq!(v.0[3],
-               ::js::token::Token::Regex {
-                   regex: "\\\\",
-                   is_global: false,
-                   is_interactive: true,
-               });
-}
-
-#[test]
 fn missing_whitespace() {
     let source = r#"
 for (var entry in results) {
@@ -362,4 +321,15 @@ val = val.replace(/\_/g, "");
 var valGenerics = extractGenerics(val);"#;
     let expected_result = "val=val.replace(/\\_/g,\"\");var valGenerics=extractGenerics(val);";
     assert_eq!(minify(source), expected_result);
+}
+
+#[test]
+fn replace_keyword() {
+    let source = r#"
+var x = ['a', 'b', null, 'd', {'x': null, 'e': null, 'z': 'w'}];
+var n = null;
+"#;
+    let expected_result = "var x=['a','b',N,'d',{'x':N,'e':N,'z':'w'}];var n=N;";
+    assert_eq!(minify_and_replace_keywords(source, &[(token::Keyword::Null, "N")]),
+               expected_result);
 }

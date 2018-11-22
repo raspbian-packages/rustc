@@ -65,14 +65,14 @@ macro_rules! down_cast_data {
 macro_rules! access_from {
     ($save_ctxt:expr, $vis:expr, $id:expr) => {
         Access {
-            public: $vis.node == ast::VisibilityKind::Public,
+            public: $vis.node.is_pub(),
             reachable: $save_ctxt.analysis.access_levels.is_reachable($id),
         }
     };
 
     ($save_ctxt:expr, $item:expr) => {
         Access {
-            public: $item.vis.node == ast::VisibilityKind::Public,
+            public: $item.vis.node.is_pub(),
             reachable: $save_ctxt.analysis.access_levels.is_reachable($item.id),
         }
     };
@@ -316,14 +316,14 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         sig: &'l ast::MethodSig,
         body: Option<&'l ast::Block>,
         id: ast::NodeId,
-        name: ast::Ident,
+        ident: ast::Ident,
         generics: &'l ast::Generics,
         vis: ast::Visibility,
         span: Span,
     ) {
-        debug!("process_method: {}:{}", id, name);
+        debug!("process_method: {}:{}", id, ident);
 
-        if let Some(mut method_data) = self.save_ctxt.get_method_data(id, name.name, span) {
+        if let Some(mut method_data) = self.save_ctxt.get_method_data(id, ident.name, span) {
             let sig_str = ::make_signature(&sig.decl, &generics);
             if body.is_some() {
                 self.nest_tables(
@@ -335,7 +335,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             self.process_generic_params(&generics, span, &method_data.qualname, id);
 
             method_data.value = sig_str;
-            method_data.sig = sig::method_signature(id, name, generics, sig, &self.save_ctxt);
+            method_data.sig = sig::method_signature(id, ident, generics, sig, &self.save_ctxt);
             self.dumper.dump_def(&access_from!(self.save_ctxt, vis, id), method_data);
         }
 
@@ -370,35 +370,38 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         id: NodeId,
     ) {
         for param in &generics.params {
-            if let ast::GenericParam::Type(ref ty_param) = *param {
-                let param_ss = ty_param.ident.span;
-                let name = escape(self.span.snippet(param_ss));
-                // Append $id to name to make sure each one is unique
-                let qualname = format!("{}::{}${}", prefix, name, id);
-                if !self.span.filter_generated(Some(param_ss), full_span) {
-                    let id = ::id_from_node_id(ty_param.id, &self.save_ctxt);
-                    let span = self.span_from_span(param_ss);
+            match param.kind {
+                ast::GenericParamKind::Lifetime { .. } => {}
+                ast::GenericParamKind::Type { .. } => {
+                    let param_ss = param.ident.span;
+                    let name = escape(self.span.snippet(param_ss));
+                    // Append $id to name to make sure each one is unique.
+                    let qualname = format!("{}::{}${}", prefix, name, id);
+                    if !self.span.filter_generated(Some(param_ss), full_span) {
+                        let id = ::id_from_node_id(param.id, &self.save_ctxt);
+                        let span = self.span_from_span(param_ss);
 
-                    self.dumper.dump_def(
-                        &Access {
-                            public: false,
-                            reachable: false,
-                        },
-                        Def {
-                            kind: DefKind::Type,
-                            id,
-                            span,
-                            name,
-                            qualname,
-                            value: String::new(),
-                            parent: None,
-                            children: vec![],
-                            decl_id: None,
-                            docs: String::new(),
-                            sig: None,
-                            attributes: vec![],
-                        },
-                    );
+                        self.dumper.dump_def(
+                            &Access {
+                                public: false,
+                                reachable: false,
+                            },
+                            Def {
+                                kind: DefKind::Type,
+                                id,
+                                span,
+                                name,
+                                qualname,
+                                value: String::new(),
+                                parent: None,
+                                children: vec![],
+                                decl_id: None,
+                                docs: String::new(),
+                                sig: None,
+                                attributes: vec![],
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -520,7 +523,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                     .iter()
                     .enumerate()
                     .filter_map(|(i, f)| {
-                        if include_priv_fields || f.vis.node == ast::VisibilityKind::Public {
+                        if include_priv_fields || f.vis.node.is_pub() {
                             f.ident
                                 .map(|i| i.to_string())
                                 .or_else(|| Some(i.to_string()))
@@ -715,7 +718,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         &mut self,
         item: &'l ast::Item,
         generics: &'l ast::Generics,
-        trait_refs: &'l ast::TyParamBounds,
+        trait_refs: &'l ast::GenericBounds,
         methods: &'l [ast::TraitItem],
     ) {
         let name = item.ident.to_string();
@@ -758,10 +761,8 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         // super-traits
         for super_bound in trait_refs.iter() {
             let trait_ref = match *super_bound {
-                ast::TraitTyParamBound(ref trait_ref, _) => trait_ref,
-                ast::RegionTyParamBound(..) => {
-                    continue;
-                }
+                ast::GenericBound::Trait(ref trait_ref, _) => trait_ref,
+                ast::GenericBound::Outlives(..) => continue,
             };
 
             let trait_ref = &trait_ref.trait_ref;
@@ -818,14 +819,17 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         }
         self.dump_path_ref(id, path);
 
-        // Type parameters
+        // Type arguments
         for seg in &path.segments {
-            if let Some(ref params) = seg.parameters {
-                match **params {
-                    ast::PathParameters::AngleBracketed(ref data) => for t in &data.types {
-                        self.visit_ty(t);
-                    },
-                    ast::PathParameters::Parenthesized(ref data) => {
+            if let Some(ref generic_args) = seg.args {
+                match **generic_args {
+                    ast::GenericArgs::AngleBracketed(ref data) => {
+                        data.args.iter().for_each(|arg| match arg {
+                            ast::GenericArg::Type(ty) => self.visit_ty(ty),
+                            _ => {}
+                        });
+                    }
+                    ast::GenericArgs::Parenthesized(ref data) => {
                         for t in &data.inputs {
                             self.visit_ty(t);
                         }
@@ -905,11 +909,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         }
 
         // Explicit types in the turbo-fish.
-        if let Some(ref params) = seg.parameters {
-            if let ast::PathParameters::AngleBracketed(ref data) = **params {
-                for t in &data.types {
-                    self.visit_ty(t);
-                }
+        if let Some(ref generic_args) = seg.args {
+            if let ast::GenericArgs::AngleBracketed(ref data) = **generic_args {
+                data.args.iter().for_each(|arg| match arg {
+                    ast::GenericArg::Type(ty) => self.visit_ty(ty),
+                    _ => {}
+                });
             }
         }
 
@@ -1233,6 +1238,16 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                 // trait.
                 self.visit_ty(ty)
             }
+            ast::ImplItemKind::Existential(ref bounds) => {
+                // FIXME uses of the assoc type should ideally point to this
+                // 'def' and the name here should be a ref to the def in the
+                // trait.
+                for bound in bounds.iter() {
+                    if let ast::GenericBound::Trait(trait_ref, _) = bound {
+                        self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
+                    }
+                }
+            }
             ast::ImplItemKind::Macro(_) => {}
         }
     }
@@ -1303,14 +1318,13 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
                 };
 
                 // Make a comma-separated list of names of imported modules.
-                let mut names = vec![];
                 let glob_map = &self.save_ctxt.analysis.glob_map;
                 let glob_map = glob_map.as_ref().unwrap();
-                if glob_map.contains_key(&id) {
-                    for n in glob_map.get(&id).unwrap() {
-                        names.push(n.to_string());
-                    }
-                }
+                let names = if glob_map.contains_key(&id) {
+                    glob_map.get(&id).unwrap().iter().map(|n| n.to_string()).collect()
+                } else {
+                    Vec::new()
+                };
 
                 let sub_span = self.span.sub_span_of_token(use_tree.span,
                                                            token::BinOp(token::Star));
@@ -1472,24 +1486,55 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                 self.visit_ty(&ty);
                 self.process_generic_params(ty_params, item.span, &qualname, item.id);
             }
+            Existential(ref _bounds, ref ty_params) => {
+                let qualname = format!("::{}", self.tcx.node_path_str(item.id));
+                // FIXME do something with _bounds
+                let value = String::new();
+                let sub_span = self.span.sub_span_after_keyword(item.span, keywords::Type);
+                if !self.span.filter_generated(sub_span, item.span) {
+                    let span = self.span_from_span(sub_span.expect("No span found for typedef"));
+                    let id = ::id_from_node_id(item.id, &self.save_ctxt);
+
+                    self.dumper.dump_def(
+                        &access_from!(self.save_ctxt, item),
+                        Def {
+                            kind: DefKind::Type,
+                            id,
+                            span,
+                            name: item.ident.to_string(),
+                            qualname: qualname.clone(),
+                            value,
+                            parent: None,
+                            children: vec![],
+                            decl_id: None,
+                            docs: self.save_ctxt.docs_for_attrs(&item.attrs),
+                            sig: sig::item_signature(item, &self.save_ctxt),
+                            attributes: lower_attributes(item.attrs.clone(), &self.save_ctxt),
+                        },
+                    );
+                }
+
+                self.process_generic_params(ty_params, item.span, &qualname, item.id);
+            }
             Mac(_) => (),
             _ => visit::walk_item(self, item),
         }
     }
 
     fn visit_generics(&mut self, generics: &'l ast::Generics) {
-        for param in &generics.params {
-            if let ast::GenericParam::Type(ref ty_param) = *param {
-                for bound in ty_param.bounds.iter() {
-                    if let ast::TraitTyParamBound(ref trait_ref, _) = *bound {
+        generics.params.iter().for_each(|param| match param.kind {
+            ast::GenericParamKind::Lifetime { .. } => {}
+            ast::GenericParamKind::Type { ref default, .. } => {
+                for bound in &param.bounds {
+                    if let ast::GenericBound::Trait(ref trait_ref, _) = *bound {
                         self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
                     }
                 }
-                if let Some(ref ty) = ty_param.default {
+                if let Some(ref ty) = default {
                     self.visit_ty(&ty);
                 }
             }
-        }
+        });
     }
 
     fn visit_ty(&mut self, t: &'l ast::Ty) {
@@ -1549,7 +1594,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                     }
                 }
             }
-            ast::ExprKind::Closure(_, _, ref decl, ref body, _fn_decl_span) => {
+            ast::ExprKind::Closure(_, _, _, ref decl, ref body, _fn_decl_span) => {
                 let mut id = String::from("$");
                 id.push_str(&ex.id.to_string());
 

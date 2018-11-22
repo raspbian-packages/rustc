@@ -2,17 +2,14 @@
 
 pub use self::inner::*;
 
-#[cfg(target_os = "redox")]
-mod inner {
-    use std::fmt;
-    use std::cmp::Ordering;
-    use std::ops::{Add, Sub};
-    use syscall;
-
-    use Duration;
+#[cfg(any(
+    all(target_arch = "wasm32", not(target_os = "emscripten")),
+    target_os = "redox",
+))]
+mod common {
     use Tm;
 
-    fn time_to_tm(ts: i64, tm: &mut Tm) {
+    pub fn time_to_tm(ts: i64, tm: &mut Tm) {
         let leapyear = |year| -> bool {
             year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
         };
@@ -56,7 +53,7 @@ mod inner {
         tm.tm_isdst = 0;
     }
 
-    fn tm_to_time(tm: &Tm) -> i64 {
+    pub fn tm_to_time(tm: &Tm) -> i64 {
         let mut y = tm.tm_year as i64 + 1900;
         let mut m = tm.tm_mon as i64 + 1;
         if m <= 2 {
@@ -70,6 +67,82 @@ mod inner {
         (365*y + y/4 - y/100 + y/400 + 3*(m+1)/5 + 30*m + d - 719561)
             * 86400 + 3600 * h + 60 * mi + s
     }
+}
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+mod inner {
+    use std::ops::{Add, Sub};
+    use Tm;
+    use Duration;
+    use super::common::{time_to_tm, tm_to_time};
+
+    #[derive(Copy, Clone, Debug, PartialOrd, Ord, PartialEq, Eq)]
+    pub struct SteadyTime;
+
+    pub fn time_to_utc_tm(sec: i64, tm: &mut Tm) {
+        time_to_tm(sec, tm);
+    }
+
+    pub fn time_to_local_tm(sec: i64, tm: &mut Tm) {
+        // FIXME: Add timezone logic
+        time_to_tm(sec, tm);
+    }
+
+    pub fn utc_tm_to_time(tm: &Tm) -> i64 {
+        tm_to_time(tm)
+    }
+
+    pub fn local_tm_to_time(tm: &Tm) -> i64 {
+        // FIXME: Add timezone logic
+        tm_to_time(tm)
+    }
+
+    pub fn get_time() -> (i64, i32) {
+        unimplemented!()
+    }
+
+    pub fn get_precise_ns() -> u64 {
+        unimplemented!()
+    }
+
+    impl SteadyTime {
+        pub fn now() -> SteadyTime {
+            unimplemented!()
+        }
+    }
+
+    impl Sub for SteadyTime {
+        type Output = Duration;
+        fn sub(self, _other: SteadyTime) -> Duration {
+            unimplemented!()
+        }
+    }
+
+    impl Sub<Duration> for SteadyTime {
+        type Output = SteadyTime;
+        fn sub(self, _other: Duration) -> SteadyTime {
+            unimplemented!()
+        }
+    }
+
+    impl Add<Duration> for SteadyTime {
+        type Output = SteadyTime;
+        fn add(self, _other: Duration) -> SteadyTime {
+            unimplemented!()
+        }
+    }
+}
+
+#[cfg(target_os = "redox")]
+mod inner {
+    use std::fmt;
+    use std::cmp::Ordering;
+    use std::ops::{Add, Sub};
+    use syscall;
+    use super::common::{time_to_tm, tm_to_time};
+
+    use Duration;
+    use Tm;
 
     pub fn time_to_utc_tm(sec: i64, tm: &mut Tm) {
         time_to_tm(sec, tm);
@@ -348,6 +421,7 @@ mod inner {
             (tv.tv_sec as i64, tv.tv_usec * 1000)
         }
 
+        #[inline]
         pub fn get_precise_ns() -> u64 {
             unsafe {
                 let time = libc::mach_absolute_time();
@@ -490,14 +564,20 @@ mod inner {
                 let seconds = other.num_seconds();
                 let nanoseconds = other - Duration::seconds(seconds);
                 let nanoseconds = nanoseconds.num_nanoseconds().unwrap();
+
+                #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
+                type nsec = i64;
+                #[cfg(not(all(target_arch = "x86_64", target_pointer_width = "32")))]
+                type nsec = libc::c_long;
+
                 self.t.tv_sec += seconds as libc::time_t;
-                self.t.tv_nsec += nanoseconds as libc::c_long;
-                if self.t.tv_nsec >= ::NSEC_PER_SEC as libc::c_long {
-                    self.t.tv_nsec -= ::NSEC_PER_SEC as libc::c_long;
+                self.t.tv_nsec += nanoseconds as nsec;
+                if self.t.tv_nsec >= ::NSEC_PER_SEC as nsec {
+                    self.t.tv_nsec -= ::NSEC_PER_SEC as nsec;
                     self.t.tv_sec += 1;
                 } else if self.t.tv_nsec < 0 {
                     self.t.tv_sec -= 1;
-                    self.t.tv_nsec += ::NSEC_PER_SEC as libc::c_long;
+                    self.t.tv_nsec += ::NSEC_PER_SEC as nsec;
                 }
                 self
             }

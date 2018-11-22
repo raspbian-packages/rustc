@@ -213,10 +213,10 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
   FAILURES_ALLOWED = 36
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 50
+  FAILURES_ALLOWED = 25
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
-  FAILURES_ALLOWED = 160
+  FAILURES_ALLOWED = 180
 endif
 FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
@@ -387,7 +387,7 @@ source_orig-beta: debian/watch-beta
 	set -e; $(get_beta_version); \
 	tar xf ../rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
 	bv="$$(sed -re 's/[0-9]+.[0-9]+.[0-9]+-beta.([0-9]+) \(.*\)/\1/g' rustc-beta-src/version)"; \
-	bash -c 'shopt -s nullglob; for i in ../rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'
-	rm -f rustc-beta-src/version
-	rmdir -p rustc-beta-src
+	bash -c 'shopt -s nullglob; for i in ../rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'; \
+	rm -f rustc-beta-src/version; \
+	rmdir -p rustc-beta-src; \
 	echo "prepared rustc $$newver.0~beta.$$bv"

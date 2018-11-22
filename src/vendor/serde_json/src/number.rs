@@ -10,11 +10,6 @@ use error::Error;
 use serde::de::{self, Unexpected, Visitor};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{self, Debug, Display};
-use std::i64;
-use std::str::FromStr;
-
-#[cfg(not(feature = "arbitrary_precision"))]
-use num_traits::NumCast;
 
 #[cfg(feature = "arbitrary_precision")]
 use dtoa;
@@ -22,6 +17,8 @@ use dtoa;
 use itoa;
 #[cfg(feature = "arbitrary_precision")]
 use serde::de::{IntoDeserializer, MapAccess};
+
+use de::ParserNumber;
 
 #[cfg(feature = "arbitrary_precision")]
 use error::ErrorCode;
@@ -66,10 +63,8 @@ impl Number {
     /// # #[macro_use]
     /// # extern crate serde_json;
     /// #
-    /// # use std::i64;
-    /// #
     /// # fn main() {
-    /// let big = i64::MAX as u64 + 10;
+    /// let big = i64::max_value() as u64 + 10;
     /// let v = json!({ "a": 64, "b": big, "c": 256.0 });
     ///
     /// assert!(v["a"].is_i64());
@@ -172,10 +167,8 @@ impl Number {
     /// # #[macro_use]
     /// # extern crate serde_json;
     /// #
-    /// # use std::i64;
-    /// #
     /// # fn main() {
-    /// let big = i64::MAX as u64 + 10;
+    /// let big = i64::max_value() as u64 + 10;
     /// let v = json!({ "a": 64, "b": big, "c": 256.0 });
     ///
     /// assert_eq!(v["a"].as_i64(), Some(64));
@@ -187,7 +180,11 @@ impl Number {
     pub fn as_i64(&self) -> Option<i64> {
         #[cfg(not(feature = "arbitrary_precision"))]
         match self.n {
-            N::PosInt(n) => NumCast::from(n),
+            N::PosInt(n) => if n <= i64::max_value() as u64 {
+                Some(n as i64)
+            } else {
+                None
+            },
             N::NegInt(n) => Some(n),
             N::Float(_) => None,
         }
@@ -215,8 +212,7 @@ impl Number {
         #[cfg(not(feature = "arbitrary_precision"))]
         match self.n {
             N::PosInt(n) => Some(n),
-            N::NegInt(n) => NumCast::from(n),
-            N::Float(_) => None,
+            N::NegInt(_) | N::Float(_) => None,
         }
         #[cfg(feature = "arbitrary_precision")]
         self.n.parse().ok()
@@ -240,8 +236,8 @@ impl Number {
     pub fn as_f64(&self) -> Option<f64> {
         #[cfg(not(feature = "arbitrary_precision"))]
         match self.n {
-            N::PosInt(n) => NumCast::from(n),
-            N::NegInt(n) => NumCast::from(n),
+            N::PosInt(n) => Some(n as f64),
+            N::NegInt(n) => Some(n as f64),
             N::Float(n) => Some(n),
         }
         #[cfg(feature = "arbitrary_precision")]
@@ -564,6 +560,11 @@ impl<'de> Deserializer<'de> for Number {
     deserialize_number!(deserialize_f32 => visit_f32);
     deserialize_number!(deserialize_f64 => visit_f64);
 
+    serde_if_integer128! {
+        deserialize_number!(deserialize_i128 => visit_i128);
+        deserialize_number!(deserialize_u128 => visit_u128);
+    }
+
     forward_to_deserialize_any! {
         bool char str string bytes byte_buf option unit unit_struct
         newtype_struct seq tuple tuple_struct map struct enum identifier
@@ -586,6 +587,11 @@ impl<'de, 'a> Deserializer<'de> for &'a Number {
     deserialize_number!(deserialize_u64 => visit_u64);
     deserialize_number!(deserialize_f32 => visit_f32);
     deserialize_number!(deserialize_f64 => visit_f64);
+
+    serde_if_integer128! {
+        deserialize_number!(deserialize_i128 => visit_i128);
+        deserialize_number!(deserialize_u128 => visit_u128);
+    }
 
     forward_to_deserialize_any! {
         bool char str string bytes byte_buf option unit unit_struct
@@ -638,26 +644,16 @@ impl<'de> Deserializer<'de> for NumberFieldDeserializer {
     }
 
     forward_to_deserialize_any! {
-        bool u8 u16 u32 u64 i8 i16 i32 i64 f32 f64 char str string seq
-        bytes byte_buf map struct option unit newtype_struct
-        ignored_any unit_struct tuple_struct tuple enum identifier
+        bool u8 u16 u32 u64 u128 i8 i16 i32 i64 i128 f32 f64 char str string seq
+        bytes byte_buf map struct option unit newtype_struct ignored_any
+        unit_struct tuple_struct tuple enum identifier
     }
 }
 
-impl FromStr for Number {
-    type Err = Error;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        super::de::Deserializer::from_str(s)
-            .parse_any_signed_number()
-            .map(|n| n.into())
-    }
-}
-
-impl From<super::de::Number> for Number {
-    fn from(value: super::de::Number) -> Self {
+impl From<ParserNumber> for Number {
+    fn from(value: ParserNumber) -> Self {
         let n = match value {
-            super::de::Number::F64(f) => {
+            ParserNumber::F64(f) => {
                 #[cfg(not(feature = "arbitrary_precision"))]
                 {
                     N::Float(f)
@@ -667,7 +663,7 @@ impl From<super::de::Number> for Number {
                     f.to_string()
                 }
             }
-            super::de::Number::U64(u) => {
+            ParserNumber::U64(u) => {
                 #[cfg(not(feature = "arbitrary_precision"))]
                 {
                     N::PosInt(u)
@@ -677,7 +673,7 @@ impl From<super::de::Number> for Number {
                     u.to_string()
                 }
             }
-            super::de::Number::I64(i) => {
+            ParserNumber::I64(i) => {
                 #[cfg(not(feature = "arbitrary_precision"))]
                 {
                     N::NegInt(i)
@@ -688,7 +684,7 @@ impl From<super::de::Number> for Number {
                 }
             }
             #[cfg(feature = "arbitrary_precision")]
-            super::de::Number::String(s) => s,
+            ParserNumber::String(s) => s,
         };
         Number { n: n }
     }
@@ -757,6 +753,7 @@ impl Number {
     #[cfg(not(feature = "arbitrary_precision"))]
     // Not public API. Should be pub(crate).
     #[doc(hidden)]
+    #[cold]
     pub fn unexpected(&self) -> Unexpected {
         match self.n {
             N::PosInt(u) => Unexpected::Unsigned(u),
@@ -768,6 +765,7 @@ impl Number {
     #[cfg(feature = "arbitrary_precision")]
     // Not public API. Should be pub(crate).
     #[doc(hidden)]
+    #[cold]
     pub fn unexpected(&self) -> Unexpected {
         Unexpected::Other("number")
     }

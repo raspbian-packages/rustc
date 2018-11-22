@@ -415,6 +415,10 @@
         var currentResults, index, searchIndex;
         var MAX_LEV_DISTANCE = 3;
         var MAX_RESULTS = 200;
+        var GENERICS_DATA = 1;
+        var NAME = 0;
+        var INPUTS_DATA = 0;
+        var OUTPUT_DATA = 1;
         var params = getQueryStringParams();
 
         // Populate search bar with query string search term when provided,
@@ -603,8 +607,9 @@
                 // match as well.
                 var lev_distance = MAX_LEV_DISTANCE + 1;
                 if (val.generics.length > 0) {
-                    if (obj.g && obj.g.length >= val.generics.length) {
-                        var elems = obj.g.slice(0);
+                    if (obj.length > GENERICS_DATA &&
+                          obj[GENERICS_DATA].length >= val.generics.length) {
+                        var elems = obj[GENERICS_DATA].slice(0);
                         var total = 0;
                         var done = 0;
                         // We need to find the type that matches the most to remove it in order
@@ -636,11 +641,12 @@
             // Check for type name and type generics (if any).
             function checkType(obj, val, literalSearch) {
                 var lev_distance = MAX_LEV_DISTANCE + 1;
-                if (obj.n === val.name) {
+                if (obj[NAME] === val.name) {
                     if (literalSearch === true) {
                         if (val.generics && val.generics.length !== 0) {
-                            if (obj.g && obj.length >= val.generics.length) {
-                                var elems = obj.g.slice(0);
+                            if (obj.length > GENERICS_DATA &&
+                                  obj[GENERICS_DATA].length >= val.generics.length) {
+                                var elems = obj[GENERICS_DATA].slice(0);
                                 var allFound = true;
                                 var x;
 
@@ -664,7 +670,7 @@
                     }
                     // If the type has generics but don't match, then it won't return at this point.
                     // Otherwise, `checkGenerics` will return 0 and it'll return.
-                    if (obj.g && obj.g.length !== 0) {
+                    if (obj.length > GENERICS_DATA && obj[GENERICS_DATA].length !== 0) {
                         var tmp_lev = checkGenerics(obj, val);
                         if (tmp_lev <= MAX_LEV_DISTANCE) {
                             return tmp_lev;
@@ -675,22 +681,23 @@
                 }
                 // Names didn't match so let's check if one of the generic types could.
                 if (literalSearch === true) {
-                     if (obj.g && obj.g.length > 0) {
-                        for (var x = 0; x < obj.g.length; ++x) {
-                            if (obj.g[x] === val.name) {
+                     if (obj.length > GENERICS_DATA && obj[GENERICS_DATA].length > 0) {
+                        for (var x = 0; x < obj[GENERICS_DATA].length; ++x) {
+                            if (obj[GENERICS_DATA][x] === val.name) {
                                 return true;
                             }
                         }
                     }
                     return false;
                 }
-                var lev_distance = Math.min(levenshtein(obj.n, val.name), lev_distance);
+                var lev_distance = Math.min(levenshtein(obj[NAME], val.name),
+                                            lev_distance);
                 if (lev_distance <= MAX_LEV_DISTANCE) {
                     lev_distance = Math.min(checkGenerics(obj, val), lev_distance);
-                } else if (obj.g && obj.g.length > 0) {
+                } else if (obj.length > GENERICS_DATA && obj[GENERICS_DATA].length > 0) {
                     // We can check if the type we're looking for is inside the generics!
-                    for (var x = 0; x < obj.g.length; ++x) {
-                        lev_distance = Math.min(levenshtein(obj.g[x], val.name),
+                    for (var x = 0; x < obj[GENERICS_DATA].length; ++x) {
+                        lev_distance = Math.min(levenshtein(obj[GENERICS_DATA][x], val.name),
                                                 lev_distance);
                     }
                 }
@@ -702,9 +709,10 @@
             function findArg(obj, val, literalSearch) {
                 var lev_distance = MAX_LEV_DISTANCE + 1;
 
-                if (obj && obj.type && obj.type.i && obj.type.i.length > 0) {
-                    for (var i = 0; i < obj.type.i.length; i++) {
-                        var tmp = checkType(obj.type.i[i], val, literalSearch);
+                if (obj && obj.type && obj.type[INPUTS_DATA] &&
+                      obj.type[INPUTS_DATA].length > 0) {
+                    for (var i = 0; i < obj.type[INPUTS_DATA].length; i++) {
+                        var tmp = checkType(obj.type[INPUTS_DATA][i], val, literalSearch);
                         if (literalSearch === true && tmp === true) {
                             return true;
                         }
@@ -720,8 +728,8 @@
             function checkReturned(obj, val, literalSearch) {
                 var lev_distance = MAX_LEV_DISTANCE + 1;
 
-                if (obj && obj.type && obj.type.o) {
-                    var tmp = checkType(obj.type.o, val, literalSearch);
+                if (obj && obj.type && obj.type.length > OUTPUT_DATA) {
+                    var tmp = checkType(obj.type[OUTPUT_DATA], val, literalSearch);
                     if (literalSearch === true && tmp === true) {
                         return true;
                     }
@@ -866,7 +874,7 @@
                     var fullId = generateId(ty);
 
                     // allow searching for void (no output) functions as well
-                    var typeOutput = type.o ? type.o.name : "";
+                    var typeOutput = type.length > OUTPUT_DATA ? type[OUTPUT_DATA].name : "";
                     var returned = checkReturned(ty, output, true);
                     if (output.name === "*" || returned === true) {
                         var in_args = false;
@@ -1930,17 +1938,19 @@
         if (collapse) {
             toggleAllDocs(pageId, true);
         }
-        onEach(document.getElementsByClassName("collapse-toggle"), function(e) {
-            // inherent impl ids are like 'impl' or impl-<number>'.
-            // they will never be hidden by default.
-            var n = e.parentNode;
-            if (n.id.match(/^impl(?:-\d+)?$/) === null) {
-                // Automatically minimize all non-inherent impls
-                if (collapse || hasClass(n, 'impl')) {
-                    collapseDocs(e, "hide", pageId);
+        if (getCurrentValue('rustdoc-trait-implementations') !== "false") {
+            onEach(document.getElementsByClassName("collapse-toggle"), function(e) {
+                // inherent impl ids are like 'impl' or impl-<number>'.
+                // they will never be hidden by default.
+                var n = e.parentNode;
+                if (n.id.match(/^impl(?:-\d+)?$/) === null) {
+                    // Automatically minimize all non-inherent impls
+                    if (collapse || hasClass(n, 'impl')) {
+                        collapseDocs(e, "hide", pageId);
+                    }
                 }
-            }
-        });
+            });
+        }
     }
 
     var x = document.getElementById('toggle-all-docs');
@@ -1991,7 +2001,7 @@
         onEach(e.getElementsByClassName('associatedconstant'), func);
     });
 
-    function createToggle(otherMessage, extraClass) {
+    function createToggle(otherMessage, fontSize, extraClass) {
         var span = document.createElement('span');
         span.className = 'toggle-label';
         span.style.display = 'none';
@@ -1999,7 +2009,10 @@
             span.innerHTML = '&nbsp;Expand&nbsp;description';
         } else {
             span.innerHTML = otherMessage;
-            span.style.fontSize = '20px';
+        }
+
+        if (fontSize) {
+            span.style.fontSize = fontSize;
         }
 
         var mainToggle = toggle.cloneNode(true);
@@ -2038,13 +2051,27 @@
         }
         if (e.parentNode.id === "main") {
             var otherMessage;
+            var fontSize;
             var extraClass;
+
             if (hasClass(e, "type-decl")) {
+                fontSize = "20px";
                 otherMessage = '&nbsp;Show&nbsp;declaration';
+            } else if (hasClass(e, "non-exhaustive")) {
+                otherMessage = '&nbsp;This&nbsp;';
+                if (hasClass(e, "non-exhaustive-struct")) {
+                    otherMessage += 'struct';
+                } else if (hasClass(e, "non-exhaustive-enum")) {
+                    otherMessage += 'enum';
+                } else if (hasClass(e, "non-exhaustive-type")) {
+                    otherMessage += 'type';
+                }
+                otherMessage += '&nbsp;is&nbsp;marked&nbsp;as&nbsp;non-exhaustive';
             } else if (hasClass(e.childNodes[0], "impl-items")) {
                 extraClass = "marg-left";
             }
-            e.parentNode.insertBefore(createToggle(otherMessage, extraClass), e);
+
+            e.parentNode.insertBefore(createToggle(otherMessage, fontSize, extraClass), e);
             if (otherMessage && getCurrentValue('rustdoc-item-declarations') !== "false") {
                 collapseDocs(e.previousSibling.childNodes[0], "toggle");
             }

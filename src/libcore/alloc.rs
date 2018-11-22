@@ -48,6 +48,7 @@ fn size_align<T>() -> (usize, usize) {
 /// use specific allocators with looser requirements.)
 #[stable(feature = "alloc_layout", since = "1.28.0")]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(not(stage0), lang = "alloc_layout")]
 pub struct Layout {
     // size of the requested block of memory, measured in bytes.
     size_: usize,
@@ -66,6 +67,8 @@ impl Layout {
     /// Constructs a `Layout` from a given `size` and `align`,
     /// or returns `LayoutErr` if either of the following conditions
     /// are not met:
+    ///
+    /// * `align` must not be zero,
     ///
     /// * `align` must be a power of two,
     ///
@@ -380,34 +383,6 @@ impl CannotReallocInPlace {
 impl fmt::Display for CannotReallocInPlace {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.description())
-    }
-}
-
-/// Augments `AllocErr` with a CapacityOverflow variant.
-// FIXME: should this be in libcore or liballoc?
-#[derive(Clone, PartialEq, Eq, Debug)]
-#[unstable(feature = "try_reserve", reason = "new API", issue="48043")]
-pub enum CollectionAllocErr {
-    /// Error due to the computed capacity exceeding the collection's maximum
-    /// (usually `isize::MAX` bytes).
-    CapacityOverflow,
-    /// Error due to the allocator (see the `AllocErr` type's docs).
-    AllocErr,
-}
-
-#[unstable(feature = "try_reserve", reason = "new API", issue="48043")]
-impl From<AllocErr> for CollectionAllocErr {
-    #[inline]
-    fn from(AllocErr: AllocErr) -> Self {
-        CollectionAllocErr::AllocErr
-    }
-}
-
-#[unstable(feature = "try_reserve", reason = "new API", issue="48043")]
-impl From<LayoutErr> for CollectionAllocErr {
-    #[inline]
-    fn from(_: LayoutErr) -> Self {
-        CollectionAllocErr::CapacityOverflow
     }
 }
 

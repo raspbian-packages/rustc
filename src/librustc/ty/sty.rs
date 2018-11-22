@@ -12,7 +12,7 @@
 
 use hir::def_id::DefId;
 
-use middle::const_val::ConstVal;
+use mir::interpret::ConstValue;
 use middle::region;
 use polonius_engine::Atom;
 use rustc_data_structures::indexed_vec::Idx;
@@ -20,12 +20,12 @@ use ty::subst::{Substs, Subst, Kind, UnpackedKind};
 use ty::{self, AdtDef, TypeFlags, Ty, TyCtxt, TypeFoldable};
 use ty::{Slice, TyS, ParamEnvAnd, ParamEnv};
 use util::captures::Captures;
-use mir::interpret::{Scalar, Pointer, Value, ConstValue};
+use mir::interpret::{Scalar, Pointer, Value};
 
 use std::iter;
 use std::cmp::Ordering;
 use rustc_target::spec::abi;
-use syntax::ast::{self, Name};
+use syntax::ast::{self, Ident};
 use syntax::symbol::{keywords, InternedString};
 
 use serialize;
@@ -158,8 +158,10 @@ pub enum TypeVariants<'tcx> {
     TyProjection(ProjectionTy<'tcx>),
 
     /// Anonymized (`impl Trait`) type found in a return type.
-    /// The DefId comes from the `impl Trait` ast::Ty node, and the
-    /// substitutions are for the generics of the function in question.
+    /// The DefId comes either from
+    /// * the `impl Trait` ast::Ty node,
+    /// * or the `existential type` declaration
+    /// The substitutions are for the generics of the function in question.
     /// After typeck, the concrete type can be found in the `types` map.
     TyAnon(DefId, &'tcx Substs<'tcx>),
 
@@ -614,6 +616,15 @@ impl<'tcx> TraitRef<'tcx> {
         TraitRef { def_id: def_id, substs: substs }
     }
 
+    /// Returns a TraitRef of the form `P0: Foo<P1..Pn>` where `Pi`
+    /// are the parameters defined on trait.
+    pub fn identity<'a, 'gcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>, def_id: DefId) -> TraitRef<'tcx> {
+        TraitRef {
+            def_id,
+            substs: Substs::identity_for_item(tcx, def_id),
+        }
+    }
+
     pub fn self_ty(&self) -> Ty<'tcx> {
         self.substs.type_at(0)
     }
@@ -853,11 +864,11 @@ impl<'a, 'tcx> ProjectionTy<'tcx> {
     /// Construct a ProjectionTy by searching the trait from trait_ref for the
     /// associated item named item_name.
     pub fn from_ref_and_name(
-        tcx: TyCtxt, trait_ref: ty::TraitRef<'tcx>, item_name: Name
+        tcx: TyCtxt, trait_ref: ty::TraitRef<'tcx>, item_name: Ident
     ) -> ProjectionTy<'tcx> {
         let item_def_id = tcx.associated_items(trait_ref.def_id).find(|item| {
             item.kind == ty::AssociatedKind::Type &&
-            tcx.hygienic_eq(item_name, item.name, trait_ref.def_id)
+            tcx.hygienic_eq(item_name, item.ident, trait_ref.def_id)
         }).unwrap().def_id;
 
         ProjectionTy {
@@ -1087,7 +1098,7 @@ pub type Region<'tcx> = &'tcx RegionKind;
 ///
 /// [1]: http://smallcultfollowing.com/babysteps/blog/2013/10/29/intermingled-parameter-lists/
 /// [2]: http://smallcultfollowing.com/babysteps/blog/2013/11/04/intermingled-parameter-lists/
-/// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/trait-hrtb.html
+/// [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/traits/hrtb.html
 #[derive(Clone, PartialEq, Eq, Hash, Copy, RustcEncodable, RustcDecodable, PartialOrd, Ord)]
 pub enum RegionKind {
     // Region bound in a type or fn declaration which will be
@@ -1751,14 +1762,10 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
         }
     }
 
-    pub fn ty_to_def_id(&self) -> Option<DefId> {
+    pub fn is_impl_trait(&self) -> bool {
         match self.sty {
-            TyDynamic(ref tt, ..) => tt.principal().map(|p| p.def_id()),
-            TyAdt(def, _) => Some(def.did),
-            TyForeign(did) => Some(did),
-            TyClosure(id, _) => Some(id),
-            TyFnDef(id, _) => Some(id),
-            _ => None,
+            TyAnon(..) => true,
+            _ => false,
         }
     }
 
@@ -1852,7 +1859,7 @@ impl<'a, 'gcx, 'tcx> TyS<'tcx> {
 pub struct Const<'tcx> {
     pub ty: Ty<'tcx>,
 
-    pub val: ConstVal<'tcx>,
+    pub val: ConstValue<'tcx>,
 }
 
 impl<'tcx> Const<'tcx> {
@@ -1863,19 +1870,7 @@ impl<'tcx> Const<'tcx> {
         ty: Ty<'tcx>,
     ) -> &'tcx Self {
         tcx.mk_const(Const {
-            val: ConstVal::Unevaluated(def_id, substs),
-            ty,
-        })
-    }
-
-    #[inline]
-    pub fn from_const_val(
-        tcx: TyCtxt<'_, '_, 'tcx>,
-        val: ConstVal<'tcx>,
-        ty: Ty<'tcx>,
-    ) -> &'tcx Self {
-        tcx.mk_const(Const {
-            val,
+            val: ConstValue::Unevaluated(def_id, substs),
             ty,
         })
     }
@@ -1886,7 +1881,10 @@ impl<'tcx> Const<'tcx> {
         val: ConstValue<'tcx>,
         ty: Ty<'tcx>,
     ) -> &'tcx Self {
-        Self::from_const_val(tcx, ConstVal::Value(val), ty)
+        tcx.mk_const(Const {
+            val,
+            ty,
+        })
     }
 
     #[inline]
@@ -1949,34 +1947,22 @@ impl<'tcx> Const<'tcx> {
         }
         let ty = tcx.lift_to_global(&ty).unwrap();
         let size = tcx.layout_of(ty).ok()?.size;
-        match self.val {
-            ConstVal::Value(val) => val.to_bits(size),
-            _ => None,
-        }
+        self.val.to_bits(size)
     }
 
     #[inline]
     pub fn to_ptr(&self) -> Option<Pointer> {
-        match self.val {
-            ConstVal::Value(val) => val.to_ptr(),
-            _ => None,
-        }
+        self.val.to_ptr()
     }
 
     #[inline]
     pub fn to_byval_value(&self) -> Option<Value> {
-        match self.val {
-            ConstVal::Value(val) => val.to_byval_value(),
-            _ => None,
-        }
+        self.val.to_byval_value()
     }
 
     #[inline]
     pub fn to_scalar(&self) -> Option<Scalar> {
-        match self.val {
-            ConstVal::Value(val) => val.to_scalar(),
-            _ => None,
-        }
+        self.val.to_scalar()
     }
 
     #[inline]
@@ -1988,10 +1974,7 @@ impl<'tcx> Const<'tcx> {
         assert_eq!(self.ty, ty.value);
         let ty = tcx.lift_to_global(&ty).unwrap();
         let size = tcx.layout_of(ty).ok()?.size;
-        match self.val {
-            ConstVal::Value(val) => val.to_bits(size),
-            _ => None,
-        }
+        self.val.to_bits(size)
     }
 
     #[inline]

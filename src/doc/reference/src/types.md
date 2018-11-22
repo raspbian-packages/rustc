@@ -414,6 +414,8 @@ so that the call to `f` works as if it were:
 f(Closure{s: s, t: &t});
 ```
 
+### Capture modes
+
 The compiler prefers to capture a closed-over variable by immutable borrow,
 followed by unique immutable borrow (see below), by mutable borrow, and finally
 by move. It will pick the first choice of these that allows the closure to
@@ -432,7 +434,7 @@ order to capture a single field:
 
 ```rust
 # use std::collections::HashSet;
-# 
+#
 struct SetVec {
     set: HashSet<u32>,
     vec: Vec<u32>
@@ -554,7 +556,7 @@ traits except the first trait must be auto traits, there may not be more than
 one lifetime, and opt-out bounds (e.g. `?sized`) are not allowed. Furthermore,
 paths to traits may be parenthesized.
 
-For example, given a trait `Trait`, the following are all trait objects: 
+For example, given a trait `Trait`, the following are all trait objects:
 
 * `Trait`
 * `dyn Trait`
@@ -580,10 +582,13 @@ if the sets of auto traits are the same and the lifetime bounds are the same.
 For example, `dyn Trait + Send + UnwindSafe` is the same as
 `dyn Trait + Unwindsafe + Send`.
 
-> Warning: With two trait object types, even when the complete set of traits is
-> the same, if the base traits differ, the type is different. For example,
-> `dyn Send + Sync` is a different type from `dyn Sync + Send`. See
-> [issue 33140].
+<div class="warning">
+
+***Warning:*** With two trait object types, even when the complete set of traits
+is the same, if the base traits differ, the type is different. For example,
+`dyn Send + Sync` is a different type from `dyn Sync + Send`. See [issue 33140].
+
+</div>
 
 Due to the opaqueness of which concrete type the value is of, trait objects are
 [dynamically sized types]. Like all

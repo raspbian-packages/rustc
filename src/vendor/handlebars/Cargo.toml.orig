@@ -1,7 +1,7 @@
 [package]
 
 name = "handlebars"
-version = "0.32.0"
+version = "0.32.4"
 authors = ["Ning Sun <sunng@about.me>"]
 description = "Handlebars templating implemented in Rust."
 license = "MIT"
@@ -25,18 +25,13 @@ pest = "^1.0.0"
 pest_derive = "^1.0.0"
 serde = "^1.0.0"
 serde_json = "^1.0.0"
-regex = "^0.2.0"
+regex = "^1.0.0"
 lazy_static = "^1.0.0"
 
 [dev-dependencies]
 env_logger = "^0.4.0"
 maplit = "^1.0.0"
 serde_derive = "^1.0.0"
-
-[package.metadata.release]
-sign-commit = true
-upload-doc = true
-pre-release-replacements = [ {file="CHANGELOG.md", search="Unreleased", replace="{{version}}"}, {file="CHANGELOG.md", search="ReleaseDate", replace="{{date}}"} ]
 
 [badges]
 maintenance = { status = "actively-developed" }

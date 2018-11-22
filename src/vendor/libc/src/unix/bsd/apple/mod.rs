@@ -245,7 +245,7 @@ s! {
         pub f_reserved: [::uint32_t; 8],
     }
 
-    // FIXME: this should have align 4 but it's got align 8 on 64-bit
+    #[cfg_attr(feature = "stdbuild", repr(packed(4)))]
     pub struct kevent {
         pub ident: ::uintptr_t,
         pub filter: ::int16_t,
@@ -512,6 +512,17 @@ s! {
         pub sc_reserved: [::uint32_t; 5],
     }
 
+    pub struct in_pktinfo {
+        pub ipi_ifindex: ::c_uint,
+        pub ipi_spec_dst: ::in_addr,
+        pub ipi_addr: ::in_addr,
+    }
+
+    pub struct in6_pktinfo {
+        pub ipi6_addr: ::in6_addr,
+        pub ipi6_ifindex: ::c_uint,
+    }
+
     // sys/ipc.h:
 
     pub struct ipc_perm {
@@ -524,7 +535,7 @@ s! {
         pub _key: ::key_t,
     }
 
-    // FIXME: this should have align 4 but it's got align 8 on 64-bit
+    #[cfg_attr(feature = "stdbuild", repr(packed(4)))]
     pub struct shmid_ds {
         pub shm_perm: ipc_perm,
         pub shm_segsz: ::size_t,
@@ -1503,8 +1514,11 @@ pub const IP_TTL: ::c_int = 4;
 pub const IP_HDRINCL: ::c_int = 2;
 pub const IP_ADD_MEMBERSHIP: ::c_int = 12;
 pub const IP_DROP_MEMBERSHIP: ::c_int = 13;
+pub const IP_PKTINFO: ::c_int = 26;
 pub const IPV6_JOIN_GROUP: ::c_int = 12;
 pub const IPV6_LEAVE_GROUP: ::c_int = 13;
+pub const IPV6_PKTINFO: ::c_int = 46;
+pub const IPV6_RECVPKTINFO: ::c_int = 61;
 
 pub const TCP_NODELAY: ::c_int = 0x01;
 pub const TCP_KEEPALIVE: ::c_int = 0x10;

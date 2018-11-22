@@ -8,8 +8,8 @@ name = "rustfix"
 description = "Automatically apply the suggestions made by rustc"
 repository = "https://github.com/rust-lang-nursery/rustfix"
 documentation = "https://docs.rs/rustfix"
-readme = "README.md"
-version = "0.3.1"
+readme = "Readme.md"
+version = "0.4.2"
 exclude = [
     "etc/*",
     "examples/*",
@@ -32,6 +32,3 @@ proptest = "0.7.0"
 difference = "2.0.0"
 
 [workspace]
-members = [
-    "cargo-fix",
-]

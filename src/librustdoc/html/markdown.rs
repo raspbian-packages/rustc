@@ -64,21 +64,21 @@ pub struct MarkdownSummaryLine<'a>(pub &'a str, pub &'a [(String, String)]);
 /// All lines are used in documentation tests.
 enum Line<'a> {
     Hidden(&'a str),
-    Shown(&'a str),
+    Shown(Cow<'a, str>),
 }
 
 impl<'a> Line<'a> {
-    fn for_html(self) -> Option<&'a str> {
+    fn for_html(self) -> Option<Cow<'a, str>> {
         match self {
             Line::Shown(l) => Some(l),
             Line::Hidden(_) => None,
         }
     }
 
-    fn for_code(self) -> &'a str {
+    fn for_code(self) -> Cow<'a, str> {
         match self {
-            Line::Shown(l) |
-            Line::Hidden(l) => l,
+            Line::Shown(l) => l,
+            Line::Hidden(l) => Cow::Borrowed(l),
         }
     }
 }
@@ -91,7 +91,7 @@ impl<'a> Line<'a> {
 fn map_line(s: &str) -> Line {
     let trimmed = s.trim();
     if trimmed.starts_with("##") {
-        Line::Shown(&trimmed[1..])
+        Line::Shown(Cow::Owned(s.replacen("##", "#", 1)))
     } else if trimmed.starts_with("# ") {
         // # text
         Line::Hidden(&trimmed[2..])
@@ -99,7 +99,7 @@ fn map_line(s: &str) -> Line {
         // We cannot handle '#text' because it could be #[attr].
         Line::Hidden("")
     } else {
-        Line::Shown(s)
+        Line::Shown(Cow::Borrowed(s))
     }
 }
 
@@ -168,7 +168,7 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'a, I> {
             }
         }
         let lines = origtext.lines().filter_map(|l| map_line(l).for_html());
-        let text = lines.collect::<Vec<&str>>().join("\n");
+        let text = lines.collect::<Vec<Cow<str>>>().join("\n");
         PLAYGROUND.with(|play| {
             // insert newline to clearly separate it from the
             // previous block so we can shorten the html output
@@ -179,7 +179,7 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for CodeBlocks<'a, I> {
                 }
                 let test = origtext.lines()
                     .map(|l| map_line(l).for_code())
-                    .collect::<Vec<&str>>().join("\n");
+                    .collect::<Vec<Cow<str>>>().join("\n");
                 let krate = krate.as_ref().map(|s| &**s);
                 let (test, _) = test::make_test(&test, krate, false,
                                            &Default::default());
@@ -339,6 +339,20 @@ impl<'a, I: Iterator<Item = Event<'a>>> SummaryLine<'a, I> {
     }
 }
 
+fn check_if_allowed_tag(t: &Tag) -> bool {
+    match *t {
+        Tag::Paragraph
+        | Tag::CodeBlock(_)
+        | Tag::Item
+        | Tag::Emphasis
+        | Tag::Strong
+        | Tag::Code
+        | Tag::Link(_, _)
+        | Tag::BlockQuote => true,
+        _ => false,
+    }
+}
+
 impl<'a, I: Iterator<Item = Event<'a>>> Iterator for SummaryLine<'a, I> {
     type Item = Event<'a>;
 
@@ -350,12 +364,28 @@ impl<'a, I: Iterator<Item = Event<'a>>> Iterator for SummaryLine<'a, I> {
             self.started = true;
         }
         let event = self.inner.next();
-        match event {
-            Some(Event::Start(..)) => self.depth += 1,
-            Some(Event::End(..)) => self.depth -= 1,
-            _ => {}
+        let mut is_start = true;
+        let is_allowed_tag = match event {
+            Some(Event::Start(ref c)) => {
+                self.depth += 1;
+                check_if_allowed_tag(c)
+            }
+            Some(Event::End(ref c)) => {
+                self.depth -= 1;
+                is_start = false;
+                check_if_allowed_tag(c)
+            }
+            _ => true,
+        };
+        if is_allowed_tag == false {
+            if is_start {
+                Some(Event::Start(Tag::Paragraph))
+            } else {
+                Some(Event::End(Tag::Paragraph))
+            }
+        } else {
+            event
         }
-        event
     }
 }
 
@@ -477,7 +507,7 @@ pub fn find_testable_code(doc: &str, tests: &mut ::test::Collector, position: Sp
                 }
                 if let Some(offset) = offset {
                     let lines = test_s.lines().map(|l| map_line(l).for_code());
-                    let text = lines.collect::<Vec<&str>>().join("\n");
+                    let text = lines.collect::<Vec<Cow<str>>>().join("\n");
                     nb_lines += doc[prev_offset..offset].lines().count();
                     let line = tests.get_line() + (nb_lines - 1);
                     let filename = tests.get_filename();
@@ -688,8 +718,7 @@ impl<'a> fmt::Display for MarkdownSummaryLine<'a> {
             }
         };
 
-        let p = Parser::new_with_broken_link_callback(md, Options::empty(),
-                                                      Some(&replacer));
+        let p = Parser::new_with_broken_link_callback(md, Options::empty(), Some(&replacer));
 
         let mut s = String::new();
 
@@ -852,14 +881,14 @@ mod tests {
     #[test]
     fn issue_17736() {
         let markdown = "# title";
-        format!("{}", Markdown(markdown, &[]));
+        Markdown(markdown, &[]).to_string();
         reset_ids(true);
     }
 
     #[test]
     fn test_header() {
         fn t(input: &str, expect: &str) {
-            let output = format!("{}", Markdown(input, &[]));
+            let output = Markdown(input, &[]).to_string();
             assert_eq!(output, expect, "original: {}", input);
             reset_ids(true);
         }
@@ -881,7 +910,7 @@ mod tests {
     #[test]
     fn test_header_ids_multiple_blocks() {
         fn t(input: &str, expect: &str) {
-            let output = format!("{}", Markdown(input, &[]));
+            let output = Markdown(input, &[]).to_string();
             assert_eq!(output, expect, "original: {}", input);
         }
 
@@ -922,7 +951,7 @@ mod tests {
     #[test]
     fn test_markdown_html_escape() {
         fn t(input: &str, expect: &str) {
-            let output = format!("{}", MarkdownHtml(input));
+            let output = MarkdownHtml(input).to_string();
             assert_eq!(output, expect, "original: {}", input);
         }
 

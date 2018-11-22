@@ -66,7 +66,7 @@ use core::ptr;
 use core::str::pattern::Pattern;
 use core::str::lossy;
 
-use alloc::CollectionAllocErr;
+use collections::CollectionAllocErr;
 use borrow::{Cow, ToOwned};
 use boxed::Box;
 use str::{self, from_boxed_utf8_unchecked, FromStr, Utf8Error, Chars};
@@ -1222,7 +1222,7 @@ impl String {
 
         while idx < len {
             let ch = unsafe {
-                self.slice_unchecked(idx, len).chars().next().unwrap()
+                self.get_unchecked(idx..len).chars().next().unwrap()
             };
             let ch_len = ch.len_utf8();
 

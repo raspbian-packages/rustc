@@ -229,7 +229,7 @@ macro_rules! supported_targets {
             }
         }
 
-        pub fn get_targets() -> Box<Iterator<Item=String>> {
+        pub fn get_targets() -> Box<dyn Iterator<Item=String>> {
             Box::new(TARGETS.iter().filter_map(|t| -> Option<String> {
                 load_specific(t)
                     .and(Ok(t.to_string()))
@@ -274,6 +274,7 @@ supported_targets! {
     ("powerpc-unknown-linux-gnuspe", powerpc_unknown_linux_gnuspe),
     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
+    ("powerpc64le-unknown-linux-musl", powerpc64le_unknown_linux_musl),
     ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
     ("sparc-unknown-linux-gnu", sparc_unknown_linux_gnu),
     ("sparc64-unknown-linux-gnu", sparc64_unknown_linux_gnu),
@@ -331,8 +332,8 @@ supported_targets! {
     ("x86_64-apple-darwin", x86_64_apple_darwin),
     ("i686-apple-darwin", i686_apple_darwin),
 
-    ("aarch64-unknown-fuchsia", aarch64_unknown_fuchsia),
-    ("x86_64-unknown-fuchsia", x86_64_unknown_fuchsia),
+    ("aarch64-fuchsia", aarch64_fuchsia),
+    ("x86_64-fuchsia", x86_64_fuchsia),
 
     ("x86_64-unknown-l4re-uclibc", x86_64_unknown_l4re_uclibc),
 
@@ -572,6 +573,9 @@ pub struct TargetOptions {
     /// Don't use this field; instead use the `.max_atomic_width()` method.
     pub max_atomic_width: Option<u64>,
 
+    /// Whether the target supports atomic CAS operations natively
+    pub atomic_cas: bool,
+
     /// Panic strategy: "unwind" or "abort"
     pub panic_strategy: PanicStrategy,
 
@@ -690,6 +694,7 @@ impl Default for TargetOptions {
             no_integrated_as: false,
             min_atomic_width: None,
             max_atomic_width: None,
+            atomic_cas: true,
             panic_strategy: PanicStrategy::Unwind,
             abi_blacklist: vec![],
             crt_static_allows_dylibs: false,
@@ -856,23 +861,27 @@ impl Target {
             } );
             ($key_name:ident, link_args) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
-                if let Some(obj) = obj.find(&name[..]).and_then(|o| o.as_object()) {
+                if let Some(val) = obj.find(&name[..]) {
+                    let obj = val.as_object().ok_or_else(|| format!("{}: expected a \
+                        JSON object with fields per linker-flavor.", name))?;
                     let mut args = LinkArgs::new();
                     for (k, v) in obj {
-                        let k = LinkerFlavor::from_str(&k).ok_or_else(|| {
+                        let flavor = LinkerFlavor::from_str(&k).ok_or_else(|| {
                             format!("{}: '{}' is not a valid value for linker-flavor. \
                                      Use 'em', 'gcc', 'ld' or 'msvc'", name, k)
                         })?;
 
-                        let v = v.as_array().map(|a| {
-                            a
-                                .iter()
-                                .filter_map(|o| o.as_string())
-                                .map(|s| s.to_owned())
-                                .collect::<Vec<_>>()
-                        }).unwrap_or(vec![]);
+                        let v = v.as_array().ok_or_else(||
+                            format!("{}.{}: expected a JSON array", name, k)
+                        )?.iter().enumerate()
+                            .map(|(i,s)| {
+                                let s = s.as_string().ok_or_else(||
+                                    format!("{}.{}[{}]: expected a JSON string", name, k, i))?;
+                                Ok(s.to_owned())
+                            })
+                            .collect::<Result<Vec<_>, String>>()?;
 
-                        args.insert(k, v);
+                        args.insert(flavor, v);
                     }
                     base.options.$key_name = args;
                 }
@@ -946,6 +955,7 @@ impl Target {
         key!(no_integrated_as, bool);
         key!(max_atomic_width, Option<u64>);
         key!(min_atomic_width, Option<u64>);
+        key!(atomic_cas, bool);
         try!(key!(panic_strategy, PanicStrategy));
         key!(crt_static_allows_dylibs, bool);
         key!(crt_static_default, bool);
@@ -1154,6 +1164,7 @@ impl ToJson for Target {
         target_option_val!(no_integrated_as);
         target_option_val!(min_atomic_width);
         target_option_val!(max_atomic_width);
+        target_option_val!(atomic_cas);
         target_option_val!(panic_strategy);
         target_option_val!(crt_static_allows_dylibs);
         target_option_val!(crt_static_default);

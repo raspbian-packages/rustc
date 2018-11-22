@@ -26,6 +26,7 @@ static LICENSES: &'static [&'static str] = &[
     "MIT OR Apache-2.0",
     "MIT",
     "Unlicense/MIT",
+    "Unlicense OR MIT",
 ];
 
 /// These are exceptions to Rust's permissive licensing policy, and
@@ -47,6 +48,8 @@ static EXCEPTIONS: &'static [&'static str] = &[
     "selectors",          // MPL-2.0, rustdoc
     "clippy_lints",       // MPL-2.0, rls
     "colored",            // MPL-2.0, rustfmt
+    "ordslice",           // Apache-2.0, rls
+    "cloudabi",           // BSD-2-Clause, (rls -> crossbeam-channel 0.2 -> rand 0.5)
 ];
 
 /// Which crates to check against the whitelist?
@@ -58,7 +61,6 @@ static WHITELIST_CRATES: &'static [CrateVersion] = &[
 /// Whitelist of crates rustc is allowed to depend on. Avoid adding to the list if possible.
 static WHITELIST: &'static [Crate] = &[
     Crate("aho-corasick"),
-    Crate("ar"),
     Crate("arrayvec"),
     Crate("atty"),
     Crate("backtrace"),
@@ -114,7 +116,7 @@ static WHITELIST: &'static [Crate] = &[
     Crate("scopeguard"),
     Crate("smallvec"),
     Crate("stable_deref_trait"),
-    Crate("tempdir"),
+    Crate("tempfile"),
     Crate("termcolor"),
     Crate("terminon"),
     Crate("termion"),
@@ -165,7 +167,7 @@ impl<'a> Crate<'a> {
 impl<'a> CrateVersion<'a> {
     /// Returns the struct and whether or not the dep is in-tree
     pub fn from_str(s: &'a str) -> (Self, bool) {
-        let mut parts = s.split(" ");
+        let mut parts = s.split(' ');
         let name = parts.next().unwrap();
         let version = parts.next().unwrap();
         let path = parts.next().unwrap();

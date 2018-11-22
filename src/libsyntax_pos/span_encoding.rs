@@ -26,7 +26,9 @@ use std::hash::{Hash, Hasher};
 /// The primary goal of `Span` is to be as small as possible and fit into other structures
 /// (that's why it uses `packed` as well). Decoding speed is the second priority.
 /// See `SpanData` for the info on span fields in decoded representation.
-#[repr(packed)]
+
+/// Workaround for compiler bug: https://github.com/rust-lang/rust/issues/53181
+#[cfg_attr(not(any(target_arch = "sparc64", target_arch = "sparcv9")), repr(packed))]
 pub struct Span(u32);
 
 impl Copy for Span {}
@@ -100,7 +102,7 @@ const INTERNED_INDEX_OFFSET: u32 = 1;
 
 #[inline]
 fn encode(sd: &SpanData) -> Span {
-    let (base, len, ctxt) = (sd.lo.0, sd.hi.0 - sd.lo.0, sd.ctxt.0);
+    let (base, len, ctxt) = (sd.lo.0, sd.hi.0 - sd.lo.0, sd.ctxt.as_u32());
 
     let val = if (base >> INLINE_SIZES[BASE_INDEX]) == 0 &&
                  (len >> INLINE_SIZES[LEN_INDEX]) == 0 &&
@@ -132,7 +134,7 @@ fn decode(span: Span) -> SpanData {
         let index = extract(INTERNED_INDEX_OFFSET, INTERNED_INDEX_SIZE);
         return with_span_interner(|interner| *interner.get(index));
     };
-    SpanData { lo: BytePos(base), hi: BytePos(base + len), ctxt: SyntaxContext(ctxt) }
+    SpanData { lo: BytePos(base), hi: BytePos(base + len), ctxt: SyntaxContext::from_u32(ctxt) }
 }
 
 #[derive(Default)]

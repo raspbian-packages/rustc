@@ -1,12 +1,12 @@
 //! Defines the pipeline which processes text for inclusion in the index. Most users do not need
 //! to use this module directly.
 
-use serde::ser::{Serialize, Serializer, SerializeSeq};
+use serde::ser::{Serialize, SerializeSeq, Serializer};
 
 /// Splits a text string into a vector of individual tokens.
 pub fn tokenize(text: &str) -> Vec<String> {
     text.split(|c: char| c.is_whitespace() || c == '-')
-        .filter(|s| s.len() > 0)
+        .filter(|s| !s.is_empty())
         .map(|s| s.trim().to_lowercase())
         .collect()
 }

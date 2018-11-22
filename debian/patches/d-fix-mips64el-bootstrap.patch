@@ -1,7 +1,7 @@
 Bug: https://github.com/rust-lang/rust/issues/52108
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
-@@ -608,6 +608,8 @@
+@@ -620,6 +620,8 @@
              (os.pathsep + env["LIBRARY_PATH"]) \
              if "LIBRARY_PATH" in env else ""
          env["RUSTFLAGS"] = "-Cdebuginfo=2 "

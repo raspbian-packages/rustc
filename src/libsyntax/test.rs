@@ -22,7 +22,7 @@ use std::vec;
 use attr::{self, HasAttrs};
 use syntax_pos::{self, DUMMY_SP, NO_EXPANSION, Span, FileMap, BytePos};
 
-use codemap::{self, CodeMap, ExpnInfo, NameAndSpan, MacroAttribute, dummy_spanned};
+use codemap::{self, CodeMap, ExpnInfo, MacroAttribute, dummy_spanned};
 use errors;
 use config;
 use entry::{self, EntryPointType};
@@ -72,7 +72,7 @@ struct TestCtxt<'a> {
 // Traverse the crate, collecting all the test functions, eliding any
 // existing main functions, and synthesizing a main test harness
 pub fn modify_for_testing(sess: &ParseSess,
-                          resolver: &mut Resolver,
+                          resolver: &mut dyn Resolver,
                           should_test: bool,
                           krate: ast::Crate,
                           span_diagnostic: &errors::Handler,
@@ -124,24 +124,36 @@ impl<'a> fold::Folder for TestHarnessGenerator<'a> {
 
         if is_test_fn(&self.cx, &i) || is_bench_fn(&self.cx, &i) {
             match i.node {
-                ast::ItemKind::Fn(_, ast::Unsafety::Unsafe, _, _, _, _) => {
-                    let diag = self.cx.span_diagnostic;
-                    diag.span_fatal(i.span, "unsafe functions cannot be used for tests").raise();
+                ast::ItemKind::Fn(_, header, _, _) => {
+                    if header.unsafety == ast::Unsafety::Unsafe {
+                        let diag = self.cx.span_diagnostic;
+                        diag.span_fatal(
+                            i.span,
+                            "unsafe functions cannot be used for tests"
+                        ).raise();
+                    }
+                    if header.asyncness.is_async() {
+                        let diag = self.cx.span_diagnostic;
+                        diag.span_fatal(
+                            i.span,
+                            "async functions cannot be used for tests"
+                        ).raise();
+                    }
                 }
-                _ => {
-                    debug!("this is a test function");
-                    let test = Test {
-                        span: i.span,
-                        path: self.cx.path.clone(),
-                        bench: is_bench_fn(&self.cx, &i),
-                        ignore: is_ignored(&i),
-                        should_panic: should_panic(&i, &self.cx),
-                        allow_fail: is_allowed_fail(&i),
-                    };
-                    self.cx.testfns.push(test);
-                    self.tests.push(i.ident);
-                }
+                _ => {},
             }
+
+            debug!("this is a test function");
+            let test = Test {
+                span: i.span,
+                path: self.cx.path.clone(),
+                bench: is_bench_fn(&self.cx, &i),
+                ignore: is_ignored(&i),
+                should_panic: should_panic(&i, &self.cx),
+                allow_fail: is_allowed_fail(&i),
+            };
+            self.cx.testfns.push(test);
+            self.tests.push(i.ident);
         }
 
         let mut item = i.into_inner();
@@ -266,7 +278,7 @@ fn mk_reexport_mod(cx: &mut TestCtxt,
 }
 
 fn generate_test_harness(sess: &ParseSess,
-                         resolver: &mut Resolver,
+                         resolver: &mut dyn Resolver,
                          reexport_test_harness_main: Option<Symbol>,
                          krate: ast::Crate,
                          sd: &errors::Handler,
@@ -295,13 +307,12 @@ fn generate_test_harness(sess: &ParseSess,
 
     mark.set_expn_info(ExpnInfo {
         call_site: DUMMY_SP,
-        callee: NameAndSpan {
-            format: MacroAttribute(Symbol::intern("test")),
-            span: None,
-            allow_internal_unstable: true,
-            allow_internal_unsafe: false,
-            edition: hygiene::default_edition(),
-        }
+        def_site: None,
+        format: MacroAttribute(Symbol::intern("test")),
+        allow_internal_unstable: true,
+        allow_internal_unsafe: false,
+        local_inner_macros: false,
+        edition: hygiene::default_edition(),
     });
 
     TestHarnessGenerator {
@@ -318,7 +329,6 @@ fn ignored_span(cx: &TestCtxt, sp: Span) -> Span {
     sp.with_ctxt(cx.ctxt)
 }
 
-#[derive(PartialEq)]
 enum HasTestSignature {
     Yes,
     No(BadTestSignature),
@@ -338,12 +348,12 @@ fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
     fn has_test_signature(_cx: &TestCtxt, i: &ast::Item) -> HasTestSignature {
         let has_should_panic_attr = attr::contains_name(&i.attrs, "should_panic");
         match i.node {
-            ast::ItemKind::Fn(ref decl, _, _, _, ref generics, _) => {
+            ast::ItemKind::Fn(ref decl, _, ref generics, _) => {
                 // If the termination trait is active, the compiler will check that the output
                 // type implements the `Termination` trait as `libtest` enforces that.
                 let has_output = match decl.output {
                     ast::FunctionRetTy::Default(..) => false,
-                    ast::FunctionRetTy::Ty(ref t) if t.node == ast::TyKind::Tup(vec![]) => false,
+                    ast::FunctionRetTy::Ty(ref t) if t.node.is_unit() => false,
                     _ => true
                 };
 
@@ -353,7 +363,7 @@ fn is_test_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
 
                 match (has_output, has_should_panic_attr) {
                     (true, true) => No(BadTestSignature::ShouldPanicOnlyWithNoArgs),
-                    (true, false) => if generics.is_parameterized() {
+                    (true, false) => if !generics.params.is_empty() {
                         No(BadTestSignature::WrongTypeSignature)
                     } else {
                         Yes
@@ -396,7 +406,7 @@ fn is_bench_fn(cx: &TestCtxt, i: &ast::Item) -> bool {
 
     fn has_bench_signature(_cx: &TestCtxt, i: &ast::Item) -> bool {
         match i.node {
-            ast::ItemKind::Fn(ref decl, _, _, _, _, _) => {
+            ast::ItemKind::Fn(ref decl, _, _, _) => {
                 // NB: inadequate check, but we're running
                 // well before resolve, can't get too deep.
                 decl.inputs.len() == 1
@@ -537,9 +547,7 @@ fn mk_main(cx: &mut TestCtxt) -> P<ast::Item> {
     let main_ret_ty = ecx.ty(sp, ast::TyKind::Tup(vec![]));
     let main_body = ecx.block(sp, vec![call_test_main]);
     let main = ast::ItemKind::Fn(ecx.fn_decl(vec![], ast::FunctionRetTy::Ty(main_ret_ty)),
-                           ast::Unsafety::Normal,
-                           dummy_spanned(ast::Constness::NotConst),
-                           ::rustc_target::spec::abi::Abi::Rust,
+                           ast::FnHeader::default(),
                            ast::Generics::default(),
                            main_body);
     P(ast::Item {

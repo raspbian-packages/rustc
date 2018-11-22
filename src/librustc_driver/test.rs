@@ -88,13 +88,13 @@ impl Emitter for ExpectErrorEmitter {
     }
 }
 
-fn errors(msgs: &[&str]) -> (Box<Emitter + sync::Send>, usize) {
+fn errors(msgs: &[&str]) -> (Box<dyn Emitter + sync::Send>, usize) {
     let v = msgs.iter().map(|m| m.to_string()).collect();
-    (box ExpectErrorEmitter { messages: v } as Box<Emitter + sync::Send>, msgs.len())
+    (box ExpectErrorEmitter { messages: v } as Box<dyn Emitter + sync::Send>, msgs.len())
 }
 
 fn test_env<F>(source_string: &str,
-               args: (Box<Emitter + sync::Send>, usize),
+               args: (Box<dyn Emitter + sync::Send>, usize),
                body: F)
     where F: FnOnce(Env)
 {
@@ -112,7 +112,7 @@ fn test_env<F>(source_string: &str,
 fn test_env_with_pool<F>(
     options: config::Options,
     source_string: &str,
-    (emitter, expected_err_count): (Box<Emitter + sync::Send>, usize),
+    (emitter, expected_err_count): (Box<dyn Emitter + sync::Send>, usize),
     body: F
 )
     where F: FnOnce(Env)
@@ -249,24 +249,24 @@ impl<'a, 'gcx, 'tcx> Env<'a, 'gcx, 'tcx> {
             }
 
             return match it.node {
-                hir::ItemUse(..) |
-                hir::ItemExternCrate(..) |
-                hir::ItemConst(..) |
-                hir::ItemStatic(..) |
-                hir::ItemFn(..) |
-                hir::ItemForeignMod(..) |
-                hir::ItemGlobalAsm(..) |
-                hir::ItemExistential(..) |
-                hir::ItemTy(..) => None,
+                hir::ItemKind::Use(..) |
+                hir::ItemKind::ExternCrate(..) |
+                hir::ItemKind::Const(..) |
+                hir::ItemKind::Static(..) |
+                hir::ItemKind::Fn(..) |
+                hir::ItemKind::ForeignMod(..) |
+                hir::ItemKind::GlobalAsm(..) |
+                hir::ItemKind::Existential(..) |
+                hir::ItemKind::Ty(..) => None,
 
-                hir::ItemEnum(..) |
-                hir::ItemStruct(..) |
-                hir::ItemUnion(..) |
-                hir::ItemTrait(..) |
-                hir::ItemTraitAlias(..) |
-                hir::ItemImpl(..) => None,
+                hir::ItemKind::Enum(..) |
+                hir::ItemKind::Struct(..) |
+                hir::ItemKind::Union(..) |
+                hir::ItemKind::Trait(..) |
+                hir::ItemKind::TraitAlias(..) |
+                hir::ItemKind::Impl(..) => None,
 
-                hir::ItemMod(ref m) => search_mod(this, m, idx, names),
+                hir::ItemKind::Mod(ref m) => search_mod(this, m, idx, names),
             };
         }
     }

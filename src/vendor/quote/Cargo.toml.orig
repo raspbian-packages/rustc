@@ -1,6 +1,6 @@
 [package]
 name = "quote"
-version = "0.5.1" # don't forget to update html_root_url, version in readme for breaking changes
+version = "0.6.3" # don't forget to update html_root_url, version in readme for breaking changes
 authors = ["David Tolnay <dtolnay@gmail.com>"]
 license = "MIT/Apache-2.0"
 description = "Quasi-quoting macro quote!(...)"
@@ -11,7 +11,7 @@ readme = "README.md"
 include = ["Cargo.toml", "src/**/*.rs", "tests/**/*.rs", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 
 [dependencies]
-proc-macro2 = { version = "0.3", default-features = false }
+proc-macro2 = { version = "0.4.4", default-features = false }
 
 [features]
 default = ["proc-macro"]

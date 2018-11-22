@@ -108,9 +108,9 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
         debug!("lookup({:?})", place);
         match *place {
             Place::Local(local) => Ok(self.builder.data.rev_lookup.locals[local]),
+            Place::Promoted(..) |
             Place::Static(..) => {
-                let span = self.builder.mir.source_info(self.loc).span;
-                Err(MoveError::cannot_move_out_of(span, Static))
+                Err(MoveError::cannot_move_out_of(self.loc, Static))
             }
             Place::Projection(ref proj) => {
                 self.move_path_for_projection(place, proj)
@@ -136,10 +136,10 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
         match place_ty.sty {
             ty::TyRef(..) | ty::TyRawPtr(..) =>
                 return Err(MoveError::cannot_move_out_of(
-                    mir.source_info(self.loc).span,
-                    BorrowedContent { target_ty: place.ty(mir, tcx).to_ty(tcx) })),
+                    self.loc,
+                    BorrowedContent { target_place: place.clone() })),
             ty::TyAdt(adt, _) if adt.has_dtor(tcx) && !adt.is_box() =>
-                return Err(MoveError::cannot_move_out_of(mir.source_info(self.loc).span,
+                return Err(MoveError::cannot_move_out_of(self.loc,
                                                          InteriorOfTypeWithDestructor {
                     container_ty: place_ty
                 })),
@@ -148,7 +148,7 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
                 return Err(MoveError::UnionMove { path: base }),
             ty::TySlice(_) =>
                 return Err(MoveError::cannot_move_out_of(
-                    mir.source_info(self.loc).span,
+                    self.loc,
                     InteriorOfSliceOrArray {
                         ty: place_ty, is_index: match proj.elem {
                             ProjectionElem::Index(..) => true,
@@ -158,7 +158,7 @@ impl<'b, 'a, 'gcx, 'tcx> Gatherer<'b, 'a, 'gcx, 'tcx> {
             ty::TyArray(..) => match proj.elem {
                 ProjectionElem::Index(..) =>
                     return Err(MoveError::cannot_move_out_of(
-                        mir.source_info(self.loc).span,
+                        self.loc,
                         InteriorOfSliceOrArray {
                             ty: place_ty, is_index: true
                         })),

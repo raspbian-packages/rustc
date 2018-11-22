@@ -313,6 +313,11 @@ s! {
         pub sdl_slen: ::uint8_t,
         pub sdl_data: [::c_char; 12],
     }
+
+    pub struct in_pktinfo {
+        pub ipi_addr: ::in_addr,
+        pub ipi_ifindex: ::c_uint,
+    }
 }
 
 pub const AT_FDCWD: ::c_int = -100;
@@ -371,6 +376,8 @@ pub const F_GETNOSIGPIPE: ::c_int = 13;
 pub const F_SETNOSIGPIPE: ::c_int = 14;
 pub const F_MAXFD: ::c_int = 11;
 
+pub const IP_PKTINFO: ::c_int = 25;
+pub const IP_RECVPKTINFO: ::c_int = 26;
 pub const IPV6_JOIN_GROUP: ::c_int = 12;
 pub const IPV6_LEAVE_GROUP: ::c_int = 13;
 
@@ -946,6 +953,8 @@ pub const CHWFLOW: ::tcflag_t = ::MDMBUF | ::CRTSCTS | ::CDTRCTS;
 
 pub const SOCK_CLOEXEC: ::c_int = 0x10000000;
 pub const SOCK_NONBLOCK: ::c_int = 0x20000000;
+
+pub const SIGSTKSZ : ::size_t = 40960;
 
 // dirfd() is a macro on netbsd to access
 // the first field of the struct where dirp points to:

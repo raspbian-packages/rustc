@@ -18,14 +18,21 @@ pub mod diagnostics;
 use diagnostics::{Diagnostic, DiagnosticSpan};
 mod replace;
 
+#[derive(Debug, Clone, Copy)]
+pub enum Filter {
+    MachineApplicableOnly,
+    Everything,
+}
+
 pub fn get_suggestions_from_json<S: ::std::hash::BuildHasher>(
     input: &str,
     only: &HashSet<String, S>,
+    filter: Filter,
 ) -> serde_json::error::Result<Vec<Suggestion>> {
     let mut result = Vec::new();
     for cargo_msg in serde_json::Deserializer::from_str(input).into_iter::<Diagnostic>() {
         // One diagnostic line might have multiple suggestions
-        result.extend(collect_suggestions(&cargo_msg?, only));
+        result.extend(collect_suggestions(&cargo_msg?, only, filter));
     }
     Ok(result)
 }
@@ -85,7 +92,7 @@ pub struct Replacement {
     pub replacement: String,
 }
 
-fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
+fn parse_snippet(span: &DiagnosticSpan) -> Option<Snippet> {
     // unindent the snippet
     let indent = span.text
         .iter()
@@ -96,8 +103,7 @@ fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
                 .count();
             std::cmp::min(indent, line.highlight_start)
         })
-        .min()
-        .expect("text to replace is empty");
+        .min()?;
     let start = span.text[0].highlight_start - 1;
     let end = span.text[0].highlight_end - 1;
     let lead = span.text[0].text[indent..start].to_string();
@@ -113,7 +119,7 @@ fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
         body.push_str(&last.text[indent..last.highlight_end - 1]);
     }
     tail.push_str(&last.text[last.highlight_end - 1..]);
-    Snippet {
+    Some(Snippet {
         file_name: span.file_name.clone(),
         line_range: LineRange {
             start: LinePosition {
@@ -127,21 +133,19 @@ fn parse_snippet(span: &DiagnosticSpan) -> Snippet {
         },
         range: (span.byte_start as usize)..(span.byte_end as usize),
         text: (lead, body, tail),
-    }
+    })
 }
 
 fn collect_span(span: &DiagnosticSpan) -> Option<Replacement> {
-    span.suggested_replacement
-        .clone()
-        .map(|replacement| Replacement {
-            snippet: parse_snippet(span),
-            replacement,
-        })
+    let snippet = parse_snippet(span)?;
+    let replacement = span.suggested_replacement.clone()?;
+    Some(Replacement { snippet, replacement })
 }
 
 pub fn collect_suggestions<S: ::std::hash::BuildHasher>(
     diagnostic: &Diagnostic,
     only: &HashSet<String, S>,
+    filter: Filter,
 ) -> Option<Suggestion> {
     if !only.is_empty() {
         if let Some(ref code) = diagnostic.code {
@@ -158,14 +162,28 @@ pub fn collect_suggestions<S: ::std::hash::BuildHasher>(
     let snippets = diagnostic
         .spans
         .iter()
-        .map(|span| parse_snippet(span))
+        .filter_map(|span| parse_snippet(span))
         .collect();
 
     let solutions: Vec<_> = diagnostic
         .children
         .iter()
         .filter_map(|child| {
-            let replacements: Vec<_> = child.spans.iter().filter_map(collect_span).collect();
+            let replacements: Vec<_> = child
+                .spans
+                .iter()
+                .filter(|span| {
+                    use Filter::*;
+                    use diagnostics::Applicability::*;
+
+                    match (filter, &span.suggestion_applicability) {
+                        (MachineApplicableOnly, Some(MachineApplicable)) => true,
+                        (MachineApplicableOnly, _) => false,
+                        (Everything, _) => true,
+                    }
+                })
+                .filter_map(collect_span)
+                .collect();
             if replacements.len() == 1 {
                 Some(Solution {
                     message: child.message.clone(),
@@ -188,22 +206,39 @@ pub fn collect_suggestions<S: ::std::hash::BuildHasher>(
     }
 }
 
-pub fn apply_suggestions(code: &str, suggestions: &[Suggestion]) -> Result<String, Error> {
-    use replace::Data;
+pub struct CodeFix {
+    data: replace::Data,
+}
 
-    let mut fixed = Data::new(code.as_bytes());
+impl CodeFix {
+    pub fn new(s: &str) -> CodeFix {
+        CodeFix {
+            data: replace::Data::new(s.as_bytes()),
+        }
+    }
 
-    for sug in suggestions.iter().rev() {
-        for sol in &sug.solutions {
+    pub fn apply(&mut self, suggestion: &Suggestion) -> Result<(), Error> {
+        for sol in &suggestion.solutions {
             for r in &sol.replacements {
-                fixed.replace_range(
+                self.data.replace_range(
                     r.snippet.range.start,
                     r.snippet.range.end.saturating_sub(1),
                     r.replacement.as_bytes(),
                 )?;
             }
         }
+        Ok(())
     }
 
-    Ok(String::from_utf8(fixed.to_vec())?)
+    pub fn finish(&self) -> Result<String, Error> {
+        Ok(String::from_utf8(self.data.to_vec())?)
+    }
+}
+
+pub fn apply_suggestions(code: &str, suggestions: &[Suggestion]) -> Result<String, Error> {
+    let mut fix = CodeFix::new(code);
+    for suggestion in suggestions.iter().rev() {
+        fix.apply(suggestion)?;
+    }
+    fix.finish()
 }

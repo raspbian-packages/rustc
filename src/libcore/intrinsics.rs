@@ -1085,6 +1085,15 @@ extern "rust-intrinsic" {
     /// [`std::ptr::write_volatile`](../../std/ptr/fn.write_volatile.html).
     pub fn volatile_store<T>(dst: *mut T, val: T);
 
+    /// Perform a volatile load from the `src` pointer
+    /// The pointer is not required to be aligned.
+    #[cfg(not(stage0))]
+    pub fn unaligned_volatile_load<T>(src: *const T) -> T;
+    /// Perform a volatile store to the `dst` pointer.
+    /// The pointer is not required to be aligned.
+    #[cfg(not(stage0))]
+    pub fn unaligned_volatile_store<T>(dst: *mut T, val: T);
+
     /// Returns the square root of an `f32`
     pub fn sqrtf32(x: f32) -> f32;
     /// Returns the square root of an `f64`
@@ -1363,10 +1372,6 @@ extern "rust-intrinsic" {
     /// on MSVC it's `*mut [usize; 2]`. For more information see the compiler's
     /// source as well as std's catch implementation.
     pub fn try(f: fn(*mut u8), data: *mut u8, local_ptr: *mut u8) -> i32;
-
-    #[cfg(stage0)]
-    /// docs my friends, its friday!
-    pub fn align_offset(ptr: *const (), align: usize) -> usize;
 
     /// Emits a `!nontemporal` store according to LLVM (see their docs).
     /// Probably will never become stable.

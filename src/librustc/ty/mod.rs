@@ -21,7 +21,7 @@ use hir::map::DefPathData;
 use hir::svh::Svh;
 use ich::Fingerprint;
 use ich::StableHashingContext;
-use infer::canonical::{Canonical, Canonicalize};
+use infer::canonical::Canonical;
 use middle::lang_items::{FnTraitLangItem, FnMutTraitLangItem, FnOnceTraitLangItem};
 use middle::privacy::AccessLevels;
 use middle::resolve_lifetime::ObjectLifetimeDefault;
@@ -47,7 +47,7 @@ use std::ops::Deref;
 use rustc_data_structures::sync::{self, Lrc, ParallelIterator, par_iter};
 use std::slice;
 use std::vec::IntoIter;
-use std::mem;
+use std::{mem, ptr};
 use syntax::ast::{self, DUMMY_NODE_ID, Name, Ident, NodeId};
 use syntax::attr;
 use syntax::ext::hygiene::Mark;
@@ -174,10 +174,10 @@ pub struct ImplHeader<'tcx> {
     pub predicates: Vec<Predicate<'tcx>>,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+#[derive(Copy, Clone, Debug, PartialEq)]
 pub struct AssociatedItem {
     pub def_id: DefId,
-    pub name: Name,
+    pub ident: Ident,
     pub kind: AssociatedKind,
     pub vis: Visibility,
     pub defaultness: hir::Defaultness,
@@ -192,6 +192,7 @@ pub struct AssociatedItem {
 pub enum AssociatedKind {
     Const,
     Method,
+    Existential,
     Type
 }
 
@@ -201,6 +202,7 @@ impl AssociatedItem {
             AssociatedKind::Const => Def::AssociatedConst(self.def_id),
             AssociatedKind::Method => Def::Method(self.def_id),
             AssociatedKind::Type => Def::AssociatedTy(self.def_id),
+            AssociatedKind::Existential => Def::AssociatedExistential(self.def_id),
         }
     }
 
@@ -208,7 +210,8 @@ impl AssociatedItem {
     /// for !
     pub fn relevant_for_never<'tcx>(&self) -> bool {
         match self.kind {
-            AssociatedKind::Const => true,
+            AssociatedKind::Existential |
+            AssociatedKind::Const |
             AssociatedKind::Type => true,
             // FIXME(canndrew): Be more thorough here, check if any argument is uninhabited.
             AssociatedKind::Method => !self.method_has_self_argument,
@@ -222,11 +225,12 @@ impl AssociatedItem {
                 // late-bound regions, and we don't want method signatures to show up
                 // `as for<'r> fn(&'r MyType)`.  Pretty-printing handles late-bound
                 // regions just fine, showing `fn(&MyType)`.
-                format!("{}", tcx.fn_sig(self.def_id).skip_binder())
+                tcx.fn_sig(self.def_id).skip_binder().to_string()
             }
-            ty::AssociatedKind::Type => format!("type {};", self.name.to_string()),
+            ty::AssociatedKind::Type => format!("type {};", self.ident),
+            ty::AssociatedKind::Existential => format!("existential type {};", self.ident),
             ty::AssociatedKind::Const => {
-                format!("const {}: {:?};", self.name.to_string(), tcx.type_of(self.def_id))
+                format!("const {}: {:?};", self.ident, tcx.type_of(self.def_id))
             }
         }
     }
@@ -268,16 +272,16 @@ impl<'a, 'gcx, 'tcx> DefIdTree for TyCtxt<'a, 'gcx, 'tcx> {
 
 impl Visibility {
     pub fn from_hir(visibility: &hir::Visibility, id: NodeId, tcx: TyCtxt) -> Self {
-        match *visibility {
-            hir::Public => Visibility::Public,
-            hir::Visibility::Crate(_) => Visibility::Restricted(DefId::local(CRATE_DEF_INDEX)),
-            hir::Visibility::Restricted { ref path, .. } => match path.def {
+        match visibility.node {
+            hir::VisibilityKind::Public => Visibility::Public,
+            hir::VisibilityKind::Crate(_) => Visibility::Restricted(DefId::local(CRATE_DEF_INDEX)),
+            hir::VisibilityKind::Restricted { ref path, .. } => match path.def {
                 // If there is no resolution, `resolve` will have already reported an error, so
                 // assume that the visibility is public to avoid reporting more privacy errors.
                 Def::Err => Visibility::Public,
                 def => Visibility::Restricted(def.def_id()),
             },
-            hir::Inherited => {
+            hir::VisibilityKind::Inherited => {
                 Visibility::Restricted(tcx.hir.get_module_parent(id))
             }
         }
@@ -523,8 +527,7 @@ impl<'tcx> PartialOrd for TyS<'tcx> {
 impl<'tcx> PartialEq for TyS<'tcx> {
     #[inline]
     fn eq(&self, other: &TyS<'tcx>) -> bool {
-        // (self as *const _) == (other as *const _)
-        (self as *const TyS<'tcx>) == (other as *const TyS<'tcx>)
+        ptr::eq(self, other)
     }
 }
 impl<'tcx> Eq for TyS<'tcx> {}
@@ -590,15 +593,6 @@ impl<'tcx> serialize::UseSpecializedEncodable for Ty<'tcx> {}
 impl<'tcx> serialize::UseSpecializedDecodable for Ty<'tcx> {}
 
 pub type CanonicalTy<'gcx> = Canonical<'gcx, Ty<'gcx>>;
-
-impl <'gcx: 'tcx, 'tcx> Canonicalize<'gcx, 'tcx> for Ty<'tcx> {
-    type Canonicalized = CanonicalTy<'gcx>;
-
-    fn intern(_gcx: TyCtxt<'_, 'gcx, 'gcx>,
-              value: Canonical<'gcx, Self::Lifted>) -> Self::Canonicalized {
-        value
-    }
-}
 
 extern {
     /// A dummy type used to force Slice to by unsized without requiring fat pointers
@@ -683,7 +677,7 @@ impl<T> PartialOrd for Slice<T> where T: PartialOrd {
 impl<T: PartialEq> PartialEq for Slice<T> {
     #[inline]
     fn eq(&self, other: &Slice<T>) -> bool {
-        (self as *const _) == (other as *const _)
+        ptr::eq(self, other)
     }
 }
 impl<T: Eq> Eq for Slice<T> {}
@@ -1487,13 +1481,26 @@ impl<'tcx> InstantiatedPredicates<'tcx> {
 /// type name in a non-zero universe is a skolemized type -- an
 /// idealized representative of "types in general" that we use for
 /// checking generic functions.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, RustcEncodable, RustcDecodable)]
 pub struct UniverseIndex(u32);
 
 impl UniverseIndex {
     /// The root universe, where things that the user defined are
     /// visible.
     pub const ROOT: Self = UniverseIndex(0);
+
+    /// The "max universe" -- this isn't really a valid universe, but
+    /// it's useful sometimes as a "starting value" when you are
+    /// taking the minimum of a (non-empty!) set of universes.
+    pub const MAX: Self = UniverseIndex(::std::u32::MAX);
+
+    /// Creates a universe index from the given integer.  Not to be
+    /// used lightly lest you pick a bad value. But sometimes we
+    /// convert universe indicies into integers and back for various
+    /// reasons.
+    pub fn from_u32(index: u32) -> Self {
+        UniverseIndex(index)
+    }
 
     /// A "subuniverse" corresponds to being inside a `forall` quantifier.
     /// So, for example, suppose we have this type in universe `U`:
@@ -1510,12 +1517,23 @@ impl UniverseIndex {
         UniverseIndex(self.0.checked_add(1).unwrap())
     }
 
+    /// True if the names in this universe are a subset of the names in `other`.
+    pub fn is_subset_of(self, other: UniverseIndex) -> bool {
+        self.0 <= other.0
+    }
+
     pub fn as_u32(&self) -> u32 {
         self.0
     }
 
     pub fn as_usize(&self) -> usize {
         self.0 as usize
+    }
+}
+
+impl fmt::Debug for UniverseIndex {
+    fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
+        write!(fmt, "U{}", self.as_u32())
     }
 }
 
@@ -1735,7 +1753,7 @@ impl Ord for AdtDef {
 impl PartialEq for AdtDef {
     // AdtDef are always interned and this is part of TyS equality
     #[inline]
-    fn eq(&self, other: &Self) -> bool { self as *const _ == other as *const _ }
+    fn eq(&self, other: &Self) -> bool { ptr::eq(self, other) }
 }
 
 impl Eq for AdtDef {}
@@ -2074,7 +2092,7 @@ impl<'a, 'gcx, 'tcx> AdtDef {
                     })
                 } else {
                     info!("invalid enum discriminant: {:#?}", val);
-                    ::middle::const_val::struct_error(
+                    ::mir::interpret::struct_error(
                         tcx.at(tcx.def_span(expr_did)),
                         "constant evaluation of enum discriminant resulted in non-integer",
                     ).emit();
@@ -2500,10 +2518,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 (ty::AssociatedKind::Method, has_self)
             }
             hir::AssociatedItemKind::Type => (ty::AssociatedKind::Type, false),
+            hir::AssociatedItemKind::Existential => bug!("only impls can have existentials"),
         };
 
         AssociatedItem {
-            name: trait_item_ref.name,
+            ident: trait_item_ref.ident,
             kind,
             // Visibility of trait items is inherited from their traits.
             vis: Visibility::from_hir(parent_vis, trait_item_ref.id.node_id, self),
@@ -2525,10 +2544,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 (ty::AssociatedKind::Method, has_self)
             }
             hir::AssociatedItemKind::Type => (ty::AssociatedKind::Type, false),
+            hir::AssociatedItemKind::Existential => (ty::AssociatedKind::Existential, false),
         };
 
-        ty::AssociatedItem {
-            name: impl_item_ref.name,
+        AssociatedItem {
+            ident: impl_item_ref.ident,
             kind,
             // Visibility of trait impl items doesn't matter.
             vis: ty::Visibility::from_hir(&impl_item_ref.vis, impl_item_ref.id.node_id, self),
@@ -2553,10 +2573,10 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     pub fn associated_items(
         self,
         def_id: DefId,
-    ) -> impl Iterator<Item = ty::AssociatedItem> + 'a {
+    ) -> impl Iterator<Item = AssociatedItem> + 'a {
         let def_ids = self.associated_item_def_ids(def_id);
         Box::new((0..def_ids.len()).map(move |i| self.associated_item(def_ids[i])))
-            as Box<dyn Iterator<Item = ty::AssociatedItem> + 'a>
+            as Box<dyn Iterator<Item = AssociatedItem> + 'a>
     }
 
     /// Returns true if the impls are the same polarity and are implementing
@@ -2701,15 +2721,12 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             self.opt_associated_item(def_id)
         };
 
-        match item {
-            Some(trait_item) => {
-                match trait_item.container {
-                    TraitContainer(_) => None,
-                    ImplContainer(def_id) => Some(def_id),
-                }
+        item.and_then(|trait_item|
+            match trait_item.container {
+                TraitContainer(_) => None,
+                ImplContainer(def_id) => Some(def_id),
             }
-            None => None
-        }
+        )
     }
 
     /// Looks up the span of `impl_did` if the impl is local; otherwise returns `Err`
@@ -2726,19 +2743,19 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     // Hygienically compare a use-site name (`use_name`) for a field or an associated item with its
     // supposed definition name (`def_name`). The method also needs `DefId` of the supposed
     // definition's parent/scope to perform comparison.
-    pub fn hygienic_eq(self, use_name: Name, def_name: Name, def_parent_def_id: DefId) -> bool {
-        let (use_ident, def_ident) = (use_name.to_ident(), def_name.to_ident());
-        self.adjust_ident(use_ident, def_parent_def_id, DUMMY_NODE_ID).0 == def_ident
+    pub fn hygienic_eq(self, use_name: Ident, def_name: Ident, def_parent_def_id: DefId) -> bool {
+        self.adjust_ident(use_name, def_parent_def_id, DUMMY_NODE_ID).0 == def_name.modern()
     }
 
     pub fn adjust_ident(self, mut ident: Ident, scope: DefId, block: NodeId) -> (Ident, DefId) {
-        let expansion = match scope.krate {
-            LOCAL_CRATE => self.hir.definitions().expansion(scope.index),
+        ident = ident.modern();
+        let target_expansion = match scope.krate {
+            LOCAL_CRATE => self.hir.definitions().expansion_that_defined(scope.index),
             _ => Mark::root(),
         };
-        ident = ident.modern();
-        let scope = match ident.span.adjust(expansion) {
-            Some(macro_def) => self.hir.definitions().macro_def_scope(macro_def),
+        let scope = match ident.span.adjust(target_expansion) {
+            Some(actual_expansion) =>
+                self.hir.definitions().parent_module_of_macro_def(actual_expansion),
             None if block == DUMMY_NODE_ID => DefId::local(CRATE_DEF_INDEX), // Dummy DefId
             None => self.hir.get_module_parent(block),
         };
@@ -2766,7 +2783,7 @@ fn associated_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId)
     let parent_def_id = tcx.hir.local_def_id(parent_id);
     let parent_item = tcx.hir.expect_item(parent_id);
     match parent_item.node {
-        hir::ItemImpl(.., ref impl_item_refs) => {
+        hir::ItemKind::Impl(.., ref impl_item_refs) => {
             if let Some(impl_item_ref) = impl_item_refs.iter().find(|i| i.id.node_id == id) {
                 let assoc_item = tcx.associated_item_from_impl_item_ref(parent_def_id,
                                                                         impl_item_ref);
@@ -2775,7 +2792,7 @@ fn associated_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId)
             }
         }
 
-        hir::ItemTrait(.., ref trait_item_refs) => {
+        hir::ItemKind::Trait(.., ref trait_item_refs) => {
             if let Some(trait_item_ref) = trait_item_refs.iter().find(|i| i.id.node_id == id) {
                 let assoc_item = tcx.associated_item_from_trait_item_ref(parent_def_id,
                                                                          &parent_item.vis,
@@ -2824,19 +2841,19 @@ fn associated_item_def_ids<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let id = tcx.hir.as_local_node_id(def_id).unwrap();
     let item = tcx.hir.expect_item(id);
     let vec: Vec<_> = match item.node {
-        hir::ItemTrait(.., ref trait_item_refs) => {
+        hir::ItemKind::Trait(.., ref trait_item_refs) => {
             trait_item_refs.iter()
                            .map(|trait_item_ref| trait_item_ref.id)
                            .map(|id| tcx.hir.local_def_id(id.node_id))
                            .collect()
         }
-        hir::ItemImpl(.., ref impl_item_refs) => {
+        hir::ItemKind::Impl(.., ref impl_item_refs) => {
             impl_item_refs.iter()
                           .map(|impl_item_ref| impl_item_ref.id)
                           .map(|id| tcx.hir.local_def_id(id.node_id))
                           .collect()
         }
-        hir::ItemTraitAlias(..) => vec![],
+        hir::ItemKind::TraitAlias(..) => vec![],
         _ => span_bug!(item.span, "associated_item_def_ids: not impl or trait")
     };
     Lrc::new(vec)
@@ -2859,20 +2876,31 @@ fn trait_of_item<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Option
         })
 }
 
+/// Yields the parent function's `DefId` if `def_id` is an `impl Trait` definition
+pub fn is_impl_trait_defn(tcx: TyCtxt, def_id: DefId) -> Option<DefId> {
+    if let Some(node_id) = tcx.hir.as_local_node_id(def_id) {
+        if let hir::map::NodeItem(item) = tcx.hir.get(node_id) {
+            if let hir::ItemKind::Existential(ref exist_ty) = item.node {
+                return exist_ty.impl_trait_fn;
+            }
+        }
+    }
+    None
+}
+
 /// See `ParamEnv` struct def'n for details.
 fn param_env<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                        def_id: DefId)
                        -> ParamEnv<'tcx> {
 
-    // The param_env of an existential type is its parent's param_env
-    if let Some(Def::Existential(_)) = tcx.describe_def(def_id) {
-        let parent = tcx.parent_def_id(def_id).expect("impl trait item w/o a parent");
+    // The param_env of an impl Trait type is its defining function's param_env
+    if let Some(parent) = is_impl_trait_defn(tcx, def_id) {
         return param_env(tcx, parent);
     }
     // Compute the bounds on Self and the type parameters.
 
-    let bounds = tcx.predicates_of(def_id).instantiate_identity(tcx);
-    let predicates = bounds.predicates;
+    let InstantiatedPredicates { predicates } =
+        tcx.predicates_of(def_id).instantiate_identity(tcx);
 
     // Finally, we have to normalize the bounds in the environment, in
     // case they contain any associated type projections. This process

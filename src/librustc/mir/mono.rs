@@ -36,7 +36,8 @@ impl<'tcx> MonoItem<'tcx> {
             },
             // Conservatively estimate the size of a static declaration
             // or assembly to be 1.
-            MonoItem::Static(_) | MonoItem::GlobalAsm(_) => 1,
+            MonoItem::Static(_) |
+            MonoItem::GlobalAsm(_) => 1,
         }
     }
 }

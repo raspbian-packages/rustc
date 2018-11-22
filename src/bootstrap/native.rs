@@ -167,8 +167,22 @@ impl Step for Llvm {
         // which saves both memory during parallel links and overall disk space
         // for the tools.  We don't distribute any of those tools, so this is
         // just a local concern.  However, it doesn't work well everywhere.
-        if target.contains("linux-gnu") || target.contains("apple-darwin") {
-           cfg.define("LLVM_LINK_LLVM_DYLIB", "ON");
+        //
+        // If we are shipping llvm tools then we statically link them LLVM
+        if (target.contains("linux-gnu") || target.contains("apple-darwin")) &&
+            !builder.config.llvm_tools_enabled {
+                cfg.define("LLVM_LINK_LLVM_DYLIB", "ON");
+        }
+
+        // For distribution we want the LLVM tools to be *statically* linked to libstdc++
+        if builder.config.llvm_tools_enabled {
+            if !target.contains("windows") {
+                if target.contains("apple") {
+                    cfg.define("CMAKE_EXE_LINKER_FLAGS", "-static-libstdc++");
+                } else {
+                    cfg.define("CMAKE_EXE_LINKER_FLAGS", "-Wl,-Bsymbolic -static-libstdc++");
+                }
+            }
         }
 
         if target.contains("msvc") {
@@ -242,12 +256,12 @@ fn check_llvm_version(builder: &Builder, llvm_config: &Path) {
     let version = output(cmd.arg("--version"));
     let mut parts = version.split('.').take(2)
         .filter_map(|s| s.parse::<u32>().ok());
-    if let (Some(major), Some(minor)) = (parts.next(), parts.next()) {
-        if major > 3 || (major == 3 && minor >= 9) {
+    if let (Some(major), Some(_minor)) = (parts.next(), parts.next()) {
+        if major >= 5 {
             return
         }
     }
-    panic!("\n\nbad LLVM version: {}, need >=3.9\n\n", version)
+    panic!("\n\nbad LLVM version: {}, need >=5.0\n\n", version)
 }
 
 fn configure_cmake(builder: &Builder,
@@ -460,7 +474,7 @@ impl Step for TestHelpers {
         }
 
         let _folder = builder.fold_output(|| "build_test_helpers");
-        builder.info(&format!("Building test helpers"));
+        builder.info("Building test helpers");
         t!(fs::create_dir_all(&dst));
         let mut cfg = cc::Build::new();
 
@@ -617,6 +631,7 @@ impl Step for Openssl {
             "powerpc-unknown-netbsd" => "BSD-generic32",
             "powerpc64-unknown-linux-gnu" => "linux-ppc64",
             "powerpc64le-unknown-linux-gnu" => "linux-ppc64le",
+            "powerpc64le-unknown-linux-musl" => "linux-ppc64le",
             "s390x-unknown-linux-gnu" => "linux64-s390x",
             "sparc-unknown-linux-gnu" => "linux-sparcv9",
             "sparc64-unknown-linux-gnu" => "linux64-sparcv9",

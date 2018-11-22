@@ -120,13 +120,13 @@ pub fn unsafe_slice(_: &[UnsafeInner]) {
 pub fn str(_: &[u8]) {
 }
 
-// CHECK: @trait_borrow({}* nonnull %arg0.0, {}* noalias nonnull readonly %arg0.1)
+// CHECK: @trait_borrow({}* nonnull %arg0.0, [3 x [[USIZE]]]* noalias readonly dereferenceable({{.*}}) %arg0.1)
 // FIXME #25759 This should also have `nocapture`
 #[no_mangle]
 pub fn trait_borrow(_: &Drop) {
 }
 
-// CHECK: @trait_box({}* noalias nonnull, {}* noalias nonnull readonly)
+// CHECK: @trait_box({}* noalias nonnull, [3 x [[USIZE]]]* noalias readonly dereferenceable({{.*}}))
 #[no_mangle]
 pub fn trait_box(_: Box<Drop>) {
 }
@@ -149,7 +149,7 @@ pub fn enum_id_1(x: Option<Result<u16, u16>>) -> Option<Result<u16, u16>> {
   x
 }
 
-// CHECK: i16 @enum_id_2(i16)
+// CHECK: { i8, i8 } @enum_id_2(i1 zeroext %x.0, i8 %x.1)
 #[no_mangle]
 pub fn enum_id_2(x: Option<u8>) -> Option<u8> {
   x

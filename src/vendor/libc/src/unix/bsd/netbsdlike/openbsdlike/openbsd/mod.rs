@@ -27,6 +27,8 @@ s! {
     }
 }
 
+pub const MAP_STACK : ::c_int = 0x4000;
+
 // https://github.com/openbsd/src/blob/master/sys/net/if.h#L187
 pub const IFF_UP: ::c_int = 0x1; // interface is up
 pub const IFF_BROADCAST: ::c_int = 0x2; // broadcast address valid
@@ -44,6 +46,8 @@ pub const IFF_LINK0: ::c_int = 0x1000; // per link layer defined bit
 pub const IFF_LINK1: ::c_int = 0x2000; // per link layer defined bit
 pub const IFF_LINK2: ::c_int = 0x4000; // per link layer defined bit
 pub const IFF_MULTICAST: ::c_int = 0x8000; // supports multicast
+
+pub const SIGSTKSZ : ::size_t = 24576;
 
 extern {
     pub fn accept4(s: ::c_int, addr: *mut ::sockaddr,

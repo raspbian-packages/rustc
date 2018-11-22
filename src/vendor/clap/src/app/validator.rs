@@ -1,6 +1,6 @@
 // std
 use std::fmt::Display;
-#[allow(unused_imports)]
+#[allow(deprecated, unused_imports)]
 use std::ascii::AsciiExt;
 
 // Internal
@@ -10,7 +10,6 @@ use args::{AnyArg, ArgMatcher, MatchedArg};
 use args::settings::ArgSettings;
 use errors::{Error, ErrorKind};
 use errors::Result as ClapResult;
-use osstringext::OsStrExt2;
 use app::settings::AppSettings as AS;
 use app::parser::{ParseResult, Parser};
 use fmt::{Colorizer, ColorizerOption};
@@ -120,7 +119,7 @@ impl<'a, 'b, 'z> Validator<'a, 'b, 'z> {
                     ));
                 }
             }
-            if !arg.is_set(ArgSettings::EmptyValues) && val.is_empty_()
+            if !arg.is_set(ArgSettings::EmptyValues) && val.is_empty()
                 && matcher.contains(&*arg.name())
             {
                 debugln!("Validator::validate_arg_values: illegal empty val found");
@@ -158,9 +157,9 @@ impl<'a, 'b, 'z> Validator<'a, 'b, 'z> {
 
     fn build_err(&self, name: &str, matcher: &ArgMatcher) -> ClapResult<()> {
         debugln!("build_err!: name={}", name);
-        let mut c_with = find_from!(self.0, &name, blacklist, &matcher);
+        let mut c_with = find_from!(self.0, &name, blacklist, matcher);
         c_with = c_with.or(
-        self.0.find_any_arg(&name).map_or(None, |aa| aa.blacklist())
+        self.0.find_any_arg(name).map_or(None, |aa| aa.blacklist())
             .map_or(None,
                     |bl| bl.iter().find(|arg| matcher.contains(arg)))
             .map_or(None, |an| self.0.find_any_arg(an))

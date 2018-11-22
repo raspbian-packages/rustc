@@ -516,8 +516,8 @@ impl Session {
     pub fn asm_comments(&self) -> bool {
         self.opts.debugging_opts.asm_comments
     }
-    pub fn no_verify(&self) -> bool {
-        self.opts.debugging_opts.no_verify
+    pub fn verify_llvm_ir(&self) -> bool {
+        self.opts.debugging_opts.verify_llvm_ir
     }
     pub fn borrowck_stats(&self) -> bool {
         self.opts.debugging_opts.borrowck_stats
@@ -623,9 +623,6 @@ impl Session {
     }
     pub fn unstable_options(&self) -> bool {
         self.opts.debugging_opts.unstable_options
-    }
-    pub fn nonzeroing_move_hints(&self) -> bool {
-        self.opts.debugging_opts.enable_nonzeroing_move_hints
     }
     pub fn overflow_checks(&self) -> bool {
         self.opts
@@ -1000,6 +997,7 @@ pub fn build_session_with_codemap(
     let can_emit_warnings = !(warnings_allow || cap_lints_allow);
 
     let treat_err_as_bug = sopts.debugging_opts.treat_err_as_bug;
+    let report_delayed_bugs = sopts.debugging_opts.report_delayed_bugs;
 
     let external_macro_backtrace = sopts.debugging_opts.external_macro_backtrace;
 
@@ -1045,6 +1043,7 @@ pub fn build_session_with_codemap(
         errors::HandlerFlags {
             can_emit_warnings,
             treat_err_as_bug,
+            report_delayed_bugs,
             external_macro_backtrace,
             ..Default::default()
         },

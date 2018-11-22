@@ -12,16 +12,22 @@
 
 pub use core::task::*;
 
-#[cfg(target_has_atomic = "ptr")]
+#[cfg(any(
+    all(stage0, target_has_atomic = "ptr"),
+    all(not(stage0), target_has_atomic = "ptr", target_has_atomic = "cas")
+))]
 pub use self::if_arc::*;
 
-#[cfg(target_has_atomic = "ptr")]
+#[cfg(any(
+    all(stage0, target_has_atomic = "ptr"),
+    all(not(stage0), target_has_atomic = "ptr", target_has_atomic = "cas")
+))]
 mod if_arc {
     use super::*;
-    use arc::Arc;
     use core::marker::PhantomData;
     use core::mem;
     use core::ptr::{self, NonNull};
+    use sync::Arc;
 
     /// A way of waking up a specific task.
     ///
@@ -47,7 +53,10 @@ mod if_arc {
         }
     }
 
-    #[cfg(target_has_atomic = "ptr")]
+    #[cfg(any(
+        all(stage0, target_has_atomic = "ptr"),
+        all(not(stage0), target_has_atomic = "ptr", target_has_atomic = "cas")
+    ))]
     struct ArcWrapped<T>(PhantomData<T>);
 
     unsafe impl<T: Wake + 'static> UnsafeWake for ArcWrapped<T> {

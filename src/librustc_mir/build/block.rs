@@ -16,6 +16,8 @@ use rustc::mir::*;
 use rustc::hir;
 use syntax_pos::Span;
 
+use std::slice;
+
 impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn ast_block(&mut self,
                      destination: &Place<'tcx>,
@@ -115,11 +117,21 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     // Declare the bindings, which may create a source scope.
                     let remainder_span = remainder_scope.span(this.hir.tcx(),
                                                               &this.hir.region_scope_tree);
-                    let scope = this.declare_bindings(None, remainder_span, lint_level, &pattern,
-                                                      ArmHasGuard(false));
+
+                    let scope;
 
                     // Evaluate the initializer, if present.
                     if let Some(init) = initializer {
+                        let initializer_span = init.span();
+
+                        scope = this.declare_bindings(
+                            None,
+                            remainder_span,
+                            lint_level,
+                            slice::from_ref(&pattern),
+                            ArmHasGuard(false),
+                            Some((None, initializer_span)),
+                        );
                         unpack!(block = this.in_opt_scope(
                             opt_destruction_scope.map(|de|(de, source_info)), block, |this| {
                                 let scope = (init_scope, source_info);
@@ -128,6 +140,10 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                                 })
                             }));
                     } else {
+                        scope = this.declare_bindings(
+                            None, remainder_span, lint_level, slice::from_ref(&pattern),
+                            ArmHasGuard(false), None);
+
                         // FIXME(#47184): We currently only insert `UserAssertTy` statements for
                         // patterns that are bindings, this is as we do not want to deconstruct
                         // the type being assertion to match the pattern.

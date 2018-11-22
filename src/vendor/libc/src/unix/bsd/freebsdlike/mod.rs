@@ -175,6 +175,11 @@ s! {
         pub type_: ::c_ushort,
         pub prio: ::c_ushort,
     }
+
+    pub struct in6_pktinfo {
+        pub ipi6_addr: ::in6_addr,
+        pub ipi6_ifindex: ::c_uint,
+    }
 }
 
 pub const AIO_LISTIO_MAX: ::c_int = 16;
@@ -635,13 +640,20 @@ pub const SOCK_NONBLOCK: ::c_int = 0x20000000;
 pub const SOCK_MAXADDRLEN: ::c_int = 255;
 pub const IP_TTL: ::c_int = 4;
 pub const IP_HDRINCL: ::c_int = 2;
+pub const IP_RECVDSTADDR: ::c_int = 7;
+pub const IP_SENDSRCADDR: ::c_int = IP_RECVDSTADDR;
 pub const IP_ADD_MEMBERSHIP: ::c_int = 12;
 pub const IP_DROP_MEMBERSHIP: ::c_int = 13;
 pub const IPV6_JOIN_GROUP: ::c_int = 12;
 pub const IPV6_LEAVE_GROUP: ::c_int = 13;
+pub const IPV6_RECVPKTINFO: ::c_int = 36;
+pub const IPV6_PKTINFO: ::c_int = 46;
 
-pub const TCP_NODELAY: ::c_int = 1;
-pub const TCP_KEEPIDLE: ::c_int = 256;
+pub const TCP_NODELAY:   ::c_int = 1;
+pub const TCP_KEEPIDLE:  ::c_int = 256;
+pub const TCP_KEEPINTVL: ::c_int = 512;
+pub const TCP_KEEPCNT:   ::c_int = 1024;
+
 pub const SOL_SOCKET: ::c_int = 0xffff;
 pub const SO_DEBUG: ::c_int = 0x01;
 pub const SO_ACCEPTCONN: ::c_int = 0x0002;
@@ -1172,6 +1184,8 @@ extern {
     pub fn sethostname(name: *const ::c_char, len: ::c_int) -> ::c_int;
     pub fn sem_timedwait(sem: *mut sem_t,
                          abstime: *const ::timespec) -> ::c_int;
+    pub fn sem_getvalue(sem: *mut sem_t,
+                        sval: *mut ::c_int) -> ::c_int;
     pub fn pthread_mutex_timedlock(lock: *mut pthread_mutex_t,
                                    abstime: *const ::timespec) -> ::c_int;
     pub fn pipe2(fds: *mut ::c_int, flags: ::c_int) -> ::c_int;

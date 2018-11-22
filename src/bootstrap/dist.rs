@@ -26,7 +26,7 @@ use std::process::{Command, Stdio};
 
 use build_helper::output;
 
-use {Compiler, Mode};
+use {Compiler, Mode, LLVM_TOOLS};
 use channel;
 use util::{libdir, is_dylib, exe};
 use builder::{Builder, RunConfig, ShouldRun, Step};
@@ -41,8 +41,12 @@ pub fn pkgname(builder: &Builder, component: &str) -> String {
         format!("{}-{}", component, builder.cargo_package_vers())
     } else if component == "rls" {
         format!("{}-{}", component, builder.rls_package_vers())
+    } else if component == "clippy" {
+        format!("{}-{}", component, builder.clippy_package_vers())
     } else if component == "rustfmt" {
         format!("{}-{}", component, builder.rustfmt_package_vers())
+    } else if component == "llvm-tools" {
+        format!("{}-{}", component, builder.llvm_tools_package_vers())
     } else {
         assert!(component.starts_with("rust"));
         format!("{}-{}", component, builder.rust_package_vers())
@@ -90,7 +94,7 @@ impl Step for Docs {
 
         builder.info(&format!("Dist docs ({})", host));
         if !builder.config.docs {
-            builder.info(&format!("\tskipping - docs disabled"));
+            builder.info("\tskipping - docs disabled");
             return distdir(builder).join(format!("{}-{}.tar.gz", name, host));
         }
 
@@ -152,7 +156,7 @@ impl Step for RustcDocs {
 
         builder.info(&format!("Dist compiler docs ({})", host));
         if !builder.config.compiler_docs {
-            builder.info(&format!("\tskipping - compiler docs disabled"));
+            builder.info("\tskipping - compiler docs disabled");
             return distdir(builder).join(format!("{}-{}.tar.gz", name, host));
         }
 
@@ -304,6 +308,14 @@ fn make_win_dist(
         builder.copy_to_folder(&src, &target_bin_dir);
     }
 
+    // Warn windows-gnu users that the bundled GCC cannot compile C files
+    builder.create(
+        &target_bin_dir.join("GCC-WARNING.txt"),
+        "gcc.exe contained in this folder cannot be used for compiling C files - it is only\
+         used as a linker. In order to be able to compile projects containing C code use\
+         the GCC provided by MinGW or Cygwin."
+    );
+
     //Copy platform libs to platform-specific lib directory
     let target_lib_dir = plat_root.join("lib").join("rustlib").join(target_triple).join("lib");
     fs::create_dir_all(&target_lib_dir).expect("creating target_lib_dir failed");
@@ -394,7 +406,7 @@ impl Step for Rustc {
         let compiler = self.compiler;
         let host = self.compiler.host;
 
-        builder.info(&format!("Dist rustc stage{} ({})", compiler.stage, compiler.host));
+        builder.info(&format!("Dist rustc stage{} ({})", compiler.stage, host));
         let name = pkgname(builder, "rustc");
         let image = tmpdir(builder).join(format!("{}-{}-image", name, host));
         let _ = fs::remove_dir_all(&image);
@@ -489,12 +501,13 @@ impl Step for Rustc {
 
             // Copy over lld if it's there
             if builder.config.lld_enabled {
-                let exe = exe("lld", &compiler.host);
+                let exe = exe("rust-lld", &compiler.host);
                 let src = builder.sysroot_libdir(compiler, host)
                     .parent()
                     .unwrap()
                     .join("bin")
                     .join(&exe);
+                // for the rationale about this rename check `compile::copy_lld_to_sysroot`
                 let dst = image.join("lib/rustlib")
                     .join(&*host)
                     .join("bin")
@@ -626,7 +639,7 @@ impl Step for Std {
         // The only true set of target libraries came from the build triple, so
         // let's reduce redundant work by only producing archives from that host.
         if compiler.host != builder.config.build {
-            builder.info(&format!("\tskipping, not a build host"));
+            builder.info("\tskipping, not a build host");
             return distdir(builder).join(format!("{}-{}.tar.gz", name, target));
         }
 
@@ -702,11 +715,11 @@ impl Step for Analysis {
         let compiler = self.compiler;
         let target = self.target;
         assert!(builder.config.extended);
-        builder.info(&format!("Dist analysis"));
+        builder.info("Dist analysis");
         let name = pkgname(builder, "rust-analysis");
 
         if &compiler.host != builder.config.build {
-            builder.info(&format!("\tskipping, not a build host"));
+            builder.info("\tskipping, not a build host");
             return distdir(builder).join(format!("{}-{}.tar.gz", name, target));
         }
 
@@ -811,7 +824,7 @@ impl Step for Src {
 
     /// Creates the `rust-src` installer component
     fn run(self, builder: &Builder) -> PathBuf {
-        builder.info(&format!("Dist src"));
+        builder.info("Dist src");
 
         let name = pkgname(builder, "rust-src");
         let image = tmpdir(builder).join(format!("{}-image", name));
@@ -905,7 +918,7 @@ impl Step for PlainSourceTarball {
 
     /// Creates the plain source tarball
     fn run(self, builder: &Builder) -> PathBuf {
-        builder.info(&format!("Create plain source tarball"));
+        builder.info("Create plain source tarball");
 
         // Make sure that the root folder of tarball has the correct name
         let plain_name = format!("{}-src", pkgname(builder, "rustc"));
@@ -956,7 +969,7 @@ impl Step for PlainSourceTarball {
             if !has_cargo_vendor {
                 let mut cmd = builder.cargo(
                     builder.compiler(0, builder.config.build),
-                    Mode::ToolRustc,
+                    Mode::ToolBootstrap,
                     builder.config.build,
                     "install"
                 );
@@ -988,7 +1001,7 @@ impl Step for PlainSourceTarball {
         if let Some(dir) = tarball.parent() {
             builder.create_dir(&dir);
         }
-        builder.info(&format!("running installer"));
+        builder.info("running installer");
         let mut cmd = rust_installer(builder);
         cmd.arg("tarball")
            .arg("--input").arg(&plain_name)
@@ -1184,6 +1197,87 @@ impl Step for Rls {
     }
 }
 
+#[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct Clippy {
+    pub stage: u32,
+    pub target: Interned<String>,
+}
+
+impl Step for Clippy {
+    type Output = Option<PathBuf>;
+    const ONLY_HOSTS: bool = true;
+
+    fn should_run(run: ShouldRun) -> ShouldRun {
+        run.path("clippy")
+    }
+
+    fn make_run(run: RunConfig) {
+        run.builder.ensure(Clippy {
+            stage: run.builder.top_stage,
+            target: run.target,
+        });
+    }
+
+    fn run(self, builder: &Builder) -> Option<PathBuf> {
+        let stage = self.stage;
+        let target = self.target;
+        assert!(builder.config.extended);
+
+        builder.info(&format!("Dist clippy stage{} ({})", stage, target));
+        let src = builder.src.join("src/tools/clippy");
+        let release_num = builder.release_num("clippy");
+        let name = pkgname(builder, "clippy");
+        let version = builder.clippy_info.version(builder, &release_num);
+
+        let tmp = tmpdir(builder);
+        let image = tmp.join("clippy-image");
+        drop(fs::remove_dir_all(&image));
+        builder.create_dir(&image);
+
+        // Prepare the image directory
+        // We expect clippy to build, because we've exited this step above if tool
+        // state for clippy isn't testing.
+        let clippy = builder.ensure(tool::Clippy {
+            compiler: builder.compiler(stage, builder.config.build),
+            target, extra_features: Vec::new()
+        }).or_else(|| { println!("Unable to build clippy, skipping dist"); None })?;
+        let cargoclippy = builder.ensure(tool::CargoClippy {
+            compiler: builder.compiler(stage, builder.config.build),
+            target, extra_features: Vec::new()
+        }).or_else(|| { println!("Unable to build cargo clippy, skipping dist"); None })?;
+
+        builder.install(&clippy, &image.join("bin"), 0o755);
+        builder.install(&cargoclippy, &image.join("bin"), 0o755);
+        let doc = image.join("share/doc/clippy");
+        builder.install(&src.join("README.md"), &doc, 0o644);
+        builder.install(&src.join("LICENSE"), &doc, 0o644);
+
+        // Prepare the overlay
+        let overlay = tmp.join("clippy-overlay");
+        drop(fs::remove_dir_all(&overlay));
+        t!(fs::create_dir_all(&overlay));
+        builder.install(&src.join("README.md"), &overlay, 0o644);
+        builder.install(&src.join("LICENSE"), &doc, 0o644);
+        builder.create(&overlay.join("version"), &version);
+
+        // Generate the installer tarball
+        let mut cmd = rust_installer(builder);
+        cmd.arg("generate")
+           .arg("--product-name=Rust")
+           .arg("--rel-manifest-dir=rustlib")
+           .arg("--success-message=clippy-ready-to-serve.")
+           .arg("--image-dir").arg(&image)
+           .arg("--work-dir").arg(&tmpdir(builder))
+           .arg("--output-dir").arg(&distdir(builder))
+           .arg("--non-installed-overlay").arg(&overlay)
+           .arg(format!("--package-name={}-{}", name, target))
+           .arg("--legacy-manifest-dirs=rustlib,cargo")
+           .arg("--component-name=clippy-preview");
+
+        builder.run(&mut cmd);
+        Some(distdir(builder).join(format!("{}-{}.tar.gz", name, target)))
+    }
+}
 
 #[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Rustfmt {
@@ -1304,6 +1398,8 @@ impl Step for Extended {
         let cargo_installer = builder.ensure(Cargo { stage, target });
         let rustfmt_installer = builder.ensure(Rustfmt { stage, target });
         let rls_installer = builder.ensure(Rls { stage, target });
+        let llvm_tools_installer = builder.ensure(LlvmTools { stage, target });
+        let clippy_installer = builder.ensure(Clippy { stage, target });
         let mingw_installer = builder.ensure(Mingw { host: target });
         let analysis_installer = builder.ensure(Analysis {
             compiler: builder.compiler(stage, self.host),
@@ -1340,7 +1436,9 @@ impl Step for Extended {
         tarballs.push(rustc_installer);
         tarballs.push(cargo_installer);
         tarballs.extend(rls_installer.clone());
+        tarballs.extend(clippy_installer.clone());
         tarballs.extend(rustfmt_installer.clone());
+        tarballs.extend(llvm_tools_installer.clone());
         tarballs.push(analysis_installer);
         tarballs.push(std_installer);
         if builder.config.docs {
@@ -1408,6 +1506,9 @@ impl Step for Extended {
             if rls_installer.is_none() {
                 contents = filter(&contents, "rls");
             }
+            if clippy_installer.is_none() {
+                contents = filter(&contents, "clippy");
+            }
             if rustfmt_installer.is_none() {
                 contents = filter(&contents, "rustfmt");
             }
@@ -1445,6 +1546,9 @@ impl Step for Extended {
             if rls_installer.is_some() {
                 prepare("rls");
             }
+            if clippy_installer.is_some() {
+                prepare("clippy");
+            }
 
             // create an 'uninstall' package
             builder.install(&etc.join("pkg/postinstall"), &pkg.join("uninstall"), 0o755);
@@ -1473,6 +1577,8 @@ impl Step for Extended {
                     format!("{}-{}", name, target)
                 } else if name == "rls" {
                     "rls-preview".to_string()
+                } else if name == "clippy" {
+                    "clippy-preview".to_string()
                 } else {
                     name.to_string()
                 };
@@ -1488,6 +1594,9 @@ impl Step for Extended {
             prepare("rust-std");
             if rls_installer.is_some() {
                 prepare("rls");
+            }
+            if clippy_installer.is_some() {
+                prepare("clippy");
             }
             if target.contains("windows-gnu") {
                 prepare("rust-mingw");
@@ -1569,6 +1678,18 @@ impl Step for Extended {
                                 .arg("-out").arg(exe.join("RlsGroup.wxs"))
                                 .arg("-t").arg(etc.join("msi/remove-duplicates.xsl")));
             }
+            if clippy_installer.is_some() {
+                builder.run(Command::new(&heat)
+                                .current_dir(&exe)
+                                .arg("dir")
+                                .arg("clippy")
+                                .args(&heat_flags)
+                                .arg("-cg").arg("ClippyGroup")
+                                .arg("-dr").arg("Clippy")
+                                .arg("-var").arg("var.ClippyDir")
+                                .arg("-out").arg(exe.join("ClippyGroup.wxs"))
+                                .arg("-t").arg(etc.join("msi/remove-duplicates.xsl")));
+            }
             builder.run(Command::new(&heat)
                             .current_dir(&exe)
                             .arg("dir")
@@ -1611,6 +1732,9 @@ impl Step for Extended {
                 if rls_installer.is_some() {
                     cmd.arg("-dRlsDir=rls");
                 }
+                if clippy_installer.is_some() {
+                    cmd.arg("-dClippyDir=clippy");
+                }
                 if target.contains("windows-gnu") {
                     cmd.arg("-dGccDir=rust-mingw");
                 }
@@ -1625,6 +1749,9 @@ impl Step for Extended {
             candle("StdGroup.wxs".as_ref());
             if rls_installer.is_some() {
                 candle("RlsGroup.wxs".as_ref());
+            }
+            if clippy_installer.is_some() {
+                candle("ClippyGroup.wxs".as_ref());
             }
             candle("AnalysisGroup.wxs".as_ref());
 
@@ -1654,6 +1781,9 @@ impl Step for Extended {
 
             if rls_installer.is_some() {
                 cmd.arg("RlsGroup.wixobj");
+            }
+            if clippy_installer.is_some() {
+                cmd.arg("ClippyGroup.wixobj");
             }
 
             if target.contains("windows-gnu") {
@@ -1740,7 +1870,9 @@ impl Step for HashSign {
         cmd.arg(builder.rust_package_vers());
         cmd.arg(builder.package_vers(&builder.release_num("cargo")));
         cmd.arg(builder.package_vers(&builder.release_num("rls")));
+        cmd.arg(builder.package_vers(&builder.release_num("clippy")));
         cmd.arg(builder.package_vers(&builder.release_num("rustfmt")));
+        cmd.arg(builder.llvm_tools_package_vers());
         cmd.arg(addr);
 
         builder.create_dir(&distdir(builder));
@@ -1749,5 +1881,89 @@ impl Step for HashSign {
         t!(child.stdin.take().unwrap().write_all(pass.as_bytes()));
         let status = t!(child.wait());
         assert!(status.success());
+    }
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct LlvmTools {
+    pub stage: u32,
+    pub target: Interned<String>,
+}
+
+impl Step for LlvmTools {
+    type Output = Option<PathBuf>;
+    const ONLY_HOSTS: bool = true;
+
+    fn should_run(run: ShouldRun) -> ShouldRun {
+        run.path("llvm-tools")
+    }
+
+    fn make_run(run: RunConfig) {
+        run.builder.ensure(LlvmTools {
+            stage: run.builder.top_stage,
+            target: run.target,
+        });
+    }
+
+    fn run(self, builder: &Builder) -> Option<PathBuf> {
+        let stage = self.stage;
+        let target = self.target;
+        assert!(builder.config.extended);
+
+        /* run only if llvm-config isn't used */
+        if let Some(config) = builder.config.target_config.get(&target) {
+            if let Some(ref _s) = config.llvm_config {
+                builder.info(&format!("Skipping LlvmTools stage{} ({}): external LLVM",
+                    stage, target));
+                return None;
+            }
+        }
+
+        builder.info(&format!("Dist LlvmTools stage{} ({})", stage, target));
+        let src = builder.src.join("src/llvm");
+        let name = pkgname(builder, "llvm-tools");
+
+        let tmp = tmpdir(builder);
+        let image = tmp.join("llvm-tools-image");
+        drop(fs::remove_dir_all(&image));
+
+        // Prepare the image directory
+        let bindir = builder
+            .llvm_out(target)
+            .join("bin");
+        let dst = image.join("lib/rustlib")
+            .join(target)
+            .join("bin");
+        t!(fs::create_dir_all(&dst));
+        for tool in LLVM_TOOLS {
+            let exe = bindir.join(exe(tool, &target));
+            builder.install(&exe, &dst, 0o755);
+        }
+
+        // Prepare the overlay
+        let overlay = tmp.join("llvm-tools-overlay");
+        drop(fs::remove_dir_all(&overlay));
+        builder.create_dir(&overlay);
+        builder.install(&src.join("README.txt"), &overlay, 0o644);
+        builder.install(&src.join("LICENSE.TXT"), &overlay, 0o644);
+        builder.create(&overlay.join("version"), &builder.llvm_tools_vers());
+
+        // Generate the installer tarball
+        let mut cmd = rust_installer(builder);
+        cmd.arg("generate")
+            .arg("--product-name=Rust")
+            .arg("--rel-manifest-dir=rustlib")
+            .arg("--success-message=llvm-tools-installed.")
+            .arg("--image-dir").arg(&image)
+            .arg("--work-dir").arg(&tmpdir(builder))
+            .arg("--output-dir").arg(&distdir(builder))
+            .arg("--non-installed-overlay").arg(&overlay)
+            .arg(format!("--package-name={}-{}", name, target))
+            .arg("--legacy-manifest-dirs=rustlib,cargo")
+            .arg("--component-name=llvm-tools-preview");
+
+
+        builder.run(&mut cmd);
+        Some(distdir(builder).join(format!("{}-{}.tar.gz", name, target)))
     }
 }

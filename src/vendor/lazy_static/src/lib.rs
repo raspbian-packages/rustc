@@ -86,7 +86,7 @@ fn main() {
 
 # Implementation details
 
-The `Deref` implementation uses a hidden static variable that is guarded by a atomic check on each access.
+The `Deref` implementation uses a hidden static variable that is guarded by an atomic check on each access.
 
 # Cargo features
 
@@ -103,7 +103,7 @@ no guarantees can be made about them in regard to SemVer stability.
 #![cfg_attr(feature="spin_no_std", feature(const_fn))]
 #![cfg_attr(feature="nightly", feature(unreachable))]
 
-#![doc(html_root_url = "https://docs.rs/lazy_static/1.0.0")]
+#![doc(html_root_url = "https://docs.rs/lazy_static/1.0.2")]
 #![no_std]
 
 #[cfg(not(feature="nightly"))]
@@ -123,7 +123,7 @@ pub mod lazy;
 #[doc(hidden)]
 pub use core::ops::Deref as __Deref;
 
-#[macro_export]
+#[macro_export(local_inner_macros)]
 #[doc(hidden)]
 macro_rules! __lazy_static_internal {
     // optional visibility restrictions are wrapped in `()` to allow for
@@ -170,7 +170,7 @@ macro_rules! __lazy_static_internal {
     () => ()
 }
 
-#[macro_export]
+#[macro_export(local_inner_macros)]
 macro_rules! lazy_static {
     ($(#[$attr:meta])* static ref $N:ident : $T:ty = $e:expr; $($t:tt)*) => {
         // use `()` to explicitly forward the information about private items
