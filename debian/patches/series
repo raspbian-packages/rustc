@@ -40,3 +40,5 @@ d-i686-baseline.patch
 d-no-web-dependencies-in-doc.patch
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch
+
+drop-color-handling.patch

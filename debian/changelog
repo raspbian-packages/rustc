@@ -4,8 +4,11 @@ rustc (1.29.0+dfsg1-1+rpi1) buster-staging; urgency=medium
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
+  [changes introduce in 1.29.0+dfsg1-1+rpi1 by Peter Michael Green]
+  * Add upstream patch to disable color handling in rustbuild, it conflicts
+    with newer versions of cargo.
 
- -- Raspbian forward porter <root@raspbian.org>  Thu, 22 Nov 2018 06:15:29 +0000
+ -- Peter Michael Green <plugwash@raspbian.org>  Thu, 22 Nov 2018 06:15:29 +0000
 
 rustc (1.29.0+dfsg1-1) unstable; urgency=medium
 
