@@ -93,17 +93,17 @@ impl TargetDataLayout {
         let mut dl = TargetDataLayout::default();
         let mut i128_align_src = 64;
         for spec in target.data_layout.split('-') {
-            match &spec.split(':').collect::<Vec<_>>()[..] {
-                &["e"] => dl.endian = Endian::Little,
-                &["E"] => dl.endian = Endian::Big,
-                &["a", ref a..] => dl.aggregate_align = align(a, "a")?,
-                &["f32", ref a..] => dl.f32_align = align(a, "f32")?,
-                &["f64", ref a..] => dl.f64_align = align(a, "f64")?,
-                &[p @ "p", s, ref a..] | &[p @ "p0", s, ref a..] => {
+            match spec.split(':').collect::<Vec<_>>()[..] {
+                ["e"] => dl.endian = Endian::Little,
+                ["E"] => dl.endian = Endian::Big,
+                ["a", ref a..] => dl.aggregate_align = align(a, "a")?,
+                ["f32", ref a..] => dl.f32_align = align(a, "f32")?,
+                ["f64", ref a..] => dl.f64_align = align(a, "f64")?,
+                [p @ "p", s, ref a..] | [p @ "p0", s, ref a..] => {
                     dl.pointer_size = size(s, p)?;
                     dl.pointer_align = align(a, p)?;
                 }
-                &[s, ref a..] if s.starts_with("i") => {
+                [s, ref a..] if s.starts_with("i") => {
                     let bits = match s[1..].parse::<u64>() {
                         Ok(bits) => bits,
                         Err(_) => {
@@ -127,7 +127,7 @@ impl TargetDataLayout {
                         dl.i128_align = a;
                     }
                 }
-                &[s, ref a..] if s.starts_with("v") => {
+                [s, ref a..] if s.starts_with("v") => {
                     let v_size = size(&s[1..], "v")?;
                     let a = align(a, s)?;
                     if let Some(v) = dl.vector_align.iter_mut().find(|v| v.0 == v_size) {
@@ -416,6 +416,24 @@ impl Align {
             pref_pow2: cmp::max(self.pref_pow2, other.pref_pow2),
         }
     }
+
+    /// Compute the best alignment possible for the given offset
+    /// (the largest power of two that the offset is a multiple of).
+    ///
+    /// NB: for an offset of `0`, this happens to return `2^64`.
+    pub fn max_for_offset(offset: Size) -> Align {
+        let pow2 = offset.bytes().trailing_zeros() as u8;
+        Align {
+            abi_pow2: pow2,
+            pref_pow2: pow2,
+        }
+    }
+
+    /// Lower the alignment, if necessary, such that the given offset
+    /// is aligned to it (the offset is a multiple of the aligment).
+    pub fn restrict_for_offset(self, offset: Size) -> Align {
+        self.min(Align::max_for_offset(offset))
+    }
 }
 
 /// Integers, also used for enum discriminants.
@@ -429,8 +447,8 @@ pub enum Integer {
 }
 
 impl Integer {
-    pub fn size(&self) -> Size {
-        match *self {
+    pub fn size(self) -> Size {
+        match self {
             I8 => Size::from_bytes(1),
             I16 => Size::from_bytes(2),
             I32 => Size::from_bytes(4),
@@ -439,10 +457,10 @@ impl Integer {
         }
     }
 
-    pub fn align<C: HasDataLayout>(&self, cx: C) -> Align {
+    pub fn align<C: HasDataLayout>(self, cx: C) -> Align {
         let dl = cx.data_layout();
 
-        match *self {
+        match self {
             I8 => dl.i8_align,
             I16 => dl.i16_align,
             I32 => dl.i32_align,
@@ -522,15 +540,15 @@ impl fmt::Display for FloatTy {
 }
 
 impl FloatTy {
-    pub fn ty_to_string(&self) -> &'static str {
-        match *self {
+    pub fn ty_to_string(self) -> &'static str {
+        match self {
             FloatTy::F32 => "f32",
             FloatTy::F64 => "f64",
         }
     }
 
-    pub fn bit_width(&self) -> usize {
-        match *self {
+    pub fn bit_width(self) -> usize {
+        match self {
             FloatTy::F32 => 32,
             FloatTy::F64 => 64,
         }
@@ -596,7 +614,16 @@ pub struct Scalar {
     pub value: Primitive,
 
     /// Inclusive wrap-around range of valid values, that is, if
-    /// min > max, it represents min..=u128::MAX followed by 0..=max.
+    /// start > end, it represents `start..=max_value()`,
+    /// followed by `0..=end`.
+    ///
+    /// That is, for an i8 primitive, a range of `254..=2` means following
+    /// sequence:
+    ///
+    ///    254 (-2), 255 (-1), 0, 1, 2
+    ///
+    /// This is intended specifically to mirror LLVM’s `!range` metadata,
+    /// semantics.
     // FIXME(eddyb) always use the shortest range, e.g. by finding
     // the largest space between two consecutive valid values and
     // taking everything else as the (shortest) valid range.

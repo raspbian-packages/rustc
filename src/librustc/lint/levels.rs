@@ -21,7 +21,7 @@ use rustc_data_structures::stable_hasher::{HashStable, ToStableHashKey,
 use session::Session;
 use syntax::ast;
 use syntax::attr;
-use syntax::codemap::MultiSpan;
+use syntax::source_map::MultiSpan;
 use syntax::feature_gate;
 use syntax::symbol::Symbol;
 use util::nodemap::FxHashMap;
@@ -227,17 +227,19 @@ impl<'a> LintLevelsBuilder<'a> {
                         continue
                     }
                 };
-                if let Some(lint_tool) = word.is_scoped() {
-                    if !self.sess.features_untracked().tool_lints {
-                        feature_gate::emit_feature_err(&sess.parse_sess,
-                                                       "tool_lints",
-                                                       word.span,
-                                                       feature_gate::GateIssue::Language,
-                                                       &format!("scoped lint `{}` is experimental",
-                                                                word.ident));
+                let tool_name = if let Some(lint_tool) = word.is_scoped() {
+                    let gate_feature = !self.sess.features_untracked().tool_lints;
+                    let known_tool = attr::is_known_lint_tool(lint_tool);
+                    if gate_feature {
+                        feature_gate::emit_feature_err(
+                            &sess.parse_sess,
+                            "tool_lints",
+                            word.span,
+                            feature_gate::GateIssue::Language,
+                            &format!("scoped lint `{}` is experimental", word.ident),
+                        );
                     }
-
-                    if !attr::is_known_lint_tool(lint_tool) {
+                    if !known_tool {
                         span_err!(
                             sess,
                             lint_tool.span,
@@ -247,14 +249,69 @@ impl<'a> LintLevelsBuilder<'a> {
                         );
                     }
 
-                    continue
-                }
+                    if gate_feature || !known_tool {
+                        continue;
+                    }
+
+                    Some(lint_tool.as_str())
+                } else {
+                    None
+                };
                 let name = word.name();
-                match store.check_lint_name(&name.as_str()) {
+                match store.check_lint_name(&name.as_str(), tool_name) {
                     CheckLintNameResult::Ok(ids) => {
                         let src = LintSource::Node(name, li.span);
                         for id in ids {
                             specs.insert(*id, (level, src));
+                        }
+                    }
+
+                    CheckLintNameResult::Tool(result) => {
+                        match result {
+                            Ok(ids) => {
+                                let complete_name = &format!("{}::{}", tool_name.unwrap(), name);
+                                let src = LintSource::Node(Symbol::intern(complete_name), li.span);
+                                for id in ids {
+                                    specs.insert(*id, (level, src));
+                                }
+                            }
+                            Err((Some(ids), new_lint_name)) => {
+                                let lint = builtin::RENAMED_AND_REMOVED_LINTS;
+                                let (lvl, src) =
+                                    self.sets
+                                        .get_lint_level(lint, self.cur, Some(&specs), &sess);
+                                let msg = format!(
+                                    "lint name `{}` is deprecated \
+                                     and may not have an effect in the future. \
+                                     Also `cfg_attr(cargo-clippy)` won't be necessary anymore",
+                                    name
+                                );
+                                let mut err = lint::struct_lint_level(
+                                    self.sess,
+                                    lint,
+                                    lvl,
+                                    src,
+                                    Some(li.span.into()),
+                                    &msg,
+                                );
+                                err.span_suggestion_with_applicability(
+                                    li.span,
+                                    "change it to",
+                                    new_lint_name.to_string(),
+                                    Applicability::MachineApplicable,
+                                ).cancel();
+
+                                let src = LintSource::Node(Symbol::intern(&new_lint_name), li.span);
+                                for id in ids {
+                                    specs.insert(*id, (level, src));
+                                }
+                            }
+                            Err((None, _)) => {
+                                // If Tool(Err(None, _)) is returned, then either the lint does not
+                                // exist in the tool or the code was not compiled with the tool and
+                                // therefore the lint was never added to the `LintStore`. To detect
+                                // this is the responsibility of the lint tool.
+                            }
                         }
                     }
 
@@ -298,7 +355,7 @@ impl<'a> LintLevelsBuilder<'a> {
                         if name.as_str().chars().any(|c| c.is_uppercase()) {
                             let name_lower = name.as_str().to_lowercase().to_string();
                             if let CheckLintNameResult::NoLint =
-                                    store.check_lint_name(&name_lower) {
+                                    store.check_lint_name(&name_lower, tool_name) {
                                 db.emit();
                             } else {
                                 db.span_suggestion_with_applicability(

@@ -77,6 +77,7 @@ pub struct Config {
     pub llvm_enabled: bool,
     pub llvm_assertions: bool,
     pub llvm_optimize: bool,
+    pub llvm_thin_lto: bool,
     pub llvm_release_debuginfo: bool,
     pub llvm_version_check: bool,
     pub llvm_static_stdcpp: bool,
@@ -85,8 +86,10 @@ pub struct Config {
     pub llvm_targets: Option<String>,
     pub llvm_experimental_targets: String,
     pub llvm_link_jobs: Option<u32>,
+    pub llvm_version_suffix: Option<String>,
 
     pub lld_enabled: bool,
+    pub lldb_enabled: bool,
     pub llvm_tools_enabled: bool,
 
     // rust codegen options
@@ -106,6 +109,7 @@ pub struct Config {
     pub rust_codegen_backends: Vec<Interned<String>>,
     pub rust_codegen_backends_dir: String,
     pub rust_verify_llvm_ir: bool,
+    pub rust_remap_debuginfo: bool,
 
     pub build: Interned<String>,
     pub hosts: Vec<Interned<String>>,
@@ -162,6 +166,7 @@ pub struct Target {
     pub cc: Option<PathBuf>,
     pub cxx: Option<PathBuf>,
     pub ar: Option<PathBuf>,
+    pub ranlib: Option<PathBuf>,
     pub linker: Option<PathBuf>,
     pub ndk: Option<PathBuf>,
     pub crt_static: Option<bool>,
@@ -245,6 +250,7 @@ struct Llvm {
     ninja: Option<bool>,
     assertions: Option<bool>,
     optimize: Option<bool>,
+    thin_lto: Option<bool>,
     release_debuginfo: Option<bool>,
     version_check: Option<bool>,
     static_libstdcpp: Option<bool>,
@@ -252,6 +258,7 @@ struct Llvm {
     experimental_targets: Option<String>,
     link_jobs: Option<u32>,
     link_shared: Option<bool>,
+    version_suffix: Option<String>,
     clang_cl: Option<String>
 }
 
@@ -310,10 +317,12 @@ struct Rust {
     codegen_backends_dir: Option<String>,
     wasm_syscall: Option<bool>,
     lld: Option<bool>,
+    lldb: Option<bool>,
     llvm_tools: Option<bool>,
     deny_warnings: Option<bool>,
     backtrace_on_ice: Option<bool>,
     verify_llvm_ir: Option<bool>,
+    remap_debuginfo: Option<bool>,
 }
 
 /// TOML representation of how each build target is configured.
@@ -325,6 +334,7 @@ struct TomlTarget {
     cc: Option<String>,
     cxx: Option<String>,
     ar: Option<String>,
+    ranlib: Option<String>,
     linker: Option<String>,
     android_ndk: Option<String>,
     crt_static: Option<bool>,
@@ -501,14 +511,16 @@ impl Config {
             set(&mut config.llvm_enabled, llvm.enabled);
             llvm_assertions = llvm.assertions;
             set(&mut config.llvm_optimize, llvm.optimize);
+            set(&mut config.llvm_thin_lto, llvm.thin_lto);
             set(&mut config.llvm_release_debuginfo, llvm.release_debuginfo);
             set(&mut config.llvm_version_check, llvm.version_check);
             set(&mut config.llvm_static_stdcpp, llvm.static_libstdcpp);
             set(&mut config.llvm_link_shared, llvm.link_shared);
             config.llvm_targets = llvm.targets.clone();
             config.llvm_experimental_targets = llvm.experimental_targets.clone()
-                .unwrap_or("WebAssembly".to_string());
+                .unwrap_or("WebAssembly;RISCV".to_string());
             config.llvm_link_jobs = llvm.link_jobs;
+            config.llvm_version_suffix = llvm.version_suffix.clone();
             config.llvm_clang_cl = llvm.clang_cl.clone();
         }
 
@@ -538,6 +550,7 @@ impl Config {
             }
             set(&mut config.wasm_syscall, rust.wasm_syscall);
             set(&mut config.lld_enabled, rust.lld);
+            set(&mut config.lldb_enabled, rust.lldb);
             set(&mut config.llvm_tools_enabled, rust.llvm_tools);
             config.rustc_parallel_queries = rust.experimental_parallel_queries.unwrap_or(false);
             config.rustc_default_linker = rust.default_linker.clone();
@@ -546,6 +559,7 @@ impl Config {
             set(&mut config.deny_warnings, rust.deny_warnings.or(flags.warnings));
             set(&mut config.backtrace_on_ice, rust.backtrace_on_ice);
             set(&mut config.rust_verify_llvm_ir, rust.verify_llvm_ir);
+            set(&mut config.rust_remap_debuginfo, rust.remap_debuginfo);
 
             if let Some(ref backends) = rust.codegen_backends {
                 config.rust_codegen_backends = backends.iter()
@@ -578,6 +592,7 @@ impl Config {
                 target.cc = cfg.cc.clone().map(PathBuf::from);
                 target.cxx = cfg.cxx.clone().map(PathBuf::from);
                 target.ar = cfg.ar.clone().map(PathBuf::from);
+                target.ranlib = cfg.ranlib.clone().map(PathBuf::from);
                 target.linker = cfg.linker.clone().map(PathBuf::from);
                 target.crt_static = cfg.crt_static.clone();
                 target.musl_root = cfg.musl_root.clone().map(PathBuf::from);

@@ -21,13 +21,9 @@ pub use self::MovedValueUseKind::*;
 use self::InteriorKind::*;
 
 use rustc::hir::HirId;
-use rustc::hir::map as hir_map;
+use rustc::hir::Node;
 use rustc::hir::map::blocks::FnLikeNode;
 use rustc::cfg;
-use rustc::middle::dataflow::DataFlowContext;
-use rustc::middle::dataflow::BitwiseOperator;
-use rustc::middle::dataflow::DataFlowOperator;
-use rustc::middle::dataflow::KillFrom;
 use rustc::middle::borrowck::{BorrowCheckResult, SignalledError};
 use rustc::hir::def_id::{DefId, LocalDefId};
 use rustc::middle::expr_use_visitor as euv;
@@ -49,10 +45,12 @@ use rustc_data_structures::sync::Lrc;
 use std::hash::{Hash, Hasher};
 use syntax::ast;
 use syntax_pos::{MultiSpan, Span};
-use errors::{DiagnosticBuilder, DiagnosticId};
+use errors::{Applicability, DiagnosticBuilder, DiagnosticId};
 
 use rustc::hir;
 use rustc::hir::intravisit::{self, Visitor};
+
+use dataflow::{DataFlowContext, BitwiseOperator, DataFlowOperator, KillFrom};
 
 pub mod check_loans;
 
@@ -97,8 +95,8 @@ fn borrowck<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, owner_def_id: DefId)
     let owner_id = tcx.hir.as_local_node_id(owner_def_id).unwrap();
 
     match tcx.hir.get(owner_id) {
-        hir_map::NodeStructCtor(_) |
-        hir_map::NodeVariant(_) => {
+        Node::StructCtor(_) |
+        Node::Variant(_) => {
             // We get invoked with anything that has MIR, but some of
             // those things (notably the synthesized constructors from
             // tuple structs/variants) do not have an associated body
@@ -421,7 +419,7 @@ fn closure_to_block(closure_id: LocalDefId,
                     tcx: TyCtxt) -> ast::NodeId {
     let closure_id = tcx.hir.local_def_id_to_node_id(closure_id);
     match tcx.hir.get(closure_id) {
-        hir_map::NodeExpr(expr) => match expr.node {
+        Node::Expr(expr) => match expr.node {
             hir::ExprKind::Closure(.., body_id, _, _) => {
                 body_id.node_id
             }
@@ -443,7 +441,7 @@ impl<'a, 'tcx> LoanPath<'tcx> {
             LpUpvar(upvar_id) => {
                 let block_id = closure_to_block(upvar_id.closure_expr_id, bccx.tcx);
                 let hir_id = bccx.tcx.hir.node_to_hir_id(block_id);
-                region::Scope::Node(hir_id.local_id)
+                region::Scope { id: hir_id.local_id, data: region::ScopeData::Node }
             }
             LpDowncast(ref base, _) |
             LpExtend(ref base, ..) => base.kill_scope(bccx),
@@ -640,8 +638,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                      use_kind: MovedValueUseKind,
                                      lp: &LoanPath<'tcx>,
                                      the_move: &move_data::Move,
-                                     moved_lp: &LoanPath<'tcx>,
-                                     _param_env: ty::ParamEnv<'tcx>) {
+                                     moved_lp: &LoanPath<'tcx>) {
         let (verb, verb_participle) = match use_kind {
             MovedInUse => ("use", "used"),
             MovedInCapture => ("capture", "captured"),
@@ -700,7 +697,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                                              Some(nl.to_string()),
                                                              Origin::Ast);
                 let need_note = match lp.ty.sty {
-                    ty::TypeVariants::TyClosure(id, _) => {
+                    ty::Closure(id, _) => {
                         let node_id = self.tcx.hir.as_local_node_id(id).unwrap();
                         let hir_id = self.tcx.hir.node_to_hir_id(node_id);
                         if let Some((span, name)) = self.tables.closure_kind_origins().get(hir_id) {
@@ -806,23 +803,6 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
         self.signal_error();
     }
 
-    pub fn struct_span_err_with_code<S: Into<MultiSpan>>(&self,
-                                                         s: S,
-                                                         msg: &str,
-                                                         code: DiagnosticId)
-                                                         -> DiagnosticBuilder<'a> {
-        self.tcx.sess.struct_span_err_with_code(s, msg, code)
-    }
-
-    pub fn span_err_with_code<S: Into<MultiSpan>>(
-        &self,
-        s: S,
-        msg: &str,
-        code: DiagnosticId,
-    ) {
-        self.tcx.sess.span_err_with_code(s, msg, code);
-    }
-
     fn report_bckerr(&self, err: &BckError<'a, 'tcx>) {
         let error_span = err.span.clone();
 
@@ -868,7 +848,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                             let sp = self.tcx.hir.span(node_id);
                             let fn_closure_msg = "`Fn` closures cannot capture their enclosing \
                                                   environment for modifications";
-                            match (self.tcx.sess.codemap().span_to_snippet(sp), &err.cmt.cat) {
+                            match (self.tcx.sess.source_map().span_to_snippet(sp), &err.cmt.cat) {
                                 (_, &Categorization::Upvar(mc::Upvar {
                                     kind: ty::ClosureKind::Fn, ..
                                 })) => {
@@ -898,6 +878,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                                 }
                             }
                         }
+
                         db
                     }
                     BorrowViolation(euv::ClosureCapture(_)) => {
@@ -917,6 +898,28 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                             "err_mutbl with a closure invocation");
                     }
                 };
+
+                // We add a special note about `IndexMut`, if the source of this error
+                // is the fact that `Index` is implemented, but `IndexMut` is not. Needing
+                // to implement two traits for "one operator" is not very intuitive for
+                // many programmers.
+                if err.cmt.note == mc::NoteIndex {
+                    let node_id = self.tcx.hir.hir_to_node_id(err.cmt.hir_id);
+                    let node =  self.tcx.hir.get(node_id);
+
+                    // This pattern probably always matches.
+                    if let Node::Expr(
+                        hir::Expr { node: hir::ExprKind::Index(lhs, _), ..}
+                    ) = node {
+                        let ty = self.tables.expr_ty(lhs);
+
+                        db.help(&format!(
+                            "trait `IndexMut` is required to modify indexed content, but \
+                             it is not implemented for `{}`",
+                            ty
+                        ));
+                    }
+                }
 
                 self.note_and_explain_mutbl_error(&mut db, &err, &error_span);
                 self.note_immutability_blame(
@@ -1029,7 +1032,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                 if let ty::ReScope(scope) = *super_scope {
                     let node_id = scope.node_id(self.tcx, &self.region_scope_tree);
                     match self.tcx.hir.find(node_id) {
-                        Some(hir_map::NodeStmt(_)) => {
+                        Some(Node::Stmt(_)) => {
                             if *sub_scope != ty::ReStatic {
                                 db.note("consider using a `let` binding to increase its lifetime");
                             }
@@ -1157,13 +1160,13 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
             ref ty
         }) = pty.node {
             // Account for existing lifetimes when generating the message
-            let pointee_snippet = match self.tcx.sess.codemap().span_to_snippet(ty.span) {
+            let pointee_snippet = match self.tcx.sess.source_map().span_to_snippet(ty.span) {
                 Ok(snippet) => snippet,
                 _ => return None
             };
 
             let lifetime_snippet = if !lifetime.is_elided() {
-                format!("{} ", match self.tcx.sess.codemap().span_to_snippet(lifetime.span) {
+                format!("{} ", match self.tcx.sess.source_map().span_to_snippet(lifetime.span) {
                     Ok(lifetime_snippet) => lifetime_snippet,
                     _ => return None
                 })
@@ -1180,7 +1183,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
 
     fn local_binding_mode(&self, node_id: ast::NodeId) -> ty::BindingMode {
         let pat = match self.tcx.hir.get(node_id) {
-            hir_map::Node::NodeBinding(pat) => pat,
+            Node::Binding(pat) => pat,
             node => bug!("bad node for local: {:?}", node)
         };
 
@@ -1232,7 +1235,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                     ty::BindByReference(..) => {
                         let let_span = self.tcx.hir.span(node_id);
                         let suggestion = suggest_ref_mut(self.tcx, let_span);
-                        if let Some((let_span, replace_str)) = suggestion {
+                        if let Some(replace_str) = suggestion {
                             db.span_suggestion(
                                 let_span,
                                 "use a mutable reference instead",
@@ -1256,7 +1259,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                     None => return
                 };
 
-                if let hir_map::Node::NodeField(ref field) = self.tcx.hir.get(node_id) {
+                if let Node::Field(ref field) = self.tcx.hir.get(node_id) {
                     if let Some(msg) = self.suggest_mut_for_immutable(&field.ty, false) {
                         db.span_label(field.ty.span, msg);
                     }
@@ -1274,7 +1277,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                             binding_node_id: ast::NodeId) {
         let let_span = self.tcx.hir.span(binding_node_id);
         if let ty::BindByValue(..) = self.local_binding_mode(binding_node_id) {
-            if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(let_span) {
+            if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(let_span) {
                 let (ty, is_implicit_self) = self.local_ty(binding_node_id);
                 if is_implicit_self && snippet != "self" {
                     // avoid suggesting `mut &self`.
@@ -1296,9 +1299,11 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                         snippet
                     );
                 } else {
-                    db.span_label(
+                    db.span_suggestion_with_applicability(
                         let_span,
-                        format!("consider changing this to `mut {}`", snippet),
+                        "make this binding mutable",
+                        format!("mut {}", snippet),
+                        Applicability::MachineApplicable,
                     );
                 }
             }
@@ -1312,7 +1317,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
         let cmt_path_or_string = self.cmt_to_path_or_string(&err.cmt);
 
         let suggestion =
-            match self.tcx.sess.codemap().span_to_snippet(err.span) {
+            match self.tcx.sess.source_map().span_to_snippet(err.span) {
                 Ok(string) => format!("move {}", string),
                 Err(_) => "move |<args>| <body>".to_string()
             };
@@ -1334,7 +1339,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
     fn region_end_span(&self, region: ty::Region<'tcx>) -> Option<Span> {
         match *region {
             ty::ReScope(scope) => {
-                Some(self.tcx.sess.codemap().end_point(
+                Some(self.tcx.sess.source_map().end_point(
                         scope.span(self.tcx, &self.region_scope_tree)))
             }
             _ => None
@@ -1365,7 +1370,7 @@ impl<'a, 'tcx> BorrowckCtxt<'a, 'tcx> {
                     db.span_label(*error_span, "cannot borrow as mutable");
                 } else if let Categorization::Local(local_id) = err.cmt.cat {
                     let span = self.tcx.hir.span(local_id);
-                    if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(span) {
+                    if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(span) {
                         if snippet.starts_with("ref mut ") || snippet.starts_with("&mut ") {
                             db.span_label(*error_span, "cannot reborrow mutably");
                             db.span_label(*error_span, "try removing `&mut` here");

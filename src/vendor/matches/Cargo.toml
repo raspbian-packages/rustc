@@ -12,7 +12,7 @@
 
 [package]
 name = "matches"
-version = "0.1.7"
+version = "0.1.8"
 authors = ["Simon Sapin <simon.sapin@exyr.org>"]
 description = "A macro to evaluate, as a boolean, whether an expression matches a pattern."
 documentation = "https://docs.rs/matches/"

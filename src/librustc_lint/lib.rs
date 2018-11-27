@@ -26,7 +26,9 @@
 #![cfg_attr(test, feature(test))]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
-#![feature(macro_vis_matcher)]
+#![cfg_attr(stage0, feature(macro_vis_matcher))]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(macro_at_most_once_rep)]
@@ -45,7 +47,6 @@ use rustc::lint::{LateContext, LateLintPass, LintPass, LintArray};
 use rustc::lint::builtin::{
     BARE_TRAIT_OBJECTS,
     ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE,
-    MACRO_USE_EXTERN_CRATE,
     ELIDED_LIFETIMES_IN_PATHS,
     parser::QUESTION_MARK_MACRO_SEP
 };
@@ -61,12 +62,12 @@ use syntax::edition::Edition;
 use lint::LintId;
 use lint::FutureIncompatibleInfo;
 
-mod bad_style;
+mod nonstandard_style;
 pub mod builtin;
 mod types;
 mod unused;
 
-use bad_style::*;
+use nonstandard_style::*;
 use builtin::*;
 use types::*;
 use unused::*;
@@ -89,7 +90,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     macro_rules! add_pre_expansion_builtin {
         ($sess:ident, $($name:ident),*,) => (
             {$(
-                store.register_early_pass($sess, false, box $name);
+                store.register_pre_expansion_pass($sess, box $name);
                 )*}
             )
     }
@@ -104,12 +105,12 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
 
     macro_rules! add_lint_group {
         ($sess:ident, $name:expr, $($lint:ident),*) => (
-            store.register_group($sess, false, $name, vec![$(LintId::of($lint)),*]);
+            store.register_group($sess, false, $name, None, vec![$(LintId::of($lint)),*]);
             )
     }
 
     add_pre_expansion_builtin!(sess,
-        Async2018,
+        KeywordIdents,
     );
 
     add_early_builtin!(sess,
@@ -148,7 +149,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         MutableTransmutes: MutableTransmutes,
         UnionsWithDropFields: UnionsWithDropFields,
         UnreachablePub: UnreachablePub,
-        UnnameableTestFunctions: UnnameableTestFunctions,
+        UnnameableTestItems: UnnameableTestItems::new(),
         TypeAliasBounds: TypeAliasBounds,
         UnusedBrokenConst: UnusedBrokenConst,
         TrivialConstraints: TrivialConstraints,
@@ -195,11 +196,18 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     add_lint_group!(sess,
                     "rust_2018_idioms",
                     BARE_TRAIT_OBJECTS,
-                    UNREACHABLE_PUB,
                     UNUSED_EXTERN_CRATES,
-                    MACRO_USE_EXTERN_CRATE,
-                    ELIDED_LIFETIMES_IN_PATHS,
-                    ELLIPSIS_INCLUSIVE_RANGE_PATTERNS);
+                    ELLIPSIS_INCLUSIVE_RANGE_PATTERNS,
+                    ELIDED_LIFETIMES_IN_PATHS
+
+                    // FIXME(#52665, #47816) not always applicable and not all
+                    // macros are ready for this yet.
+                    // UNREACHABLE_PUB,
+
+                    // FIXME macro crates are not up for this yet, too much
+                    // breakage is seen if we try to encourage this lint.
+                    // MACRO_USE_EXTERN_CRATE,
+                    );
 
     // Guidelines for creating a future incompatibility lint:
     //
@@ -232,7 +240,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
-            id: LintId::of(ASYNC_IDENTS),
+            id: LintId::of(KEYWORD_IDENTS),
             reference: "issue #49716 <https://github.com/rust-lang/rust/issues/49716>",
             edition: Some(Edition::Edition2018),
         },
@@ -269,7 +277,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(ANONYMOUS_PARAMETERS),
             reference: "issue #41686 <https://github.com/rust-lang/rust/issues/41686>",
-            edition: None,
+            edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
             id: LintId::of(PARENTHESIZED_PARAMS_IN_TYPES_AND_MODULES),
@@ -305,7 +313,7 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         },
         FutureIncompatibleInfo {
             id: LintId::of(ABSOLUTE_PATHS_NOT_STARTING_WITH_CRATE),
-            reference: "issue TBD",
+            reference: "issue #53130 <https://github.com/rust-lang/rust/issues/53130>",
             edition: Some(Edition::Edition2018),
         },
         FutureIncompatibleInfo {
@@ -327,7 +335,12 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
             id: LintId::of(QUESTION_MARK_MACRO_SEP),
             reference: "issue #48075 <https://github.com/rust-lang/rust/issues/48075>",
             edition: Some(Edition::Edition2018),
-        }
+        },
+        FutureIncompatibleInfo {
+            id: LintId::of(MACRO_EXPANDED_MACRO_EXPORTS_ACCESSED_BY_ABSOLUTE_PATHS),
+            reference: "issue #52234 <https://github.com/rust-lang/rust/issues/52234>",
+            edition: None,
+        },
         ]);
 
     // Register renamed and removed lints
@@ -336,7 +349,8 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
     store.register_renamed("bare_trait_object", "bare_trait_objects");
     store.register_renamed("unstable_name_collision", "unstable_name_collisions");
     store.register_renamed("unused_doc_comment", "unused_doc_comments");
-    store.register_renamed("unknown_features", "unused_features");
+    store.register_renamed("async_idents", "keyword_idents");
+    store.register_removed("unknown_features", "replaced by an error");
     store.register_removed("unsigned_negation", "replaced by negate_unsigned feature gate");
     store.register_removed("negate_unsigned", "cast a signed value instead");
     store.register_removed("raw_pointer_derive", "using derive with raw pointers is ok");

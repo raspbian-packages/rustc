@@ -90,6 +90,10 @@ pub struct Name {
     deserialize: String,
 }
 
+fn unraw(ident: &Ident) -> String {
+    ident.to_string().trim_left_matches("r#").to_owned()
+}
+
 impl Name {
     /// Return the container name for the container when serializing.
     pub fn serialize_name(&self) -> String {
@@ -272,7 +276,7 @@ impl Container {
                         }
                     }
 
-                    // Parse `#[serde(bound = "D: Serialize")]`
+                    // Parse `#[serde(bound = "T: SomeBound")]`
                     Meta(NameValue(ref m)) if m.ident == "bound" => {
                         if let Ok(where_predicates) =
                             parse_lit_into_where(cx, &m.ident, &m.ident, &m.lit)
@@ -282,7 +286,7 @@ impl Container {
                         }
                     }
 
-                    // Parse `#[serde(bound(serialize = "D: Serialize", deserialize = "D: Deserialize"))]`
+                    // Parse `#[serde(bound(serialize = "...", deserialize = "..."))]`
                     Meta(List(ref m)) if m.ident == "bound" => {
                         if let Ok((ser, de)) = get_where_predicates(cx, &m.nested) {
                             ser_bound.set_opt(ser);
@@ -380,8 +384,8 @@ impl Container {
 
         Container {
             name: Name {
-                serialize: ser_name.get().unwrap_or_else(|| item.ident.to_string()),
-                deserialize: de_name.get().unwrap_or_else(|| item.ident.to_string()),
+                serialize: ser_name.get().unwrap_or_else(|| unraw(&item.ident)),
+                deserialize: de_name.get().unwrap_or_else(|| unraw(&item.ident)),
             },
             transparent: transparent.get(),
             deny_unknown_fields: deny_unknown_fields.get(),
@@ -617,7 +621,7 @@ impl Variant {
                         other.set_true();
                     }
 
-                    // Parse `#[serde(bound = "D: Serialize")]`
+                    // Parse `#[serde(bound = "T: SomeBound")]`
                     Meta(NameValue(ref m)) if m.ident == "bound" => {
                         if let Ok(where_predicates) =
                             parse_lit_into_where(cx, &m.ident, &m.ident, &m.lit)
@@ -627,7 +631,7 @@ impl Variant {
                         }
                     }
 
-                    // Parse `#[serde(bound(serialize = "D: Serialize", deserialize = "D: Deserialize"))]`
+                    // Parse `#[serde(bound(serialize = "...", deserialize = "..."))]`
                     Meta(List(ref m)) if m.ident == "bound" => {
                         if let Ok((ser, de)) = get_where_predicates(cx, &m.nested) {
                             ser_bound.set_opt(ser);
@@ -697,8 +701,8 @@ impl Variant {
         let de_renamed = de_name.is_some();
         Variant {
             name: Name {
-                serialize: ser_name.unwrap_or_else(|| variant.ident.to_string()),
-                deserialize: de_name.unwrap_or_else(|| variant.ident.to_string()),
+                serialize: ser_name.unwrap_or_else(|| unraw(&variant.ident)),
+                deserialize: de_name.unwrap_or_else(|| unraw(&variant.ident)),
             },
             ser_renamed: ser_renamed,
             de_renamed: de_renamed,
@@ -822,7 +826,7 @@ impl Field {
         let mut flatten = BoolAttr::none(cx, "flatten");
 
         let ident = match field.ident {
-            Some(ref ident) => ident.to_string(),
+            Some(ref ident) => unraw(ident),
             None => index.to_string(),
         };
 
@@ -921,7 +925,7 @@ impl Field {
                         }
                     }
 
-                    // Parse `#[serde(bound = "D: Serialize")]`
+                    // Parse `#[serde(bound = "T: SomeBound")]`
                     Meta(NameValue(ref m)) if m.ident == "bound" => {
                         if let Ok(where_predicates) =
                             parse_lit_into_where(cx, &m.ident, &m.ident, &m.lit)
@@ -931,7 +935,7 @@ impl Field {
                         }
                     }
 
-                    // Parse `#[serde(bound(serialize = "D: Serialize", deserialize = "D: Deserialize"))]`
+                    // Parse `#[serde(bound(serialize = "...", deserialize = "..."))]`
                     Meta(List(ref m)) if m.ident == "bound" => {
                         if let Ok((ser, de)) = get_where_predicates(cx, &m.nested) {
                             ser_bound.set_opt(ser);
@@ -989,9 +993,9 @@ impl Field {
             }
         }
 
-        // Is skip_deserializing, initialize the field to Default::default() unless a different
-        // default is specified by `#[serde(default = "...")]` on ourselves or our container (e.g.
-        // the struct we are in).
+        // Is skip_deserializing, initialize the field to Default::default() unless a
+        // different default is specified by `#[serde(default = "...")]` on
+        // ourselves or our container (e.g. the struct we are in).
         if let Default::None = *container_default {
             if skip_deserializing.0.value.is_some() {
                 default.set_if_none(Default::Default);

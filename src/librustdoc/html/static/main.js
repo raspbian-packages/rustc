@@ -52,6 +52,8 @@
 
     var themesWidth = null;
 
+    var titleBeforeSearch = document.title;
+
     if (!String.prototype.startsWith) {
         String.prototype.startsWith = function(searchString, position) {
             position = position || 0;
@@ -221,6 +223,25 @@
             }
         }
     }
+
+    function expandSection(id) {
+        var elem = document.getElementById(id);
+        if (elem && isHidden(elem)) {
+            var h3 = elem.parentNode.previousSibling;
+            if (h3 && h3.tagName !== 'H3') {
+                h3 = h3.previousSibling; // skip div.docblock
+            }
+
+            if (h3) {
+                var collapses = h3.getElementsByClassName("collapse-toggle");
+                if (collapses.length > 0) {
+                    // The element is not visible, we need to make it appear!
+                    collapseDocs(collapses[0], "show");
+                }
+            }
+        }
+    }
+
     highlightSourceLines(null);
     window.onhashchange = highlightSourceLines;
 
@@ -267,6 +288,7 @@
             ev.preventDefault();
             addClass(search, "hidden");
             removeClass(document.getElementById("main"), "hidden");
+            document.title = titleBeforeSearch;
         }
         defocusSearchBar();
     }
@@ -314,6 +336,15 @@
         }
     }
 
+    function findParentElement(elem, tagName) {
+        do {
+            if (elem && elem.tagName === tagName) {
+                return elem;
+            }
+        } while (elem = elem.parentNode);
+        return null;
+    }
+
     document.onkeypress = handleShortcut;
     document.onkeydown = handleShortcut;
     document.onclick = function(ev) {
@@ -351,6 +382,13 @@
         } else if (!hasClass(document.getElementById("help"), "hidden")) {
             addClass(document.getElementById("help"), "hidden");
             removeClass(document.body, "blur");
+        } else {
+            // Making a collapsed element visible on onhashchange seems
+            // too late
+            var a = findParentElement(ev.target, 'A');
+            if (a && a.hash) {
+                expandSection(a.hash.replace(/^#/, ''));
+            }
         }
     };
 
@@ -741,8 +779,8 @@
                 return literalSearch === true ? false : lev_distance;
             }
 
-            function checkPath(startsWith, lastElem, ty) {
-                if (startsWith.length === 0) {
+            function checkPath(contains, lastElem, ty) {
+                if (contains.length === 0) {
                     return 0;
                 }
                 var ret_lev = MAX_LEV_DISTANCE + 1;
@@ -752,17 +790,17 @@
                     path.push(ty.parent.name.toLowerCase());
                 }
 
-                if (startsWith.length > path.length) {
+                if (contains.length > path.length) {
                     return MAX_LEV_DISTANCE + 1;
                 }
                 for (var i = 0; i < path.length; ++i) {
-                    if (i + startsWith.length > path.length) {
+                    if (i + contains.length > path.length) {
                         break;
                     }
                     var lev_total = 0;
                     var aborted = false;
-                    for (var x = 0; x < startsWith.length; ++x) {
-                        var lev = levenshtein(path[i + x], startsWith[x]);
+                    for (var x = 0; x < contains.length; ++x) {
+                        var lev = levenshtein(path[i + x], contains[x]);
                         if (lev > MAX_LEV_DISTANCE) {
                             aborted = true;
                             break;
@@ -770,7 +808,7 @@
                         lev_total += lev;
                     }
                     if (aborted === false) {
-                        ret_lev = Math.min(ret_lev, Math.round(lev_total / startsWith.length));
+                        ret_lev = Math.min(ret_lev, Math.round(lev_total / contains.length));
                     }
                 }
                 return ret_lev;
@@ -934,7 +972,7 @@
                     }
                 }
                 val = paths[paths.length - 1];
-                var startsWith = paths.slice(0, paths.length > 1 ? paths.length - 1 : 1);
+                var contains = paths.slice(0, paths.length > 1 ? paths.length - 1 : 1);
 
                 for (j = 0; j < nSearchWords; ++j) {
                     var lev_distance;
@@ -944,7 +982,7 @@
                     }
                     var lev_add = 0;
                     if (paths.length > 1) {
-                        var lev = checkPath(startsWith, paths[paths.length - 1], ty);
+                        var lev = checkPath(contains, paths[paths.length - 1], ty);
                         if (lev > MAX_LEV_DISTANCE) {
                             continue;
                         } else if (lev > 0) {
@@ -987,7 +1025,7 @@
                     }
 
                     lev += lev_add;
-                    if (lev > 0 && val.length > 3 && searchWords[j].startsWith(val)) {
+                    if (lev > 0 && val.length > 3 && searchWords[j].indexOf(val) > -1) {
                         if (val.length < 6) {
                             lev -= 1;
                         } else {
@@ -1753,9 +1791,12 @@
                         x[k].setAttribute('href', rootPath + href);
                     }
                 }
-                var li = document.createElement('li');
-                li.appendChild(code);
-                list.appendChild(li);
+                var display = document.createElement('h3');
+                addClass(display, "impl");
+                display.innerHTML = '<span class="in-band"><table class="table-display"><tbody>\
+                    <tr><td><code>' + code.outerHTML + '</code></td><td></td></tr></tbody></table>\
+                    </span>';
+                list.appendChild(display);
             }
         }
     };
@@ -1938,18 +1979,29 @@
         if (collapse) {
             toggleAllDocs(pageId, true);
         }
-        if (getCurrentValue('rustdoc-trait-implementations') !== "false") {
-            onEach(document.getElementsByClassName("collapse-toggle"), function(e) {
+        var collapser = function(e) {
                 // inherent impl ids are like 'impl' or impl-<number>'.
                 // they will never be hidden by default.
-                var n = e.parentNode;
+                var n = e.parentElement;
                 if (n.id.match(/^impl(?:-\d+)?$/) === null) {
                     // Automatically minimize all non-inherent impls
                     if (collapse || hasClass(n, 'impl')) {
                         collapseDocs(e, "hide", pageId);
                     }
                 }
-            });
+        };
+        if (getCurrentValue('rustdoc-trait-implementations') !== "false") {
+            onEach(document.getElementById('implementations-list')
+                           .getElementsByClassName("collapse-toggle"), collapser);
+        }
+        if (getCurrentValue('rustdoc-method-docs') !== "false") {
+            var implItems = document.getElementsByClassName('impl-items');
+
+            if (implItems && implItems.length > 0) {
+                onEach(implItems, function(elem) {
+                    onEach(elem.getElementsByClassName("collapse-toggle"), collapser);
+                });
+            }
         }
     }
 
@@ -1987,7 +2039,8 @@
         if (!next) {
             return;
         }
-        if ((checkIfThereAreMethods(next.childNodes) || hasClass(e, 'method')) &&
+        if ((hasClass(e, 'method') || hasClass(e, 'associatedconstant') ||
+             checkIfThereAreMethods(next.childNodes)) &&
             (hasClass(next, 'docblock') ||
              hasClass(e, 'impl') ||
              (hasClass(next, 'stability') &&
@@ -1996,15 +2049,15 @@
         }
     };
     onEach(document.getElementsByClassName('method'), func);
+    onEach(document.getElementsByClassName('associatedconstant'), func);
     onEach(document.getElementsByClassName('impl'), func);
-    onEach(document.getElementsByClassName('impl-items'), function(e) {
-        onEach(e.getElementsByClassName('associatedconstant'), func);
-    });
 
-    function createToggle(otherMessage, fontSize, extraClass) {
+    function createToggle(otherMessage, fontSize, extraClass, show) {
         var span = document.createElement('span');
         span.className = 'toggle-label';
-        span.style.display = 'none';
+        if (show) {
+            span.style.display = 'none';
+        }
         if (!otherMessage) {
             span.innerHTML = '&nbsp;Expand&nbsp;description';
         } else {
@@ -2020,8 +2073,15 @@
 
         var wrapper = document.createElement('div');
         wrapper.className = 'toggle-wrapper';
+        if (!show) {
+            addClass(wrapper, 'collapsed');
+            var inner = mainToggle.getElementsByClassName('inner');
+            if (inner && inner.length > 0) {
+                inner[0].innerHTML = '+';
+            }
+        }
         if (extraClass) {
-            wrapper.className += ' ' + extraClass;
+            addClass(wrapper, extraClass);
         }
         wrapper.appendChild(mainToggle);
         return wrapper;
@@ -2053,10 +2113,15 @@
             var otherMessage;
             var fontSize;
             var extraClass;
+            var show = true;
 
             if (hasClass(e, "type-decl")) {
                 fontSize = "20px";
                 otherMessage = '&nbsp;Show&nbsp;declaration';
+                show = getCurrentValue('rustdoc-item-declarations') === "false";
+                if (!show) {
+                    extraClass = 'collapsed';
+                }
             } else if (hasClass(e, "non-exhaustive")) {
                 otherMessage = '&nbsp;This&nbsp;';
                 if (hasClass(e, "non-exhaustive-struct")) {
@@ -2071,8 +2136,8 @@
                 extraClass = "marg-left";
             }
 
-            e.parentNode.insertBefore(createToggle(otherMessage, fontSize, extraClass), e);
-            if (otherMessage && getCurrentValue('rustdoc-item-declarations') !== "false") {
+            e.parentNode.insertBefore(createToggle(otherMessage, fontSize, extraClass, show), e);
+            if (otherMessage && show) {
                 collapseDocs(e.previousSibling.childNodes[0], "toggle");
             }
         }
@@ -2208,6 +2273,10 @@
     };
 
     autoCollapse(getPageId(), getCurrentValue("rustdoc-collapse") === "true");
+
+    if (window.location.hash && window.location.hash.length > 0) {
+        expandSection(window.location.hash.replace(/^#/, ''));
+    }
 }());
 
 // Sets the focus on the search bar at the top of the page

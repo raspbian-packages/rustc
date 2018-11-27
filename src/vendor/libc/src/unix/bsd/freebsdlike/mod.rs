@@ -180,6 +180,14 @@ s! {
         pub ipi6_addr: ::in6_addr,
         pub ipi6_ifindex: ::c_uint,
     }
+
+    pub struct arphdr {
+        pub ar_hrd: u16,
+        pub ar_pro: u16,
+        pub ar_hln: u8,
+        pub ar_pln: u8,
+        pub ar_op: u16,
+    }
 }
 
 pub const AIO_LISTIO_MAX: ::c_int = 16;
@@ -1169,8 +1177,6 @@ extern {
     pub fn getpriority(which: ::c_int, who: ::c_int) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::c_int, prio: ::c_int) -> ::c_int;
     pub fn rtprio(function: ::c_int, pid: ::pid_t, rtp: *mut rtprio) -> ::c_int;
-
-    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
 
     #[cfg_attr(target_os = "freebsd", link_name = "mknodat@FBSD_1.1")]
     pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,

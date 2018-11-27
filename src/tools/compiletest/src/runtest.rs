@@ -1126,6 +1126,7 @@ impl<'test> TestCx<'test> {
     }
 
     fn check_error_patterns(&self, output_to_check: &str, proc_res: &ProcRes) {
+        debug!("check_error_patterns");
         if self.props.error_patterns.is_empty() {
             if self.props.compile_pass {
                 return;
@@ -1136,26 +1137,21 @@ impl<'test> TestCx<'test> {
                 ));
             }
         }
-        let mut next_err_idx = 0;
-        let mut next_err_pat = self.props.error_patterns[next_err_idx].trim();
-        let mut done = false;
-        for line in output_to_check.lines() {
-            if line.contains(next_err_pat) {
-                debug!("found error pattern {}", next_err_pat);
-                next_err_idx += 1;
-                if next_err_idx == self.props.error_patterns.len() {
-                    debug!("found all error patterns");
-                    done = true;
-                    break;
-                }
-                next_err_pat = self.props.error_patterns[next_err_idx].trim();
+
+        let mut missing_patterns: Vec<String> = Vec::new();
+
+        for pattern in &self.props.error_patterns {
+            if output_to_check.contains(pattern.trim()) {
+                debug!("found error pattern {}", pattern);
+            } else {
+                missing_patterns.push(pattern.to_string());
             }
         }
-        if done {
+
+        if missing_patterns.is_empty() {
             return;
         }
 
-        let missing_patterns = &self.props.error_patterns[next_err_idx..];
         if missing_patterns.len() == 1 {
             self.fatal_proc_rec(
                 &format!("error pattern '{}' not found!", missing_patterns[0]),
@@ -1163,7 +1159,7 @@ impl<'test> TestCx<'test> {
             );
         } else {
             for pattern in missing_patterns {
-                self.error(&format!("error pattern '{}' not found!", *pattern));
+                self.error(&format!("error pattern '{}' not found!", pattern));
             }
             self.fatal_proc_rec("multiple error patterns not found", proc_res);
         }
@@ -1186,6 +1182,8 @@ impl<'test> TestCx<'test> {
     }
 
     fn check_expected_errors(&self, expected_errors: Vec<errors::Error>, proc_res: &ProcRes) {
+        debug!("check_expected_errors: expected_errors={:?} proc_res.status={:?}",
+               expected_errors, proc_res.status);
         if proc_res.status.success()
             && expected_errors
                 .iter()
@@ -2211,12 +2209,12 @@ impl<'test> TestCx<'test> {
             .stdout
             .lines()
             .filter(|line| line.starts_with(PREFIX))
-            .map(str_to_mono_item)
+            .map(|line| str_to_mono_item(line, true))
             .collect();
 
         let expected: Vec<MonoItem> = errors::load_errors(&self.testpaths.file, None)
             .iter()
-            .map(|e| str_to_mono_item(&e.msg[..]))
+            .map(|e| str_to_mono_item(&e.msg[..], false))
             .collect();
 
         let mut missing = Vec::new();
@@ -2301,14 +2299,14 @@ impl<'test> TestCx<'test> {
         }
 
         // [MONO_ITEM] name [@@ (cgu)+]
-        fn str_to_mono_item(s: &str) -> MonoItem {
+        fn str_to_mono_item(s: &str, cgu_has_crate_disambiguator: bool) -> MonoItem {
             let s = if s.starts_with(PREFIX) {
                 (&s[PREFIX.len()..]).trim()
             } else {
                 s.trim()
             };
 
-            let full_string = format!("{}{}", PREFIX, s.trim().to_owned());
+            let full_string = format!("{}{}", PREFIX, s);
 
             let parts: Vec<&str> = s
                 .split(CGU_MARKER)
@@ -2325,7 +2323,13 @@ impl<'test> TestCx<'test> {
                     .split(' ')
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
+                    .map(|s| {
+                        if cgu_has_crate_disambiguator {
+                            remove_crate_disambiguator_from_cgu(s)
+                        } else {
+                            s.to_string()
+                        }
+                    })
                     .collect()
             } else {
                 HashSet::new()
@@ -2349,6 +2353,32 @@ impl<'test> TestCx<'test> {
             }
 
             string
+        }
+
+        // Given a cgu-name-prefix of the form <crate-name>.<crate-disambiguator> or
+        // the form <crate-name1>.<crate-disambiguator1>-in-<crate-name2>.<crate-disambiguator2>,
+        // remove all crate-disambiguators.
+        fn remove_crate_disambiguator_from_cgu(cgu: &str) -> String {
+            lazy_static! {
+                static ref RE: Regex = Regex::new(
+                    r"^[^\.]+(?P<d1>\.[[:alnum:]]+)(-in-[^\.]+(?P<d2>\.[[:alnum:]]+))?"
+                ).unwrap();
+            }
+
+            let captures = RE.captures(cgu).unwrap_or_else(|| {
+                panic!("invalid cgu name encountered: {}", cgu)
+            });
+
+            let mut new_name = cgu.to_owned();
+
+            if let Some(d2) = captures.name("d2") {
+                new_name.replace_range(d2.start() .. d2.end(), "");
+            }
+
+            let d1 = captures.name("d1").unwrap();
+            new_name.replace_range(d1.start() .. d1.end(), "");
+
+            new_name
         }
     }
 
@@ -2624,7 +2654,11 @@ impl<'test> TestCx<'test> {
             let suggestions = get_suggestions_from_json(
                 &proc_res.stderr,
                 &HashSet::new(),
-                Filter::Everything,
+                if self.props.rustfix_only_machine_applicable {
+                    Filter::MachineApplicableOnly
+                } else {
+                    Filter::Everything
+                },
             ).unwrap();
             let fixed_code = apply_suggestions(&unfixed_code, &suggestions).expect(&format!(
                 "failed to apply suggestions for {:?} with rustfix",
@@ -2664,12 +2698,17 @@ impl<'test> TestCx<'test> {
                 self.fatal_proc_rec("test run failed!", &proc_res);
             }
         }
+
+        debug!("run_ui_test: explicit={:?} config.compare_mode={:?} expected_errors={:?} \
+               proc_res.status={:?} props.error_patterns={:?}",
+               explicit, self.config.compare_mode, expected_errors, proc_res.status,
+               self.props.error_patterns);
         if !explicit && self.config.compare_mode.is_none() {
-            if !expected_errors.is_empty() || !proc_res.status.success() {
-                // "// error-pattern" comments
-                self.check_expected_errors(expected_errors, &proc_res);
-            } else if !self.props.error_patterns.is_empty() || !proc_res.status.success() {
+            if !expected_errors.is_empty() && !proc_res.status.success() {
                 // "//~ERROR comments"
+                self.check_expected_errors(expected_errors, &proc_res);
+            } else if !self.props.error_patterns.is_empty() && !proc_res.status.success() {
+                // "// error-pattern" comments
                 self.check_error_patterns(&proc_res.stderr, &proc_res);
             }
         }
@@ -2686,7 +2725,7 @@ impl<'test> TestCx<'test> {
             if !res.status.success() {
                 self.fatal_proc_rec("failed to compile fixed code", &res);
             }
-            if !res.stderr.is_empty() {
+            if !res.stderr.is_empty() && !self.props.rustfix_only_machine_applicable {
                 self.fatal_proc_rec("fixed code is still producing diagnostics", &res);
             }
         }
@@ -2911,6 +2950,20 @@ impl<'test> TestCx<'test> {
         };
         normalized = normalized.replace(&src_dir_str, "$SRC_DIR");
 
+        // Paths into the build directory
+        let test_build_dir = &self.config.build_base;
+        let parent_build_dir = test_build_dir.parent().unwrap().parent().unwrap().parent().unwrap();
+
+        // eg. /home/user/rust/build/x86_64-unknown-linux-gnu/test/ui
+        normalized = normalized.replace(test_build_dir.to_str().unwrap(), "$TEST_BUILD_DIR");
+        // eg. /home/user/rust/build
+        normalized = normalized.replace(&parent_build_dir.to_str().unwrap(), "$BUILD_DIR");
+
+        // Paths into lib directory.
+        let mut lib_dir = parent_build_dir.parent().unwrap().to_path_buf();
+        lib_dir.push("lib");
+        normalized = normalized.replace(&lib_dir.to_str().unwrap(), "$LIB_DIR");
+
         if json {
             // escaped newlines in json strings should be readable
             // in the stderr files. There's no point int being correct,
@@ -2918,6 +2971,13 @@ impl<'test> TestCx<'test> {
             // Thus we just turn escaped newlines back into newlines.
             normalized = normalized.replace("\\n", "\n");
         }
+
+        // If there are `$SRC_DIR` normalizations with line and column numbers, then replace them
+        // with placeholders as we do not want tests needing updated when compiler source code
+        // changes.
+        // eg. $SRC_DIR/libcore/mem.rs:323:14 becomes $SRC_DIR/libcore/mem.rs:LL:COL
+        normalized = Regex::new("SRC_DIR(.+):\\d+:\\d+").unwrap()
+            .replace_all(&normalized, "SRC_DIR$1:LL:COL").into_owned();
 
         normalized = normalized.replace("\\\\", "\\") // denormalize for paths on windows
               .replace("\\", "/") // normalize for paths on windows

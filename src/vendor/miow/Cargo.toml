@@ -12,7 +12,7 @@
 
 [package]
 name = "miow"
-version = "0.3.1"
+version = "0.3.3"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "A zero overhead I/O library for Windows, focusing on IOCP and Async I/O\nabstractions.\n"
 homepage = "https://github.com/alexcrichton/miow"
@@ -25,7 +25,7 @@ repository = "https://github.com/alexcrichton/miow"
 version = "0.3"
 
 [dependencies.winapi]
-version = "0.3.2"
-features = ["std", "fileapi", "handleapi", "ioapiset", "minwindef", "namedpipeapi", "ntdef", "winerror", "winsock2", "ws2def", "ws2ipdef"]
+version = "0.3.3"
+features = ["std", "fileapi", "handleapi", "ioapiset", "minwindef", "namedpipeapi", "ntdef", "synchapi", "winerror", "winsock2", "ws2def", "ws2ipdef"]
 [dev-dependencies.rand]
 version = "0.4"

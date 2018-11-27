@@ -177,12 +177,34 @@
 //! }
 //! ```
 //! 
+//! ## Specifying defaults for environment variables
+//! 
+//! `env_logger` can read configuration from environment variables.
+//! If these variables aren't present, the default value to use can be tweaked with the [`Env`] type.
+//! The following example defaults to log `warn` and above if the `RUST_LOG` environment variable
+//! isn't set:
+//! 
+//! ```
+//! #[macro_use] extern crate log;
+//! extern crate env_logger;
+//!
+//! use log::Level;
+//!
+//! fn main() {
+//!     let env = env_logger::Env::default()
+//!         .filter_or(env_logger::DEFAULT_FILTER_ENV, "warn");
+//! 
+//!     env_logger::Builder::from_env(env).init();
+//! }
+//! ```
+//! 
 //! [log-crate-url]: https://docs.rs/log/
 //! [`Builder`]: struct.Builder.html
+//! [`Env`]: struct.Env.html
 
 #![doc(html_logo_url = "http://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
        html_favicon_url = "http://www.rust-lang.org/favicon.ico",
-       html_root_url = "https://docs.rs/env_logger/0.5.10")]
+       html_root_url = "https://docs.rs/env_logger/0.5.12")]
 #![cfg_attr(test, deny(warnings))]
 
 // When compiled for the rustc compiler itself we want to make sure that this is
@@ -268,6 +290,7 @@ struct Format {
     default_format_timestamp: bool,
     default_format_module_path: bool,
     default_format_level: bool,
+    default_format_timestamp_nanos: bool,
     custom_format: Option<Box<Fn(&mut Formatter, &Record) -> io::Result<()> + Sync + Send>>,
 }
 
@@ -277,6 +300,7 @@ impl Default for Format {
             default_format_timestamp: true,
             default_format_module_path: true,
             default_format_level: true,
+            default_format_timestamp_nanos: false,
             custom_format: None,
         }
     }
@@ -312,8 +336,13 @@ impl Format {
                 };
 
                 let write_ts = if self.default_format_timestamp {
-                    let ts = buf.timestamp();
-                    write!(buf, "{}: ", ts)
+                    if self.default_format_timestamp_nanos {
+                      let ts_nanos = buf.precise_timestamp();
+                      write!(buf, "{}: ", ts_nanos) 
+                    } else {
+                      let ts = buf.timestamp();
+                      write!(buf, "{}: ", ts)      
+                    }
                 } else {
                     Ok(())
                 };
@@ -526,6 +555,12 @@ impl Builder {
     /// Whether or not to write the timestamp in the default format.
     pub fn default_format_timestamp(&mut self, write: bool) -> &mut Self {
         self.format.default_format_timestamp = write;
+        self
+    }
+
+    /// Whether or not to write the timestamp with nanos.
+    pub fn default_format_timestamp_nanos(&mut self, write: bool) -> &mut Self {
+        self.format.default_format_timestamp_nanos = write;
         self
     }
 

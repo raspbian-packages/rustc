@@ -288,6 +288,8 @@
        html_root_url = "https://doc.rust-lang.org/nightly/",
        test(attr(allow(unused_variables), deny(warnings))))]
 
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(str_escape)]
 
 use self::LabelText::*;
@@ -419,7 +421,8 @@ impl<'a> Id<'a> {
         if !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' ) {
             return Err(());
         }
-        return Ok(Id { name: name });
+
+        Ok(Id { name })
     }
 
     pub fn as_slice(&'a self) -> &'a str {
@@ -532,10 +535,10 @@ impl<'a> LabelText<'a> {
     /// Renders text as string suitable for a label in a .dot file.
     /// This includes quotes or suitable delimiters.
     pub fn to_dot_string(&self) -> String {
-        match self {
-            &LabelStr(ref s) => format!("\"{}\"", s.escape_default()),
-            &EscStr(ref s) => format!("\"{}\"", LabelText::escape_str(&s)),
-            &HtmlStr(ref s) => format!("<{}>", s),
+        match *self {
+            LabelStr(ref s) => format!("\"{}\"", s.escape_default()),
+            EscStr(ref s) => format!("\"{}\"", LabelText::escape_str(&s)),
+            HtmlStr(ref s) => format!("<{}>", s),
         }
     }
 

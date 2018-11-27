@@ -143,7 +143,6 @@ fn predefine_static<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
     }
 
     cx.instances.borrow_mut().insert(instance, g);
-    cx.statics.borrow_mut().insert(g, def_id);
 }
 
 fn predefine_fn<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
@@ -181,9 +180,9 @@ fn predefine_fn<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
 
     debug!("predefine_fn: mono_ty = {:?} instance = {:?}", mono_ty, instance);
     if instance.def.is_inline(cx.tcx) {
-        attributes::inline(lldecl, attributes::InlineAttr::Hint);
+        attributes::inline(cx, lldecl, attributes::InlineAttr::Hint);
     }
-    attributes::from_fn_attrs(cx, lldecl, instance.def.def_id());
+    attributes::from_fn_attrs(cx, lldecl, Some(instance.def.def_id()));
 
     cx.instances.borrow_mut().insert(instance, lldecl);
 }

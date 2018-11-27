@@ -15,7 +15,9 @@ target = ["DEB_TARGET_RUST_TYPE"]
 # originally needed to work around #45317 but no longer necessary
 # currently we have to omit it because it breaks #48319
 
-docs = BUILD_DOCS
+# this might get changed later by override_dh_auto_configure-indep
+# we do it this way to avoid spurious rebuilds
+docs = false
 
 [install]
 prefix = "/usr"

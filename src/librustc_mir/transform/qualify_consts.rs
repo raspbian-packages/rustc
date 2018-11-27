@@ -14,9 +14,9 @@
 //! The Qualif flags below can be used to also provide better
 //! diagnostics as to why a constant rvalue wasn't promoted.
 
-use rustc_data_structures::bitvec::BitVector;
-use rustc_data_structures::indexed_set::IdxSetBuf;
-use rustc_data_structures::indexed_vec::{IndexVec, Idx};
+use rustc_data_structures::bitvec::BitArray;
+use rustc_data_structures::indexed_set::IdxSet;
+use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_data_structures::fx::FxHashSet;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
@@ -116,7 +116,7 @@ struct Qualifier<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
     param_env: ty::ParamEnv<'tcx>,
     local_qualif: IndexVec<Local, Option<Qualif>>,
     qualif: Qualif,
-    const_fn_arg_vars: BitVector<Local>,
+    const_fn_arg_vars: BitArray<Local>,
     temp_promotion_state: IndexVec<Local, TempState>,
     promotion_candidates: Vec<Candidate>
 }
@@ -151,7 +151,7 @@ impl<'a, 'tcx> Qualifier<'a, 'tcx, 'tcx> {
             param_env,
             local_qualif,
             qualif: Qualif::empty(),
-            const_fn_arg_vars: BitVector::new(mir.local_decls.len()),
+            const_fn_arg_vars: BitArray::new(mir.local_decls.len()),
             temp_promotion_state: temps,
             promotion_candidates: vec![]
         }
@@ -280,12 +280,12 @@ impl<'a, 'tcx> Qualifier<'a, 'tcx, 'tcx> {
     }
 
     /// Qualify a whole const, static initializer or const fn.
-    fn qualify_const(&mut self) -> (Qualif, Lrc<IdxSetBuf<Local>>) {
+    fn qualify_const(&mut self) -> (Qualif, Lrc<IdxSet<Local>>) {
         debug!("qualifying {} {:?}", self.mode, self.def_id);
 
         let mir = self.mir;
 
-        let mut seen_blocks = BitVector::new(mir.basic_blocks().len());
+        let mut seen_blocks = BitArray::new(mir.basic_blocks().len());
         let mut bb = START_BLOCK;
         loop {
             seen_blocks.insert(bb.index());
@@ -383,7 +383,7 @@ impl<'a, 'tcx> Qualifier<'a, 'tcx, 'tcx> {
 
 
         // Collect all the temps we need to promote.
-        let mut promoted_temps = IdxSetBuf::new_empty(self.temp_promotion_state.len());
+        let mut promoted_temps = IdxSet::new_empty(self.temp_promotion_state.len());
 
         for candidate in &self.promotion_candidates {
             match *candidate {
@@ -400,6 +400,11 @@ impl<'a, 'tcx> Qualifier<'a, 'tcx, 'tcx> {
         }
 
         (self.qualif, Lrc::new(promoted_temps))
+    }
+
+    fn is_const_panic_fn(&self, def_id: DefId) -> bool {
+        Some(def_id) == self.tcx.lang_items().panic_fn() ||
+        Some(def_id) == self.tcx.lang_items().begin_panic_fn()
     }
 }
 
@@ -492,41 +497,46 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                     this.super_place(place, context, location);
                     match proj.elem {
                         ProjectionElem::Deref => {
-                            this.add(Qualif::NOT_CONST);
-
-                            let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
-                            if let ty::TyRawPtr(_) = base_ty.sty {
-                                if this.mode != Mode::Fn {
-                                    let mut err = struct_span_err!(
-                                        this.tcx.sess,
-                                        this.span,
-                                        E0396,
-                                        "raw pointers cannot be dereferenced in {}s",
-                                        this.mode
-                                    );
-                                    err.span_label(this.span,
-                                                   "dereference of raw pointer in constant");
-                                    if this.tcx.sess.teach(&err.get_code().unwrap()) {
-                                        err.note(
-                                            "The value behind a raw pointer can't be determined \
-                                             at compile-time (or even link-time), which means it \
-                                             can't be used in a constant expression."
+                            if let Mode::Fn = this.mode {
+                                this.add(Qualif::NOT_CONST);
+                            } else {
+                                let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
+                                if let ty::RawPtr(_) = base_ty.sty {
+                                    if !this.tcx.sess.features_untracked().const_raw_ptr_deref {
+                                        emit_feature_err(
+                                            &this.tcx.sess.parse_sess, "const_raw_ptr_deref",
+                                            this.span, GateIssue::Language,
+                                            &format!(
+                                                "dereferencing raw pointers in {}s is unstable",
+                                                this.mode,
+                                            ),
                                         );
-                                        err.help("A possible fix is to dereference your pointer \
-                                                  at some point in run-time.");
                                     }
-                                    err.emit();
                                 }
                             }
                         }
 
                         ProjectionElem::Field(..) |
                         ProjectionElem::Index(_) => {
-                            if this.mode == Mode::Fn {
-                                let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
-                                if let Some(def) = base_ty.ty_adt_def() {
-                                    if def.is_union() {
-                                        this.not_const();
+                            let base_ty = proj.base.ty(this.mir, this.tcx).to_ty(this.tcx);
+                            if let Some(def) = base_ty.ty_adt_def() {
+                                if def.is_union() {
+                                    match this.mode {
+                                        Mode::Fn => this.not_const(),
+                                        Mode::ConstFn => {
+                                            if !this.tcx.sess.features_untracked().const_fn_union {
+                                                emit_feature_err(
+                                                    &this.tcx.sess.parse_sess, "const_fn_union",
+                                                    this.span, GateIssue::Language,
+                                                    "unions in const fn are unstable",
+                                                );
+                                            }
+                                        },
+
+                                        | Mode::Static
+                                        | Mode::StaticMut
+                                        | Mode::Const
+                                        => {},
                                     }
                                 }
                             }
@@ -587,7 +597,7 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
             if let Place::Projection(ref proj) = *place {
                 if let ProjectionElem::Deref = proj.elem {
                     let base_ty = proj.base.ty(self.mir, self.tcx).to_ty(self.tcx);
-                    if let ty::TyRef(..) = base_ty.sty {
+                    if let ty::Ref(..) = base_ty.sty {
                         is_reborrow = true;
                     }
                 }
@@ -634,10 +644,10 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                     if self.mode == Mode::StaticMut {
                         // Inside a `static mut`, &mut [...] is also allowed.
                         match ty.sty {
-                            ty::TyArray(..) | ty::TySlice(_) => forbidden_mut = false,
+                            ty::Array(..) | ty::Slice(_) => forbidden_mut = false,
                             _ => {}
                         }
-                    } else if let ty::TyArray(_, len) = ty.sty {
+                    } else if let ty::Array(_, len) = ty.sty {
                         // FIXME(eddyb) the `self.mode == Mode::Fn` condition
                         // seems unnecessary, given that this is merely a ZST.
                         if len.unwrap_usize(self.tcx) == 0 && self.mode == Mode::Fn {
@@ -723,44 +733,17 @@ impl<'a, 'tcx> Visitor<'tcx> for Qualifier<'a, 'tcx, 'tcx> {
                 match (cast_in, cast_out) {
                     (CastTy::Ptr(_), CastTy::Int(_)) |
                     (CastTy::FnPtr, CastTy::Int(_)) => {
-                        self.add(Qualif::NOT_CONST);
-                        if self.mode != Mode::Fn {
-                            let mut err = struct_span_err!(
-                                self.tcx.sess,
-                                self.span,
-                                E0018,
-                                "raw pointers cannot be cast to integers in {}s",
-                                self.mode
+                        if let Mode::Fn = self.mode {
+                            self.add(Qualif::NOT_CONST);
+                        } else if !self.tcx.sess.features_untracked().const_raw_ptr_to_usize_cast {
+                            emit_feature_err(
+                                &self.tcx.sess.parse_sess, "const_raw_ptr_to_usize_cast",
+                                self.span, GateIssue::Language,
+                                &format!(
+                                    "casting pointers to integers in {}s is unstable",
+                                    self.mode,
+                                ),
                             );
-                            if self.tcx.sess.teach(&err.get_code().unwrap()) {
-                                err.note("\
-The value of static and constant integers must be known at compile time. You can't cast a pointer \
-to an integer because the address of a pointer can vary.
-
-For example, if you write:
-
-```
-static MY_STATIC: u32 = 42;
-static MY_STATIC_ADDR: usize = &MY_STATIC as *const _ as usize;
-static WHAT: usize = (MY_STATIC_ADDR^17) + MY_STATIC_ADDR;
-```
-
-Then `MY_STATIC_ADDR` would contain the address of `MY_STATIC`. However, the address can change \
-when the program is linked, as well as change between different executions due to ASLR, and many \
-linkers would not be able to calculate the value of `WHAT`.
-
-On the other hand, static and constant pointers can point either to a known numeric address or to \
-the address of a symbol.
-
-```
-static MY_STATIC: u32 = 42;
-static MY_STATIC_ADDR: &'static u32 = &MY_STATIC;
-const CONST_ADDR: *const u8 = 0x5f3759df as *const u8;
-```
-
-This does not pose a problem by itself because they can't be accessed directly.");
-                            }
-                            err.emit();
                         }
                     }
                     _ => {}
@@ -768,22 +751,22 @@ This does not pose a problem by itself because they can't be accessed directly."
             }
 
             Rvalue::BinaryOp(op, ref lhs, _) => {
-                if let ty::TyRawPtr(_) = lhs.ty(self.mir, self.tcx).sty {
+                if let ty::RawPtr(_) = lhs.ty(self.mir, self.tcx).sty {
                     assert!(op == BinOp::Eq || op == BinOp::Ne ||
                             op == BinOp::Le || op == BinOp::Lt ||
                             op == BinOp::Ge || op == BinOp::Gt ||
                             op == BinOp::Offset);
 
-                    self.add(Qualif::NOT_CONST);
-                    if self.mode != Mode::Fn {
-                        struct_span_err!(
-                            self.tcx.sess, self.span, E0395,
-                            "raw pointers cannot be compared in {}s",
-                            self.mode)
-                        .span_label(
+                    if let Mode::Fn = self.mode {
+                        self.add(Qualif::NOT_CONST);
+                    } else if !self.tcx.sess.features_untracked().const_compare_raw_pointers {
+                        emit_feature_err(
+                            &self.tcx.sess.parse_sess,
+                            "const_compare_raw_pointers",
                             self.span,
-                            "comparing raw pointers in static")
-                        .emit();
+                            GateIssue::Language,
+                            &format!("comparing raw pointers inside {}", self.mode),
+                        );
                     }
                 }
             }
@@ -832,7 +815,7 @@ This does not pose a problem by itself because they can't be accessed directly."
             let fn_ty = func.ty(self.mir, self.tcx);
             let mut callee_def_id = None;
             let (mut is_shuffle, mut is_const_fn) = (false, None);
-            if let ty::TyFnDef(def_id, _) = fn_ty.sty {
+            if let ty::FnDef(def_id, _) = fn_ty.sty {
                 callee_def_id = Some(def_id);
                 match self.tcx.fn_sig(def_id).abi() {
                     Abi::RustIntrinsic |
@@ -843,11 +826,32 @@ This does not pose a problem by itself because they can't be accessed directly."
                             | "min_align_of"
                             | "type_id"
                             | "bswap"
+                            | "bitreverse"
                             | "ctpop"
                             | "cttz"
                             | "cttz_nonzero"
                             | "ctlz"
-                            | "ctlz_nonzero" => is_const_fn = Some(def_id),
+                            | "ctlz_nonzero"
+                            | "overflowing_add"
+                            | "overflowing_sub"
+                            | "overflowing_mul"
+                            | "unchecked_shl"
+                            | "unchecked_shr"
+                            | "add_with_overflow"
+                            | "sub_with_overflow"
+                            | "mul_with_overflow" => is_const_fn = Some(def_id),
+                            "transmute" => {
+                                if self.mode != Mode::Fn {
+                                    is_const_fn = Some(def_id);
+                                    if !self.tcx.sess.features_untracked().const_transmute {
+                                        emit_feature_err(
+                                            &self.tcx.sess.parse_sess, "const_transmute",
+                                            self.span, GateIssue::Language,
+                                            &format!("The use of std::mem::transmute() \
+                                            is gated in {}s", self.mode));
+                                    }
+                                }
+                            }
 
                             name if name.starts_with("simd_shuffle") => {
                                 is_shuffle = true;
@@ -857,7 +861,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                         }
                     }
                     _ => {
-                        if self.tcx.is_const_fn(def_id) {
+                        if self.tcx.is_const_fn(def_id) || self.is_const_panic_fn(def_id) {
                             is_const_fn = Some(def_id);
                         }
                     }
@@ -903,11 +907,26 @@ This does not pose a problem by itself because they can't be accessed directly."
 
             // Const fn calls.
             if let Some(def_id) = is_const_fn {
+                // check the const_panic feature gate or
                 // find corresponding rustc_const_unstable feature
-                if let Some(&attr::Stability {
-                    rustc_const_unstable: Some(attr::RustcConstUnstable {
-                        feature: ref feature_name
-                    }),
+                // FIXME: cannot allow this inside `allow_internal_unstable` because that would make
+                // `panic!` insta stable in constants, since the macro is marked with the attr
+                if self.is_const_panic_fn(def_id) {
+                    if self.mode == Mode::Fn {
+                        // never promote panics
+                        self.qualif = Qualif::NOT_CONST;
+                    } else if !self.tcx.sess.features_untracked().const_panic {
+                        // don't allow panics in constants without the feature gate
+                        emit_feature_err(
+                            &self.tcx.sess.parse_sess,
+                            "const_panic",
+                            self.span,
+                            GateIssue::Language,
+                            &format!("panicking in {}s is unstable", self.mode),
+                        );
+                    }
+                } else if let Some(&attr::Stability {
+                    const_stability: Some(ref feature_name),
                 .. }) = self.tcx.lookup_stability(def_id) {
                     if
                         // feature-gate is not enabled,
@@ -1079,7 +1098,7 @@ This does not pose a problem by itself because they can't be accessed directly."
                 StatementKind::InlineAsm {..} |
                 StatementKind::EndRegion(_) |
                 StatementKind::Validate(..) |
-                StatementKind::UserAssertTy(..) |
+                StatementKind::AscribeUserType(..) |
                 StatementKind::Nop => {}
             }
         });
@@ -1102,7 +1121,7 @@ pub fn provide(providers: &mut Providers) {
 
 fn mir_const_qualif<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                               def_id: DefId)
-                              -> (u8, Lrc<IdxSetBuf<Local>>) {
+                              -> (u8, Lrc<IdxSet<Local>>) {
     // NB: This `borrow()` is guaranteed to be valid (i.e., the value
     // cannot yet be stolen), because `mir_validated()`, which steals
     // from `mir_const(), forces this query to execute before
@@ -1111,7 +1130,7 @@ fn mir_const_qualif<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     if mir.return_ty().references_error() {
         tcx.sess.delay_span_bug(mir.span, "mir_const_qualif: Mir had errors");
-        return (Qualif::NOT_CONST.bits(), Lrc::new(IdxSetBuf::new_empty(0)));
+        return (Qualif::NOT_CONST.bits(), Lrc::new(IdxSet::new_empty(0)));
     }
 
     let mut qualifier = Qualifier::new(tcx, def_id, mir, Mode::Const);
@@ -1161,8 +1180,20 @@ impl MirPass for QualifyAndPromoteConstants {
             let (temps, candidates) = {
                 let mut qualifier = Qualifier::new(tcx, def_id, mir, mode);
                 if mode == Mode::ConstFn {
-                    // Enforce a constant-like CFG for `const fn`.
-                    qualifier.qualify_const();
+                    if tcx.is_min_const_fn(def_id) {
+                        // enforce `min_const_fn` for stable const fns
+                        use super::qualify_min_const_fn::is_min_const_fn;
+                        if let Err((span, err)) = is_min_const_fn(tcx, def_id, mir) {
+                            tcx.sess.span_err(span, &err);
+                        } else {
+                            // this should not produce any errors, but better safe than sorry
+                            // FIXME(#53819)
+                            qualifier.qualify_const();
+                        }
+                    } else {
+                        // Enforce a constant-like CFG for `const fn`.
+                        qualifier.qualify_const();
+                    }
                 } else {
                     while let Some((bb, data)) = qualifier.rpo.next() {
                         qualifier.visit_basic_block_data(bb, data);

@@ -11,13 +11,14 @@
 // Type substitutions.
 
 use hir::def_id::DefId;
-use ty::{self, Lift, Slice, Ty, TyCtxt};
+use infer::canonical::Canonical;
+use ty::{self, CanonicalVar, Lift, List, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
 
 use serialize::{self, Encodable, Encoder, Decodable, Decoder};
 use syntax_pos::{Span, DUMMY_SP};
-use rustc_data_structures::accumulate_vec::AccumulateVec;
-use rustc_data_structures::array_vec::ArrayVec;
+use rustc_data_structures::indexed_vec::Idx;
+use smallvec::SmallVec;
 
 use core::intrinsics;
 use std::cmp::Ordering;
@@ -41,7 +42,7 @@ const TAG_MASK: usize = 0b11;
 const TYPE_TAG: usize = 0b00;
 const REGION_TAG: usize = 0b01;
 
-#[derive(Debug, RustcEncodable, RustcDecodable)]
+#[derive(Debug, RustcEncodable, RustcDecodable, PartialEq, Eq, PartialOrd, Ord)]
 pub enum UnpackedKind<'tcx> {
     Lifetime(ty::Region<'tcx>),
     Type(Ty<'tcx>),
@@ -73,17 +74,7 @@ impl<'tcx> UnpackedKind<'tcx> {
 
 impl<'tcx> Ord for Kind<'tcx> {
     fn cmp(&self, other: &Kind) -> Ordering {
-        match (self.unpack(), other.unpack()) {
-            (UnpackedKind::Type(_), UnpackedKind::Lifetime(_)) => Ordering::Greater,
-
-            (UnpackedKind::Type(ty1), UnpackedKind::Type(ty2)) => {
-                ty1.sty.cmp(&ty2.sty)
-            }
-
-            (UnpackedKind::Lifetime(reg1), UnpackedKind::Lifetime(reg2)) => reg1.cmp(reg2),
-
-            (UnpackedKind::Lifetime(_), UnpackedKind::Type(_))  => Ordering::Less,
-        }
+        self.unpack().cmp(&other.unpack())
     }
 }
 
@@ -177,7 +168,7 @@ impl<'tcx> Decodable for Kind<'tcx> {
 }
 
 /// A substitution mapping generic parameters to new values.
-pub type Substs<'tcx> = Slice<Kind<'tcx>>;
+pub type Substs<'tcx> = List<Kind<'tcx>>;
 
 impl<'a, 'gcx, 'tcx> Substs<'tcx> {
     /// Creates a Substs that maps each generic parameter to itself.
@@ -201,11 +192,7 @@ impl<'a, 'gcx, 'tcx> Substs<'tcx> {
     {
         let defs = tcx.generics_of(def_id);
         let count = defs.count();
-        let mut substs = if count <= 8 {
-            AccumulateVec::Array(ArrayVec::new())
-        } else {
-            AccumulateVec::Heap(Vec::with_capacity(count))
-        };
+        let mut substs = SmallVec::with_capacity(count);
         Substs::fill_item(&mut substs, tcx, defs, &mut mk_kind);
         tcx.intern_substs(&substs)
     }
@@ -225,13 +212,12 @@ impl<'a, 'gcx, 'tcx> Substs<'tcx> {
         })
     }
 
-    fn fill_item<F>(substs: &mut AccumulateVec<[Kind<'tcx>; 8]>,
+    fn fill_item<F>(substs: &mut SmallVec<[Kind<'tcx>; 8]>,
                     tcx: TyCtxt<'a, 'gcx, 'tcx>,
                     defs: &ty::Generics,
                     mk_kind: &mut F)
     where F: FnMut(&ty::GenericParamDef, &[Kind<'tcx>]) -> Kind<'tcx>
     {
-
         if let Some(def_id) = defs.parent {
             let parent_defs = tcx.generics_of(def_id);
             Substs::fill_item(substs, tcx, parent_defs, mk_kind);
@@ -239,7 +225,7 @@ impl<'a, 'gcx, 'tcx> Substs<'tcx> {
         Substs::fill_single(substs, defs, mk_kind)
     }
 
-    fn fill_single<F>(substs: &mut AccumulateVec<[Kind<'tcx>; 8]>,
+    fn fill_single<F>(substs: &mut SmallVec<[Kind<'tcx>; 8]>,
                       defs: &ty::Generics,
                       mk_kind: &mut F)
     where F: FnMut(&ty::GenericParamDef, &[Kind<'tcx>]) -> Kind<'tcx>
@@ -247,10 +233,7 @@ impl<'a, 'gcx, 'tcx> Substs<'tcx> {
         for param in &defs.params {
             let kind = mk_kind(param, substs);
             assert_eq!(param.index as usize, substs.len());
-            match *substs {
-                AccumulateVec::Array(ref mut arr) => arr.push(kind),
-                AccumulateVec::Heap(ref mut vec) => vec.push(kind),
-            }
+            substs.push(kind);
         }
     }
 
@@ -324,7 +307,7 @@ impl<'a, 'gcx, 'tcx> Substs<'tcx> {
 
 impl<'tcx> TypeFoldable<'tcx> for &'tcx Substs<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
-        let params: AccumulateVec<[_; 8]> = self.iter().map(|k| k.fold_with(folder)).collect();
+        let params: SmallVec<[_; 8]> = self.iter().map(|k| k.fold_with(folder)).collect();
 
         // If folding doesn't change the substs, it's faster to avoid
         // calling `mk_substs` and instead reuse the existing substs.
@@ -337,6 +320,33 @@ impl<'tcx> TypeFoldable<'tcx> for &'tcx Substs<'tcx> {
 
     fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
         self.iter().any(|t| t.visit_with(visitor))
+    }
+}
+
+pub type CanonicalSubsts<'gcx> = Canonical<'gcx, &'gcx Substs<'gcx>>;
+
+impl<'gcx> CanonicalSubsts<'gcx> {
+    /// True if this represents a substitution like
+    ///
+    /// ```text
+    /// [?0, ?1, ?2]
+    /// ```
+    ///
+    /// i.e., each thing is mapped to a canonical variable with the same index.
+    pub fn is_identity(&self) -> bool {
+        self.value.iter().zip(CanonicalVar::new(0)..).all(|(kind, cvar)| {
+            match kind.unpack() {
+                UnpackedKind::Type(ty) => match ty.sty {
+                    ty::Infer(ty::CanonicalTy(cvar1)) => cvar == cvar1,
+                    _ => false,
+                },
+
+                UnpackedKind::Lifetime(r) => match r {
+                    ty::ReCanonical(cvar1) => cvar == *cvar1,
+                    _ => false,
+                },
+            }
+        })
     }
 }
 
@@ -450,7 +460,7 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for SubstFolder<'a, 'gcx, 'tcx> {
         self.ty_stack_depth += 1;
 
         let t1 = match t.sty {
-            ty::TyParam(p) => {
+            ty::Param(p) => {
                 self.ty_for_param(p, t)
             }
             _ => {

@@ -29,6 +29,14 @@ pub(super) fn places_conflict<'gcx, 'tcx>(
         borrow_place, access_place, access
     );
 
+    // This Local/Local case is handled by the more general code below, but
+    // it's so common that it's a speed win to check for it first.
+    if let Place::Local(l1) = borrow_place {
+        if let Place::Local(l2) = access_place {
+            return l1 == l2;
+        }
+    }
+
     unroll_place(borrow_place, None, |borrow_components| {
         unroll_place(access_place, None, |access_components| {
             place_components_conflict(tcx, mir, borrow_components, access_components, access)
@@ -83,7 +91,7 @@ fn place_components_conflict<'gcx, 'tcx>(
     // Our invariant is, that at each step of the iteration:
     //  - If we didn't run out of access to match, our borrow and access are comparable
     //    and either equal or disjoint.
-    //  - If we did run out of accesss, the borrow can access a part of it.
+    //  - If we did run out of access, the borrow can access a part of it.
     loop {
         // loop invariant: borrow_c is always either equal to access_c or disjoint from it.
         if let Some(borrow_c) = borrow_components.next() {
@@ -170,7 +178,7 @@ fn place_components_conflict<'gcx, 'tcx>(
                         debug!("places_conflict: shallow access behind ptr");
                         return false;
                     }
-                    (ProjectionElem::Deref, ty::TyRef(_, _, hir::MutImmutable), _) => {
+                    (ProjectionElem::Deref, ty::Ref(_, _, hir::MutImmutable), _) => {
                         // the borrow goes through a dereference of a shared reference.
                         //
                         // I'm not sure why we are tracking these borrows - shared
@@ -329,6 +337,13 @@ fn place_element_conflict<'a, 'gcx: 'tcx, 'tcx>(
         }
         (Place::Promoted(p1), Place::Promoted(p2)) => {
             if p1.0 == p2.0 {
+                if let ty::Array(_, size) = p1.1.sty {
+                    if size.unwrap_usize(tcx) == 0 {
+                        // Ignore conflicts with promoted [T; 0].
+                        debug!("place_element_conflict: IGNORE-LEN-0-PROMOTED");
+                        return Overlap::Disjoint;
+                    }
+                }
                 // the same promoted - base case, equal
                 debug!("place_element_conflict: DISJOINT-OR-EQ-PROMOTED");
                 Overlap::EqualOrDisjoint
@@ -359,7 +374,7 @@ fn place_element_conflict<'a, 'gcx: 'tcx, 'tcx>(
                     } else {
                         let ty = pi1.base.ty(mir, tcx).to_ty(tcx);
                         match ty.sty {
-                            ty::TyAdt(def, _) if def.is_union() => {
+                            ty::Adt(def, _) if def.is_union() => {
                                 // Different fields of a union, we are basically stuck.
                                 debug!("place_element_conflict: STUCK-UNION");
                                 Overlap::Arbitrary

@@ -14,6 +14,7 @@
 // ignore-freebsd: gdb package too new
 // ignore-tidy-linelength
 // ignore-lldb
+// ignore-gdb
 // ignore-android: FIXME(#10381)
 // compile-flags:-g
 

@@ -308,12 +308,12 @@ impl<'a> HashStable<StableHashingContext<'a>> for hir::Ty {
 }
 
 impl_stable_hash_for!(enum hir::PrimTy {
-    TyInt(int_ty),
-    TyUint(uint_ty),
-    TyFloat(float_ty),
-    TyStr,
-    TyBool,
-    TyChar
+    Int(int_ty),
+    Uint(uint_ty),
+    Float(float_ty),
+    Str,
+    Bool,
+    Char
 });
 
 impl_stable_hash_for!(struct hir::BareFnTy {
@@ -360,6 +360,7 @@ impl_stable_hash_for!(enum hir::FunctionRetTy {
 impl_stable_hash_for!(struct hir::TraitRef {
     // Don't hash the ref_id. It is tracked via the thing it is used to access
     ref_id -> _,
+    hir_ref_id -> _,
     path,
 });
 
@@ -490,6 +491,10 @@ impl_stable_hash_for!(struct hir::Arm {
     pats,
     guard,
     body
+});
+
+impl_stable_hash_for!(enum hir::Guard {
+    If(expr),
 });
 
 impl_stable_hash_for!(struct hir::Field {
@@ -723,9 +728,10 @@ impl<'a> HashStable<StableHashingContext<'a>> for hir::VisibilityKind {
             hir::VisibilityKind::Crate(sugar) => {
                 sugar.hash_stable(hcx, hasher);
             }
-            hir::VisibilityKind::Restricted { ref path, id } => {
+            hir::VisibilityKind::Restricted { ref path, id, hir_id } => {
                 hcx.with_node_id_hashing_mode(NodeIdHashingMode::HashDefPath, |hcx| {
                     id.hash_stable(hcx, hasher);
+                    hir_id.hash_stable(hcx, hasher);
                 });
                 path.hash_stable(hcx, hasher);
             }
@@ -988,6 +994,13 @@ impl_stable_hash_for!(enum hir::def::CtorKind {
     Fictive
 });
 
+impl_stable_hash_for!(enum hir::def::NonMacroAttrKind {
+    Builtin,
+    Tool,
+    DeriveHelper,
+    Custom,
+});
+
 impl_stable_hash_for!(enum hir::def::Def {
     Mod(def_id),
     Struct(def_id),
@@ -1003,11 +1016,12 @@ impl_stable_hash_for!(enum hir::def::Def {
     PrimTy(prim_ty),
     TyParam(def_id),
     SelfTy(trait_def_id, impl_def_id),
-    TyForeign(def_id),
+    ForeignTy(def_id),
     Fn(def_id),
     Const(def_id),
     Static(def_id, is_mutbl),
     StructCtor(def_id, ctor_kind),
+    SelfCtor(impl_def_id),
     VariantCtor(def_id, ctor_kind),
     Method(def_id),
     AssociatedConst(def_id),
@@ -1015,7 +1029,8 @@ impl_stable_hash_for!(enum hir::def::Def {
     Upvar(def_id, index, expr_id),
     Label(node_id),
     Macro(def_id, macro_kind),
-    GlobalAsm(def_id),
+    ToolMod,
+    NonMacroAttr(attr_kind),
     Err
 });
 
@@ -1070,6 +1085,11 @@ impl_stable_hash_for!(struct hir::def::Export {
     span
 });
 
+impl_stable_hash_for!(struct ::middle::lib_features::LibFeatures {
+    stable,
+    unstable
+});
+
 impl<'a> HashStable<StableHashingContext<'a>> for ::middle::lang_items::LangItem {
     fn hash_stable<W: StableHasherResult>(&self,
                                           _: &mut StableHashingContext<'a>,
@@ -1121,6 +1141,7 @@ impl_stable_hash_for!(struct hir::CodegenFnAttrs {
     flags,
     inline,
     export_name,
+    link_name,
     target_features,
     linkage,
     link_section,

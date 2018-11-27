@@ -27,7 +27,7 @@ use core::mem::{self, align_of_val, size_of_val};
 use core::ops::Deref;
 use core::ops::CoerceUnsized;
 use core::ptr::{self, NonNull};
-use core::marker::{Unsize, PhantomData};
+use core::marker::{Unpin, Unsize, PhantomData};
 use core::hash::{Hash, Hasher};
 use core::{isize, usize};
 use core::convert::From;
@@ -49,9 +49,10 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 ///
 /// The type `Arc<T>` provides shared ownership of a value of type `T`,
 /// allocated in the heap. Invoking [`clone`][clone] on `Arc` produces
-/// a new pointer to the same value in the heap. When the last `Arc`
-/// pointer to a given value is destroyed, the pointed-to value is
-/// also destroyed.
+/// a new `Arc` instance, which points to the same value on the heap as the
+/// source `Arc`, while increasing a reference count. When the last `Arc`
+/// pointer to a given value is destroyed, the pointed-to value is also
+/// destroyed.
 ///
 /// Shared references in Rust disallow mutation by default, and `Arc` is no
 /// exception: you cannot generally obtain a mutable reference to something
@@ -107,7 +108,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// // The two syntaxes below are equivalent.
 /// let a = foo.clone();
 /// let b = Arc::clone(&foo);
-/// // a and b both point to the same memory location as foo.
+/// // a, b, and foo are all Arcs that point to the same memory location
 /// ```
 ///
 /// The [`Arc::clone(&from)`] syntax is the most idiomatic because it conveys more explicitly
@@ -672,7 +673,7 @@ impl<T: Clone> ArcFromSlice<T> for Arc<[T]> {
             };
 
             for (i, item) in v.iter().enumerate() {
-                ptr::write(elems.offset(i as isize), item.clone());
+                ptr::write(elems.add(i), item.clone());
                 guard.n_elems += 1;
             }
 
@@ -915,9 +916,7 @@ unsafe impl<#[may_dangle] T: ?Sized> Drop for Arc<T> {
     ///
     /// This will decrement the strong reference count. If the strong reference
     /// count reaches zero then the only other references (if any) are
-    /// [`Weak`][weak], so we `drop` the inner value.
-    ///
-    /// [weak]: struct.Weak.html
+    /// [`Weak`], so we `drop` the inner value.
     ///
     /// # Examples
     ///
@@ -1158,9 +1157,9 @@ impl<T: ?Sized> Clone for Weak<T> {
 #[stable(feature = "downgraded_weak", since = "1.10.0")]
 impl<T> Default for Weak<T> {
     /// Constructs a new `Weak<T>`, without allocating memory.
-    /// Calling [`upgrade`] on the return value always gives [`None`].
+    /// Calling [`upgrade`][Weak::upgrade] on the return value always
+    /// gives [`None`].
     ///
-    /// [`upgrade`]: struct.Weak.html#method.upgrade
     /// [`None`]: ../../std/option/enum.Option.html#variant.None
     ///
     /// # Examples
@@ -1942,3 +1941,6 @@ impl<T: ?Sized> AsRef<T> for Arc<T> {
         &**self
     }
 }
+
+#[unstable(feature = "pin", issue = "49150")]
+impl<T: ?Sized> Unpin for Arc<T> { }

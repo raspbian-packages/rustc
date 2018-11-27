@@ -32,8 +32,7 @@ pub fn without_defaults(generics: &syn::Generics) -> syn::Generics {
                     ..param.clone()
                 }),
                 _ => param.clone(),
-            })
-            .collect(),
+            }).collect(),
         ..generics.clone()
     }
 }
@@ -91,7 +90,8 @@ pub fn with_where_predicates_from_variants(
 // Puts the given bound on any generic type parameters that are used in fields
 // for which filter returns true.
 //
-// For example, the following struct needs the bound `A: Serialize, B: Serialize`.
+// For example, the following struct needs the bound `A: Serialize, B:
+// Serialize`.
 //
 //     struct S<'b, A, B: 'b, C> {
 //         a: A,
@@ -193,8 +193,7 @@ pub fn with_bound(
         .map(|id| syn::TypePath {
             qself: None,
             path: id.into(),
-        })
-        .chain(associated_type_usage.into_iter().cloned())
+        }).chain(associated_type_usage.into_iter().cloned())
         .map(|bounded_ty| {
             syn::WherePredicate::Type(syn::PredicateType {
                 lifetimes: None,
@@ -208,7 +207,7 @@ pub fn with_bound(
                     lifetimes: None,
                     path: bound.clone(),
                 })].into_iter()
-                    .collect(),
+                .collect(),
             })
         });
 
@@ -241,7 +240,7 @@ pub fn with_self_bound(
                 lifetimes: None,
                 path: bound.clone(),
             })].into_iter()
-                .collect(),
+            .collect(),
         }));
     generics
 }
@@ -270,8 +269,7 @@ pub fn with_lifetime_bound(generics: &syn::Generics, lifetime: &str) -> syn::Gen
                 syn::GenericParam::Const(_) => {}
             }
             param
-        }))
-        .collect();
+        })).collect();
 
     syn::Generics {
         params: params,
@@ -307,13 +305,12 @@ fn type_of_item(cont: &Container) -> syn::Type {
                                 syn::GenericParam::Const(_) => {
                                     panic!("Serde does not support const generics yet");
                                 }
-                            })
-                            .collect(),
+                            }).collect(),
                         gt_token: <Token![>]>::default(),
                     },
                 ),
             }].into_iter()
-                .collect(),
+            .collect(),
         },
     })
 }

@@ -32,7 +32,7 @@ use native;
 use test;
 use tool;
 use util::{add_lib_path, exe, libdir};
-use {Build, DocTests, Mode};
+use {Build, DocTests, Mode, GitRepo};
 
 pub use Compiler;
 
@@ -461,6 +461,7 @@ impl<'a> Builder<'a> {
                 dist::Rustfmt,
                 dist::Clippy,
                 dist::LlvmTools,
+                dist::Lldb,
                 dist::Extended,
                 dist::HashSign
             ),
@@ -707,6 +708,80 @@ impl<'a> Builder<'a> {
     ) -> Command {
         let mut cargo = Command::new(&self.initial_cargo);
         let out_dir = self.stage_out(compiler, mode);
+
+        // command specific path, we call clear_if_dirty with this
+        let mut my_out = match cmd {
+            "build" => self.cargo_out(compiler, mode, target),
+
+            // This is the intended out directory for crate documentation.
+            "doc" =>  self.crate_doc_out(target),
+
+            _ => self.stage_out(compiler, mode),
+        };
+
+        // This is for the original compiler, but if we're forced to use stage 1, then
+        // std/test/rustc stamps won't exist in stage 2, so we need to get those from stage 1, since
+        // we copy the libs forward.
+        let cmp = if self.force_use_stage1(compiler, target) {
+            self.compiler(1, compiler.host)
+        } else {
+            compiler
+        };
+
+        let libstd_stamp = match cmd {
+            "check" => check::libstd_stamp(self, cmp, target),
+            _ => compile::libstd_stamp(self, cmp, target),
+        };
+
+        let libtest_stamp = match cmd {
+            "check" => check::libtest_stamp(self, cmp, target),
+            _ => compile::libstd_stamp(self, cmp, target),
+        };
+
+        let librustc_stamp = match cmd {
+            "check" => check::librustc_stamp(self, cmp, target),
+            _ => compile::librustc_stamp(self, cmp, target),
+        };
+
+        if cmd == "doc" {
+            if mode == Mode::Rustc || mode == Mode::ToolRustc || mode == Mode::Codegen {
+                // This is the intended out directory for compiler documentation.
+                my_out = self.compiler_doc_out(target);
+            }
+            let rustdoc = self.rustdoc(compiler.host);
+            self.clear_if_dirty(&my_out, &rustdoc);
+        } else if cmd != "test" {
+            match mode {
+                Mode::Std => {
+                    self.clear_if_dirty(&my_out, &self.rustc(compiler));
+                },
+                Mode::Test => {
+                    self.clear_if_dirty(&my_out, &libstd_stamp);
+                },
+                Mode::Rustc => {
+                    self.clear_if_dirty(&my_out, &self.rustc(compiler));
+                    self.clear_if_dirty(&my_out, &libstd_stamp);
+                    self.clear_if_dirty(&my_out, &libtest_stamp);
+                },
+                Mode::Codegen => {
+                    self.clear_if_dirty(&my_out, &librustc_stamp);
+                },
+                Mode::ToolBootstrap => { },
+                Mode::ToolStd => {
+                    self.clear_if_dirty(&my_out, &libstd_stamp);
+                },
+                Mode::ToolTest => {
+                    self.clear_if_dirty(&my_out, &libstd_stamp);
+                    self.clear_if_dirty(&my_out, &libtest_stamp);
+                },
+                Mode::ToolRustc => {
+                    self.clear_if_dirty(&my_out, &libstd_stamp);
+                    self.clear_if_dirty(&my_out, &libtest_stamp);
+                    self.clear_if_dirty(&my_out, &librustc_stamp);
+                },
+            }
+        }
+
         cargo
             .env("CARGO_TARGET_DIR", out_dir)
             .arg(cmd);
@@ -826,7 +901,7 @@ impl<'a> Builder<'a> {
         if let Some(ref error_format) = self.config.rustc_error_format {
             cargo.env("RUSTC_ERROR_FORMAT", error_format);
         }
-        if cmd != "build" && cmd != "check" && want_rustdoc {
+        if cmd != "build" && cmd != "check" && cmd != "rustc" && want_rustdoc {
             cargo.env("RUSTDOC_LIBDIR", self.sysroot_libdir(compiler, self.config.build));
         }
 
@@ -873,6 +948,10 @@ impl<'a> Builder<'a> {
 
         if let Some(x) = self.crt_static(compiler.host) {
             cargo.env("RUSTC_HOST_CRT_STATIC", x.to_string());
+        }
+
+        if let Some(map) = self.build.debuginfo_map(GitRepo::Rustc) {
+            cargo.env("RUSTC_DEBUGINFO_MAP", map);
         }
 
         // Enable usage of unstable features
@@ -963,7 +1042,7 @@ impl<'a> Builder<'a> {
             let cc = ccacheify(&self.cc(target));
             cargo.env(format!("CC_{}", target), &cc).env("CC", &cc);
 
-            let cflags = self.cflags(target).join(" ");
+            let cflags = self.cflags(target, GitRepo::Rustc).join(" ");
             cargo
                 .env(format!("CFLAGS_{}", target), cflags.clone())
                 .env("CFLAGS", cflags.clone());
@@ -987,7 +1066,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        if cmd == "build"
+        if (cmd == "build" || cmd == "rustc")
             && mode == Mode::Std
             && self.config.extended
             && compiler.is_final_stage(self)

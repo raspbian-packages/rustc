@@ -151,7 +151,7 @@ impl<R: AsyncRead + AsyncWrite> AsyncWrite for DeflateEncoder<R> {
 ///
 /// # fn main() {
 /// #    let mut e = DeflateEncoder::new(Vec::new(), Compression::default());
-/// #    e.write(b"Hello World").unwrap();
+/// #    e.write_all(b"Hello World").unwrap();
 /// #    let bytes = e.finish().unwrap();
 /// #    println!("{}", decode_reader(bytes).unwrap());
 /// # }
@@ -168,8 +168,6 @@ impl<R: AsyncRead + AsyncWrite> AsyncWrite for DeflateEncoder<R> {
 pub struct DeflateDecoder<R> {
     inner: bufread::DeflateDecoder<BufReader<R>>,
 }
-
-
 
 impl<R: Read> DeflateDecoder<R> {
     /// Creates a new decoder which will decompress data read from the given

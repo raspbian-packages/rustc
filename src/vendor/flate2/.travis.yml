@@ -3,11 +3,19 @@ sudo: false
 
 matrix:
   include:
-    - rust: 1.21.0
     - rust: stable
     - os: osx
     - rust: beta
     - rust: nightly
+
+    - rust: stable
+      script: cargo run --manifest-path systest/Cargo.toml
+
+    - rust: stable
+      env: RUST_BACKEND=1
+      script:
+        - cargo test --features rust_backend
+        - cargo test --features rust_backend --no-default-features
 
     - rust: nightly
       before_script:
@@ -17,17 +25,17 @@ matrix:
       after_success:
         - travis-cargo --only nightly doc-upload
 
+  allow_failures:
+    - env: RUST_BACKEND=1
+
 script:
-  - export CARGO_TARGET_DIR=`pwd`/target
-  - cargo build --verbose
+  - cargo build
   - rustdoc --test README.md -L target/debug/deps --extern flate2=target/debug/libflate2.rlib
-  - cargo test --verbose
-  - cargo test --verbose --features zlib
-  - cargo test --verbose --features tokio
-  - cargo test --verbose --features 'tokio zlib'
-  - cargo test --verbose --features zlib --no-default-features
-  - cargo test --verbose --features rust_backend
-  - cargo test --verbose --features rust_backend --no-default-features
+  - cargo test
+  - cargo test --features zlib
+  - cargo test --features tokio
+  - cargo test --features 'tokio zlib'
+  - cargo test --features zlib --no-default-features
   - cargo clean && cargo build
   - cargo doc --no-deps
   - cargo doc --no-deps --manifest-path=miniz-sys/Cargo.toml

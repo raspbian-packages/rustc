@@ -42,7 +42,7 @@ use lint::builtin::parser::QUESTION_MARK_MACRO_SEP;
 use session::{Session, DiagnosticMessageId};
 use std::{hash, ptr};
 use syntax::ast;
-use syntax::codemap::{MultiSpan, ExpnFormat};
+use syntax::source_map::{MultiSpan, ExpnFormat};
 use syntax::early_buffered_lints::BufferedEarlyLintId;
 use syntax::edition::Edition;
 use syntax::symbol::Symbol;
@@ -53,7 +53,7 @@ use ty::query::Providers;
 use util::nodemap::NodeMap;
 
 pub use lint::context::{LateContext, EarlyContext, LintContext, LintStore,
-                        check_crate, check_ast_crate,
+                        check_crate, check_ast_crate, CheckLintNameResult,
                         FutureIncompatibleInfo, BufferedEarlyLint};
 
 /// Specification of a single lint.
@@ -135,6 +135,26 @@ macro_rules! declare_lint {
             desc: $desc,
             edition_lint_opts: Some(($lint_edition, $crate::lint::Level::$edition_level)),
             report_in_external_macro: false,
+        };
+    );
+}
+
+#[macro_export]
+macro_rules! declare_tool_lint {
+    ($vis: vis $tool: ident ::$NAME: ident, $Level: ident, $desc: expr) => (
+        declare_tool_lint!{$vis $tool::$NAME, $Level, $desc, false}
+    );
+    ($vis: vis $tool: ident ::$NAME: ident, $Level: ident, $desc: expr,
+     report_in_external_macro: $rep: expr) => (
+         declare_tool_lint!{$vis $tool::$NAME, $Level, $desc, $rep}
+    );
+    ($vis: vis $tool: ident ::$NAME: ident, $Level: ident, $desc: expr, $external: expr) => (
+        $vis static $NAME: &$crate::lint::Lint = &$crate::lint::Lint {
+            name: &concat!(stringify!($tool), "::", stringify!($NAME)),
+            default_level: $crate::lint::$Level,
+            desc: $desc,
+            edition_lint_opts: None,
+            report_in_external_macro: $external,
         };
     );
 }
@@ -222,7 +242,7 @@ macro_rules! late_lint_methods {
             fn check_variant(a: &$hir hir::Variant, b: &$hir hir::Generics);
             fn check_variant_post(a: &$hir hir::Variant, b: &$hir hir::Generics);
             fn check_lifetime(a: &$hir hir::Lifetime);
-            fn check_path(a: &$hir hir::Path, b: ast::NodeId);
+            fn check_path(a: &$hir hir::Path, b: hir::HirId);
             fn check_attribute(a: &$hir ast::Attribute);
 
             /// Called when entering a syntax node that can have lint attributes such
@@ -246,7 +266,7 @@ macro_rules! late_lint_methods {
 
 macro_rules! expand_lint_pass_methods {
     ($context:ty, [$($(#[$attr:meta])* fn $name:ident($($param:ident: $arg:ty),*);)*]) => (
-        $(#[inline(always)] fn $name(&mut self, $context, $(_: $arg),*) {})*
+        $(#[inline(always)] fn $name(&mut self, _: $context, $(_: $arg),*) {})*
     )
 }
 
@@ -492,7 +512,7 @@ impl LintBuffer {
             msg: msg.to_string(),
             diagnostic
         };
-        let arr = self.map.entry(id).or_insert(Vec::new());
+        let arr = self.map.entry(id).or_default();
         if !arr.contains(&early_lint) {
             arr.push(early_lint);
         }
@@ -575,7 +595,8 @@ pub fn struct_lint_level<'a>(sess: &'a Session,
     // Check for future incompatibility lints and issue a stronger warning.
     let lints = sess.lint_store.borrow();
     let lint_id = LintId::of(lint);
-    if let Some(future_incompatible) = lints.future_incompatible(lint_id) {
+    let future_incompatible = lints.future_incompatible(lint_id);
+    if let Some(future_incompatible) = future_incompatible {
         const STANDARD_MESSAGE: &str =
             "this was previously accepted by the compiler but is being phased out; \
              it will become a hard error";
@@ -593,20 +614,21 @@ pub fn struct_lint_level<'a>(sess: &'a Session,
                                future_incompatible.reference);
         err.warn(&explanation);
         err.note(&citation);
+    }
 
-    // If this lint is *not* a future incompatibility warning then we want to be
-    // sure to not be too noisy in some situations. If this code originates in a
-    // foreign macro, aka something that this crate did not itself author, then
-    // it's likely that there's nothing this crate can do about it. We probably
-    // want to skip the lint entirely.
-    //
-    // For some lints though (like unreachable code) there's clear actionable
-    // items to take care of (delete the macro invocation). As a result we have
-    // a few lints we whitelist here for allowing a lint even though it's in a
-    // foreign macro invocation.
-    } else if !lint.report_in_external_macro {
-        if err.span.primary_spans().iter().any(|s| in_external_macro(sess, *s)) {
-            err.cancel();
+    // If this code originates in a foreign macro, aka something that this crate
+    // did not itself author, then it's likely that there's nothing this crate
+    // can do about it. We probably want to skip the lint entirely.
+    if err.span.primary_spans().iter().any(|s| in_external_macro(sess, *s)) {
+        // Any suggestions made here are likely to be incorrect, so anything we
+        // emit shouldn't be automatically fixed by rustfix.
+        err.allow_suggestions(false);
+
+        // If this is a future incompatible lint it'll become a hard error, so
+        // we have to emit *something*. Also allow lints to whitelist themselves
+        // on a case-by-case basis for emission in a foreign macro.
+        if future_incompatible.is_none() && !lint.report_in_external_macro {
+            err.cancel()
         }
     }
 
@@ -732,7 +754,7 @@ pub fn in_external_macro(sess: &Session, span: Span) -> bool {
         None => return true,
     };
 
-    match sess.codemap().span_to_snippet(def_site) {
+    match sess.source_map().span_to_snippet(def_site) {
         Ok(code) => !code.starts_with("macro_rules"),
         // no snippet = external macro or compiler-builtin expansion
         Err(_) => true,

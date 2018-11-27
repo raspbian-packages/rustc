@@ -11,7 +11,7 @@
 // aux-build:attribute-with-error.rs
 // ignore-stage1
 
-#![feature(use_extern_macros)]
+#![feature(custom_inner_attributes)]
 
 extern crate attribute_with_error;
 

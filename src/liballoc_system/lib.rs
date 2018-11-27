@@ -14,8 +14,11 @@
             reason = "this library is unlikely to be stabilized in its current \
                       form or name",
             issue = "32838")]
+
 #![feature(allocator_api)]
 #![feature(core_intrinsics)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(staged_api)]
 #![feature(rustc_attrs)]
 #![cfg_attr(any(unix, target_os = "cloudabi", target_os = "redox"), feature(libc))]
@@ -174,7 +177,10 @@ mod platform {
         }
     }
 
-    #[cfg(any(target_os = "android", target_os = "redox", target_os = "solaris"))]
+    #[cfg(any(target_os = "android",
+              target_os = "hermit",
+              target_os = "redox",
+              target_os = "solaris"))]
     #[inline]
     unsafe fn aligned_malloc(layout: &Layout) -> *mut u8 {
         // On android we currently target API level 9 which unfortunately
@@ -197,7 +203,10 @@ mod platform {
         libc::memalign(layout.align(), layout.size()) as *mut u8
     }
 
-    #[cfg(not(any(target_os = "android", target_os = "redox", target_os = "solaris")))]
+    #[cfg(not(any(target_os = "android",
+                  target_os = "hermit",
+                  target_os = "redox",
+                  target_os = "solaris")))]
     #[inline]
     unsafe fn aligned_malloc(layout: &Layout) -> *mut u8 {
         let mut out = ptr::null_mut();
@@ -211,7 +220,7 @@ mod platform {
 }
 
 #[cfg(windows)]
-#[allow(bad_style)]
+#[allow(nonstandard_style)]
 mod platform {
     use MIN_ALIGN;
     use System;
@@ -241,7 +250,7 @@ mod platform {
     }
 
     unsafe fn align_ptr(ptr: *mut u8, align: usize) -> *mut u8 {
-        let aligned = ptr.offset((align - (ptr as usize & (align - 1))) as isize);
+        let aligned = ptr.add(align - (ptr as usize & (align - 1)));
         *get_header(aligned) = Header(ptr);
         aligned
     }

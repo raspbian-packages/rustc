@@ -3,9 +3,9 @@ Bug: https://github.com/rust-lang/rust/issues/52494
 --- a/src/test/ui/target-feature-gate.rs
 +++ b/src/test/ui/target-feature-gate.rs
 @@ -12,6 +12,8 @@
- // ignore-aarch64
- // ignore-wasm
  // ignore-emscripten
+ // ignore-mips
+ // ignore-mips64
 +// ignore-powerpc64
 +// ignore-powerpc64le
  // gate-test-sse4a_target_feature
@@ -15,8 +15,8 @@ Bug: https://github.com/rust-lang/rust/issues/52494
 +++ b/src/test/ui/target-feature-gate.stderr
 @@ -1,5 +1,5 @@
  error[E0658]: the target feature `avx512bw` is currently unstable (see issue #44839)
--  --> $DIR/target-feature-gate.rs:26:18
-+  --> $DIR/target-feature-gate.rs:28:18
+-  --> $DIR/target-feature-gate.rs:29:18
++  --> $DIR/target-feature-gate.rs:31:18
     |
  LL | #[target_feature(enable = "avx512bw")]
     |                  ^^^^^^^^^^^^^^^^^^^

@@ -157,6 +157,23 @@ impl fmt::Display for AtRule {
     }
 }*/
 
+
+/// Minifies a given CSS source code.
+///
+/// # Example
+///
+/// ```rust
+/// extern crate minifier;
+/// use minifier::css::minify;
+///
+/// fn main() {
+///     let css = r#"
+///         .foo > p {
+///             color: red;
+///         }"#.into();
+///     let css_minified = minify(css);
+/// }
+/// ```
 pub fn minify<'a>(content: &'a str) -> Result<String, &'static str> {
     token::tokenize(content).map(|t| format!("{}", t))
 }
@@ -213,5 +230,26 @@ h2, h3:not(.impl):not(.method):not(.type) {
                     @media (max-width:700px){.theme-picker{left:10px;top:54px;z-index:1;\
                     background-color:rgba(0,0,0,0);font:15px \"SFMono-Regular\",Consolas,\
                     \"Liberation Mono\",Menlo,Courier,monospace;}}";
+    assert_eq!(minify(s).expect("minify failed"), expected.to_owned());
+}
+
+#[test]
+fn check_calc() {
+    let s = ".foo { width: calc(100% - 34px); }";
+    let expected = ".foo{width:calc(100% - 34px);}";
+    assert_eq!(minify(s).expect("minify failed"), expected.to_owned());
+}
+
+#[test]
+fn check_spaces() {
+    let s = ".line-numbers .line-highlighted { color: #0a042f !important; }";
+    let expected = ".line-numbers .line-highlighted{color:#0a042f !important;}";
+    assert_eq!(minify(s).expect("minify failed"), expected.to_owned());
+}
+
+#[test]
+fn check_space_after_paren() {
+    let s = ".docblock:not(.type-decl) a:not(.srclink) {}";
+    let expected = ".docblock:not(.type-decl) a:not(.srclink){}";
     assert_eq!(minify(s).expect("minify failed"), expected.to_owned());
 }

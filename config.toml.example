@@ -21,6 +21,12 @@
 # Indicates whether the LLVM build is a Release or Debug build
 #optimize = true
 
+# Indicates whether LLVM should be built with ThinLTO. Note that this will
+# only succeed if you use clang, lld, llvm-ar, and llvm-ranlib in your C/C++
+# toolchain (see the `cc`, `cxx`, `linker`, `ar`, and `ranlib` options below).
+# More info at: https://clang.llvm.org/docs/ThinLTO.html#clang-bootstrap
+#thin-lto = false
+
 # Indicates whether an LLVM Release build should include debug info
 #release-debuginfo = false
 
@@ -61,8 +67,8 @@
 # the same format as above, but since these targets are experimental, they are
 # not built by default and the experimental Rust compilation targets that depend
 # on them will not work unless the user opts in to building them. By default the
-# `WebAssembly` target is enabled when compiling LLVM from scratch.
-#experimental-targets = "WebAssembly"
+# `WebAssembly` and `RISCV` targets are enabled when compiling LLVM from scratch.
+#experimental-targets = "WebAssembly;RISCV"
 
 # Cap the number of parallel linker invocations when compiling LLVM.
 # This can be useful when building LLVM with debug info, which significantly
@@ -75,6 +81,10 @@
 # When invoking `llvm-config` this configures whether the `--shared` argument is
 # passed to prefer linking to shared libraries.
 #link-shared = false
+
+# When building llvm, this configures what is being appended to the version.
+# If absent, we let the version as-is.
+#version-suffix = "-rust"
 
 # On MSVC you can compile LLVM with clang-cl, but the test suite doesn't pass
 # with clang-cl, so this is special in that it only compiles LLVM with clang-cl
@@ -354,6 +364,10 @@
 # sysroot.
 #llvm-tools = false
 
+# Indicates whether LLDB will be made available in the sysroot.
+# This is only built if LLVM is also being built.
+#lldb = false
+
 # Whether to deny warnings in crates
 #deny-warnings = true
 
@@ -362,6 +376,10 @@
 
 # Whether to verify generated LLVM IR
 #verify-llvm-ir = false
+
+# Map all debuginfo paths for libstd and crates to `/rust/$sha/$crate/...`,
+# generally only set for releases
+#remap-debuginfo = false
 
 # =============================================================================
 # Options for specific targets
@@ -383,6 +401,10 @@
 # Archiver to be used to assemble static libraries compiled from C/C++ code.
 # Note: an absolute path should be used, otherwise LLVM build will break.
 #ar = "ar"
+
+# Ranlib to be used to assemble static libraries compiled from C/C++ code.
+# Note: an absolute path should be used, otherwise LLVM build will break.
+#ranlib = "ranlib"
 
 # Linker to be used to link Rust code. Note that the
 # default value is platform specific, and if not specified it may also depend on

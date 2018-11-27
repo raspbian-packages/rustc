@@ -54,7 +54,7 @@
 //! [win64]: http://msdn.microsoft.com/en-us/library/1eyas8tf.aspx
 //! [llvm]: http://llvm.org/docs/ExceptionHandling.html#background-on-windows-exceptions
 
-#![allow(bad_style)]
+#![allow(nonstandard_style)]
 #![allow(private_no_mangle_fns)]
 
 use alloc::boxed::Box;
@@ -119,7 +119,7 @@ mod imp {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "arm"))]
 #[macro_use]
 mod imp {
     pub type ptr_t = u32;
@@ -142,7 +142,7 @@ mod imp {
 
 #[repr(C)]
 pub struct _ThrowInfo {
-    pub attribues: c_uint,
+    pub attributes: c_uint,
     pub pnfnUnwind: imp::ptr_t,
     pub pForwardCompat: imp::ptr_t,
     pub pCatchableTypeArray: imp::ptr_t,
@@ -178,7 +178,7 @@ pub struct _TypeDescriptor {
 }
 
 static mut THROW_INFO: _ThrowInfo = _ThrowInfo {
-    attribues: 0,
+    attributes: 0,
     pnfnUnwind: ptr!(0),
     pForwardCompat: ptr!(0),
     pCatchableTypeArray: ptr!(0),

@@ -18,8 +18,7 @@ use dataflow::{self, do_dataflow, DebugFormatted};
 use rustc::ty::{self, TyCtxt};
 use rustc::mir::*;
 use rustc::util::nodemap::FxHashMap;
-use rustc_data_structures::indexed_set::IdxSetBuf;
-use rustc_data_structures::indexed_vec::Idx;
+use rustc_data_structures::indexed_set::IdxSet;
 use transform::{MirPass, MirSource};
 use util::patch::MirPatch;
 use util::elaborate_drops::{DropFlagState, Unwind, elaborate_drop};
@@ -93,12 +92,12 @@ fn find_dead_unwinds<'a, 'tcx>(
     mir: &Mir<'tcx>,
     id: ast::NodeId,
     env: &MoveDataParamEnv<'tcx, 'tcx>)
-    -> IdxSetBuf<BasicBlock>
+    -> IdxSet<BasicBlock>
 {
     debug!("find_dead_unwinds({:?})", mir.span);
     // We only need to do this pass once, because unwind edges can only
     // reach cleanup blocks, which can't have unwind edges themselves.
-    let mut dead_unwinds = IdxSetBuf::new_empty(mir.basic_blocks().len());
+    let mut dead_unwinds = IdxSet::new_empty(mir.basic_blocks().len());
     let flow_inits =
         do_dataflow(tcx, mir, id, &[], &dead_unwinds,
                     MaybeInitializedPlaces::new(tcx, mir, &env),
@@ -112,7 +111,7 @@ fn find_dead_unwinds<'a, 'tcx>(
 
         let mut init_data = InitializationData {
             live: flow_inits.sets().on_entry_set_for(bb.index()).to_owned(),
-            dead: IdxSetBuf::new_empty(env.move_data.move_paths.len()),
+            dead: IdxSet::new_empty(env.move_data.move_paths.len()),
         };
         debug!("find_dead_unwinds @ {:?}: {:?}; init_data={:?}",
                bb, bb_data, init_data.live);
@@ -147,8 +146,8 @@ fn find_dead_unwinds<'a, 'tcx>(
 }
 
 struct InitializationData {
-    live: IdxSetBuf<MovePathIndex>,
-    dead: IdxSetBuf<MovePathIndex>
+    live: IdxSet<MovePathIndex>,
+    dead: IdxSet<MovePathIndex>
 }
 
 impl InitializationData {
@@ -543,6 +542,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         Rvalue::Use(Operand::Constant(Box::new(Constant {
             span,
             ty: self.tcx.types.bool,
+            user_ty: None,
             literal: ty::Const::from_bool(self.tcx, val),
         })))
     }

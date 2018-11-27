@@ -6,8 +6,10 @@ various systems, including libc.
 
 [![Build Status](https://travis-ci.org/rust-lang/libc.svg?branch=master)](https://travis-ci.org/rust-lang/libc)
 [![Build status](https://ci.appveyor.com/api/projects/status/github/rust-lang/libc?svg=true)](https://ci.appveyor.com/project/rust-lang-libs/libc)
+[![Latest version](https://img.shields.io/crates/v/libc.svg)](https://crates.io/crates/libc)
+[![Documentation](https://docs.rs/libc/badge.svg)](https://docs.rs/libc)
+![License](https://img.shields.io/crates/l/libc.svg)
 
-[Documentation](#platforms-and-documentation)
 
 ## Usage
 
@@ -31,6 +33,16 @@ this via:
 ```toml
 [dependencies]
 libc = { version = "0.2", default-features = false }
+```
+
+By default libc uses private fields in structs in order to enforce a certain
+memory alignment on them. These structs can be hard to instantiate outside of
+libc. To make libc use `#[repr(align(x))]`, instead of the private fields,
+activate the *align* feature. This requires Rust 1.25 or newer:
+
+```toml
+[dependencies]
+libc = { version = "0.2", features = ["align"] }
 ```
 
 ## What is libc?

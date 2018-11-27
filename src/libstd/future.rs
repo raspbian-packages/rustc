@@ -12,7 +12,7 @@
 
 use core::cell::Cell;
 use core::marker::Unpin;
-use core::mem::PinMut;
+use core::pin::PinMut;
 use core::option::Option;
 use core::ptr::NonNull;
 use core::task::{self, Poll};
@@ -88,7 +88,7 @@ where
 /// This function acquires exclusive access to the task context.
 ///
 /// Panics if no task has been set or if the task context has already been
-/// retrived by a surrounding call to get_task_cx.
+/// retrieved by a surrounding call to get_task_cx.
 pub fn get_task_cx<F, R>(f: F) -> R
 where
     F: FnOnce(&mut task::Context) -> R
@@ -108,9 +108,9 @@ where
 
 #[unstable(feature = "gen_future", issue = "50547")]
 /// Polls a future in the current thread-local task context.
-pub fn poll_in_task_cx<F>(f: &mut PinMut<F>) -> Poll<F::Output>
+pub fn poll_in_task_cx<F>(f: PinMut<F>) -> Poll<F::Output>
 where
     F: Future
 {
-    get_task_cx(|cx| f.reborrow().poll(cx))
+    get_task_cx(|cx| f.poll(cx))
 }

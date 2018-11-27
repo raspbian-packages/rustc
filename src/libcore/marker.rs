@@ -95,7 +95,7 @@ impl<T: ?Sized> !Send for *mut T { }
     message="the size for values of type `{Self}` cannot be known at compilation time",
     label="doesn't have a size known at compile-time",
     note="to learn more, visit <https://doc.rust-lang.org/book/second-edition/\
-          ch19-04-advanced-types.html#dynamically-sized-types-and-sized>",
+          ch19-04-advanced-types.html#dynamically-sized-types-and-the-sized-trait>",
 )]
 #[fundamental] // for Default, for example, which requires that `[T]: !Default` be evaluatable
 pub trait Sized {
@@ -511,7 +511,7 @@ macro_rules! impls{
 ///     let ptr = vec.as_ptr();
 ///     Slice {
 ///         start: ptr,
-///         end: unsafe { ptr.offset(vec.len() as isize) },
+///         end: unsafe { ptr.add(vec.len()) },
 ///         phantom: PhantomData,
 ///     }
 /// }
@@ -603,15 +603,38 @@ unsafe impl<T: ?Sized> Freeze for *mut T {}
 unsafe impl<'a, T: ?Sized> Freeze for &'a T {}
 unsafe impl<'a, T: ?Sized> Freeze for &'a mut T {}
 
-/// Types which can be moved out of a `PinMut`.
+/// Types which can be safely moved after being pinned.
 ///
-/// The `Unpin` trait is used to control the behavior of the [`PinMut`] type. If a
-/// type implements `Unpin`, it is safe to move a value of that type out of the
-/// `PinMut` pointer.
+/// Since Rust itself has no notion of immovable types, and will consider moves to always be safe,
+/// this trait cannot prevent types from moving by itself.
+///
+/// Instead it can be used to prevent moves through the type system,
+/// by controlling the behavior of special pointer types like [`PinMut`],
+/// which "pin" the type in place by not allowing it to be moved out of them.
+/// See the [`pin module`] documentation for more information on pinning.
+///
+/// Implementing this trait lifts the restrictions of pinning off a type,
+/// which then allows it to move out with functions such as [`replace`].
+///
+/// So this, for example, can only be done on types implementing `Unpin`:
+///
+/// ```rust
+/// #![feature(pin)]
+/// use std::mem::replace;
+/// use std::pin::PinMut;
+///
+/// let mut string = "this".to_string();
+/// let mut pinned_string = PinMut::new(&mut string);
+///
+/// // dereferencing the pointer mutably is only possible because String implements Unpin
+/// replace(&mut *pinned_string, "other".to_string());
+/// ```
 ///
 /// This trait is automatically implemented for almost every type.
 ///
-/// [`PinMut`]: ../mem/struct.PinMut.html
+/// [`replace`]: ../../std/mem/fn.replace.html
+/// [`PinMut`]: ../pin/struct.PinMut.html
+/// [`pin module`]: ../../std/pin/index.html
 #[unstable(feature = "pin", issue = "49150")]
 pub auto trait Unpin {}
 

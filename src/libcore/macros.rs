@@ -349,6 +349,26 @@ macro_rules! try {
 /// write!(&mut v, "s = {:?}", s).unwrap(); // uses io::Write::write_fmt
 /// assert_eq!(v, b"s = \"abc 123\"");
 /// ```
+///
+/// Note: This macro can be used in `no_std` setups as well
+/// In a `no_std` setup you are responsible for the
+/// implementation details of the components.
+///
+/// ```no_run
+/// # extern crate core;
+/// use core::fmt::Write;
+///
+/// struct Example;
+///
+/// impl Write for Example {
+///     fn write_str(&mut self, _s: &str) -> core::fmt::Result {
+///          unimplemented!();
+///     }
+/// }
+///
+/// let mut m = Example{};
+/// write!(&mut m, "Hello World").expect("Not written");
+/// ```
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
 macro_rules! write {
@@ -396,6 +416,7 @@ macro_rules! write {
 /// ```
 #[macro_export]
 #[stable(feature = "rust1", since = "1.0.0")]
+#[allow_internal_unstable]
 macro_rules! writeln {
     ($dst:expr) => (
         write!($dst, "\n")
@@ -403,11 +424,8 @@ macro_rules! writeln {
     ($dst:expr,) => (
         writeln!($dst)
     );
-    ($dst:expr, $fmt:expr) => (
-        write!($dst, concat!($fmt, "\n"))
-    );
-    ($dst:expr, $fmt:expr, $($arg:tt)*) => (
-        write!($dst, concat!($fmt, "\n"), $($arg)*)
+    ($dst:expr, $($arg:tt)*) => (
+        $dst.write_fmt(format_args_nl!($($arg)*))
     );
 }
 
@@ -543,7 +561,7 @@ macro_rules! unimplemented {
 /// into libsyntax itself.
 ///
 /// For more information, see documentation for `std`'s macros.
-#[cfg(dox)]
+#[cfg(rustdoc)]
 mod builtin {
 
     /// Unconditionally causes compilation to fail with the given error message when encountered.

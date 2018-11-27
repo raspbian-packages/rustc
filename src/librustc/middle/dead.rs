@@ -12,7 +12,7 @@
 // closely. The idea is that all reachable symbols are live, codes called
 // from live codes are live, and everything else is dead.
 
-use hir::map as hir_map;
+use hir::Node;
 use hir::{self, PatKind};
 use hir::intravisit::{self, Visitor, NestedVisitorMap};
 use hir::itemlikevisit::ItemLikeVisitor;
@@ -24,21 +24,21 @@ use middle::privacy;
 use ty::{self, TyCtxt};
 use util::nodemap::FxHashSet;
 
-use syntax::{ast, codemap};
+use syntax::{ast, source_map};
 use syntax::attr;
 use syntax_pos;
 
 // Any local node that may call something in its body block should be
-// explored. For example, if it's a live NodeItem that is a
+// explored. For example, if it's a live Node::Item that is a
 // function, then we should explore its block to check for codes that
 // may need to be marked as live.
 fn should_explore<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             node_id: ast::NodeId) -> bool {
     match tcx.hir.find(node_id) {
-        Some(hir_map::NodeItem(..)) |
-        Some(hir_map::NodeImplItem(..)) |
-        Some(hir_map::NodeForeignItem(..)) |
-        Some(hir_map::NodeTraitItem(..)) =>
+        Some(Node::Item(..)) |
+        Some(Node::ImplItem(..)) |
+        Some(Node::ForeignItem(..)) |
+        Some(Node::TraitItem(..)) =>
             true,
         _ =>
             false
@@ -105,19 +105,19 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
 
     fn handle_field_access(&mut self, lhs: &hir::Expr, node_id: ast::NodeId) {
         match self.tables.expr_ty_adjusted(lhs).sty {
-            ty::TyAdt(def, _) => {
+            ty::Adt(def, _) => {
                 let index = self.tcx.field_index(node_id, self.tables);
                 self.insert_def_id(def.non_enum_variant().fields[index].did);
             }
-            ty::TyTuple(..) => {}
+            ty::Tuple(..) => {}
             _ => span_bug!(lhs.span, "named field access on non-ADT"),
         }
     }
 
     fn handle_field_pattern_match(&mut self, lhs: &hir::Pat, def: Def,
-                                  pats: &[codemap::Spanned<hir::FieldPat>]) {
+                                  pats: &[source_map::Spanned<hir::FieldPat>]) {
         let variant = match self.tables.node_id_to_type(lhs.hir_id).sty {
-            ty::TyAdt(adt, _) => adt.variant_of_def(def),
+            ty::Adt(adt, _) => adt.variant_of_def(def),
             _ => span_bug!(lhs.span, "non-ADT in struct pattern")
         };
         for pat in pats {
@@ -145,13 +145,13 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
         }
     }
 
-    fn visit_node(&mut self, node: &hir_map::Node<'tcx>) {
+    fn visit_node(&mut self, node: &Node<'tcx>) {
         let had_repr_c = self.repr_has_repr_c;
         self.repr_has_repr_c = false;
         let had_inherited_pub_visibility = self.inherited_pub_visibility;
         self.inherited_pub_visibility = false;
         match *node {
-            hir_map::NodeItem(item) => {
+            Node::Item(item) => {
                 match item.node {
                     hir::ItemKind::Struct(..) | hir::ItemKind::Union(..) => {
                         let def_id = self.tcx.hir.local_def_id(item.id);
@@ -173,13 +173,13 @@ impl<'a, 'tcx> MarkSymbolVisitor<'a, 'tcx> {
                     _ => ()
                 }
             }
-            hir_map::NodeTraitItem(trait_item) => {
+            Node::TraitItem(trait_item) => {
                 intravisit::walk_trait_item(self, trait_item);
             }
-            hir_map::NodeImplItem(impl_item) => {
+            Node::ImplItem(impl_item) => {
                 intravisit::walk_impl_item(self, impl_item);
             }
-            hir_map::NodeForeignItem(foreign_item) => {
+            Node::ForeignItem(foreign_item) => {
                 intravisit::walk_foreign_item(self, &foreign_item);
             }
             _ => ()
@@ -236,7 +236,7 @@ impl<'a, 'tcx> Visitor<'tcx> for MarkSymbolVisitor<'a, 'tcx> {
                 self.handle_field_access(&lhs, expr.id);
             }
             hir::ExprKind::Struct(_, ref fields, _) => {
-                if let ty::TypeVariants::TyAdt(ref adt, _) = self.tables.expr_ty(expr).sty {
+                if let ty::Adt(ref adt, _) = self.tables.expr_ty(expr).sty {
                     self.mark_as_used_if_union(adt, fields);
                 }
             }
@@ -279,7 +279,7 @@ impl<'a, 'tcx> Visitor<'tcx> for MarkSymbolVisitor<'a, 'tcx> {
         self.in_pat = false;
     }
 
-    fn visit_path(&mut self, path: &'tcx hir::Path, _: ast::NodeId) {
+    fn visit_path(&mut self, path: &'tcx hir::Path, _: hir::HirId) {
         self.handle_definition(path.def);
         intravisit::walk_path(self, path);
     }
@@ -293,7 +293,9 @@ fn has_allow_dead_code_or_lang_attr(tcx: TyCtxt,
     }
 
     // (To be) stable attribute for #[lang = "panic_impl"]
-    if attr::contains_name(attrs, "panic_implementation") {
+    if attr::contains_name(attrs, "panic_implementation") ||
+        attr::contains_name(attrs, "panic_handler")
+    {
         return true;
     }
 
@@ -393,7 +395,13 @@ fn create_and_seed_worklist<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                       krate: &hir::Crate)
                                       -> Vec<ast::NodeId>
 {
-    let worklist = access_levels.map.iter().map(|(&id, _)| id).chain(
+    let worklist = access_levels.map.iter().filter_map(|(&id, level)| {
+        if level >= &privacy::AccessLevel::Reachable {
+            Some(id)
+        } else {
+            None
+        }
+    }).chain(
         // Seed entry point
         tcx.sess.entry_fn.borrow().map(|(id, _, _)| id)
     ).collect::<Vec<_>>();
@@ -551,15 +559,19 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
                 hir::ItemKind::Struct(..) |
                 hir::ItemKind::Union(..) |
                 hir::ItemKind::Trait(..) |
-                hir::ItemKind::Impl(..) => self.tcx.sess.codemap().def_span(item.span),
+                hir::ItemKind::Impl(..) => self.tcx.sess.source_map().def_span(item.span),
                 _ => item.span,
+            };
+            let participle = match item.node {
+                hir::ItemKind::Struct(..) => "constructed", // Issue #52325
+                _ => "used"
             };
             self.warn_dead_code(
                 item.id,
                 span,
                 item.name,
                 item.node.descriptive_variant(),
-                "used",
+                participle,
             );
         } else {
             // Only continue if we didn't warn
@@ -608,7 +620,7 @@ impl<'a, 'tcx> Visitor<'tcx> for DeadVisitor<'a, 'tcx> {
             }
             hir::ImplItemKind::Method(_, body_id) => {
                 if !self.symbol_is_live(impl_item.id, None) {
-                    let span = self.tcx.sess.codemap().def_span(impl_item.span);
+                    let span = self.tcx.sess.source_map().def_span(impl_item.span);
                     self.warn_dead_code(impl_item.id, span, impl_item.ident.name, "method", "used");
                 }
                 self.visit_nested_body(body_id)

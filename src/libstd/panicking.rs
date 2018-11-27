@@ -319,7 +319,8 @@ pub fn panicking() -> bool {
 
 /// Entry point of panic from the libcore crate.
 #[cfg(not(test))]
-#[panic_implementation]
+#[cfg_attr(stage0, panic_implementation)]
+#[cfg_attr(not(stage0), panic_handler)]
 #[unwind(allowed)]
 pub fn rust_begin_panic(info: &PanicInfo) -> ! {
     continue_panic_fmt(&info)
@@ -397,6 +398,7 @@ fn continue_panic_fmt(info: &PanicInfo) -> ! {
 #[unstable(feature = "libstd_sys_internals",
            reason = "used by the panic! macro",
            issue = "0")]
+#[cfg_attr(not(any(stage0, test)), lang = "begin_panic")]
 #[inline(never)] #[cold] // avoid code bloat at the call sites as much as possible
 pub fn begin_panic<M: Any + Send>(msg: M, file_line_col: &(&'static str, u32, u32)) -> ! {
     // Note that this should be the only allocation performed in this code path.

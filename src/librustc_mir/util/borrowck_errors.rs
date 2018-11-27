@@ -203,8 +203,15 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             desc,
             OGN = o
         );
-        err.span_label(old_loan_span, "first closure is constructed here");
-        err.span_label(new_loan_span, "second closure is constructed here");
+        if old_loan_span == new_loan_span {
+            err.span_label(
+                old_loan_span,
+                "closures are constructed here in different iterations of loop"
+            );
+        } else {
+            err.span_label(old_loan_span, "first closure is constructed here");
+            err.span_label(new_loan_span, "second closure is constructed here");
+        }
         if let Some(old_load_end_span) = old_load_end_span {
             err.span_label(old_load_end_span, "borrow from first closure ends here");
         }
@@ -418,8 +425,8 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         o: Origin,
     ) -> DiagnosticBuilder<'cx> {
         let type_name = match (&ty.sty, is_index) {
-            (&ty::TyArray(_, _), Some(true)) | (&ty::TyArray(_, _), None) => "array",
-            (&ty::TySlice(_), _) => "slice",
+            (&ty::Array(_, _), Some(true)) | (&ty::Array(_, _), None) => "array",
+            (&ty::Slice(_), _) => "slice",
             _ => span_bug!(move_from_span, "this path should not cause illegal move"),
         };
         let mut err = struct_span_err!(
@@ -467,7 +474,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     ) -> DiagnosticBuilder<'cx> {
         let moved_path = moved_path
             .map(|mp| format!(": `{}`", mp))
-            .unwrap_or("".to_owned());
+            .unwrap_or(String::new());
 
         let err = struct_span_err!(
             self,
@@ -665,6 +672,22 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
                 closure_span,
                 format!("may outlive borrowed value {}", borrowed_path),
             );
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
+    fn thread_local_value_does_not_live_long_enough(
+        self,
+        span: Span,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let err = struct_span_err!(
+            self,
+            span,
+            E0712,
+            "thread-local variable borrowed past end of function{OGN}",
+            OGN = o
+        );
 
         self.cancel_if_wrong_origin(err, o)
     }

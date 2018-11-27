@@ -14,6 +14,7 @@ use build::scope::{CachedBlock, DropKind};
 use hair::cx::Cx;
 use hair::{LintLevel, BindingMode, PatternKind};
 use rustc::hir;
+use rustc::hir::Node;
 use rustc::hir::def_id::{DefId, LocalDefId};
 use rustc::middle::region;
 use rustc::mir::*;
@@ -37,20 +38,17 @@ use util as mir_util;
 /// Construct the MIR for a given def-id.
 pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'tcx> {
     let id = tcx.hir.as_local_node_id(def_id).unwrap();
-    let unsupported = || {
-        span_bug!(tcx.hir.span(id), "can't build MIR for {:?}", def_id);
-    };
 
     // Figure out what primary body this item has.
     let body_id = match tcx.hir.get(id) {
-        hir::map::NodeVariant(variant) =>
+        Node::Variant(variant) =>
             return create_constructor_shim(tcx, id, &variant.node.data),
-        hir::map::NodeStructCtor(ctor) =>
+        Node::StructCtor(ctor) =>
             return create_constructor_shim(tcx, id, ctor),
 
         _ => match tcx.hir.maybe_body_owned_by(id) {
             Some(body) => body,
-            None => unsupported(),
+            None => span_bug!(tcx.hir.span(id), "can't build MIR for {:?}", def_id),
         },
     };
 
@@ -67,13 +65,13 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
             let ty = tcx.type_of(tcx.hir.local_def_id(id));
             let mut abi = fn_sig.abi;
             let implicit_argument = match ty.sty {
-                ty::TyClosure(..) => {
+                ty::Closure(..) => {
                     // HACK(eddyb) Avoid having RustCall on closures,
                     // as it adds unnecessary (and wrong) auto-tupling.
                     abi = Abi::Rust;
                     Some(ArgInfo(liberated_closure_env_ty(tcx, id, body_id), None, None, None))
                 }
-                ty::TyGenerator(..) => {
+                ty::Generator(..) => {
                     let gen_ty = tcx.body_tables(body_id).node_id_to_type(fn_hir_id);
                     Some(ArgInfo(gen_ty, None, None, None))
                 }
@@ -115,7 +113,7 @@ pub fn mir_build<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, def_id: DefId) -> Mir<'t
 
             let (yield_ty, return_ty) = if body.is_generator {
                 let gen_sig = match ty.sty {
-                    ty::TyGenerator(gen_def_id, gen_substs, ..) =>
+                    ty::Generator(gen_def_id, gen_substs, ..) =>
                         gen_substs.sig(gen_def_id, tcx),
                     _ =>
                         span_bug!(tcx.hir.span(id), "generator w/o generator type: {:?}", ty),
@@ -241,7 +239,7 @@ fn liberated_closure_env_ty<'a, 'gcx, 'tcx>(tcx: TyCtxt<'a, 'gcx, 'tcx>,
     let closure_ty = tcx.body_tables(body_id).node_id_to_type(closure_expr_hir_id);
 
     let (closure_def_id, closure_substs) = match closure_ty.sty {
-        ty::TyClosure(closure_def_id, closure_substs) => (closure_def_id, closure_substs),
+        ty::Closure(closure_def_id, closure_substs) => (closure_def_id, closure_substs),
         _ => bug!("closure expr does not have closure type: {:?}", closure_ty)
     };
 
@@ -404,7 +402,9 @@ struct CFG<'tcx> {
     basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
 }
 
-newtype_index!(ScopeId);
+newtype_index! {
+    pub struct ScopeId { .. }
+}
 
 ///////////////////////////////////////////////////////////////////////////
 /// The `BlockAnd` "monad" packages up the new basic block along with a
@@ -523,7 +523,7 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
                 by_ref,
                 mutability: Mutability::Not,
             };
-            if let Some(hir::map::NodeBinding(pat)) = tcx.hir.find(var_id) {
+            if let Some(Node::Binding(pat)) = tcx.hir.find(var_id) {
                 if let hir::PatKind::Binding(_, _, ident, _) = pat.node {
                     decl.debug_name = ident.name;
 
@@ -550,8 +550,14 @@ fn construct_fn<'a, 'gcx, 'tcx, A>(hir: Cx<'a, 'gcx, 'tcx>,
         upvar_decls);
 
     let fn_def_id = tcx.hir.local_def_id(fn_id);
-    let call_site_scope = region::Scope::CallSite(body.value.hir_id.local_id);
-    let arg_scope = region::Scope::Arguments(body.value.hir_id.local_id);
+    let call_site_scope = region::Scope {
+        id: body.value.hir_id.local_id,
+        data: region::ScopeData::CallSite
+    };
+    let arg_scope = region::Scope {
+        id: body.value.hir_id.local_id,
+        data: region::ScopeData::Arguments
+    };
     let mut block = START_BLOCK;
     let source_info = builder.source_info(span);
     let call_site_s = (call_site_scope, source_info);
@@ -730,6 +736,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
             self.local_decls.push(LocalDecl {
                 mutability: Mutability::Mut,
                 ty,
+                user_ty: None,
                 source_info,
                 visibility_scope: source_info.scope,
                 name,
@@ -763,6 +770,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                                     binding_mode,
                                     opt_ty_info,
                                     opt_match_place: Some((Some(place.clone()), span)),
+                                    pat_span: span,
                                 })))
                             };
                         self.var_indices.insert(var, LocalsForNode::One(local));

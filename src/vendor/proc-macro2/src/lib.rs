@@ -43,10 +43,13 @@
 //! [ts]: https://doc.rust-lang.org/proc_macro/struct.TokenStream.html
 
 // Proc-macro2 types in rustdoc of other crates get linked to here.
-#![doc(html_root_url = "https://docs.rs/proc-macro2/0.4.8")]
-#![cfg_attr(feature = "nightly", feature(proc_macro_raw_ident, proc_macro_span))]
+#![doc(html_root_url = "https://docs.rs/proc-macro2/0.4.13")]
+#![cfg_attr(
+    feature = "nightly",
+    feature(proc_macro_raw_ident, proc_macro_span)
+)]
 
-#[cfg(feature = "proc-macro")]
+#[cfg(use_proc_macro)]
 extern crate proc_macro;
 extern crate unicode_xid;
 
@@ -146,14 +149,14 @@ impl FromStr for TokenStream {
     }
 }
 
-#[cfg(feature = "proc-macro")]
+#[cfg(use_proc_macro)]
 impl From<proc_macro::TokenStream> for TokenStream {
     fn from(inner: proc_macro::TokenStream) -> TokenStream {
         TokenStream::_new(inner.into())
     }
 }
 
-#[cfg(feature = "proc-macro")]
+#[cfg(use_proc_macro)]
 impl From<TokenStream> for proc_macro::TokenStream {
     fn from(inner: TokenStream) -> proc_macro::TokenStream {
         inner.inner.into()
@@ -163,6 +166,13 @@ impl From<TokenStream> for proc_macro::TokenStream {
 impl Extend<TokenTree> for TokenStream {
     fn extend<I: IntoIterator<Item = TokenTree>>(&mut self, streams: I) {
         self.inner.extend(streams)
+    }
+}
+
+impl Extend<TokenStream> for TokenStream {
+    fn extend<I: IntoIterator<Item = TokenStream>>(&mut self, streams: I) {
+        self.inner
+            .extend(streams.into_iter().map(|stream| stream.inner))
     }
 }
 
@@ -318,7 +328,7 @@ impl Span {
     }
 
     /// This method is only available when the `"nightly"` feature is enabled.
-    #[cfg(all(feature = "nightly", feature = "proc-macro"))]
+    #[cfg(all(feature = "nightly", use_proc_macro))]
     pub fn unstable(self) -> proc_macro::Span {
         self.inner.unstable()
     }

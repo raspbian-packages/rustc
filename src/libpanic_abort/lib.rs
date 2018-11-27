@@ -24,13 +24,15 @@
 
 #![feature(core_intrinsics)]
 #![feature(libc)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(panic_runtime)]
 #![feature(staged_api)]
 #![feature(rustc_attrs)]
 
 // Rust's "try" function, but if we're aborting on panics we just call the
 // function as there's nothing else we need to do here.
-#[no_mangle]
+#[cfg_attr(stage0, no_mangle)]
 #[rustc_std_internal_symbol]
 pub unsafe extern fn __rust_maybe_catch_panic(f: fn(*mut u8),
                                               data: *mut u8,
@@ -50,7 +52,7 @@ pub unsafe extern fn __rust_maybe_catch_panic(f: fn(*mut u8),
 // which would break compat with XP. For now just use `intrinsics::abort` which
 // will kill us with an illegal instruction, which will do a good enough job for
 // now hopefully.
-#[no_mangle]
+#[cfg_attr(stage0, no_mangle)]
 #[rustc_std_internal_symbol]
 pub unsafe extern fn __rust_start_panic(_payload: usize) -> u32 {
     abort();

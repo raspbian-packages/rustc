@@ -9,18 +9,21 @@
 // except according to those terms.
 
 use rustc::hir;
-use rustc::mir::{self, BindingForm, ClearCrossCrate, Local, Location, Mir};
-use rustc::mir::{Mutability, Place, Projection, ProjectionElem, Static};
-use rustc::ty::{self, TyCtxt};
+use rustc::hir::Node;
+use rustc::mir::{self, BindingForm, Constant, ClearCrossCrate, Local, Location, Mir};
+use rustc::mir::{Mutability, Operand, Place, Projection, ProjectionElem, Static, Terminator};
+use rustc::mir::TerminatorKind;
+use rustc::ty::{self, Const, DefIdTree, TyS, TyKind, TyCtxt};
 use rustc_data_structures::indexed_vec::Idx;
 use syntax_pos::Span;
 
+use dataflow::move_paths::InitLocation;
 use borrow_check::MirBorrowckCtxt;
 use util::borrowck_errors::{BorrowckErrors, Origin};
 use util::collect_writes::FindAssignments;
 use util::suggest_ref_mut;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub(super) enum AccessKind {
     MutableBorrow,
     Mutate,
@@ -36,10 +39,18 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
         error_access: AccessKind,
         location: Location,
     ) {
+        debug!(
+            "report_mutability_error(\
+                access_place={:?}, span={:?}, the_place_err={:?}, error_access={:?}, location={:?},\
+            )",
+            access_place, span, the_place_err, error_access, location,
+        );
+
         let mut err;
         let item_msg;
         let reason;
         let access_place_desc = self.describe_place(access_place);
+        debug!("report_mutability_error: access_place_desc={:?}", access_place_desc);
 
         match the_place_err {
             Place::Local(local) => {
@@ -63,7 +74,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                 ));
 
                 item_msg = format!("`{}`", access_place_desc.unwrap());
-                if self.is_upvar(access_place) {
+                if access_place.is_upvar_field_projection(self.mir, &self.tcx).is_some() {
                     reason = ", as it is not declared as mutable".to_string();
                 } else {
                     let name = self.mir.upvar_decls[upvar_index.index()].debug_name;
@@ -82,7 +93,8 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                         the_place_err.ty(self.mir, self.tcx).to_ty(self.tcx)
                     ));
 
-                    reason = if self.is_upvar(access_place) {
+                    reason = if access_place.is_upvar_field_projection(self.mir,
+                                                                       &self.tcx).is_some() {
                         ", as it is a captured variable in a `Fn` closure".to_string()
                     } else {
                         ", as `Fn` closures cannot mutate their captured variables".to_string()
@@ -119,7 +131,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                         }
                     } else {
                         item_msg = format!("data in a {}", pointer_type);
-                        reason = "".to_string();
+                        reason = String::new();
                     }
                 }
             }
@@ -129,7 +141,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
             Place::Static(box Static { def_id, ty: _ }) => {
                 if let Place::Static(_) = access_place {
                     item_msg = format!("immutable static item `{}`", access_place_desc.unwrap());
-                    reason = "".to_string();
+                    reason = String::new();
                 } else {
                     item_msg = format!("`{}`", access_place_desc.unwrap());
                     let static_name = &self.tcx.item_name(*def_id);
@@ -155,11 +167,12 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
             }) => bug!("Unexpected immutable place."),
         }
 
+        debug!("report_mutability_error: item_msg={:?}, reason={:?}", item_msg, reason);
+
         // `act` and `acted_on` are strings that let us abstract over
         // the verbs used in some diagnostic messages.
         let act;
         let acted_on;
-
 
         let span = match error_access {
             AccessKind::Move => {
@@ -180,33 +193,27 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                 act = "borrow as mutable";
                 acted_on = "borrowed as mutable";
 
-                let closure_span = self.find_closure_span(span, location);
-                if let Some((args, var)) = closure_span {
-                    err = self.tcx.cannot_borrow_path_as_mutable_because(
-                        args,
-                        &item_msg,
-                        &reason,
-                        Origin::Mir,
-                    );
-                    err.span_label(
-                        var,
-                        format!(
-                            "mutable borrow occurs due to use of `{}` in closure",
-                            self.describe_place(access_place).unwrap(),
-                        ),
-                    );
-                    args
-                } else {
-                    err = self.tcx.cannot_borrow_path_as_mutable_because(
-                        span,
-                        &item_msg,
-                        &reason,
-                        Origin::Mir,
-                    );
-                    span
-                }
+                let borrow_spans = self.borrow_spans(span, location);
+                let borrow_span = borrow_spans.args_or_use();
+                err = self.tcx.cannot_borrow_path_as_mutable_because(
+                    borrow_span,
+                    &item_msg,
+                    &reason,
+                    Origin::Mir,
+                );
+                borrow_spans.var_span_label(
+                    &mut err,
+                    format!(
+                        "mutable borrow occurs due to use of `{}` in closure",
+                        // always Some() if the message is printed.
+                        self.describe_place(access_place).unwrap_or(String::new()),
+                    )
+                );
+                borrow_span
             }
         };
+
+        debug!("report_mutability_error: act={:?}, acted_on={:?}", act, acted_on);
 
         match the_place_err {
             // We want to suggest users use `let mut` for local (user
@@ -242,7 +249,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                     .var_hir_id
                     .assert_crate_local();
                 let upvar_node_id = self.tcx.hir.hir_to_node_id(upvar_hir_id);
-                if let Some(hir::map::NodeBinding(pat)) = self.tcx.hir.find(upvar_node_id) {
+                if let Some(Node::Binding(pat)) = self.tcx.hir.find(upvar_node_id) {
                     if let hir::PatKind::Binding(
                         hir::BindingAnnotation::Unannotated,
                         _,
@@ -264,7 +271,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
             // a local variable, then just suggest the user remove it.
             Place::Local(_)
                 if {
-                    if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(span) {
+                    if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(span) {
                         snippet.starts_with("&mut ")
                     } else {
                         false
@@ -307,7 +314,7 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                 let local_decl = &self.mir.local_decls[*local];
                 let suggestion = match local_decl.is_user_variable.as_ref().unwrap() {
                     ClearCrossCrate::Set(mir::BindingForm::ImplicitSelf) => {
-                        Some(suggest_ampmut_self(local_decl))
+                        Some(suggest_ampmut_self(self.tcx, local_decl))
                     }
 
                     ClearCrossCrate::Set(mir::BindingForm::Var(mir::VarBindingForm {
@@ -325,7 +332,11 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                     ClearCrossCrate::Set(mir::BindingForm::Var(mir::VarBindingForm {
                         binding_mode: ty::BindingMode::BindByReference(_),
                         ..
-                    })) => suggest_ref_mut(self.tcx, local_decl.source_info.span),
+                    })) => {
+                        let pattern_span = local_decl.source_info.span;
+                        suggest_ref_mut(self.tcx, pattern_span)
+                            .map(|replacement| (pattern_span, replacement))
+                    }
 
                     //
                     ClearCrossCrate::Set(mir::BindingForm::RefForGuard) => unreachable!(),
@@ -384,6 +395,63 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
                 );
             }
 
+            Place::Projection(box Projection {
+                base: Place::Local(local),
+                elem: ProjectionElem::Deref,
+            })  if error_access == AccessKind::MutableBorrow => {
+                err.span_label(span, format!("cannot {ACT}", ACT = act));
+
+                let mpi = self.move_data.rev_lookup.find_local(*local);
+                for i in self.move_data.init_path_map[mpi].iter() {
+                    if let InitLocation::Statement(location) = self.move_data.inits[*i].location {
+                        if let Some(
+                            Terminator {
+                                kind: TerminatorKind::Call {
+                                    func: Operand::Constant(box Constant {
+                                        literal: Const {
+                                            ty: &TyS {
+                                                sty: TyKind::FnDef(id, substs),
+                                                ..
+                                            },
+                                            ..
+                                        },
+                                        ..
+                                    }),
+                                    ..
+                                },
+                                ..
+                            }
+                        ) = &self.mir.basic_blocks()[location.block].terminator {
+                            if self.tcx.parent(id) == self.tcx.lang_items().index_trait() {
+
+                                let mut found = false;
+                                self.tcx.for_each_relevant_impl(
+                                    self.tcx.lang_items().index_mut_trait().unwrap(),
+                                    substs.type_at(0),
+                                    |_relevant_impl| {
+                                        found = true;
+                                    }
+                                );
+
+                                let extra = if found {
+                                    String::from("")
+                                } else {
+                                    format!(", but it is not implemented for `{}`",
+                                            substs.type_at(0))
+                                };
+
+                                err.help(
+                                    &format!(
+                                        "trait `IndexMut` is required to modify indexed content{}",
+                                         extra,
+                                    ),
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+
             _ => {
                 err.span_label(span, format!("cannot {ACT}", ACT = act));
             }
@@ -391,35 +459,24 @@ impl<'a, 'gcx, 'tcx> MirBorrowckCtxt<'a, 'gcx, 'tcx> {
 
         err.buffer(&mut self.errors_buffer);
     }
-
-    // Does this place refer to what the user sees as an upvar
-    fn is_upvar(&self, place: &Place<'tcx>) -> bool {
-        match *place {
-            Place::Projection(box Projection {
-                ref base,
-                elem: ProjectionElem::Field(_, _),
-            }) => {
-                let base_ty = base.ty(self.mir, self.tcx).to_ty(self.tcx);
-                is_closure_or_generator(base_ty)
-            }
-            Place::Projection(box Projection {
-                base:
-                    Place::Projection(box Projection {
-                        ref base,
-                        elem: ProjectionElem::Field(upvar_index, _),
-                    }),
-                elem: ProjectionElem::Deref,
-            }) => {
-                let base_ty = base.ty(self.mir, self.tcx).to_ty(self.tcx);
-                is_closure_or_generator(base_ty) && self.mir.upvar_decls[upvar_index.index()].by_ref
-            }
-            _ => false,
-        }
-    }
 }
 
-fn suggest_ampmut_self<'cx, 'gcx, 'tcx>(local_decl: &mir::LocalDecl<'tcx>) -> (Span, String) {
-    (local_decl.source_info.span, "&mut self".to_string())
+fn suggest_ampmut_self<'cx, 'gcx, 'tcx>(
+    tcx: TyCtxt<'cx, 'gcx, 'tcx>,
+    local_decl: &mir::LocalDecl<'tcx>,
+) -> (Span, String) {
+    let sp = local_decl.source_info.span;
+    (sp, match tcx.sess.source_map().span_to_snippet(sp) {
+        Ok(snippet) => {
+            let lt_pos = snippet.find('\'');
+            if let Some(lt_pos) = lt_pos {
+                format!("&{}mut self", &snippet[lt_pos..snippet.len() - 4])
+            } else {
+                "&mut self".to_string()
+            }
+        }
+        _ => "&mut self".to_string()
+    })
 }
 
 // When we want to suggest a user change a local variable to be a `&mut`, there
@@ -447,9 +504,15 @@ fn suggest_ampmut<'cx, 'gcx, 'tcx>(
     let locations = mir.find_assignments(local);
     if locations.len() > 0 {
         let assignment_rhs_span = mir.source_info(locations[0]).span;
-        let snippet = tcx.sess.codemap().span_to_snippet(assignment_rhs_span);
-        if let Ok(src) = snippet {
-            if src.starts_with('&') {
+        if let Ok(src) = tcx.sess.source_map().span_to_snippet(assignment_rhs_span) {
+            if let (true, Some(ws_pos)) = (
+                src.starts_with("&'"),
+                src.find(|c: char| -> bool { c.is_whitespace() }),
+            ) {
+                let lt_name = &src[1..ws_pos];
+                let ty = &src[ws_pos..];
+                return (assignment_rhs_span, format!("&{} mut {}", lt_name, ty));
+            } else if src.starts_with('&') {
                 let borrowed_expr = src[1..].to_string();
                 return (assignment_rhs_span, format!("&mut {}", borrowed_expr));
             }
@@ -466,13 +529,25 @@ fn suggest_ampmut<'cx, 'gcx, 'tcx>(
         None => local_decl.source_info.span,
     };
 
+    if let Ok(src) = tcx.sess.source_map().span_to_snippet(highlight_span) {
+        if let (true, Some(ws_pos)) = (
+            src.starts_with("&'"),
+            src.find(|c: char| -> bool { c.is_whitespace() }),
+        ) {
+            let lt_name = &src[1..ws_pos];
+            let ty = &src[ws_pos..];
+            return (highlight_span, format!("&{} mut{}", lt_name, ty));
+        }
+    }
+
     let ty_mut = local_decl.ty.builtin_deref(true).unwrap();
     assert_eq!(ty_mut.mutbl, hir::MutImmutable);
-    if local_decl.ty.is_region_ptr() {
-        (highlight_span, format!("&mut {}", ty_mut.ty))
-    } else {
-        (highlight_span, format!("*mut {}", ty_mut.ty))
-    }
+    (highlight_span,
+     if local_decl.ty.is_region_ptr() {
+         format!("&mut {}", ty_mut.ty)
+     } else {
+         format!("*mut {}", ty_mut.ty)
+     })
 }
 
 fn is_closure_or_generator(ty: ty::Ty) -> bool {

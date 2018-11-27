@@ -16,6 +16,7 @@
 // 2. loans made in overlapping scopes do not conflict
 // 3. assignments do not affect things loaned out as immutable
 // 4. moves do not affect things loaned out in any way
+
 use self::UseError::*;
 
 use borrowck::*;
@@ -29,6 +30,7 @@ use rustc::ty::{self, TyCtxt, RegionKind};
 use syntax::ast;
 use syntax_pos::Span;
 use rustc::hir;
+use rustc::hir::Node;
 use rustc_mir::util::borrowck_errors::{BorrowckErrors, Origin};
 
 use std::rc::Rc;
@@ -91,7 +93,6 @@ struct CheckLoanCtxt<'a, 'tcx: 'a> {
     dfcx_loans: &'a LoanDataFlow<'a, 'tcx>,
     move_data: &'a move_data::FlowedMoveData<'a, 'tcx>,
     all_loans: &'a [Loan<'tcx>],
-    param_env: ty::ParamEnv<'tcx>,
     movable_generator: bool,
 }
 
@@ -202,7 +203,7 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
 
     let node_id = bccx.tcx.hir.as_local_node_id(def_id).unwrap();
     let movable_generator = !match bccx.tcx.hir.get(node_id) {
-        hir::map::Node::NodeExpr(&hir::Expr {
+        Node::Expr(&hir::Expr {
             node: hir::ExprKind::Closure(.., Some(hir::GeneratorMovability::Static)),
             ..
         }) => true,
@@ -215,7 +216,6 @@ pub fn check_loans<'a, 'b, 'c, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>,
         dfcx_loans,
         move_data,
         all_loans,
-        param_env,
         movable_generator,
     };
     let rvalue_promotable_map = bccx.tcx.rvalue_promotable_map(def_id);
@@ -596,7 +596,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             // 3. Where does old loan expire.
 
             let previous_end_span =
-                Some(self.tcx().sess.codemap().end_point(
+                Some(self.tcx().sess.source_map().end_point(
                         old_loan.kill_scope.span(self.tcx(), &self.bccx.region_scope_tree)));
 
             let mut err = match (new_loan.kind, old_loan.kind) {
@@ -767,8 +767,12 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
 
         let mut ret = UseOk;
 
+        let scope = region::Scope {
+            id: expr_id,
+            data: region::ScopeData::Node
+        };
         self.each_in_scope_loan_affecting_path(
-            region::Scope::Node(expr_id), use_path, |loan| {
+            scope, use_path, |loan| {
             if !compatible_borrow_kinds(loan.kind, borrow_kind) {
                 ret = UseWhileBorrowed(loan.loan_path.clone(), loan.span);
                 false
@@ -801,8 +805,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
                 use_kind,
                 &lp,
                 the_move,
-                moved_lp,
-                self.param_env);
+                moved_lp);
             false
         });
     }
@@ -846,7 +849,7 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
             }
             LpExtend(ref lp_base, _, LpInterior(_, InteriorField(_))) => {
                 match lp_base.to_type().sty {
-                    ty::TyAdt(def, _) if def.has_dtor(self.tcx()) => {
+                    ty::Adt(def, _) if def.has_dtor(self.tcx()) => {
                         // In the case where the owner implements drop, then
                         // the path must be initialized to prevent a case of
                         // partial reinitialization
@@ -887,7 +890,10 @@ impl<'a, 'tcx> CheckLoanCtxt<'a, 'tcx> {
 
         // Check that we don't invalidate any outstanding loans
         if let Some(loan_path) = opt_loan_path(assignee_cmt) {
-            let scope = region::Scope::Node(assignment_id);
+            let scope = region::Scope {
+                id: assignment_id,
+                data: region::ScopeData::Node
+            };
             self.each_in_scope_loan_affecting_path(scope, &loan_path, |loan| {
                 self.report_illegal_mutation(assignment_span, &loan_path, loan);
                 false

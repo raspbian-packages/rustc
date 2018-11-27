@@ -13,12 +13,12 @@
 > _MetaItem_ :\
 > &nbsp;&nbsp; &nbsp;&nbsp; IDENTIFIER\
 > &nbsp;&nbsp; | IDENTIFIER `=` LITERAL\
-> &nbsp;&nbsp; | IDENTIFIER `(` LITERAL `)`\
 > &nbsp;&nbsp; | IDENTIFIER `(` _MetaSeq_ `)`
 >
 > _MetaSeq_ :\
 > &nbsp;&nbsp; &nbsp;&nbsp; EMPTY\
 > &nbsp;&nbsp; | _MetaItem_\
+> &nbsp;&nbsp; | LITERAL\
 > &nbsp;&nbsp; | _MetaItem_ `,` _MetaSeq_
 
 An _attribute_ is a general, free-form metadatum that is interpreted according
@@ -30,14 +30,12 @@ Attributes may appear as any of:
 * A single identifier, the _attribute name_
 * An identifier followed by the equals sign '=' and a literal, providing a
   key/value pair
-* An identifier followed by a parenthesized literal, providing a
-  key/value pair
 * An identifier followed by a parenthesized list of sub-attribute arguments
+  which include literals
 
 _Inner attributes_, written with a bang ("!") after the hash ("#"), apply to the
 item that the attribute is declared within. _Outer attributes_, written without
-the bang after the hash, apply to the item or generic parameter that follow the
-attribute.
+the bang after the hash, apply to the thing that follows the attribute.
 
 Attributes may be applied to many things in the language:
 
@@ -83,6 +81,24 @@ fn some_unused_variables() {
 }
 ```
 
+There are three kinds of attributes:
+
+* Built-in attributes
+* Macro attributes
+* Derive mode helper attributes
+
+## Active and inert attributes
+
+An attribute is either active or inert. During attribute processing, *active
+attributes* remove themselves from the thing they are on while *inert attriutes*
+stay on.
+
+The `cfg` and `cfg_attr` attributes are active. The `test` attribute is inert
+when compiling for tests and active otherwise. Attribute macros are active.
+All other attributes are inert.
+
+---
+
 The rest of this page describes or links to descriptions of which attribute
 names have meaning.
 
@@ -118,16 +134,6 @@ names have meaning.
 - `path` - specifies the file to load the module from. `#[path="foo.rs"] mod
   bar;` is equivalent to `mod bar { /* contents of foo.rs */ }`. The path is
   taken relative to the directory that the current module is in.
-
-## Function-only attributes
-
-- `test` - indicates that this function is a test function, to only be compiled
-  in case of `--test`.
-  - `ignore` - indicates that this test function is disabled.
-- `should_panic` - indicates that this test function should panic, inverting the
-  success condition.
-- `cold` - The function is unlikely to be executed, so optimize it (and calls
-  to it) differently.
 
 ## FFI attributes
 
@@ -172,19 +178,27 @@ which can be used to control type layout.
 
 - `macro_reexport` on an `extern crate` — re-export the named macros.
 
-- `macro_export` - export a macro for cross-crate usage.
+- `macro_export` - export a `macro_rules` macro for cross-crate usage.
 
 - `no_link` on an `extern crate` — even if we load this crate for macros, don't
   link it into the output.
 
 See the [macros section of the first edition of the
 book](../book/first-edition/macros.html#scoping-and-macro-importexport) for more
-information on macro scope.
+information on `macro_rules` macro scope.
+
+- `proc_macro` - Defines a [function-like macro].
+
+- `proc_macro_derive` - Defines a [derive mode macro].
+
+- `proc_macro_attribute` - Defines an [attribute macro].
 
 ## Miscellaneous attributes
 
 - `export_name` - on statics and functions, this determines the name of the
   exported symbol.
+- `global_allocator` - when applied to a static item implementing the
+  `GlobalAlloc` trait, sets the global allocator.
 - `link_section` - on statics and functions, this specifies the section of the
   object file that this item's contents will be placed into.
 - `no_mangle` - on any item, do not apply the standard name mangling. Set the
@@ -228,103 +242,47 @@ are transformed into `doc` attributes.
 
 See [The Rustdoc Book] for reference material on this attribute.
 
+### Testing
+
+The compiler comes with a default test framework. It works by attributing
+functions with the `test` attribute. These functions are only compiled when
+compiling with the test harness. Like [main], functions annotated with this
+attribute must take no arguments, must not declare any
+[trait or lifetime bounds], must not have any [where clauses], and its return
+type must be one of the following:
+
+* `()`
+* `Result<(), E> where E: Error`
+<!-- * `!` -->
+<!-- * Result<!, E> where E: Error` -->
+
+> Note: The implementation of which return types are allowed is determined by
+> the unstable [`Termination`] trait.
+
+<!-- If the previous section needs updating (from "must take no arguments"
+  onwards, also update it in the crates-and-source-files.md file -->
+
+> Note: The test harness is ran by passing the `--test` argument to `rustc` or
+> using `cargo test`.
+
+Tests that return `()` pass as long as they terminate and do not panic. Tests
+that return a `Result` pass as long as they return `Ok(())`. Tests that do not
+terminate neither pass nor fail.
+
+A function annotated with the `test` attribute can also be annotated with the
+`ignore` attribute. The *`ignore` attribute* tells the test harness to not
+execute that function as a test. It will still only be compiled when compiling
+with the test harness.
+
+A function annotated with the `test` attribute that returns `()` can also be
+annotated with the `should_panic` attribute. The *`should_panic` attribute*
+makes the test only pass if it actually panics.
+
 ### Conditional compilation
 
-Sometimes one wants to have different compiler outputs from the same code,
-depending on build target, such as targeted operating system, or to enable
-release builds.
-
-Configuration options are boolean (on or off) and are named either with a
-single identifier (e.g. `foo`) or an identifier and a string (e.g. `foo = "bar"`;
-the quotes are required and spaces around the `=` are unimportant). Note that
-similarly-named options, such as `foo`, `foo="bar"` and `foo="baz"` may each be
-set or unset independently.
-
-Configuration options are either provided by the compiler or passed in on the
-command line using `--cfg` (e.g. `rustc main.rs --cfg foo --cfg 'bar="baz"'`).
-Rust code then checks for their presence using the `#[cfg(...)]` attribute:
-
-```rust
-// The function is only included in the build when compiling for macOS
-#[cfg(target_os = "macos")]
-fn macos_only() {
-  // ...
-}
-
-// This function is only included when either foo or bar is defined
-#[cfg(any(foo, bar))]
-fn needs_foo_or_bar() {
-  // ...
-}
-
-// This function is only included when compiling for a unixish OS with a 32-bit
-// architecture
-#[cfg(all(unix, target_pointer_width = "32"))]
-fn on_32bit_unix() {
-  // ...
-}
-
-// This function is only included when foo is not defined
-#[cfg(not(foo))]
-fn needs_not_foo() {
-  // ...
-}
-```
-
-This illustrates some conditional compilation can be achieved using the
-`#[cfg(...)]` attribute. `any`, `all` and `not` can be used to assemble
-arbitrarily complex configurations through nesting.
-
-The following configurations must be defined by the implementation:
-
-* `target_arch = "..."` - Target CPU architecture, such as `"x86"`,
-  `"x86_64"` `"mips"`, `"powerpc"`, `"powerpc64"`, `"arm"`, or
-  `"aarch64"`. This value is closely related to the first element of
-  the platform target triple, though it is not identical.
-* `target_os = "..."` - Operating system of the target, examples
-  include `"windows"`, `"macos"`, `"ios"`, `"linux"`, `"android"`,
-  `"freebsd"`, `"dragonfly"`, `"bitrig"` , `"openbsd"` or
-  `"netbsd"`. This value is closely related to the second and third
-  element of the platform target triple, though it is not identical.
-* `target_family = "..."` - Operating system family of the target, e. g.
-  `"unix"` or `"windows"`. The value of this configuration option is defined
-  as a configuration itself, like `unix` or `windows`.
-* `unix` - See `target_family`.
-* `windows` - See `target_family`.
-* `target_env = ".."` - Further disambiguates the target platform with
-  information about the ABI/libc. Presently this value is either
-  `"gnu"`, `"msvc"`, `"musl"`, or the empty string. For historical
-  reasons this value has only been defined as non-empty when needed
-  for disambiguation. Thus on many GNU platforms this value will be
-  empty. This value is closely related to the fourth element of the
-  platform target triple, though it is not identical. For example,
-  embedded ABIs such as `gnueabihf` will simply define `target_env` as
-  `"gnu"`.
-* `target_endian = "..."` - Endianness of the target CPU, either `"little"` or
-  `"big"`.
-* `target_pointer_width = "..."` - Target pointer width in bits. This is set
-  to `"32"` for targets with 32-bit pointers, and likewise set to `"64"` for
-  64-bit pointers.
-* `target_has_atomic = "..."` - Set of integer sizes on which the target can perform
-  atomic operations. Values are `"8"`, `"16"`, `"32"`, `"64"` and `"ptr"`.
-* `target_vendor = "..."` - Vendor of the target, for example `apple`, `pc`, or
-  simply `"unknown"`.
-* `test` - Enabled when compiling the test harness (using the `--test` flag).
-* `debug_assertions` - Enabled by default when compiling without optimizations.
-  This can be used to enable extra debugging code in development but not in
-  production.  For example, it controls the behavior of the standard library's
-  `debug_assert!` macro.
-
-You can also set another attribute based on a `cfg` variable with `cfg_attr`:
-
-```rust,ignore
-#[cfg_attr(a, b)]
-```
-
-This is the same as `#[b]` if `a` is set by `cfg`, and nothing otherwise.
-
-Lastly, configuration options can be used in expressions by invoking the `cfg!`
-macro: `cfg!(a)` evaluates to `true` if `a` is set, and `false` otherwise.
+The `cfg` and `cfg_attr` attributes control conditional compilation of [items]
+and attributes. See the [conditional compilation] section for reference material
+on these attributes.
 
 ### Lint check attributes
 
@@ -396,7 +354,7 @@ pub mod m3 {
 }
 ```
 
-#### `must_use` Attribute
+#### `must_use`
 
 The `must_use` attribute can be used on user-defined composite types
 ([`struct`s][struct], [`enum`s][enum], and [`union`s][union]) and [functions].
@@ -495,24 +453,42 @@ When used on a function in an implementation, the attribute does nothing.
 The `must_use` attribute may also include a message by using
 `#[must_use = "message"]`. The message will be given alongside the warning.
 
-### Inline attribute
+### Optimization Hints
 
-The inline attribute suggests that the compiler should place a copy of
-the function or static in the caller, rather than generating code to
-call the function or access the static where it is defined.
+The `cold` and `inline` attributes give suggestions to the compiler to compile
+your code in a way that may be faster than what it would do without the hint.
+The attributes are only suggestions, and the compiler may choose to ignore it.
 
-The compiler automatically inlines functions based on internal heuristics.
-Incorrectly inlining functions can actually make the program slower, so it
-should be used with care.
+#### `inline` Attribute
 
-`#[inline]` and `#[inline(always)]` always cause the function to be serialized
-into the crate metadata to allow cross-crate inlining.
+The *`inline` attribute* suggests to the compiler that it should place a copy of
+the attributed function in the caller, rather than generating code to call the
+function where it is defined.
 
-There are three different types of inline attributes:
+This attribute can be used on [functions] and function prototypes, although it
+does not do anything on function prototypes. When this attribute is applied to
+a function in a [trait], it applies only to that function when used as a default
+function for a trait implementation and not to all trait implementations.
+
+> ***Note***: The compiler automatically inlines functions based on internal
+> heuristics. Incorrectly inlining functions can actually make the program
+> slower, so this attibute should be used with care.
+
+There are three ways of using the inline attribute:
 
 * `#[inline]` hints the compiler to perform an inline expansion.
 * `#[inline(always)]` asks the compiler to always perform an inline expansion.
 * `#[inline(never)]` asks the compiler to never perform an inline expansion.
+
+#### `cold` Attribute
+
+The *`cold` attribute* suggests to the compiler that the attributed function is
+unlikely to be called.
+
+This attribute can be used on [functions] and function prototypes, although it
+does not do anything on function prototypes. When this attribute is applied to
+a function in a [trait], it applies only to that function when used as a default
+function for a trait implementation and not to all trait implementations.
 
 ### `derive`
 
@@ -544,7 +520,7 @@ impl<T: PartialEq> PartialEq for Foo<T> {
 }
 ```
 
-You can implement `derive` for your own type through [procedural macros].
+You can implement `derive` for your own traits through [procedural macros].
 
 [Doc comments]: comments.html#doc-comments
 [The Rustdoc Book]: ../rustdoc/the-doc-attribute.html
@@ -571,3 +547,12 @@ You can implement `derive` for your own type through [procedural macros].
 [statements]: statements.html
 [match expressions]: expressions/match-expr.html
 [external blocks]: items/external-blocks.html
+[items]: items.html
+[attribute macro]: procedural-macros.html#attribute-macros
+[function-like macro]: procedural-macros.html#function-like-procedural-macros
+[conditional compilation]: conditional-compilation.html
+[derive mode macro]: procedural-macros.html#derive-mode-macros
+[trait]: items/traits.html[main]: crates-and-source-files.html
+[`Termination`]: ../std/process/trait.Termination.html
+[where clause]: items/where-clauses.html
+[trait or lifetime bounds]: trait-bounds.html

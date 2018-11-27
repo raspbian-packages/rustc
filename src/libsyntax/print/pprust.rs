@@ -8,15 +8,13 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub use self::AnnNode::*;
-
 use rustc_target::spec::abi::{self, Abi};
 use ast::{self, BlockCheckMode, PatKind, RangeEnd, RangeSyntax};
 use ast::{SelfKind, GenericBound, TraitBoundModifier};
 use ast::{Attribute, MacDelimiter, GenericArg};
 use util::parser::{self, AssocOp, Fixity};
 use attr;
-use codemap::{self, CodeMap, Spanned};
+use source_map::{self, SourceMap, Spanned};
 use syntax_pos::{self, BytePos};
 use syntax_pos::hygiene::{Mark, SyntaxContext};
 use parse::token::{self, BinOpToken, Token};
@@ -36,13 +34,13 @@ use std::iter::Peekable;
 use std::vec;
 
 pub enum AnnNode<'a> {
-    NodeIdent(&'a ast::Ident),
-    NodeName(&'a ast::Name),
-    NodeBlock(&'a ast::Block),
-    NodeItem(&'a ast::Item),
-    NodeSubItem(ast::NodeId),
-    NodeExpr(&'a ast::Expr),
-    NodePat(&'a ast::Pat),
+    Ident(&'a ast::Ident),
+    Name(&'a ast::Name),
+    Block(&'a ast::Block),
+    Item(&'a ast::Item),
+    SubItem(ast::NodeId),
+    Expr(&'a ast::Expr),
+    Pat(&'a ast::Pat),
 }
 
 pub trait PpAnn {
@@ -57,7 +55,7 @@ impl PpAnn for NoAnn {}
 
 pub struct State<'a> {
     pub s: pp::Printer<'a>,
-    cm: Option<&'a CodeMap>,
+    cm: Option<&'a SourceMap>,
     comments: Option<Vec<comments::Comment> >,
     literals: Peekable<vec::IntoIter<comments::Literal>>,
     cur_cmnt: usize,
@@ -84,7 +82,7 @@ pub const DEFAULT_COLUMNS: usize = 78;
 /// Requires you to pass an input filename and reader so that
 /// it can scan the input text for comments and literals to
 /// copy forward.
-pub fn print_crate<'a>(cm: &'a CodeMap,
+pub fn print_crate<'a>(cm: &'a SourceMap,
                        sess: &ParseSess,
                        krate: &ast::Crate,
                        filename: FileName,
@@ -118,7 +116,7 @@ pub fn print_crate<'a>(cm: &'a CodeMap,
 }
 
 impl<'a> State<'a> {
-    pub fn new_from_input(cm: &'a CodeMap,
+    pub fn new_from_input(cm: &'a SourceMap,
                           sess: &ParseSess,
                           filename: FileName,
                           input: &mut dyn Read,
@@ -138,7 +136,7 @@ impl<'a> State<'a> {
             if is_expanded { None } else { Some(lits) })
     }
 
-    pub fn new(cm: &'a CodeMap,
+    pub fn new(cm: &'a SourceMap,
                out: Box<dyn Write+'a>,
                ann: &'a dyn PpAnn,
                comments: Option<Vec<comments::Comment>>,
@@ -380,7 +378,7 @@ pub fn fun_to_string(decl: &ast::FnDecl,
     to_string(|s| {
         s.head("")?;
         s.print_fn(decl, header, Some(name),
-                   generics, &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
+                   generics, &source_map::dummy_spanned(ast::VisibilityKind::Inherited))?;
         s.end()?; // Close the head box
         s.end() // Close the outer box
     })
@@ -1196,7 +1194,7 @@ impl<'a> State<'a> {
         self.hardbreak_if_not_bol()?;
         self.maybe_print_comment(item.span.lo())?;
         self.print_outer_attributes(&item.attrs)?;
-        self.ann.pre(self, NodeItem(item))?;
+        self.ann.pre(self, AnnNode::Item(item))?;
         match item.node {
             ast::ItemKind::ExternCrate(orig_name) => {
                 self.head(&visibility_qualified(&item.vis, "extern crate"))?;
@@ -1439,7 +1437,7 @@ impl<'a> State<'a> {
                 self.end()?;
             }
         }
-        self.ann.post(self, NodeItem(item))
+        self.ann.post(self, AnnNode::Item(item))
     }
 
     fn print_trait_ref(&mut self, t: &ast::TraitRef) -> io::Result<()> {
@@ -1596,7 +1594,7 @@ impl<'a> State<'a> {
 
     pub fn print_trait_item(&mut self, ti: &ast::TraitItem)
                             -> io::Result<()> {
-        self.ann.pre(self, NodeSubItem(ti.id))?;
+        self.ann.pre(self, AnnNode::SubItem(ti.id))?;
         self.hardbreak_if_not_bol()?;
         self.maybe_print_comment(ti.span.lo())?;
         self.print_outer_attributes(&ti.attrs)?;
@@ -1606,7 +1604,7 @@ impl<'a> State<'a> {
                     ti.ident,
                     ty,
                     default.as_ref().map(|expr| &**expr),
-                    &codemap::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
+                    &source_map::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
                 )?;
             }
             ast::TraitItemKind::Method(ref sig, ref body) => {
@@ -1617,7 +1615,7 @@ impl<'a> State<'a> {
                     ti.ident,
                     &ti.generics,
                     sig,
-                    &codemap::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
+                    &source_map::respan(ti.span.shrink_to_lo(), ast::VisibilityKind::Inherited),
                 )?;
                 if let Some(ref body) = *body {
                     self.nbsp()?;
@@ -1638,11 +1636,11 @@ impl<'a> State<'a> {
                 }
             }
         }
-        self.ann.post(self, NodeSubItem(ti.id))
+        self.ann.post(self, AnnNode::SubItem(ti.id))
     }
 
     pub fn print_impl_item(&mut self, ii: &ast::ImplItem) -> io::Result<()> {
-        self.ann.pre(self, NodeSubItem(ii.id))?;
+        self.ann.pre(self, AnnNode::SubItem(ii.id))?;
         self.hardbreak_if_not_bol()?;
         self.maybe_print_comment(ii.span.lo())?;
         self.print_outer_attributes(&ii.attrs)?;
@@ -1672,7 +1670,7 @@ impl<'a> State<'a> {
                 }
             }
         }
-        self.ann.post(self, NodeSubItem(ii.id))
+        self.ann.post(self, AnnNode::SubItem(ii.id))
     }
 
     pub fn print_stmt(&mut self, st: &ast::Stmt) -> io::Result<()> {
@@ -1756,7 +1754,7 @@ impl<'a> State<'a> {
             BlockCheckMode::Default => ()
         }
         self.maybe_print_comment(blk.span.lo())?;
-        self.ann.pre(self, NodeBlock(blk))?;
+        self.ann.pre(self, AnnNode::Block(blk))?;
         self.bopen()?;
 
         self.print_inner_attributes(attrs)?;
@@ -1774,7 +1772,7 @@ impl<'a> State<'a> {
         }
 
         self.bclose_maybe_open(blk.span, indented, close_box)?;
-        self.ann.post(self, NodeBlock(blk))
+        self.ann.post(self, AnnNode::Block(blk))
     }
 
     fn print_else(&mut self, els: Option<&ast::Expr>) -> io::Result<()> {
@@ -2065,7 +2063,7 @@ impl<'a> State<'a> {
         }
 
         self.ibox(INDENT_UNIT)?;
-        self.ann.pre(self, NodeExpr(expr))?;
+        self.ann.pre(self, AnnNode::Expr(expr))?;
         match expr.node {
             ast::ExprKind::Box(ref expr) => {
                 self.word_space("box")?;
@@ -2379,13 +2377,13 @@ impl<'a> State<'a> {
                 self.print_expr_maybe_paren(e, parser::PREC_POSTFIX)?;
                 self.s.word("?")?
             }
-            ast::ExprKind::Catch(ref blk) => {
-                self.head("do catch")?;
+            ast::ExprKind::TryBlock(ref blk) => {
+                self.head("try")?;
                 self.s.space()?;
                 self.print_block_with_attrs(blk, attrs)?
             }
         }
-        self.ann.post(self, NodeExpr(expr))?;
+        self.ann.post(self, AnnNode::Expr(expr))?;
         self.end()
     }
 
@@ -2404,7 +2402,7 @@ impl<'a> State<'a> {
         } else {
             self.s.word(&ident.as_str())?;
         }
-        self.ann.post(self, NodeIdent(&ident))
+        self.ann.post(self, AnnNode::Ident(&ident))
     }
 
     pub fn print_usize(&mut self, i: usize) -> io::Result<()> {
@@ -2413,7 +2411,7 @@ impl<'a> State<'a> {
 
     pub fn print_name(&mut self, name: ast::Name) -> io::Result<()> {
         self.s.word(&name.as_str())?;
-        self.ann.post(self, NodeName(&name))
+        self.ann.post(self, AnnNode::Name(&name))
     }
 
     pub fn print_for_decl(&mut self, loc: &ast::Local,
@@ -2537,7 +2535,7 @@ impl<'a> State<'a> {
 
     pub fn print_pat(&mut self, pat: &ast::Pat) -> io::Result<()> {
         self.maybe_print_comment(pat.span.lo())?;
-        self.ann.pre(self, NodePat(pat))?;
+        self.ann.pre(self, AnnNode::Pat(pat))?;
         /* Pat isn't normalized, but the beauty of it
          is that it doesn't matter */
         match pat.node {
@@ -2675,7 +2673,7 @@ impl<'a> State<'a> {
             }
             PatKind::Mac(ref m) => self.print_mac(m)?,
         }
-        self.ann.post(self, NodePat(pat))
+        self.ann.post(self, AnnNode::Pat(pat))
     }
 
     fn print_pats(&mut self, pats: &[P<ast::Pat>]) -> io::Result<()> {
@@ -2704,10 +2702,14 @@ impl<'a> State<'a> {
         self.print_outer_attributes(&arm.attrs)?;
         self.print_pats(&arm.pats)?;
         self.s.space()?;
-        if let Some(ref e) = arm.guard {
-            self.word_space("if")?;
-            self.print_expr(e)?;
-            self.s.space()?;
+        if let Some(ref g) = arm.guard {
+            match g {
+                ast::Guard::If(ref e) => {
+                    self.word_space("if")?;
+                    self.print_expr(e)?;
+                    self.s.space()?;
+                }
+            }
         }
         self.word_space("=>")?;
 
@@ -3085,7 +3087,7 @@ impl<'a> State<'a> {
                       ast::FnHeader { unsafety, abi, ..ast::FnHeader::default() },
                       name,
                       &generics,
-                      &codemap::dummy_spanned(ast::VisibilityKind::Inherited))?;
+                      &source_map::dummy_spanned(ast::VisibilityKind::Inherited))?;
         self.end()
     }
 
@@ -3185,7 +3187,7 @@ mod tests {
     use super::*;
 
     use ast;
-    use codemap;
+    use source_map;
     use syntax_pos;
     use with_globals;
 
@@ -3205,7 +3207,7 @@ mod tests {
                     &decl,
                     ast::FnHeader {
                         unsafety: ast::Unsafety::Normal,
-                        constness: codemap::dummy_spanned(ast::Constness::NotConst),
+                        constness: source_map::dummy_spanned(ast::Constness::NotConst),
                         asyncness: ast::IsAsync::NotAsync,
                         abi: Abi::Rust,
                     },
@@ -3222,7 +3224,7 @@ mod tests {
         with_globals(|| {
             let ident = ast::Ident::from_str("principal_skinner");
 
-            let var = codemap::respan(syntax_pos::DUMMY_SP, ast::Variant_ {
+            let var = source_map::respan(syntax_pos::DUMMY_SP, ast::Variant_ {
                 ident,
                 attrs: Vec::new(),
                 // making this up as I go.... ?

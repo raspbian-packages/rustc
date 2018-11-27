@@ -34,18 +34,17 @@ use rustc::cfg;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty};
 use rustc::traits;
-use rustc::hir::map as hir_map;
+use hir::Node;
 use util::nodemap::NodeSet;
 use lint::{LateContext, LintContext, LintArray};
 use lint::{LintPass, LateLintPass, EarlyLintPass, EarlyContext};
 
-use std::collections::HashSet;
 use rustc::util::nodemap::FxHashSet;
 
 use syntax::tokenstream::{TokenTree, TokenStream};
 use syntax::ast;
 use syntax::attr;
-use syntax::codemap::Spanned;
+use syntax::source_map::Spanned;
 use syntax::edition::Edition;
 use syntax::feature_gate::{AttributeGate, AttributeType, Stability, deprecated_attributes};
 use syntax_pos::{BytePos, Span, SyntaxContext};
@@ -55,7 +54,7 @@ use syntax::errors::{Applicability, DiagnosticBuilder};
 use rustc::hir::{self, GenericParamKind, PatKind};
 use rustc::hir::intravisit::FnKind;
 
-use bad_style::{MethodLateContext, method_context};
+use nonstandard_style::{MethodLateContext, method_context};
 
 // hardwired lints from librustc
 pub use lint::builtin::*;
@@ -82,9 +81,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for WhileTrue {
                 if let ast::LitKind::Bool(true) = lit.node {
                     if lit.span.ctxt() == SyntaxContext::empty() {
                         let msg = "denote infinite loops with `loop { ... }`";
-                        let condition_span = cx.tcx.sess.codemap().def_span(e.span);
+                        let condition_span = cx.tcx.sess.source_map().def_span(e.span);
                         let mut err = cx.struct_span_lint(WHILE_TRUE, condition_span, msg);
-                        err.span_suggestion_short(condition_span, "use `loop`", "loop".to_owned());
+                        err.span_suggestion_short_with_applicability(
+                            condition_span,
+                            "use `loop`",
+                            "loop".to_owned(),
+                            Applicability::MachineApplicable
+                        );
                         err.emit();
                     }
                 }
@@ -190,8 +194,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for NonShorthandFieldPatterns {
                         let mut err = cx.struct_span_lint(NON_SHORTHAND_FIELD_PATTERNS,
                                      fieldpat.span,
                                      &format!("the `{}:` in this pattern is redundant", ident));
-                        let subspan = cx.tcx.sess.codemap().span_through_char(fieldpat.span, ':');
-                        err.span_suggestion_short(subspan, "remove this", ident.to_string());
+                        let subspan = cx.tcx.sess.source_map().span_through_char(fieldpat.span,
+                                                                                 ':');
+                        err.span_suggestion_short_with_applicability(
+                            subspan,
+                            "remove this",
+                            ident.to_string(),
+                            Applicability::MachineApplicable
+                        );
                         err.emit();
                     }
                 }
@@ -294,14 +304,14 @@ pub struct MissingDoc {
     doc_hidden_stack: Vec<bool>,
 
     /// Private traits or trait items that leaked through. Don't check their methods.
-    private_traits: HashSet<ast::NodeId>,
+    private_traits: FxHashSet<ast::NodeId>,
 }
 
 impl MissingDoc {
     pub fn new() -> MissingDoc {
         MissingDoc {
             doc_hidden_stack: vec![false],
-            private_traits: HashSet::new(),
+            private_traits: FxHashSet::default(),
         }
     }
 
@@ -358,7 +368,7 @@ impl MissingDoc {
         let has_doc = attrs.iter().any(|a| has_doc(a));
         if !has_doc {
             cx.span_lint(MISSING_DOCS,
-                         cx.tcx.sess.codemap().def_span(sp),
+                         cx.tcx.sess.source_map().def_span(sp),
                          &format!("missing documentation for {}", desc));
         }
     }
@@ -416,7 +426,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDoc {
                 let real_trait = trait_ref.path.def.def_id();
                 if let Some(node_id) = cx.tcx.hir.as_local_node_id(real_trait) {
                     match cx.tcx.hir.find(node_id) {
-                        Some(hir_map::NodeItem(item)) => {
+                        Some(Node::Item(item)) => {
                             if let hir::VisibilityKind::Inherited = item.vis.node {
                                 for impl_item_ref in impl_item_refs {
                                     self.private_traits.insert(impl_item_ref.id.node_id);
@@ -618,8 +628,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingDebugImplementations {
 declare_lint! {
     pub ANONYMOUS_PARAMETERS,
     Allow,
-    "detects anonymous parameters",
-    Edition::Edition2018 => Warn
+    "detects anonymous parameters"
 }
 
 /// Checks for use of anonymous parameters (RFC 1685)
@@ -642,7 +651,7 @@ impl EarlyLintPass for AnonymousParameters {
                             if ident.name == keywords::Invalid.name() {
                                 let ty_snip = cx
                                     .sess
-                                    .codemap()
+                                    .source_map()
                                     .span_to_snippet(arg.ty.span);
 
                                 let (ty_snip, appl) = if let Ok(snip) = ty_snip {
@@ -709,10 +718,11 @@ impl EarlyLintPass for BadRepr {
                         | "i8" | "i16" | "i32" | "i64" | "i128" | "isize" => {
                             // if the literal could have been a valid `repr` arg,
                             // suggest the correct syntax
-                            warn.span_suggestion(
+                            warn.span_suggestion_with_applicability(
                                 attr.span,
                                 "give `repr` a hint",
                                 repr_str(&lit.as_str()),
+                                Applicability::MachineApplicable
                             );
                             suggested = true;
                         }
@@ -780,7 +790,12 @@ impl EarlyLintPass for DeprecatedAttr {
                     let msg = format!("use of deprecated attribute `{}`: {}. See {}",
                                       name, reason, link);
                     let mut err = cx.struct_span_lint(DEPRECATED, attr.span, &msg);
-                    err.span_suggestion_short(attr.span, "remove this attribute", "".to_owned());
+                    err.span_suggestion_short_with_applicability(
+                        attr.span,
+                        "remove this attribute",
+                        String::new(),
+                        Applicability::MachineApplicable
+                    );
                     err.emit();
                 }
                 return;
@@ -873,7 +888,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
         // NB. this has an edge case with non-returning statements,
         // like `loop {}` or `panic!()`: control flow never reaches
         // the exit node through these, so one can have a function
-        // that never actually calls itselfs but is still picked up by
+        // that never actually calls itself but is still picked up by
         // this lint:
         //
         //     fn f(cond: bool) {
@@ -886,14 +901,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
         // considers this to be an error for two reasons, (a) it is
         // easier to implement, and (b) it seems rare to actually want
         // to have behaviour like the above, rather than
-        // e.g. accidentally recurring after an assert.
+        // e.g. accidentally recursing after an assert.
 
         let cfg = cfg::CFG::new(cx.tcx, &body);
 
         let mut work_queue = vec![cfg.entry];
         let mut reached_exit_without_self_call = false;
         let mut self_call_spans = vec![];
-        let mut visited = HashSet::new();
+        let mut visited = FxHashSet::default();
 
         while let Some(idx) = work_queue.pop() {
             if idx == cfg.exit {
@@ -943,11 +958,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
         // no break */ }`) shouldn't be linted unless it actually
         // recurs.
         if !reached_exit_without_self_call && !self_call_spans.is_empty() {
-            let sp = cx.tcx.sess.codemap().def_span(sp);
+            let sp = cx.tcx.sess.source_map().def_span(sp);
             let mut db = cx.struct_span_lint(UNCONDITIONAL_RECURSION,
                                              sp,
-                                             "function cannot return without recurring");
-            db.span_label(sp, "cannot return without recurring");
+                                             "function cannot return without recursing");
+            db.span_label(sp, "cannot return without recursing");
             // offer some help to the programmer.
             for call in &self_call_spans {
                 db.span_label(*call, "recursive call site");
@@ -964,7 +979,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
 
         fn expr_refers_to_this_fn(cx: &LateContext, fn_id: ast::NodeId, id: ast::NodeId) -> bool {
             match cx.tcx.hir.get(id) {
-                hir_map::NodeExpr(&hir::Expr { node: hir::ExprKind::Call(ref callee, _), .. }) => {
+                Node::Expr(&hir::Expr { node: hir::ExprKind::Call(ref callee, _), .. }) => {
                     let def = if let hir::ExprKind::Path(ref qpath) = callee.node {
                         cx.tables.qpath_def(qpath, callee.hir_id)
                     } else {
@@ -987,7 +1002,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
             use rustc::ty::adjustment::*;
 
             // Ignore non-expressions.
-            let expr = if let hir_map::NodeExpr(e) = cx.tcx.hir.get(id) {
+            let expr = if let Node::Expr(e) = cx.tcx.hir.get(id) {
                 e
             } else {
                 return false;
@@ -1075,7 +1090,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnconditionalRecursion {
                             // a default method definition.
                             Ok(Some(traits::VtableParam(_))) => {
                                 let on_self = trait_ref.self_ty().is_self();
-                                // We can only be recurring in a default
+                                // We can only be recursing in a default
                                 // method if we're being called literally
                                 // on the `Self` type.
                                 on_self && callee_id == method.def_id
@@ -1202,7 +1217,12 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                 }
             };
             if let Some(replacement) = suggestion {
-                err.span_suggestion(vis.span, "try making it public", replacement);
+                err.span_suggestion_with_applicability(
+                    vis.span,
+                    "try making it public",
+                    replacement,
+                    Applicability::MachineApplicable
+                );
             }
         };
 
@@ -1226,9 +1246,14 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                                                                   it.span,
                                                                   "functions generic over \
                                                                    types must be mangled");
-                                err.span_suggestion_short(no_mangle_attr.span,
-                                                          "remove this attribute",
-                                                          "".to_owned());
+                                err.span_suggestion_short_with_applicability(
+                                    no_mangle_attr.span,
+                                    "remove this attribute",
+                                    String::new(),
+                                    // Use of `#[no_mangle]` suggests FFI intent; correct
+                                    // fix may be to monomorphize source by hand
+                                    Applicability::MaybeIncorrect
+                                );
                                 err.emit();
                                 break;
                             }
@@ -1253,14 +1278,17 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for InvalidNoMangleItems {
                     let mut err = cx.struct_span_lint(NO_MANGLE_CONST_ITEMS, it.span, msg);
 
                     // account for "pub const" (#45562)
-                    let start = cx.tcx.sess.codemap().span_to_snippet(it.span)
+                    let start = cx.tcx.sess.source_map().span_to_snippet(it.span)
                         .map(|snippet| snippet.find("const").unwrap_or(0))
                         .unwrap_or(0) as u32;
                     // `const` is 5 chars
                     let const_span = it.span.with_hi(BytePos(it.span.lo().0 + start + 5));
-                    err.span_suggestion(const_span,
-                                        "try a static value",
-                                        "pub static".to_owned());
+                    err.span_suggestion_with_applicability(
+                        const_span,
+                        "try a static value",
+                        "pub static".to_owned(),
+                        Applicability::MachineApplicable
+                    );
                     err.emit();
                 }
             }
@@ -1291,7 +1319,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutableTransmutes {
         let msg = "mutating transmuted &mut T from &T may cause undefined behavior, \
                    consider instead using an UnsafeCell";
         match get_transmute_from_to(cx, expr) {
-            Some((&ty::TyRef(_, _, from_mt), &ty::TyRef(_, _, to_mt))) => {
+            Some((&ty::Ref(_, _, from_mt), &ty::Ref(_, _, to_mt))) => {
                 if to_mt == hir::Mutability::MutMutable &&
                    from_mt == hir::Mutability::MutImmutable {
                     cx.span_lint(MUTABLE_TRANSMUTES, expr.span, msg);
@@ -1303,7 +1331,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MutableTransmutes {
         fn get_transmute_from_to<'a, 'tcx>
             (cx: &LateContext<'a, 'tcx>,
              expr: &hir::Expr)
-             -> Option<(&'tcx ty::TypeVariants<'tcx>, &'tcx ty::TypeVariants<'tcx>)> {
+             -> Option<(&'tcx ty::TyKind<'tcx>, &'tcx ty::TyKind<'tcx>)> {
             let def = if let hir::ExprKind::Path(ref qpath) = expr.node {
                 cx.tables.qpath_def(qpath, expr.hir_id)
             } else {
@@ -1412,7 +1440,7 @@ impl UnreachablePub {
                 if span.ctxt().outer().expn_info().is_some() {
                     applicability = Applicability::MaybeIncorrect;
                 }
-                let def_span = cx.tcx.sess.codemap().def_span(span);
+                let def_span = cx.tcx.sess.source_map().def_span(span);
                 let mut err = cx.struct_span_lint(UNREACHABLE_PUB, def_span,
                                                   &format!("unreachable `pub` {}", what));
                 let replacement = if cx.tcx.features().crate_visibility_modifier {
@@ -1498,7 +1526,6 @@ impl TypeAliasBounds {
 
         // We use a HIR visitor to walk the type.
         use rustc::hir::intravisit::{self, Visitor};
-        use syntax::ast::NodeId;
         struct WalkAssocTypes<'a, 'db> where 'db: 'a {
             err: &'a mut DiagnosticBuilder<'db>
         }
@@ -1508,7 +1535,7 @@ impl TypeAliasBounds {
                 intravisit::NestedVisitorMap::None
             }
 
-            fn visit_qpath(&mut self, qpath: &'v hir::QPath, id: NodeId, span: Span) {
+            fn visit_qpath(&mut self, qpath: &'v hir::QPath, id: hir::HirId, span: Span) {
                 if TypeAliasBounds::is_type_variable_assoc(qpath) {
                     self.err.span_help(span,
                         "use fully disambiguated paths (i.e., `<T as Trait>::Assoc`) to refer to \
@@ -1585,23 +1612,16 @@ fn validate_const<'a, 'tcx>(
     gid: ::rustc::mir::interpret::GlobalId<'tcx>,
     what: &str,
 ) {
-    let mut ecx = ::rustc_mir::interpret::mk_eval_cx(tcx, gid.instance, param_env).unwrap();
+    let ecx = ::rustc_mir::interpret::mk_eval_cx(tcx, gid.instance, param_env).unwrap();
     let result = (|| {
-        let val = ecx.const_to_value(constant.val)?;
-        use rustc_target::abi::LayoutOf;
-        let layout = ecx.layout_of(constant.ty)?;
-        let place = ecx.allocate_place_for_value(val, layout, None)?;
-        let ptr = place.to_ptr()?;
-        let mut todo = vec![(ptr, layout.ty, String::new())];
+        let op = ecx.const_to_op(constant)?;
+        let mut todo = vec![(op, Vec::new())];
         let mut seen = FxHashSet();
-        seen.insert((ptr, layout.ty));
-        while let Some((ptr, ty, path)) = todo.pop() {
-            let layout = ecx.layout_of(ty)?;
-            ecx.validate_ptr_target(
-                ptr,
-                layout.align,
-                layout,
-                path,
+        seen.insert(op);
+        while let Some((op, mut path)) = todo.pop() {
+            ecx.validate_operand(
+                op,
+                &mut path,
                 &mut seen,
                 &mut todo,
             )?;
@@ -1815,71 +1835,87 @@ impl EarlyLintPass for EllipsisInclusiveRangePatterns {
 }
 
 declare_lint! {
-    UNNAMEABLE_TEST_FUNCTIONS,
+    UNNAMEABLE_TEST_ITEMS,
     Warn,
-    "detects an function that cannot be named being marked as #[test]"
+    "detects an item that cannot be named being marked as #[test_case]",
+    report_in_external_macro: true
 }
 
-pub struct UnnameableTestFunctions;
+pub struct UnnameableTestItems {
+    boundary: ast::NodeId, // NodeId of the item under which things are not nameable
+    items_nameable: bool,
+}
 
-impl LintPass for UnnameableTestFunctions {
-    fn get_lints(&self) -> LintArray {
-        lint_array!(UNNAMEABLE_TEST_FUNCTIONS)
+impl UnnameableTestItems {
+    pub fn new() -> Self {
+        Self {
+            boundary: ast::DUMMY_NODE_ID,
+            items_nameable: true
+        }
     }
 }
 
-impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnnameableTestFunctions {
+impl LintPass for UnnameableTestItems {
+    fn get_lints(&self) -> LintArray {
+        lint_array!(UNNAMEABLE_TEST_ITEMS)
+    }
+}
+
+impl<'a, 'tcx> LateLintPass<'a, 'tcx> for UnnameableTestItems {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
-        match it.node {
-            hir::ItemKind::Fn(..) => {
-                for attr in &it.attrs {
-                    if attr.name() == "test" {
-                        let parent = cx.tcx.hir.get_parent(it.id);
-                        match cx.tcx.hir.find(parent) {
-                            Some(hir_map::NodeItem(hir::Item {node: hir::ItemKind::Mod(_), ..})) |
-                            None => {}
-                            _ => {
-                                cx.struct_span_lint(
-                                    UNNAMEABLE_TEST_FUNCTIONS,
-                                    attr.span,
-                                    "cannot test inner function",
-                                ).emit();
-                            }
-                        }
-                        break;
-                    }
-                }
+        if self.items_nameable {
+            if let hir::ItemKind::Mod(..) = it.node {}
+            else {
+                self.items_nameable = false;
+                self.boundary = it.id;
             }
-            _ => return,
-        };
+            return;
+        }
+
+        if let Some(attr) = attr::find_by_name(&it.attrs, "rustc_test_marker") {
+            cx.struct_span_lint(
+                UNNAMEABLE_TEST_ITEMS,
+                attr.span,
+                "cannot test inner items",
+            ).emit();
+        }
+    }
+
+    fn check_item_post(&mut self, _cx: &LateContext, it: &hir::Item) {
+        if !self.items_nameable && self.boundary == it.id {
+            self.items_nameable = true;
+        }
     }
 }
 
 declare_lint! {
-    pub ASYNC_IDENTS,
+    pub KEYWORD_IDENTS,
     Allow,
-    "detects `async` being used as an identifier"
+    "detects edition keywords being used as an identifier"
 }
 
-/// Checks for uses of `async` as an identifier
+/// Checks for uses of edtion keywords used as an identifier
 #[derive(Clone)]
-pub struct Async2018;
+pub struct KeywordIdents;
 
-impl LintPass for Async2018 {
+impl LintPass for KeywordIdents {
     fn get_lints(&self) -> LintArray {
-        lint_array!(ASYNC_IDENTS)
+        lint_array!(KEYWORD_IDENTS)
     }
 }
 
-impl Async2018 {
+impl KeywordIdents {
     fn check_tokens(&mut self, cx: &EarlyContext, tokens: TokenStream) {
         for tt in tokens.into_trees() {
             match tt {
                 TokenTree::Token(span, tok) => match tok.ident() {
                     // only report non-raw idents
-                    Some((ident, false)) if ident.as_str() == "async" => {
-                        self.report(cx, span.substitute_dummy(ident.span))
-                    },
+                    Some((ident, false)) => {
+                        self.check_ident(cx, ast::Ident {
+                            span: span.substitute_dummy(ident.span),
+                            ..ident
+                        });
+                    }
                     _ => {},
                 }
                 TokenTree::Delimited(_, ref delim) => {
@@ -1888,31 +1924,9 @@ impl Async2018 {
             }
         }
     }
-    fn report(&mut self, cx: &EarlyContext, span: Span) {
-        // don't lint `r#async`
-        if cx.sess.parse_sess.raw_identifier_spans.borrow().contains(&span) {
-            return;
-        }
-        let mut lint = cx.struct_span_lint(
-            ASYNC_IDENTS,
-            span,
-            "`async` is a keyword in the 2018 edition",
-        );
-
-        // Don't suggest about raw identifiers if the feature isn't active
-        if cx.sess.features_untracked().raw_identifiers {
-            lint.span_suggestion_with_applicability(
-                span,
-                "you can use a raw identifier to stay compatible",
-                "r#async".to_string(),
-                Applicability::MachineApplicable,
-            );
-        }
-        lint.emit()
-    }
 }
 
-impl EarlyLintPass for Async2018 {
+impl EarlyLintPass for KeywordIdents {
     fn check_mac_def(&mut self, cx: &EarlyContext, mac_def: &ast::MacroDef, _id: ast::NodeId) {
         self.check_tokens(cx, mac_def.stream());
     }
@@ -1920,8 +1934,37 @@ impl EarlyLintPass for Async2018 {
         self.check_tokens(cx, mac.node.tts.clone().into());
     }
     fn check_ident(&mut self, cx: &EarlyContext, ident: ast::Ident) {
-        if ident.as_str() == "async" {
-            self.report(cx, ident.span);
+        let next_edition = match cx.sess.edition() {
+            Edition::Edition2015 => {
+                match &ident.as_str()[..] {
+                    "async" |
+                    "try" => Edition::Edition2018,
+                    _ => return,
+                }
+            }
+
+            // no new keywords yet for 2018 edition and beyond
+            _ => return,
+        };
+
+        // don't lint `r#foo`
+        if cx.sess.parse_sess.raw_identifier_spans.borrow().contains(&ident.span) {
+            return;
         }
+
+        let mut lint = cx.struct_span_lint(
+            KEYWORD_IDENTS,
+            ident.span,
+            &format!("`{}` is a keyword in the {} edition",
+                     ident.as_str(),
+                     next_edition),
+        );
+        lint.span_suggestion_with_applicability(
+            ident.span,
+            "you can use a raw identifier to stay compatible",
+            format!("r#{}", ident.as_str()),
+            Applicability::MachineApplicable,
+        );
+        lint.emit()
     }
 }

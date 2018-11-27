@@ -20,6 +20,9 @@
        html_playground_url = "https://play.rust-lang.org/",
        test(attr(deny(warnings))))]
 
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+
 pub use self::Piece::*;
 pub use self::Position::*;
 pub use self::Alignment::*;
@@ -152,7 +155,7 @@ pub struct Parser<'a> {
     style: Option<usize>,
     /// How many newlines have been seen in the string so far, to adjust the error spans
     seen_newlines: usize,
-    /// Start and end byte offset of every successfuly parsed argument
+    /// Start and end byte offset of every successfully parsed argument
     pub arg_places: Vec<(usize, usize)>,
 }
 
@@ -409,7 +412,7 @@ impl<'a> Parser<'a> {
 
         // fill character
         if let Some(&(_, c)) = self.cur.peek() {
-            match self.cur.clone().skip(1).next() {
+            match self.cur.clone().nth(1) {
                 Some((_, '>')) | Some((_, '<')) | Some((_, '^')) => {
                     spec.fill = Some(c);
                     self.cur.next();
@@ -502,13 +505,11 @@ impl<'a> Parser<'a> {
             if word.is_empty() {
                 self.cur = tmp;
                 CountImplied
+            } else if self.consume('$') {
+                CountIsName(word)
             } else {
-                if self.consume('$') {
-                    CountIsName(word)
-                } else {
-                    self.cur = tmp;
-                    CountImplied
-                }
+                self.cur = tmp;
+                CountImplied
             }
         }
     }

@@ -1,0 +1,15 @@
+[package]
+name = "macro-utils"
+version = "0.1.2"
+authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+repository = "https://github.com/GuillaumeGomez/macro_utils"
+homepage = "https://github.com/GuillaumeGomez/macro_utils"
+documentation = "https://docs.rs/macro-utils"
+description = """
+Some macros to make code writing more elegant and funny.
+"""
+
+[badges]
+travis-ci = { repository = "guillaumegomez/macro_utils" }

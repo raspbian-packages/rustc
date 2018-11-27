@@ -8,13 +8,14 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use borrow_check::nll::region_infer::{ConstraintIndex, RegionInferenceContext};
+use borrow_check::nll::constraints::OutlivesConstraint;
+use borrow_check::nll::region_infer::RegionInferenceContext;
 use borrow_check::nll::type_check::Locations;
 use rustc::hir::def_id::DefId;
 use rustc::infer::error_reporting::nice_region_error::NiceRegionError;
 use rustc::infer::InferCtxt;
 use rustc::mir::{self, Location, Mir, Place, Rvalue, StatementKind, TerminatorKind};
-use rustc::ty::RegionVid;
+use rustc::ty::{TyCtxt, RegionVid};
 use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_errors::Diagnostic;
 use std::collections::VecDeque;
@@ -42,7 +43,7 @@ impl fmt::Display for ConstraintCategory {
         // Must end with a space. Allows for empty names to be provided.
         match self {
             ConstraintCategory::Assignment => write!(f, "assignment "),
-            ConstraintCategory::Return => write!(f, "return "),
+            ConstraintCategory::Return => write!(f, "returning this value "),
             ConstraintCategory::Cast => write!(f, "cast "),
             ConstraintCategory::CallArgument => write!(f, "argument "),
             _ => write!(f, ""),
@@ -53,7 +54,7 @@ impl fmt::Display for ConstraintCategory {
 #[derive(Copy, Clone, PartialEq, Eq)]
 enum Trace {
     StartRegion,
-    FromConstraint(ConstraintIndex),
+    FromOutlivesConstraint(OutlivesConstraint),
     NotVisited,
 }
 
@@ -67,6 +68,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     fn best_blame_constraint(
         &self,
         mir: &Mir<'tcx>,
+        tcx: TyCtxt<'_, '_, 'tcx>,
         from_region: RegionVid,
         target_test: impl Fn(RegionVid) -> bool,
     ) -> (ConstraintCategory, Span, RegionVid) {
@@ -79,12 +81,11 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         debug!(
             "best_blame_constraint: path={:#?}",
             path.iter()
-                .map(|&ci| format!(
-                    "{:?}: {:?} ({:?}: {:?})",
-                    ci,
-                    &self.constraints[ci],
-                    self.constraint_sccs.scc(self.constraints[ci].sup),
-                    self.constraint_sccs.scc(self.constraints[ci].sub),
+                .map(|&c| format!(
+                    "{:?} ({:?}: {:?})",
+                    c,
+                    self.constraint_sccs.scc(c.sup),
+                    self.constraint_sccs.scc(c.sub),
                 ))
                 .collect::<Vec<_>>()
         );
@@ -92,7 +93,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         // Classify each of the constraints along the path.
         let mut categorized_path: Vec<(ConstraintCategory, Span)> = path
             .iter()
-            .map(|&index| self.classify_constraint(index, mir))
+            .map(|&index| self.classify_constraint(index, mir, tcx))
             .collect();
         debug!(
             "best_blame_constraint: categorized_path={:#?}",
@@ -120,16 +121,18 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         // highlight (e.g., a call site or something).
         let target_scc = self.constraint_sccs.scc(target_region);
         let best_choice = (0..path.len()).rev().find(|&i| {
-            let constraint = &self.constraints[path[i]];
+            let constraint = path[i];
 
             let constraint_sup_scc = self.constraint_sccs.scc(constraint.sup);
-            if constraint_sup_scc == target_scc {
-                return false;
-            }
 
             match categorized_path[i].0 {
                 ConstraintCategory::Boring => false,
-                _ => true,
+                ConstraintCategory::Other => {
+                    // other isn't interesting when the two lifetimes
+                    // are unified.
+                    constraint_sup_scc != self.constraint_sccs.scc(constraint.sub)
+                }
+                _ => constraint_sup_scc != target_scc,
             }
         });
         if let Some(i) = best_choice {
@@ -161,7 +164,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         &self,
         from_region: RegionVid,
         target_test: impl Fn(RegionVid) -> bool,
-    ) -> Option<(Vec<ConstraintIndex>, RegionVid)> {
+    ) -> Option<(Vec<OutlivesConstraint>, RegionVid)> {
         let mut context = IndexVec::from_elem(Trace::NotVisited, &self.definitions);
         context[from_region] = Trace::StartRegion;
 
@@ -182,9 +185,9 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                         Trace::NotVisited => {
                             bug!("found unvisited region {:?} on path to {:?}", p, r)
                         }
-                        Trace::FromConstraint(c) => {
+                        Trace::FromOutlivesConstraint(c) => {
                             result.push(c);
-                            p = self.constraints[c].sup;
+                            p = c.sup;
                         }
 
                         Trace::StartRegion => {
@@ -198,11 +201,14 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             // Otherwise, walk over the outgoing constraints and
             // enqueue any regions we find, keeping track of how we
             // reached them.
-            for constraint in self.constraint_graph.outgoing_edges(r) {
-                assert_eq!(self.constraints[constraint].sup, r);
-                let sub_region = self.constraints[constraint].sub;
+            let fr_static = self.universal_regions.fr_static;
+            for constraint in self.constraint_graph.outgoing_edges(r,
+                                                                   &self.constraints,
+                                                                   fr_static) {
+                assert_eq!(constraint.sup, r);
+                let sub_region = constraint.sub;
                 if let Trace::NotVisited = context[sub_region] {
-                    context[sub_region] = Trace::FromConstraint(constraint);
+                    context[sub_region] = Trace::FromOutlivesConstraint(constraint);
                     deque.push_back(sub_region);
                 }
             }
@@ -213,8 +219,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
 
     /// This function will return true if a constraint is interesting and false if a constraint
     /// is not. It is useful in filtering constraint paths to only interesting points.
-    fn constraint_is_interesting(&self, index: ConstraintIndex) -> bool {
-        let constraint = self.constraints[index];
+    fn constraint_is_interesting(&self, constraint: OutlivesConstraint) -> bool {
         debug!(
             "constraint_is_interesting: locations={:?} constraint={:?}",
             constraint.locations, constraint
@@ -229,10 +234,10 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// This function classifies a constraint from a location.
     fn classify_constraint(
         &self,
-        index: ConstraintIndex,
+        constraint: OutlivesConstraint,
         mir: &Mir<'tcx>,
+        tcx: TyCtxt<'_, '_, 'tcx>,
     ) -> (ConstraintCategory, Span) {
-        let constraint = self.constraints[index];
         debug!("classify_constraint: constraint={:?}", constraint);
         let span = constraint.locations.span(mir);
         let location = constraint
@@ -240,7 +245,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             .from_location()
             .unwrap_or(Location::START);
 
-        if !self.constraint_is_interesting(index) {
+        if !self.constraint_is_interesting(constraint) {
             return (ConstraintCategory::Boring, span);
         }
 
@@ -254,7 +259,34 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                 debug!("classify_constraint: terminator.kind={:?}", terminator.kind);
                 match terminator.kind {
                     TerminatorKind::DropAndReplace { .. } => ConstraintCategory::Assignment,
-                    TerminatorKind::Call { .. } => ConstraintCategory::CallArgument,
+                    // Classify calls differently depending on whether or not
+                    // the sub region appears in the destination type (so the
+                    // sup region is in the return type). If the return type
+                    // contains the sub-region, then this is either an
+                    // assignment or a return, depending on whether we are
+                    // writing to the RETURN_PLACE or not.
+                    //
+                    // The idea here is that the region is being propagated
+                    // from an input into the output place, so it's a kind of
+                    // assignment. Otherwise, if the sub-region only appears in
+                    // the argument types, then use the CallArgument
+                    // classification.
+                    TerminatorKind::Call { destination: Some((ref place, _)), .. } => {
+                        if tcx.any_free_region_meets(
+                            &place.ty(mir, tcx).to_ty(tcx),
+                            |region| self.to_region_vid(region) == constraint.sub,
+                        ) {
+                            match place {
+                                Place::Local(mir::RETURN_PLACE) => ConstraintCategory::Return,
+                                _ => ConstraintCategory::Assignment,
+                            }
+                        } else {
+                            ConstraintCategory::CallArgument
+                        }
+                    }
+                    TerminatorKind::Call { destination: None, .. } => {
+                        ConstraintCategory::CallArgument
+                    }
                     _ => ConstraintCategory::Other,
                 }
             } else {
@@ -304,13 +336,18 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     ) {
         debug!("report_error(fr={:?}, outlived_fr={:?})", fr, outlived_fr);
 
-        let (category, span, _) = self.best_blame_constraint(mir, fr, |r| r == outlived_fr);
+        let (category, span, _) = self.best_blame_constraint(
+            mir,
+            infcx.tcx,
+            fr,
+            |r| r == outlived_fr
+        );
 
         // Check if we can use one of the "nice region errors".
         if let (Some(f), Some(o)) = (self.to_error_region(fr), self.to_error_region(outlived_fr)) {
             let tables = infcx.tcx.typeck_tables_of(mir_def_id);
             let nice = NiceRegionError::new_from_span(infcx.tcx, span, o, f, Some(tables));
-            if let Some(_error_reported) = nice.try_report() {
+            if let Some(_error_reported) = nice.try_report_from_nll() {
                 return;
             }
         }
@@ -417,7 +454,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                 diag.span_label(span, format!(
                     "{} was supposed to return data with lifetime `{}` but it is returning \
                     data with lifetime `{}`",
-                    mir_def_name, fr_name, outlived_fr_name,
+                    mir_def_name, outlived_fr_name, fr_name
                 ));
             },
             _ => {
@@ -446,10 +483,11 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     crate fn find_outlives_blame_span(
         &self,
         mir: &Mir<'tcx>,
+        tcx: TyCtxt<'_, '_, 'tcx>,
         fr1: RegionVid,
         fr2: RegionVid,
     ) -> Span {
-        let (_, span, _) = self.best_blame_constraint(mir, fr1, |r| r == fr2);
+        let (_, span, _) = self.best_blame_constraint(mir, tcx, fr1, |r| r == fr2);
         span
     }
 }

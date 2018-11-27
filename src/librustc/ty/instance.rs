@@ -194,7 +194,7 @@ impl<'a, 'b, 'tcx> Instance<'tcx> {
             );
 
             let def = match item_type.sty {
-                ty::TyFnDef(..) if {
+                ty::FnDef(..) if {
                     let f = item_type.fn_sig(tcx);
                     f.abi() == Abi::RustIntrinsic ||
                         f.abi() == Abi::PlatformIntrinsic
@@ -294,7 +294,7 @@ fn resolve_associated_item<'a, 'tcx>(
             })
         }
         traits::VtableBuiltin(..) => {
-            if let Some(_) = tcx.lang_items().clone_trait() {
+            if tcx.lang_items().clone_trait().is_some() {
                 Some(Instance {
                     def: ty::InstanceDef::CloneShim(def_id, trait_ref.self_ty()),
                     substs: rcvr_substs

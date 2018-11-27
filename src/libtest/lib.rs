@@ -35,10 +35,13 @@
 #![feature(asm)]
 #![feature(fnbox)]
 #![cfg_attr(any(unix, target_os = "cloudabi"), feature(libc))]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(set_stdio)]
 #![feature(panic_unwind)]
 #![feature(staged_api)]
 #![feature(termination_trait_lib)]
+#![feature(test)]
 
 extern crate getopts;
 #[cfg(any(unix, target_os = "cloudabi"))]
@@ -300,7 +303,7 @@ pub fn test_main(args: &[String], tests: Vec<TestDescAndFn>, options: Options) {
 // a Vec<TestDescAndFn> is used in order to effect ownership-transfer
 // semantics into parallel test runners, which in turn requires a Vec<>
 // rather than a &[].
-pub fn test_main_static(tests: &[TestDescAndFn]) {
+pub fn test_main_static(tests: &[&TestDescAndFn]) {
     let args = env::args().collect::<Vec<_>>();
     let owned_tests = tests
         .iter()
@@ -323,7 +326,14 @@ pub fn test_main_static(tests: &[TestDescAndFn]) {
 /// test is considered a failure. By default, invokes `report()`
 /// and checks for a `0` result.
 pub fn assert_test_result<T: Termination>(result: T) {
-    assert_eq!(result.report(), 0);
+    let code = result.report();
+    assert_eq!(
+        code,
+        0,
+        "the test returned a termination value with a non-zero status code ({}) \
+         which indicates a failure",
+        code
+    );
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1175,7 +1185,7 @@ fn get_concurrency() -> usize {
     };
 
     #[cfg(windows)]
-    #[allow(bad_style)]
+    #[allow(nonstandard_style)]
     fn num_cpus() -> usize {
         #[repr(C)]
         struct SYSTEM_INFO {

@@ -15,7 +15,7 @@
 use fmt;
 use future::Future;
 use marker::{PhantomData, Unpin};
-use mem::PinMut;
+use pin::PinMut;
 use task::{Context, Poll};
 
 /// A custom trait object for polling futures, roughly akin to
@@ -27,7 +27,7 @@ use task::{Context, Poll};
 /// - The `Future` trait is currently not object safe: The `Future::poll`
 ///   method makes uses the arbitrary self types feature and traits in which
 ///   this feature is used are currently not object safe due to current compiler
-///   limitations. (See tracking issue for arbitray self types for more
+///   limitations. (See tracking issue for arbitrary self types for more
 ///   information #44874)
 pub struct LocalFutureObj<'a, T> {
     ptr: *mut (),
@@ -35,6 +35,8 @@ pub struct LocalFutureObj<'a, T> {
     drop_fn: unsafe fn(*mut ()),
     _marker: PhantomData<&'a ()>,
 }
+
+impl<'a, T> Unpin for LocalFutureObj<'a, T> {}
 
 impl<'a, T> LocalFutureObj<'a, T> {
     /// Create a `LocalFutureObj` from a custom trait object representation.
@@ -100,10 +102,11 @@ impl<'a, T> Drop for LocalFutureObj<'a, T> {
 /// - The `Future` trait is currently not object safe: The `Future::poll`
 ///   method makes uses the arbitrary self types feature and traits in which
 ///   this feature is used are currently not object safe due to current compiler
-///   limitations. (See tracking issue for arbitray self types for more
+///   limitations. (See tracking issue for arbitrary self types for more
 ///   information #44874)
 pub struct FutureObj<'a, T>(LocalFutureObj<'a, T>);
 
+impl<'a, T> Unpin for FutureObj<'a, T> {}
 unsafe impl<'a, T> Send for FutureObj<'a, T> {}
 
 impl<'a, T> FutureObj<'a, T> {

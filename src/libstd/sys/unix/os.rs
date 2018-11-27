@@ -33,6 +33,8 @@ use sys::fd;
 use vec;
 
 const TMPBUF_SZ: usize = 128;
+// We never call `ENV_LOCK.init()`, so it is UB to attempt to
+// acquire this mutex reentrantly!
 static ENV_LOCK: Mutex = Mutex::new();
 
 
@@ -47,6 +49,7 @@ extern {
                    target_os = "netbsd",
                    target_os = "openbsd",
                    target_os = "android",
+                   target_os = "hermit",
                    target_env = "newlib"),
                link_name = "__errno")]
     #[cfg_attr(target_os = "solaris", link_name = "___errno")]
@@ -376,7 +379,7 @@ pub fn current_exe() -> io::Result<PathBuf> {
     }
 }
 
-#[cfg(any(target_os = "fuchsia", target_os = "l4re"))]
+#[cfg(any(target_os = "fuchsia", target_os = "l4re", target_os = "hermit"))]
 pub fn current_exe() -> io::Result<PathBuf> {
     use io::ErrorKind;
     Err(io::Error::new(ErrorKind::Other, "Not yet implemented!"))
@@ -411,12 +414,8 @@ pub fn env() -> Env {
     unsafe {
         let _guard = ENV_LOCK.lock();
         let mut environ = *environ();
-        if environ == ptr::null() {
-            panic!("os::env() failure getting env string from OS: {}",
-                   io::Error::last_os_error());
-        }
         let mut result = Vec::new();
-        while *environ != ptr::null() {
+        while environ != ptr::null() && *environ != ptr::null() {
             if let Some(key_value) = parse(CStr::from_ptr(*environ).to_bytes()) {
                 result.push(key_value);
             }
@@ -568,5 +567,32 @@ fn parse_glibc_version(version: &str) -> Option<(usize, usize)> {
     match (parsed_ints.next(), parsed_ints.next()) {
         (Some(Ok(major)), Some(Ok(minor))) => Some((major, minor)),
         _ => None
+    }
+}
+
+#[cfg(all(test, target_env = "gnu"))]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_glibc_version() {
+        // This mostly just tests that the weak linkage doesn't panic wildly...
+        glibc_version();
+    }
+
+    #[test]
+    fn test_parse_glibc_version() {
+        let cases = [
+            ("0.0", Some((0, 0))),
+            ("01.+2", Some((1, 2))),
+            ("3.4.5.six", Some((3, 4))),
+            ("1", None),
+            ("1.-2", None),
+            ("1.foo", None),
+            ("foo.1", None),
+        ];
+        for &(version_str, parsed) in cases.iter() {
+            assert_eq!(parsed, parse_glibc_version(version_str));
+        }
     }
 }

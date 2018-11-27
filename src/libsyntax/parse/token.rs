@@ -23,8 +23,7 @@ use symbol::keywords;
 use syntax::parse::parse_stream_from_source_str;
 use syntax_pos::{self, Span, FileName};
 use syntax_pos::symbol::{self, Symbol};
-use tokenstream::{TokenStream, TokenTree};
-use tokenstream;
+use tokenstream::{self, DelimSpan, TokenStream, TokenTree};
 
 use std::{cmp, fmt};
 use std::mem;
@@ -104,6 +103,7 @@ pub(crate) fn ident_can_begin_expr(ident: ast::Ident, is_raw: bool) -> bool {
     !ident_token.is_reserved_ident() ||
     ident_token.is_path_segment_keyword() ||
     [
+        keywords::Async.name(),
         keywords::Do.name(),
         keywords::Box.name(),
         keywords::Break.name(),
@@ -301,6 +301,10 @@ impl Token {
             BinOp(Minus) => true,
             Ident(ident, false) if ident.name == keywords::True.name() => true,
             Ident(ident, false) if ident.name == keywords::False.name() => true,
+            Interpolated(ref nt) => match nt.0 {
+                NtLiteral(..) => true,
+                _             => false,
+            },
             _            => false,
         }
     }
@@ -820,7 +824,8 @@ fn prepend_attrs(sess: &ParseSess,
         // that it encompasses more than each token, but it hopefully is "good
         // enough" for now at least.
         builder.push(tokenstream::TokenTree::Token(attr.span, Pound));
-        builder.push(tokenstream::TokenTree::Delimited(attr.span, tokens));
+        let delim_span = DelimSpan::from_single(attr.span);
+        builder.push(tokenstream::TokenTree::Delimited(delim_span, tokens));
     }
     builder.push(tokens.clone());
     Some(builder.build())

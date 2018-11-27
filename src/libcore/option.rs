@@ -146,8 +146,8 @@
 #![stable(feature = "rust1", since = "1.0.0")]
 
 use iter::{FromIterator, FusedIterator, TrustedLen};
-use {hint, mem, ops};
-use mem::PinMut;
+use {hint, mem, ops::{self, Deref}};
+use pin::PinMut;
 
 // Note that this is not a lang item per se, but it has a hidden dependency on
 // `Iterator`, which is one. The compiler assumes that the `next` method of
@@ -953,6 +953,17 @@ impl<T: Default> Option<T> {
     }
 }
 
+#[unstable(feature = "inner_deref", reason = "newly added", issue = "50264")]
+impl<T: Deref> Option<T> {
+    /// Converts from `&Option<T>` to `Option<&T::Target>`.
+    ///
+    /// Leaves the original Option in-place, creating a new one with a reference
+    /// to the original one, additionally coercing the contents via `Deref`.
+    pub fn deref(&self) -> Option<&T::Target> {
+        self.as_ref().map(|t| t.deref())
+    }
+}
+
 impl<T, E> Option<Result<T, E>> {
     /// Transposes an `Option` of a `Result` into a `Result` of an `Option`.
     ///
@@ -989,16 +1000,13 @@ fn expect_failed(msg: &str) -> ! {
     panic!("{}", msg)
 }
 
-
 /////////////////////////////////////////////////////////////////////////////
 // Trait implementations
 /////////////////////////////////////////////////////////////////////////////
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<T> Default for Option<T> {
-    /// Returns [`None`].
-    ///
-    /// [`None`]: #variant.None
+    /// Returns [`None`][Option::None].
     #[inline]
     fn default() -> Option<T> { None }
 }
@@ -1051,6 +1059,20 @@ impl<'a, T> IntoIterator for &'a mut Option<T> {
 impl<T> From<T> for Option<T> {
     fn from(val: T) -> Option<T> {
         Some(val)
+    }
+}
+
+#[stable(feature = "option_ref_from_ref_option", since = "1.30.0")]
+impl<'a, T> From<&'a Option<T>> for Option<&'a T> {
+    fn from(o: &'a Option<T>) -> Option<&'a T> {
+        o.as_ref()
+    }
+}
+
+#[stable(feature = "option_ref_from_ref_option", since = "1.30.0")]
+impl<'a, T> From<&'a mut Option<T>> for Option<&'a mut T> {
+    fn from(o: &'a mut Option<T>) -> Option<&'a mut T> {
+        o.as_mut()
     }
 }
 
@@ -1131,6 +1153,7 @@ unsafe impl<'a, A> TrustedLen for Iter<'a, A> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, A> Clone for Iter<'a, A> {
+    #[inline]
     fn clone(&self) -> Iter<'a, A> {
         Iter { inner: self.inner.clone() }
     }
@@ -1217,9 +1240,10 @@ unsafe impl<A> TrustedLen for IntoIter<A> {}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<A, V: FromIterator<A>> FromIterator<Option<A>> for Option<V> {
-    /// Takes each element in the [`Iterator`]: if it is [`None`], no further
-    /// elements are taken, and the [`None`] is returned. Should no [`None`] occur, a
-    /// container with the values of each `Option` is returned.
+    /// Takes each element in the [`Iterator`]: if it is [`None`][Option::None],
+    /// no further elements are taken, and the [`None`][Option::None] is
+    /// returned. Should no [`None`][Option::None] occur, a container with the
+    /// values of each [`Option`] is returned.
     ///
     /// Here is an example which increments every integer in a vector,
     /// checking for overflow:
@@ -1236,7 +1260,6 @@ impl<A, V: FromIterator<A>> FromIterator<Option<A>> for Option<V> {
     /// ```
     ///
     /// [`Iterator`]: ../iter/trait.Iterator.html
-    /// [`None`]: enum.Option.html#variant.None
     #[inline]
     fn from_iter<I: IntoIterator<Item=Option<A>>>(iter: I) -> Option<V> {
         // FIXME(#11084): This could be replaced with Iterator::scan when this
@@ -1297,14 +1320,17 @@ impl<T> ops::Try for Option<T> {
     type Ok = T;
     type Error = NoneError;
 
+    #[inline]
     fn into_result(self) -> Result<T, NoneError> {
         self.ok_or(NoneError)
     }
 
+    #[inline]
     fn from_ok(v: T) -> Self {
         Some(v)
     }
 
+    #[inline]
     fn from_error(_: NoneError) -> Self {
         None
     }

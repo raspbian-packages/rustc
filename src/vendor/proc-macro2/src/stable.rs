@@ -116,7 +116,7 @@ impl fmt::Debug for TokenStream {
     }
 }
 
-#[cfg(feature = "proc-macro")]
+#[cfg(use_proc_macro)]
 impl From<::proc_macro::TokenStream> for TokenStream {
     fn from(inner: ::proc_macro::TokenStream) -> TokenStream {
         inner
@@ -126,7 +126,7 @@ impl From<::proc_macro::TokenStream> for TokenStream {
     }
 }
 
-#[cfg(feature = "proc-macro")]
+#[cfg(use_proc_macro)]
 impl From<TokenStream> for ::proc_macro::TokenStream {
     fn from(inner: TokenStream) -> ::proc_macro::TokenStream {
         inner
@@ -157,6 +157,13 @@ impl iter::FromIterator<TokenTree> for TokenStream {
 impl Extend<TokenTree> for TokenStream {
     fn extend<I: IntoIterator<Item = TokenTree>>(&mut self, streams: I) {
         self.inner.extend(streams);
+    }
+}
+
+impl Extend<TokenStream> for TokenStream {
+    fn extend<I: IntoIterator<Item = TokenStream>>(&mut self, streams: I) {
+        self.inner
+            .extend(streams.into_iter().flat_map(|stream| stream));
     }
 }
 

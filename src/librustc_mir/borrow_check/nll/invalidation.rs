@@ -144,10 +144,10 @@ impl<'cg, 'cx, 'tcx, 'gcx> Visitor<'tcx> for InvalidationGenerator<'cg, 'cx, 'tc
             // EndRegion matters to older NLL/MIR AST borrowck, not to alias NLL
             StatementKind::EndRegion(..) |
             StatementKind::Nop |
-            StatementKind::UserAssertTy(..) |
+            StatementKind::AscribeUserType(..) |
             StatementKind::Validate(..) |
             StatementKind::StorageLive(..) => {
-                // `Nop`, `UserAssertTy`, `Validate`, and `StorageLive` are irrelevant
+                // `Nop`, `AscribeUserType`, `Validate`, and `StorageLive` are irrelevant
                 // to borrow check.
             }
             StatementKind::StorageDead(local) => {
@@ -312,26 +312,26 @@ impl<'cg, 'cx, 'tcx, 'gcx> InvalidationGenerator<'cg, 'cx, 'tcx, 'gcx> {
             // individual fields instead. This way if `foo` has a
             // destructor but `bar` does not, we will only check for
             // borrows of `x.foo` and not `x.bar`. See #47703.
-            ty::TyAdt(def, substs) if def.is_struct() && !def.has_dtor(self.infcx.tcx) => {
+            ty::Adt(def, substs) if def.is_struct() && !def.has_dtor(self.infcx.tcx) => {
                 def.all_fields()
                     .map(|field| field.ty(gcx, substs))
                     .enumerate()
                     .for_each(|field| drop_field(self, field));
             }
             // Same as above, but for tuples.
-            ty::TyTuple(tys) => {
+            ty::Tuple(tys) => {
                 tys.iter().cloned().enumerate()
                     .for_each(|field| drop_field(self, field));
             }
             // Closures and generators also have disjoint fields, but they are only
             // directly accessed in the body of the closure/generator.
-            ty::TyGenerator(def, substs, ..)
+            ty::Generator(def, substs, ..)
                 if *drop_place == Place::Local(Local::new(1)) && !self.mir.upvar_decls.is_empty()
             => {
                 substs.upvar_tys(def, self.infcx.tcx).enumerate()
                     .for_each(|field| drop_field(self, field));
             }
-            ty::TyClosure(def, substs)
+            ty::Closure(def, substs)
                 if *drop_place == Place::Local(Local::new(1)) && !self.mir.upvar_decls.is_empty()
                 => {
                     substs.upvar_tys(def, self.infcx.tcx).enumerate()
@@ -541,7 +541,7 @@ impl<'cg, 'cx, 'tcx, 'gcx> InvalidationGenerator<'cg, 'cx, 'tcx, 'gcx> {
                             // unique or mutable borrows are invalidated by writes.
                             // Reservations count as writes since we need to check
                             // that activating the borrow will be OK
-                            // TOOD(bob_twinkles) is this actually the right thing to do?
+                            // FIXME(bob_twinkles) is this actually the right thing to do?
                             this.generate_invalidates(borrow_index, context.loc);
                         }
                 }

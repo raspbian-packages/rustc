@@ -13,15 +13,15 @@ use std::env;
 
 use ast;
 use ast::{Ident, Name};
-use codemap;
+use source_map;
 use syntax_pos::Span;
 use ext::base::{ExtCtxt, MacEager, MacResult};
 use ext::build::AstBuilder;
 use parse::token;
 use ptr::P;
+use OneVector;
 use symbol::{keywords, Symbol};
 use tokenstream::{TokenTree};
-use util::small_vector::SmallVector;
 
 use diagnostics::metadata::output_metadata;
 
@@ -131,7 +131,7 @@ pub fn expand_register_diagnostic<'cx>(ecx: &'cx mut ExtCtxt,
     let sym = Ident::with_empty_ctxt(Symbol::gensym(&format!(
         "__register_diagnostic_{}", code
     )));
-    MacEager::items(SmallVector::many(vec![
+    MacEager::items(OneVector::from_vec(vec![
         ecx.item_mod(
             span,
             span,
@@ -214,7 +214,7 @@ pub fn expand_build_diagnostic_array<'cx>(ecx: &'cx mut ExtCtxt,
         ),
     );
 
-    MacEager::items(SmallVector::many(vec![
+    MacEager::items(OneVector::from_vec(vec![
         P(ast::Item {
             ident: *name,
             attrs: Vec::new(),
@@ -223,7 +223,7 @@ pub fn expand_build_diagnostic_array<'cx>(ecx: &'cx mut ExtCtxt,
                 ty,
                 expr,
             ),
-            vis: codemap::respan(span.shrink_to_lo(), ast::VisibilityKind::Public),
+            vis: source_map::respan(span.shrink_to_lo(), ast::VisibilityKind::Public),
             span,
             tokens: None,
         })

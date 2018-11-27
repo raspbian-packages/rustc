@@ -21,6 +21,7 @@ use ty::subst::Substs;
 use ty::query::queries;
 use ty::query::Query;
 use ty::query::QueryCache;
+use util::profiling::ProfileCategory;
 
 use std::hash::Hash;
 use std::fmt::Debug;
@@ -33,6 +34,7 @@ use ich::StableHashingContext;
 
 pub trait QueryConfig<'tcx> {
     const NAME: &'static str;
+    const CATEGORY: ProfileCategory;
 
     type Key: Eq + Hash + Clone + Debug;
     type Value: Clone + for<'a> HashStable<StableHashingContext<'a>>;
@@ -193,12 +195,6 @@ impl<'tcx> QueryDescription<'tcx> for queries::super_predicates_of<'tcx> {
     fn describe(tcx: TyCtxt, def_id: DefId) -> String {
         format!("computing the supertraits of `{}`",
                 tcx.item_path_str(def_id))
-    }
-}
-
-impl<'tcx> QueryDescription<'tcx> for queries::const_value_to_allocation<'tcx> {
-    fn describe(_tcx: TyCtxt, val: &'tcx ty::Const<'tcx>) -> String {
-        format!("converting value `{:?}` to an allocation", val)
     }
 }
 
@@ -468,6 +464,12 @@ impl<'tcx> QueryDescription<'tcx> for queries::has_global_allocator<'tcx> {
     }
 }
 
+impl<'tcx> QueryDescription<'tcx> for queries::has_panic_handler<'tcx> {
+    fn describe(_: TyCtxt, _: CrateNum) -> String {
+        "checking if the crate has_panic_handler".to_string()
+    }
+}
+
 impl<'tcx> QueryDescription<'tcx> for queries::extern_crate<'tcx> {
     fn describe(_: TyCtxt, _: DefId) -> String {
         "getting crate's ExternCrateData".to_string()
@@ -624,6 +626,18 @@ impl<'tcx> QueryDescription<'tcx> for queries::crate_name<'tcx> {
     }
 }
 
+impl<'tcx> QueryDescription<'tcx> for queries::get_lib_features<'tcx> {
+    fn describe(_tcx: TyCtxt, _: CrateNum) -> String {
+        format!("calculating the lib features map")
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::defined_lib_features<'tcx> {
+    fn describe(_tcx: TyCtxt, _: CrateNum) -> String {
+        format!("calculating the lib features defined in a crate")
+    }
+}
+
 impl<'tcx> QueryDescription<'tcx> for queries::get_lang_items<'tcx> {
     fn describe(_tcx: TyCtxt, _: CrateNum) -> String {
         "calculating the lang items map".to_string()
@@ -705,12 +719,6 @@ impl<'tcx> QueryDescription<'tcx> for queries::collect_and_partition_mono_items<
 impl<'tcx> QueryDescription<'tcx> for queries::codegen_unit<'tcx> {
     fn describe(_tcx: TyCtxt, _: InternedString) -> String {
         "codegen_unit".to_string()
-    }
-}
-
-impl<'tcx> QueryDescription<'tcx> for queries::compile_codegen_unit<'tcx> {
-    fn describe(_tcx: TyCtxt, _: InternedString) -> String {
-        "compile_codegen_unit".to_string()
     }
 }
 

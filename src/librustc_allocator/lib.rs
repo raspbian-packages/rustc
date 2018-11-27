@@ -8,14 +8,19 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(rustc_private)]
 
 #[macro_use] extern crate log;
 extern crate rustc;
+extern crate rustc_data_structures;
 extern crate rustc_errors;
 extern crate rustc_target;
 extern crate syntax;
 extern crate syntax_pos;
+#[macro_use]
+extern crate smallvec;
 
 pub mod expand;
 

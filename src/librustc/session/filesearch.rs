@@ -12,14 +12,14 @@
 
 pub use self::FileMatch::*;
 
+use rustc_data_structures::fx::FxHashSet;
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use session::search_paths::{SearchPaths, PathKind};
-use util::fs as rustcfs;
+use rustc_fs_util::fix_windows_verbatim_for_gcc;
 
 #[derive(Copy, Clone)]
 pub enum FileMatch {
@@ -40,7 +40,7 @@ impl<'a> FileSearch<'a> {
     pub fn for_each_lib_search_path<F>(&self, mut f: F) where
         F: FnMut(&Path, PathKind)
     {
-        let mut visited_dirs = HashSet::new();
+        let mut visited_dirs = FxHashSet::default();
 
         for (path, kind) in self.search_paths.iter(self.kind) {
             f(path, kind);
@@ -151,7 +151,7 @@ pub fn get_or_default_sysroot() -> PathBuf {
                 // See comments on this target function, but the gist is that
                 // gcc chokes on verbatim paths which fs::canonicalize generates
                 // so we try to avoid those kinds of paths.
-                Ok(canon) => Some(rustcfs::fix_windows_verbatim_for_gcc(&canon)),
+                Ok(canon) => Some(fix_windows_verbatim_for_gcc(&canon)),
                 Err(e) => bug!("failed to get realpath: {}", e),
             }
         })

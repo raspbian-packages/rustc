@@ -19,10 +19,6 @@ use usize;
 use ptr::{self, NonNull};
 use num::NonZeroUsize;
 
-#[unstable(feature = "alloc_internals", issue = "0")]
-#[cfg(stage0)]
-pub type Opaque = u8;
-
 /// Represents the combination of a starting address and
 /// a total capacity of the returned block.
 #[unstable(feature = "allocator_api", issue = "32838")]
@@ -48,7 +44,7 @@ fn size_align<T>() -> (usize, usize) {
 /// use specific allocators with looser requirements.)
 #[stable(feature = "alloc_layout", since = "1.28.0")]
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-#[cfg_attr(not(stage0), lang = "alloc_layout")]
+#[lang = "alloc_layout"]
 pub struct Layout {
     // size of the requested block of memory, measured in bytes.
     size_: usize,
@@ -221,7 +217,7 @@ impl Layout {
 
         let len_rounded_up = len.wrapping_add(align).wrapping_sub(1)
             & !align.wrapping_sub(1);
-        return len_rounded_up.wrapping_sub(len);
+        len_rounded_up.wrapping_sub(len)
     }
 
     /// Creates a layout describing the record for `n` instances of
@@ -975,9 +971,9 @@ pub unsafe trait Alloc {
         // _l <= layout.size()                       [guaranteed by usable_size()]
         //       layout.size() <= new_layout.size()  [required by this method]
         if new_size <= u {
-            return Ok(());
+            Ok(())
         } else {
-            return Err(CannotReallocInPlace);
+            Err(CannotReallocInPlace)
         }
     }
 
@@ -1030,9 +1026,9 @@ pub unsafe trait Alloc {
         //                      layout.size() <= _u  [guaranteed by usable_size()]
         // new_layout.size() <= layout.size()        [required by this method]
         if l <= new_size {
-            return Ok(());
+            Ok(())
         } else {
-            return Err(CannotReallocInPlace);
+            Err(CannotReallocInPlace)
         }
     }
 

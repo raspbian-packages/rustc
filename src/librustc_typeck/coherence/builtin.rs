@@ -23,7 +23,7 @@ use rustc::ty::util::CopyImplementationError;
 use rustc::infer;
 
 use rustc::hir::def_id::DefId;
-use rustc::hir::map as hir_map;
+use hir::Node;
 use rustc::hir::{self, ItemKind};
 
 pub fn check_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, trait_def_id: DefId) {
@@ -41,28 +41,26 @@ struct Checker<'a, 'tcx: 'a> {
 
 impl<'a, 'tcx> Checker<'a, 'tcx> {
     fn check<F>(&self, trait_def_id: Option<DefId>, mut f: F) -> &Self
-        where F: FnMut(TyCtxt<'a, 'tcx, 'tcx>, DefId, DefId)
+        where F: FnMut(TyCtxt<'a, 'tcx, 'tcx>, DefId)
     {
         if Some(self.trait_def_id) == trait_def_id {
             for &impl_id in self.tcx.hir.trait_impls(self.trait_def_id) {
                 let impl_def_id = self.tcx.hir.local_def_id(impl_id);
-                f(self.tcx, self.trait_def_id, impl_def_id);
+                f(self.tcx, impl_def_id);
             }
         }
         self
     }
 }
 
-fn visit_implementation_of_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                          _drop_did: DefId,
-                                          impl_did: DefId) {
+fn visit_implementation_of_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, impl_did: DefId) {
     match tcx.type_of(impl_did).sty {
-        ty::TyAdt(..) => {}
+        ty::Adt(..) => {}
         _ => {
             // Destructors only work on nominal types.
             if let Some(impl_node_id) = tcx.hir.as_local_node_id(impl_did) {
                 match tcx.hir.find(impl_node_id) {
-                    Some(hir_map::NodeItem(item)) => {
+                    Some(Node::Item(item)) => {
                         let span = match item.node {
                             ItemKind::Impl(.., ref ty, _) => ty.span,
                             _ => item.span,
@@ -87,9 +85,7 @@ fn visit_implementation_of_drop<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn visit_implementation_of_copy<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                          _copy_did: DefId,
-                                          impl_did: DefId) {
+fn visit_implementation_of_copy<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, impl_did: DefId) {
     debug!("visit_implementation_of_copy: impl_did={:?}", impl_did);
 
     let impl_node_id = if let Some(n) = tcx.hir.as_local_node_id(impl_did) {
@@ -157,9 +153,7 @@ fn visit_implementation_of_copy<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     }
 }
 
-fn visit_implementation_of_coerce_unsized<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                                    _: DefId,
-                                                    impl_did: DefId) {
+fn visit_implementation_of_coerce_unsized<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, impl_did: DefId) {
     debug!("visit_implementation_of_coerce_unsized: impl_did={:?}",
            impl_did);
 
@@ -223,23 +217,23 @@ pub fn coerce_unsized_info<'a, 'gcx>(gcx: TyCtxt<'a, 'gcx, 'gcx>,
             (mt_a.ty, mt_b.ty, unsize_trait, None)
         };
         let (source, target, trait_def_id, kind) = match (&source.sty, &target.sty) {
-            (&ty::TyRef(r_a, ty_a, mutbl_a), &ty::TyRef(r_b, ty_b, mutbl_b)) => {
+            (&ty::Ref(r_a, ty_a, mutbl_a), &ty::Ref(r_b, ty_b, mutbl_b)) => {
                 infcx.sub_regions(infer::RelateObjectBound(span), r_b, r_a);
                 let mt_a = ty::TypeAndMut { ty: ty_a, mutbl: mutbl_a };
                 let mt_b = ty::TypeAndMut { ty: ty_b, mutbl: mutbl_b };
                 check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ref(r_b, ty))
             }
 
-            (&ty::TyRef(_, ty_a, mutbl_a), &ty::TyRawPtr(mt_b)) => {
+            (&ty::Ref(_, ty_a, mutbl_a), &ty::RawPtr(mt_b)) => {
                 let mt_a = ty::TypeAndMut { ty: ty_a, mutbl: mutbl_a };
                 check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ptr(ty))
             }
 
-            (&ty::TyRawPtr(mt_a), &ty::TyRawPtr(mt_b)) => {
+            (&ty::RawPtr(mt_a), &ty::RawPtr(mt_b)) => {
                 check_mutbl(mt_a, mt_b, &|ty| gcx.mk_imm_ptr(ty))
             }
 
-            (&ty::TyAdt(def_a, substs_a), &ty::TyAdt(def_b, substs_b)) if def_a.is_struct() &&
+            (&ty::Adt(def_a, substs_a), &ty::Adt(def_b, substs_b)) if def_a.is_struct() &&
                                                                           def_b.is_struct() => {
                 if def_a != def_b {
                     let source_path = gcx.item_path_str(def_a.did);

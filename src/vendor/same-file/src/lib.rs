@@ -56,8 +56,8 @@ for candidate in candidates {
 
 See [`examples/is_stderr.rs`] for a runnable example and compare the output of:
 
-- `cargo run is_stderr 2> examples/stderr` and
-- `cargo run is_stderr`.
+- `cargo run --example is_stderr 2> examples/stderr` and
+- `cargo run --example is_stderr`.
 
 [`is_same_file`]: fn.is_same_file.html
 [`Handle`]: struct.Handle.html
@@ -69,7 +69,7 @@ See [`examples/is_stderr.rs`] for a runnable example and compare the output of:
 #![deny(missing_docs)]
 
 #[cfg(windows)]
-extern crate winapi;
+extern crate winapi_util;
 
 use std::fs::File;
 use std::io;

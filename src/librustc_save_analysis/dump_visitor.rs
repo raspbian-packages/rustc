@@ -41,7 +41,7 @@ use syntax::print::pprust::{
     ty_to_string
 };
 use syntax::ptr::P;
-use syntax::codemap::{Spanned, DUMMY_SP, respan};
+use syntax::source_map::{Spanned, DUMMY_SP, respan};
 use syntax_pos::*;
 
 use {escape, generated_code, lower_attributes, PathCollector, SaveContext};
@@ -91,7 +91,7 @@ pub struct DumpVisitor<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> {
     // of macro use (callsite) spans. We store these to ensure
     // we only write one macro def per unique macro definition, and
     // one macro use per unique callsite span.
-    // mac_defs: HashSet<Span>,
+    // mac_defs: FxHashSet<Span>,
     macro_calls: FxHashSet<Span>,
 }
 
@@ -107,7 +107,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             dumper,
             span: span_utils.clone(),
             cur_scope: CRATE_NODE_ID,
-            // mac_defs: HashSet::new(),
+            // mac_defs: FxHashSet::default(),
             macro_calls: FxHashSet(),
         }
     }
@@ -147,9 +147,9 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         let crate_root = source_file.map(|source_file| {
             let source_file = Path::new(source_file);
             match source_file.file_name() {
-                Some(_) => source_file.parent().unwrap().display().to_string(),
-                None => source_file.display().to_string(),
-            }
+                Some(_) => source_file.parent().unwrap().display(),
+                None => source_file.display(),
+            }.to_string()
         });
 
         let data = CratePreludeData {
@@ -176,8 +176,8 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         let segments = &path.segments[if path.is_global() { 1 } else { 0 }..];
 
         let mut result = Vec::with_capacity(segments.len());
+        let mut segs = Vec::with_capacity(segments.len());
 
-        let mut segs = vec![];
         for (i, seg) in segments.iter().enumerate() {
             segs.push(seg.clone());
             let sub_path = ast::Path {
@@ -591,9 +591,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
 
         for variant in &enum_definition.variants {
             let name = variant.node.ident.name.to_string();
-            let mut qualname = enum_data.qualname.clone();
-            qualname.push_str("::");
-            qualname.push_str(&name);
+            let qualname = format!("{}::{}", enum_data.qualname, name);
 
             match variant.node.data {
                 ast::VariantData::Struct(ref fields, _) => {
@@ -824,10 +822,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             if let Some(ref generic_args) = seg.args {
                 match **generic_args {
                     ast::GenericArgs::AngleBracketed(ref data) => {
-                        data.args.iter().for_each(|arg| match arg {
-                            ast::GenericArg::Type(ty) => self.visit_ty(ty),
-                            _ => {}
-                        });
+                        for arg in &data.args {
+                            match arg {
+                                ast::GenericArg::Type(ty) => self.visit_ty(ty),
+                                _ => {}
+                            }
+                        }
                     }
                     ast::GenericArgs::Parenthesized(ref data) => {
                         for t in &data.inputs {
@@ -911,10 +911,12 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
         // Explicit types in the turbo-fish.
         if let Some(ref generic_args) = seg.args {
             if let ast::GenericArgs::AngleBracketed(ref data) = **generic_args {
-                data.args.iter().for_each(|arg| match arg {
-                    ast::GenericArg::Type(ty) => self.visit_ty(ty),
-                    _ => {}
-                });
+                for arg in &data.args {
+                    match arg {
+                        ast::GenericArg::Type(ty) => self.visit_ty(ty),
+                        _ => {}
+                    }
+                }
             }
         }
 
@@ -969,9 +971,9 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             match self.save_ctxt.get_path_def(id) {
                 HirDef::Local(id) => {
                     let mut value = if immut == ast::Mutability::Immutable {
-                        self.span.snippet(ident.span).to_string()
+                        self.span.snippet(ident.span)
                     } else {
-                        "<mutable>".to_string()
+                        "<mutable>".to_owned()
                     };
                     let hir_id = self.tcx.hir.node_to_hir_id(id);
                     let typ = self.save_ctxt
@@ -1099,10 +1101,9 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
     /// mac_uses and mac_defs sets to prevent multiples.
     fn process_macro_use(&mut self, span: Span) {
         let source_span = span.source_callsite();
-        if self.macro_calls.contains(&source_span) {
+        if !self.macro_calls.insert(source_span) {
             return;
         }
-        self.macro_calls.insert(source_span);
 
         let data = match self.save_ctxt.get_macro_use_data(span) {
             None => return,
@@ -1358,6 +1359,14 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> DumpVisitor<'l, 'tcx, 'll, O> {
             }
         }
     }
+
+    fn process_bounds(&mut self, bounds: &'l ast::GenericBounds) {
+        for bound in bounds {
+            if let ast::GenericBound::Trait(ref trait_ref, _) = *bound {
+                self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
+            }
+        }
+    }
 }
 
 impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tcx, 'll, O> {
@@ -1368,7 +1377,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
 
         let qualname = format!("::{}", self.tcx.node_path_str(id));
 
-        let cm = self.tcx.sess.codemap();
+        let cm = self.tcx.sess.source_map();
         let filename = cm.span_to_filename(span);
         let data_id = ::id_from_node_id(id, &self.save_ctxt);
         let children = m.items
@@ -1522,19 +1531,20 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
     }
 
     fn visit_generics(&mut self, generics: &'l ast::Generics) {
-        generics.params.iter().for_each(|param| match param.kind {
-            ast::GenericParamKind::Lifetime { .. } => {}
-            ast::GenericParamKind::Type { ref default, .. } => {
-                for bound in &param.bounds {
-                    if let ast::GenericBound::Trait(ref trait_ref, _) = *bound {
-                        self.process_path(trait_ref.trait_ref.ref_id, &trait_ref.trait_ref.path)
-                    }
-                }
+        for param in &generics.params {
+            if let ast::GenericParamKind::Type { ref default, .. } = param.kind {
+                self.process_bounds(&param.bounds);
                 if let Some(ref ty) = default {
                     self.visit_ty(&ty);
                 }
             }
-        });
+        }
+        for pred in &generics.where_clause.predicates {
+            if let ast::WherePredicate::BoundPredicate(ref wbp) = *pred {
+                self.process_bounds(&wbp.bounds);
+                self.visit_ty(&wbp.bounded_ty);
+            }
+        }
     }
 
     fn visit_ty(&mut self, t: &'l ast::Ty) {
@@ -1595,8 +1605,7 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
                 }
             }
             ast::ExprKind::Closure(_, _, _, ref decl, ref body, _fn_decl_span) => {
-                let mut id = String::from("$");
-                id.push_str(&ex.id.to_string());
+                let id = format!("${}", ex.id);
 
                 // walk arg and return types
                 for arg in &decl.inputs {
@@ -1657,7 +1666,10 @@ impl<'l, 'tcx: 'l, 'll, O: DumpOutput + 'll> Visitor<'l> for DumpVisitor<'l, 'tc
 
     fn visit_arm(&mut self, arm: &'l ast::Arm) {
         self.process_var_decl_multi(&arm.pats);
-        walk_list!(self, visit_expr, &arm.guard);
+        match arm.guard {
+            Some(ast::Guard::If(ref expr)) => self.visit_expr(expr),
+            _ => {}
+        }
         self.visit_expr(&arm.body);
     }
 

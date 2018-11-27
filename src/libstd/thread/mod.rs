@@ -731,7 +731,8 @@ const NOTIFIED: usize = 2;
 ///   specifying a maximum time to block the thread for.
 ///
 /// * The [`unpark`] method on a [`Thread`] atomically makes the token available
-///   if it wasn't already.
+///   if it wasn't already. Because the token is initially absent, [`unpark`]
+///   followed by [`park`] will result in the second call returning immediately.
 ///
 /// In other words, each [`Thread`] acts a bit like a spinlock that can be
 /// locked and unlocked using `park` and `unpark`.
@@ -766,6 +767,8 @@ const NOTIFIED: usize = 2;
 /// // Let some time pass for the thread to be spawned.
 /// thread::sleep(Duration::from_millis(10));
 ///
+/// // There is no race condition here, if `unpark`
+/// // happens first, `park` will return immediately.
 /// println!("Unpark the thread");
 /// parked_thread.thread().unpark();
 ///
@@ -937,6 +940,8 @@ pub struct ThreadId(u64);
 impl ThreadId {
     // Generate a new unique thread ID.
     fn new() -> ThreadId {
+        // We never call `GUARD.init()`, so it is UB to attempt to
+        // acquire this mutex reentrantly!
         static GUARD: mutex::Mutex = mutex::Mutex::new();
         static mut COUNTER: u64 = 0;
 
@@ -1305,11 +1310,17 @@ impl<T> JoinHandle<T> {
 
     /// Waits for the associated thread to finish.
     ///
+    /// In terms of [atomic memory orderings],  the completion of the associated
+    /// thread synchronizes with this function returning. In other words, all
+    /// operations performed by that thread are ordered before all
+    /// operations that happen after `join` returns.
+    ///
     /// If the child thread panics, [`Err`] is returned with the parameter given
     /// to [`panic`].
     ///
     /// [`Err`]: ../../std/result/enum.Result.html#variant.Err
     /// [`panic`]: ../../std/macro.panic.html
+    /// [atomic memory orderings]: ../../std/sync/atomic/index.html
     ///
     /// # Panics
     ///

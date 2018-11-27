@@ -11,25 +11,18 @@
 //! Contains infrastructure for configuring the compiler, including parsing
 //! command line options.
 
-pub use self::EntryFnType::*;
-pub use self::CrateType::*;
-pub use self::Passes::*;
-pub use self::DebugInfoLevel::*;
-
 use std::str::FromStr;
 
 use session::{early_error, early_warn, Session};
 use session::search_paths::SearchPaths;
 
-use ich::StableHashingContext;
 use rustc_target::spec::{LinkerFlavor, PanicStrategy, RelroLevel};
 use rustc_target::spec::{Target, TargetTriple};
-use rustc_data_structures::stable_hasher::ToStableHashKey;
 use lint;
 use middle::cstore;
 
 use syntax::ast::{self, IntTy, UintTy, MetaItemKind};
-use syntax::codemap::{FileName, FilePathMapping};
+use syntax::source_map::{FileName, FilePathMapping};
 use syntax::edition::{Edition, EDITION_NAME_LIST, DEFAULT_EDITION};
 use syntax::parse::token;
 use syntax::parse;
@@ -44,10 +37,10 @@ use std::collections::btree_map::Iter as BTreeMapIter;
 use std::collections::btree_map::Keys as BTreeMapKeysIter;
 use std::collections::btree_map::Values as BTreeMapValuesIter;
 
+use rustc_data_structures::fx::FxHashSet;
 use std::{fmt, str};
 use std::hash::Hasher;
 use std::collections::hash_map::DefaultHasher;
-use std::collections::HashSet;
 use std::iter::FromIterator;
 use std::path::{Path, PathBuf};
 
@@ -65,7 +58,7 @@ pub enum Sanitizer {
     Thread,
 }
 
-#[derive(Clone, Copy, PartialEq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Hash)]
 pub enum OptLevel {
     No,         // -O0
     Less,       // -O1
@@ -75,14 +68,12 @@ pub enum OptLevel {
     SizeMin,    // -Oz
 }
 
-#[derive(Clone, Copy, PartialEq, Hash)]
+/// This is what the `LtoCli` values get mapped to after resolving defaults and
+/// and taking other command line options into account.
+#[derive(Clone, Copy, PartialEq, Hash, Debug)]
 pub enum Lto {
     /// Don't do any LTO whatsoever
     No,
-
-    /// Do a full crate graph LTO. The flavor is determined by the compiler
-    /// (currently the default is "fat").
-    Yes,
 
     /// Do a full crate graph LTO with ThinLTO
     Thin,
@@ -93,6 +84,23 @@ pub enum Lto {
 
     /// Do a full crate graph LTO with "fat" LTO
     Fat,
+}
+
+/// The different settings that the `-C lto` flag can have.
+#[derive(Clone, Copy, PartialEq, Hash, Debug)]
+pub enum LtoCli {
+    /// `-C lto=no`
+    No,
+    /// `-C lto=yes`
+    Yes,
+    /// `-C lto`
+    NoParam,
+    /// `-C lto=thin`
+    Thin,
+    /// `-C lto=fat`
+    Fat,
+    /// No `-C lto` flag passed
+    Unspecified,
 }
 
 #[derive(Clone, PartialEq, Hash)]
@@ -113,10 +121,10 @@ impl CrossLangLto {
 }
 
 #[derive(Clone, Copy, PartialEq, Hash)]
-pub enum DebugInfoLevel {
-    NoDebugInfo,
-    LimitedDebugInfo,
-    FullDebugInfo,
+pub enum DebugInfo {
+    None,
+    Limited,
+    Full,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, PartialOrd, Ord, RustcEncodable, RustcDecodable)]
@@ -131,25 +139,7 @@ pub enum OutputType {
     DepInfo,
 }
 
-
-impl_stable_hash_for!(enum self::OutputType {
-    Bitcode,
-    Assembly,
-    LlvmAssembly,
-    Mir,
-    Metadata,
-    Object,
-    Exe,
-    DepInfo
-});
-
-impl<'a, 'tcx> ToStableHashKey<StableHashingContext<'a>> for OutputType {
-    type KeyType = OutputType;
-    #[inline]
-    fn to_stable_hash_key(&self, _: &StableHashingContext<'a>) -> Self::KeyType {
-        *self
-    }
-}
+impl_stable_hash_via_hash!(OutputType);
 
 impl OutputType {
     fn is_compatible_with_codegen_units_and_single_output_file(&self) -> bool {
@@ -238,9 +228,7 @@ impl Default for ErrorOutputType {
 #[derive(Clone, Hash)]
 pub struct OutputTypes(BTreeMap<OutputType, Option<PathBuf>>);
 
-impl_stable_hash_for!(tuple_struct self::OutputTypes {
-    map
-});
+impl_stable_hash_via_hash!(OutputTypes);
 
 impl OutputTypes {
     pub fn new(entries: &[(OutputType, Option<PathBuf>)]) -> OutputTypes {
@@ -287,18 +275,18 @@ impl OutputTypes {
 // DO NOT switch BTreeMap or BTreeSet out for an unsorted container type! That
 // would break dependency tracking for commandline arguments.
 #[derive(Clone, Hash)]
-pub struct Externs(BTreeMap<String, BTreeSet<String>>);
+pub struct Externs(BTreeMap<String, BTreeSet<Option<String>>>);
 
 impl Externs {
-    pub fn new(data: BTreeMap<String, BTreeSet<String>>) -> Externs {
+    pub fn new(data: BTreeMap<String, BTreeSet<Option<String>>>) -> Externs {
         Externs(data)
     }
 
-    pub fn get(&self, key: &str) -> Option<&BTreeSet<String>> {
+    pub fn get(&self, key: &str) -> Option<&BTreeSet<Option<String>>> {
         self.0.get(key)
     }
 
-    pub fn iter<'a>(&'a self) -> BTreeMapIter<'a, String, BTreeSet<String>> {
+    pub fn iter<'a>(&'a self) -> BTreeMapIter<'a, String, BTreeSet<Option<String>>> {
         self.0.iter()
     }
 }
@@ -381,7 +369,7 @@ top_level_options!(
         // Include the debug_assertions flag into dependency tracking, since it
         // can influence whether overflow checks are done or not.
         debug_assertions: bool [TRACKED],
-        debuginfo: DebugInfoLevel [TRACKED],
+        debuginfo: DebugInfo [TRACKED],
         lint_opts: Vec<(String, lint::Level)> [TRACKED],
         lint_cap: Option<lint::Level> [TRACKED],
         describe_lints: bool [UNTRACKED],
@@ -517,7 +505,7 @@ impl Input {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Hash)]
 pub struct OutputFilenames {
     pub out_directory: PathBuf,
     pub out_filestem: String,
@@ -526,13 +514,7 @@ pub struct OutputFilenames {
     pub outputs: OutputTypes,
 }
 
-impl_stable_hash_for!(struct self::OutputFilenames {
-    out_directory,
-    out_filestem,
-    single_output_file,
-    extra,
-    outputs
-});
+impl_stable_hash_via_hash!(OutputFilenames);
 
 pub const RUST_CGU_EXT: &str = "rcgu";
 
@@ -601,37 +583,38 @@ pub fn host_triple() -> &'static str {
     (option_env!("CFG_COMPILER_HOST_TRIPLE")).expect("CFG_COMPILER_HOST_TRIPLE")
 }
 
-/// Some reasonable defaults
-pub fn basic_options() -> Options {
-    Options {
-        crate_types: Vec::new(),
-        optimize: OptLevel::No,
-        debuginfo: NoDebugInfo,
-        lint_opts: Vec::new(),
-        lint_cap: None,
-        describe_lints: false,
-        output_types: OutputTypes(BTreeMap::new()),
-        search_paths: SearchPaths::new(),
-        maybe_sysroot: None,
-        target_triple: TargetTriple::from_triple(host_triple()),
-        test: false,
-        incremental: None,
-        debugging_opts: basic_debugging_options(),
-        prints: Vec::new(),
-        borrowck_mode: BorrowckMode::Ast,
-        cg: basic_codegen_options(),
-        error_format: ErrorOutputType::default(),
-        externs: Externs(BTreeMap::new()),
-        crate_name: None,
-        alt_std_name: None,
-        libs: Vec::new(),
-        unstable_features: UnstableFeatures::Disallow,
-        debug_assertions: true,
-        actually_rustdoc: false,
-        cli_forced_codegen_units: None,
-        cli_forced_thinlto_off: false,
-        remap_path_prefix: Vec::new(),
-        edition: DEFAULT_EDITION,
+impl Default for Options {
+    fn default() -> Options {
+        Options {
+            crate_types: Vec::new(),
+            optimize: OptLevel::No,
+            debuginfo: DebugInfo::None,
+            lint_opts: Vec::new(),
+            lint_cap: None,
+            describe_lints: false,
+            output_types: OutputTypes(BTreeMap::new()),
+            search_paths: SearchPaths::new(),
+            maybe_sysroot: None,
+            target_triple: TargetTriple::from_triple(host_triple()),
+            test: false,
+            incremental: None,
+            debugging_opts: basic_debugging_options(),
+            prints: Vec::new(),
+            borrowck_mode: BorrowckMode::Ast,
+            cg: basic_codegen_options(),
+            error_format: ErrorOutputType::default(),
+            externs: Externs(BTreeMap::new()),
+            crate_name: None,
+            alt_std_name: None,
+            libs: Vec::new(),
+            unstable_features: UnstableFeatures::Disallow,
+            debug_assertions: true,
+            actually_rustdoc: false,
+            cli_forced_codegen_units: None,
+            cli_forced_thinlto_off: false,
+            remap_path_prefix: Vec::new(),
+            edition: DEFAULT_EDITION,
+        }
     }
 }
 
@@ -657,6 +640,23 @@ impl Options {
         !self.debugging_opts.parse_only && // The file is just being parsed
             !self.debugging_opts.ls // The file is just being queried
     }
+
+    #[inline]
+    pub fn share_generics(&self) -> bool {
+        match self.debugging_opts.share_generics {
+            Some(setting) => setting,
+            None => {
+                match self.optimize {
+                    OptLevel::No   |
+                    OptLevel::Less |
+                    OptLevel::Size |
+                    OptLevel::SizeMin => true,
+                    OptLevel::Default    |
+                    OptLevel::Aggressive => false,
+                }
+            }
+        }
+    }
 }
 
 // The type of entry function, so
@@ -664,31 +664,31 @@ impl Options {
 // functions
 #[derive(Copy, Clone, PartialEq)]
 pub enum EntryFnType {
-    EntryMain,
-    EntryStart,
+    Main,
+    Start,
 }
 
 #[derive(Copy, PartialEq, PartialOrd, Clone, Ord, Eq, Hash, Debug)]
 pub enum CrateType {
-    CrateTypeExecutable,
-    CrateTypeDylib,
-    CrateTypeRlib,
-    CrateTypeStaticlib,
-    CrateTypeCdylib,
-    CrateTypeProcMacro,
+    Executable,
+    Dylib,
+    Rlib,
+    Staticlib,
+    Cdylib,
+    ProcMacro,
 }
 
 #[derive(Clone, Hash)]
 pub enum Passes {
-    SomePasses(Vec<String>),
-    AllPasses,
+    Some(Vec<String>),
+    All,
 }
 
 impl Passes {
     pub fn is_empty(&self) -> bool {
         match *self {
-            SomePasses(ref v) => v.is_empty(),
-            AllPasses => false,
+            Passes::Some(ref v) => v.is_empty(),
+            Passes::All => false,
         }
     }
 }
@@ -815,16 +815,16 @@ macro_rules! options {
         pub const parse_unpretty: Option<&'static str> =
             Some("`string` or `string=string`");
         pub const parse_lto: Option<&'static str> =
-            Some("one of `thin`, `fat`, or omitted");
+            Some("either a boolean (`yes`, `no`, `on`, `off`, etc), `thin`, \
+                  `fat`, or omitted");
         pub const parse_cross_lang_lto: Option<&'static str> =
-            Some("either a boolean (`yes`, `no`, `on`, `off`, etc), `no-link`, \
+            Some("either a boolean (`yes`, `no`, `on`, `off`, etc), \
                   or the path to the linker plugin");
     }
 
     #[allow(dead_code)]
     mod $mod_set {
-        use super::{$struct_name, Passes, SomePasses, AllPasses, Sanitizer, Lto,
-                    CrossLangLto};
+        use super::{$struct_name, Passes, Sanitizer, LtoCli, CrossLangLto};
         use rustc_target::spec::{LinkerFlavor, PanicStrategy, RelroLevel};
         use std::path::PathBuf;
 
@@ -935,13 +935,13 @@ macro_rules! options {
         fn parse_passes(slot: &mut Passes, v: Option<&str>) -> bool {
             match v {
                 Some("all") => {
-                    *slot = AllPasses;
+                    *slot = Passes::All;
                     true
                 }
                 v => {
                     let mut passes = vec![];
                     if parse_list(&mut passes, v) {
-                        *slot = SomePasses(passes);
+                        *slot = Passes::Some(passes);
                         true
                     } else {
                         false
@@ -1017,11 +1017,23 @@ macro_rules! options {
             }
         }
 
-        fn parse_lto(slot: &mut Lto, v: Option<&str>) -> bool {
+        fn parse_lto(slot: &mut LtoCli, v: Option<&str>) -> bool {
+            if v.is_some() {
+                let mut bool_arg = None;
+                if parse_opt_bool(&mut bool_arg, v) {
+                    *slot = if bool_arg.unwrap() {
+                        LtoCli::Yes
+                    } else {
+                        LtoCli::No
+                    };
+                    return true
+                }
+            }
+
             *slot = match v {
-                None => Lto::Yes,
-                Some("thin") => Lto::Thin,
-                Some("fat") => Lto::Fat,
+                None => LtoCli::NoParam,
+                Some("thin") => LtoCli::Thin,
+                Some("fat") => LtoCli::Fat,
                 Some(_) => return false,
             };
             true
@@ -1062,11 +1074,11 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
         "extra arguments to append to the linker invocation (space separated)"),
     link_dead_code: bool = (false, parse_bool, [UNTRACKED],
         "don't let linker strip dead code (turning it on can be used for code coverage)"),
-    lto: Lto = (Lto::No, parse_lto, [TRACKED],
+    lto: LtoCli = (LtoCli::Unspecified, parse_lto, [TRACKED],
         "perform LLVM link-time optimizations"),
     target_cpu: Option<String> = (None, parse_opt_string, [TRACKED],
         "select target processor (rustc --print target-cpus for details)"),
-    target_feature: String = ("".to_string(), parse_string, [TRACKED],
+    target_feature: String = (String::new(), parse_string, [TRACKED],
         "target specific attributes (rustc --print target-features for details)"),
     passes: Vec<String> = (Vec::new(), parse_list, [TRACKED],
         "a list of extra LLVM passes to run (space separated)"),
@@ -1100,11 +1112,11 @@ options! {CodegenOptions, CodegenSetter, basic_codegen_options,
          "choose the code model to use (rustc --print code-models for details)"),
     metadata: Vec<String> = (Vec::new(), parse_list, [TRACKED],
          "metadata to mangle symbol names with"),
-    extra_filename: String = ("".to_string(), parse_string, [UNTRACKED],
+    extra_filename: String = (String::new(), parse_string, [UNTRACKED],
          "extra data to put in each output filename"),
     codegen_units: Option<usize> = (None, parse_opt_uint, [UNTRACKED],
         "divide crate into N units to optimize in parallel"),
-    remark: Passes = (SomePasses(Vec::new()), parse_passes, [UNTRACKED],
+    remark: Passes = (Passes::Some(Vec::new()), parse_passes, [UNTRACKED],
         "print remarks for these optimization passes (space separated, or \"all\")"),
     no_stack_check: bool = (false, parse_bool, [UNTRACKED],
         "the --no-stack-check flag is deprecated and does nothing"),
@@ -1367,10 +1379,14 @@ options! {DebuggingOptions, DebuggingSetter, basic_debugging_options,
         "disables the 'leak check' for subtyping; unsound, but useful for tests"),
     crate_attr: Vec<String> = (Vec::new(), parse_string_push, [TRACKED],
         "inject the given attribute in the crate"),
+    self_profile: bool = (false, parse_bool, [UNTRACKED],
+          "run the self profiler"),
+    profile_json: bool = (false, parse_bool, [UNTRACKED],
+          "output a json file with profiler results"),
 }
 
 pub fn default_lib_output() -> CrateType {
-    CrateTypeRlib
+    CrateType::Rlib
 }
 
 pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
@@ -1384,7 +1400,7 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     let max_atomic_width = sess.target.target.max_atomic_width();
     let atomic_cas = sess.target.target.options.atomic_cas;
 
-    let mut ret = HashSet::new();
+    let mut ret = FxHashSet::default();
     // Target bindings.
     ret.insert((Symbol::intern("target_os"), Some(Symbol::intern(os))));
     if let Some(ref fam) = sess.target.target.options.target_family {
@@ -1428,7 +1444,7 @@ pub fn default_configuration(sess: &Session) -> ast::CrateConfig {
     if sess.opts.debug_assertions {
         ret.insert((Symbol::intern("debug_assertions"), None));
     }
-    if sess.opts.crate_types.contains(&CrateTypeProcMacro) {
+    if sess.opts.crate_types.contains(&CrateType::ProcMacro) {
         ret.insert((Symbol::intern("proc_macro"), None));
     }
     return ret;
@@ -2000,13 +2016,6 @@ pub fn build_session_options_and_crate_config(
         (&None, &None) => None,
     }.map(|m| PathBuf::from(m));
 
-    if cg.lto != Lto::No && incremental.is_some() {
-        early_error(
-            error_format,
-            "can't perform LTO when compiling incrementally",
-        );
-    }
-
     if debugging_opts.profile && incremental.is_some() {
         early_error(
             error_format,
@@ -2021,7 +2030,7 @@ pub fn build_session_options_and_crate_config(
     };
     if cg.target_feature == "help" {
         prints.push(PrintRequest::TargetFeatures);
-        cg.target_feature = "".to_string();
+        cg.target_feature = String::new();
     }
     if cg.relocation_model.as_ref().map_or(false, |s| s == "help") {
         prints.push(PrintRequest::RelocationModels);
@@ -2091,12 +2100,12 @@ pub fn build_session_options_and_crate_config(
         if cg.debuginfo.is_some() {
             early_error(error_format, "-g and -C debuginfo both provided");
         }
-        FullDebugInfo
+        DebugInfo::Full
     } else {
         match cg.debuginfo {
-            None | Some(0) => NoDebugInfo,
-            Some(1) => LimitedDebugInfo,
-            Some(2) => FullDebugInfo,
+            None | Some(0) => DebugInfo::None,
+            Some(1) => DebugInfo::Limited,
+            Some(2) => DebugInfo::Full,
             Some(arg) => {
                 early_error(
                     error_format,
@@ -2159,6 +2168,8 @@ pub fn build_session_options_and_crate_config(
     let cfg = parse_cfgspecs(matches.opt_strs("cfg"));
     let test = matches.opt_present("test");
 
+    let is_unstable_enabled = nightly_options::is_unstable_enabled(matches);
+
     prints.extend(matches.opt_strs("print").into_iter().map(|s| match &*s {
         "crate-name" => PrintRequest::CrateName,
         "file-names" => PrintRequest::FileNames,
@@ -2172,15 +2183,13 @@ pub fn build_session_options_and_crate_config(
         "tls-models" => PrintRequest::TlsModels,
         "native-static-libs" => PrintRequest::NativeStaticLibs,
         "target-spec-json" => {
-            if nightly_options::is_unstable_enabled(matches) {
+            if is_unstable_enabled {
                 PrintRequest::TargetSpec
             } else {
                 early_error(
                     error_format,
-                    &format!(
-                        "the `-Z unstable-options` flag must also be passed to \
-                         enable the target-spec-json print option"
-                    ),
+                    "the `-Z unstable-options` flag must also be passed to \
+                     enable the target-spec-json print option",
                 );
             }
         }
@@ -2195,7 +2204,7 @@ pub fn build_session_options_and_crate_config(
         Some(m) => early_error(error_format, &format!("unknown borrowck mode `{}`", m)),
     };
 
-    if !cg.remark.is_empty() && debuginfo == NoDebugInfo {
+    if !cg.remark.is_empty() && debuginfo == DebugInfo::None {
         early_warn(
             error_format,
             "-C remark will not show source locations without \
@@ -2203,25 +2212,26 @@ pub fn build_session_options_and_crate_config(
         );
     }
 
-    let mut externs = BTreeMap::new();
+    let mut externs: BTreeMap<_, BTreeSet<_>> = BTreeMap::new();
     for arg in &matches.opt_strs("extern") {
         let mut parts = arg.splitn(2, '=');
         let name = match parts.next() {
             Some(s) => s,
             None => early_error(error_format, "--extern value must not be empty"),
         };
-        let location = match parts.next() {
-            Some(s) => s,
-            None => early_error(
+        let location = parts.next().map(|s| s.to_string());
+        if location.is_none() && !is_unstable_enabled {
+            early_error(
                 error_format,
-                "--extern value must be of the format `foo=bar`",
-            ),
+                "the `-Z unstable-options` flag must also be passed to \
+                 enable `--extern crate_name` without `=path`",
+            );
         };
 
         externs
             .entry(name.to_string())
-            .or_insert_with(BTreeSet::new)
-            .insert(location.to_string());
+            .or_default()
+            .insert(location);
     }
 
     let crate_name = matches.opt_str("crate-name");
@@ -2284,12 +2294,12 @@ pub fn parse_crate_types_from_list(list_list: Vec<String>) -> Result<Vec<CrateTy
         for part in unparsed_crate_type.split(',') {
             let new_part = match part {
                 "lib" => default_lib_output(),
-                "rlib" => CrateTypeRlib,
-                "staticlib" => CrateTypeStaticlib,
-                "dylib" => CrateTypeDylib,
-                "cdylib" => CrateTypeCdylib,
-                "bin" => CrateTypeExecutable,
-                "proc-macro" => CrateTypeProcMacro,
+                "rlib" => CrateType::Rlib,
+                "staticlib" => CrateType::Staticlib,
+                "dylib" => CrateType::Dylib,
+                "cdylib" => CrateType::Cdylib,
+                "bin" => CrateType::Executable,
+                "proc-macro" => CrateType::ProcMacro,
                 _ => {
                     return Err(format!("unknown crate type: `{}`", part));
                 }
@@ -2367,12 +2377,12 @@ pub mod nightly_options {
 impl fmt::Display for CrateType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
-            CrateTypeExecutable => "bin".fmt(f),
-            CrateTypeDylib => "dylib".fmt(f),
-            CrateTypeRlib => "rlib".fmt(f),
-            CrateTypeStaticlib => "staticlib".fmt(f),
-            CrateTypeCdylib => "cdylib".fmt(f),
-            CrateTypeProcMacro => "proc-macro".fmt(f),
+            CrateType::Executable => "bin".fmt(f),
+            CrateType::Dylib => "dylib".fmt(f),
+            CrateType::Rlib => "rlib".fmt(f),
+            CrateType::Staticlib => "staticlib".fmt(f),
+            CrateType::Cdylib => "cdylib".fmt(f),
+            CrateType::ProcMacro => "proc-macro".fmt(f),
         }
     }
 }
@@ -2402,8 +2412,8 @@ mod dep_tracking {
     use std::hash::Hash;
     use std::path::PathBuf;
     use std::collections::hash_map::DefaultHasher;
-    use super::{CrateType, DebugInfoLevel, ErrorOutputType, Lto, OptLevel, OutputTypes,
-                Passes, Sanitizer, CrossLangLto};
+    use super::{CrateType, DebugInfo, ErrorOutputType, OptLevel, OutputTypes,
+                Passes, Sanitizer, LtoCli, CrossLangLto};
     use syntax::feature_gate::UnstableFeatures;
     use rustc_target::spec::{PanicStrategy, RelroLevel, TargetTriple};
     use syntax::edition::Edition;
@@ -2458,8 +2468,8 @@ mod dep_tracking {
     impl_dep_tracking_hash_via_hash!(RelroLevel);
     impl_dep_tracking_hash_via_hash!(Passes);
     impl_dep_tracking_hash_via_hash!(OptLevel);
-    impl_dep_tracking_hash_via_hash!(Lto);
-    impl_dep_tracking_hash_via_hash!(DebugInfoLevel);
+    impl_dep_tracking_hash_via_hash!(LtoCli);
+    impl_dep_tracking_hash_via_hash!(DebugInfo);
     impl_dep_tracking_hash_via_hash!(UnstableFeatures);
     impl_dep_tracking_hash_via_hash!(OutputTypes);
     impl_dep_tracking_hash_via_hash!(cstore::NativeLibraryKind);
@@ -2532,7 +2542,7 @@ mod tests {
     use lint;
     use middle::cstore;
     use session::config::{build_configuration, build_session_options_and_crate_config};
-    use session::config::{Lto, CrossLangLto};
+    use session::config::{LtoCli, CrossLangLto};
     use session::build_session;
     use std::collections::{BTreeMap, BTreeSet};
     use std::iter::FromIterator;
@@ -2542,6 +2552,7 @@ mod tests {
     use syntax::symbol::Symbol;
     use syntax::edition::{Edition, DEFAULT_EDITION};
     use syntax;
+    use super::Options;
 
     fn optgroups() -> getopts::Options {
         let mut opts = getopts::Options::new();
@@ -2626,9 +2637,9 @@ mod tests {
 
     #[test]
     fn test_output_types_tracking_hash_different_paths() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
 
         v1.output_types =
             OutputTypes::new(&[(OutputType::Exe, Some(PathBuf::from("./some/thing")))]);
@@ -2648,8 +2659,8 @@ mod tests {
 
     #[test]
     fn test_output_types_tracking_hash_different_construction_order() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
 
         v1.output_types = OutputTypes::new(&[
             (OutputType::Exe, Some(PathBuf::from("./some/thing"))),
@@ -2669,40 +2680,40 @@ mod tests {
 
     #[test]
     fn test_externs_tracking_hash_different_construction_order() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
 
         v1.externs = Externs::new(mk_map(vec![
             (
                 String::from("a"),
-                mk_set(vec![String::from("b"), String::from("c")]),
+                mk_set(vec![Some(String::from("b")), Some(String::from("c"))]),
             ),
             (
                 String::from("d"),
-                mk_set(vec![String::from("e"), String::from("f")]),
+                mk_set(vec![Some(String::from("e")), Some(String::from("f"))]),
             ),
         ]));
 
         v2.externs = Externs::new(mk_map(vec![
             (
                 String::from("d"),
-                mk_set(vec![String::from("e"), String::from("f")]),
+                mk_set(vec![Some(String::from("e")), Some(String::from("f"))]),
             ),
             (
                 String::from("a"),
-                mk_set(vec![String::from("b"), String::from("c")]),
+                mk_set(vec![Some(String::from("b")), Some(String::from("c"))]),
             ),
         ]));
 
         v3.externs = Externs::new(mk_map(vec![
             (
                 String::from("a"),
-                mk_set(vec![String::from("b"), String::from("c")]),
+                mk_set(vec![Some(String::from("b")), Some(String::from("c"))]),
             ),
             (
                 String::from("d"),
-                mk_set(vec![String::from("f"), String::from("e")]),
+                mk_set(vec![Some(String::from("f")), Some(String::from("e"))]),
             ),
         ]));
 
@@ -2718,9 +2729,9 @@ mod tests {
 
     #[test]
     fn test_lints_tracking_hash_different_values() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
 
         v1.lint_opts = vec![
             (String::from("a"), lint::Allow),
@@ -2755,8 +2766,8 @@ mod tests {
 
     #[test]
     fn test_lints_tracking_hash_different_construction_order() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
 
         v1.lint_opts = vec![
             (String::from("a"), lint::Allow),
@@ -2781,10 +2792,10 @@ mod tests {
 
     #[test]
     fn test_search_paths_tracking_hash_different_order() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
-        let mut v4 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
+        let mut v4 = Options::default();
 
         // Reference
         v1.search_paths
@@ -2844,10 +2855,10 @@ mod tests {
 
     #[test]
     fn test_native_libs_tracking_hash_different_values() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
-        let mut v4 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
+        let mut v4 = Options::default();
 
         // Reference
         v1.libs = vec![
@@ -2894,9 +2905,9 @@ mod tests {
 
     #[test]
     fn test_native_libs_tracking_hash_different_order() {
-        let mut v1 = super::basic_options();
-        let mut v2 = super::basic_options();
-        let mut v3 = super::basic_options();
+        let mut v1 = Options::default();
+        let mut v2 = Options::default();
+        let mut v3 = Options::default();
 
         // Reference
         v1.libs = vec![
@@ -2929,8 +2940,8 @@ mod tests {
 
     #[test]
     fn test_codegen_options_tracking_hash() {
-        let reference = super::basic_options();
-        let mut opts = super::basic_options();
+        let reference = Options::default();
+        let mut opts = Options::default();
 
         // Make sure the changing an [UNTRACKED] option leaves the hash unchanged
         opts.cg.ar = Some(String::from("abc"));
@@ -2954,7 +2965,7 @@ mod tests {
         opts.cg.codegen_units = Some(42);
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
 
-        opts.cg.remark = super::SomePasses(vec![String::from("pass1"), String::from("pass2")]);
+        opts.cg.remark = super::Passes::Some(vec![String::from("pass1"), String::from("pass2")]);
         assert_eq!(reference.dep_tracking_hash(), opts.dep_tracking_hash());
 
         opts.cg.save_temps = true;
@@ -2965,7 +2976,7 @@ mod tests {
 
         // Make sure changing a [TRACKED] option changes the hash
         opts = reference.clone();
-        opts.cg.lto = Lto::Fat;
+        opts.cg.lto = LtoCli::Fat;
         assert!(reference.dep_tracking_hash() != opts.dep_tracking_hash());
 
         opts = reference.clone();
@@ -3067,8 +3078,8 @@ mod tests {
 
     #[test]
     fn test_debugging_options_tracking_hash() {
-        let reference = super::basic_options();
-        let mut opts = super::basic_options();
+        let reference = Options::default();
+        let mut opts = Options::default();
 
         // Make sure the changing an [UNTRACKED] option leaves the hash unchanged
         opts.debugging_opts.verbose = true;
@@ -3197,7 +3208,7 @@ mod tests {
     #[test]
     fn test_edition_parsing() {
         // test default edition
-        let options = super::basic_options();
+        let options = Options::default();
         assert!(options.edition == DEFAULT_EDITION);
 
         let matches = optgroups()

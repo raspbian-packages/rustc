@@ -8,7 +8,7 @@ efficiently skip descending into directories.
 To use this crate, add `walkdir` as a dependency to your project's
 `Cargo.toml`:
 
-```text
+```toml
 [dependencies]
 walkdir = "2"
 ```
@@ -103,7 +103,6 @@ for entry in walker.filter_entry(|e| !is_hidden(e)) {
 [`filter_entry`]: struct.IntoIter.html#method.filter_entry
 */
 
-#![doc(html_root_url = "https://docs.rs/walkdir/2.0.0")]
 #![deny(missing_docs)]
 
 #[cfg(test)]
@@ -113,6 +112,8 @@ extern crate rand;
 extern crate same_file;
 #[cfg(windows)]
 extern crate winapi;
+#[cfg(windows)]
+extern crate winapi_util;
 
 use std::cmp::{Ordering, min};
 use std::error;
@@ -248,6 +249,7 @@ struct WalkDirOptions {
         FnMut(&DirEntry,&DirEntry) -> Ordering + Send + Sync + 'static
     >>,
     contents_first: bool,
+    same_file_system: bool,
 }
 
 impl fmt::Debug for WalkDirOptions {
@@ -265,6 +267,7 @@ impl fmt::Debug for WalkDirOptions {
             .field("max_depth", &self.max_depth)
             .field("sorter", &sorter_str)
             .field("contents_first", &self.contents_first)
+            .field("same_file_system", &self.same_file_system)
             .finish()
     }
 }
@@ -284,6 +287,7 @@ impl WalkDir {
                 max_depth: ::std::usize::MAX,
                 sorter: None,
                 contents_first: false,
+                same_file_system: false,
             },
             root: root.as_ref().to_path_buf(),
         }
@@ -449,6 +453,19 @@ impl WalkDir {
         self.opts.contents_first = yes;
         self
     }
+
+    /// Do not cross file system boundaries.
+    ///
+    /// When this option is enabled, directory traversal will not descend into
+    /// directories that are on a different file system from the root path.
+    ///
+    /// Currently, this option is only supported on Unix and Windows. If this
+    /// option is used on an unsupported platform, then directory traversal
+    /// will immediately return an error and will not yield any entries.
+    pub fn same_file_system(mut self, yes: bool) -> Self {
+        self.opts.same_file_system = yes;
+        self
+    }
 }
 
 impl IntoIterator for WalkDir {
@@ -464,6 +481,7 @@ impl IntoIterator for WalkDir {
             oldest_opened: 0,
             depth: 0,
             deferred_dirs: vec![],
+            root_device: None,
         }
     }
 }
@@ -513,6 +531,13 @@ pub struct IntoIter {
     /// yielded after their contents has been fully yielded. This is only
     /// used when `contents_first` is enabled.
     deferred_dirs: Vec<DirEntry>,
+    /// The device of the root file path when the first call to `next` was
+    /// made.
+    ///
+    /// If the `same_file_system` option isn't enabled, then this is always
+    /// `None`. Conversely, if it is enabled, this is always `Some(...)` after
+    /// handling the root path.
+    root_device: Option<u64>,
 }
 
 /// An ancestor is an item in the directory tree traversed by walkdir, and is
@@ -624,7 +649,7 @@ pub struct DirEntry {
     /// The file type. Necessary for recursive iteration, so store it.
     ty: FileType,
     /// Is set when this entry was created from a symbolic link and the user
-    /// excepts the iterator to follow symbolic links.
+    /// expects the iterator to follow symbolic links.
     follow_link: bool,
     /// The depth at which this entry was generated relative to the root.
     depth: usize,
@@ -651,7 +676,12 @@ impl Iterator for IntoIter {
     /// an error value. The error will be wrapped in an Option::Some.
     fn next(&mut self) -> Option<Result<DirEntry>> {
         if let Some(start) = self.start.take() {
-            let dent = itry!(DirEntry::from_link(0, start));
+            if self.opts.same_file_system {
+                let result = device_num(&start)
+                    .map_err(|e| Error::from_path(0, start.clone(), e));
+                self.root_device = Some(itry!(result));
+            }
+            let dent = itry!(DirEntry::from_path(0, start, false));
             if let Some(result) = self.handle_entry(dent) {
                 return Some(result);
             }
@@ -669,7 +699,11 @@ impl Iterator for IntoIter {
             }
             // Unwrap is safe here because we've verified above that
             // `self.stack_list` is not empty
-            match self.stack_list.last_mut().expect("bug in walkdir").next() {
+            let next = self.stack_list
+                .last_mut()
+                .expect("BUG: stack should be non-empty")
+                .next();
+            match next {
                 None => self.pop(),
                 Some(Err(err)) => return Some(Err(err)),
                 Some(Ok(dent)) => {
@@ -803,7 +837,13 @@ impl IntoIter {
         }
         let is_normal_dir = !dent.file_type().is_symlink() && dent.is_dir();
         if is_normal_dir {
-            itry!(self.push(&dent));
+            if self.opts.same_file_system && dent.depth > 0 {
+                if itry!(self.is_same_file_system(&dent)) {
+                    itry!(self.push(&dent));
+                }
+            } else {
+                itry!(self.push(&dent));
+            }
         }
         if is_normal_dir && self.opts.contents_first {
             self.deferred_dirs.push(dent);
@@ -821,7 +861,7 @@ impl IntoIter {
                 // Unwrap is safe here because we've guaranteed that
                 // `self.deferred_dirs.len()` can never be less than 1
                 let deferred: DirEntry = self.deferred_dirs.pop()
-                    .expect("bug in walkdir");
+                    .expect("BUG: deferred_dirs should be non-empty");
                 if !self.skippable() {
                     return Some(deferred);
                 }
@@ -875,7 +915,7 @@ impl IntoIter {
     }
 
     fn pop(&mut self) {
-        self.stack_list.pop().expect("cannot pop from empty stack");
+        self.stack_list.pop().expect("BUG: cannot pop from empty stack");
         if self.opts.follow_links {
             self.stack_path.pop().expect("BUG: list/path stacks out of sync");
         }
@@ -886,7 +926,11 @@ impl IntoIter {
     }
 
     fn follow(&self, mut dent: DirEntry) -> Result<DirEntry> {
-        dent = DirEntry::from_link(self.depth, dent.path().to_path_buf())?;
+        dent = DirEntry::from_path(
+            self.depth,
+            dent.path().to_path_buf(),
+            true,
+        )?;
         // The only way a symlink can cause a loop is if it points
         // to a directory. Otherwise, it always points to a leaf
         // and we can omit any loop checks.
@@ -915,6 +959,14 @@ impl IntoIter {
             }
         }
         Ok(())
+    }
+
+    fn is_same_file_system(&mut self, dent: &DirEntry) -> Result<bool> {
+        let dent_device = device_num(&dent.path)
+            .map_err(|err| Error::from_entry(dent, err))?;
+        Ok(self.root_device
+            .map(|d| d == dent_device)
+            .expect("BUG: called is_same_file_system without root device"))
     }
 
     fn skippable(&self) -> bool {
@@ -966,6 +1018,15 @@ impl DirEntry {
     /// [`std::fs::read_link`]: https://doc.rust-lang.org/stable/std/fs/fn.read_link.html
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The full path that this entry represents.
+    ///
+    /// Analogous to [`path`], but moves ownership of the path.
+    ///
+    /// [`path`]: struct.DirEntry.html#method.path
+    pub fn into_path(self) -> PathBuf {
+        self.path
     }
 
     /// Returns `true` if and only if this entry was created from a symbolic
@@ -1108,8 +1169,6 @@ impl DirEntry {
 
     #[cfg(not(any(unix, windows)))]
     fn from_entry(depth: usize, ent: &fs::DirEntry) -> Result<DirEntry> {
-        use std::os::unix::fs::DirEntryExt;
-
         let ty = ent.file_type().map_err(|err| {
             Error::from_path(depth, ent.path(), err)
         })?;
@@ -1122,21 +1181,21 @@ impl DirEntry {
     }
 
     #[cfg(windows)]
-    fn from_link(depth: usize, pb: PathBuf) -> Result<DirEntry> {
+    fn from_path(depth: usize, pb: PathBuf, link: bool) -> Result<DirEntry> {
         let md = fs::metadata(&pb).map_err(|err| {
             Error::from_path(depth, pb.clone(), err)
         })?;
         Ok(DirEntry {
             path: pb,
             ty: md.file_type(),
-            follow_link: true,
+            follow_link: link,
             depth: depth,
             metadata: md,
         })
     }
 
     #[cfg(unix)]
-    fn from_link(depth: usize, pb: PathBuf) -> Result<DirEntry> {
+    fn from_path(depth: usize, pb: PathBuf, link: bool) -> Result<DirEntry> {
         use std::os::unix::fs::MetadataExt;
 
         let md = fs::metadata(&pb).map_err(|err| {
@@ -1145,23 +1204,21 @@ impl DirEntry {
         Ok(DirEntry {
             path: pb,
             ty: md.file_type(),
-            follow_link: true,
+            follow_link: link,
             depth: depth,
             ino: md.ino(),
         })
     }
 
     #[cfg(not(any(unix, windows)))]
-    fn from_link(depth: usize, pb: PathBuf) -> Result<DirEntry> {
-        use std::os::unix::fs::MetadataExt;
-
+    fn from_path(depth: usize, pb: PathBuf, link: bool) -> Result<DirEntry> {
         let md = fs::metadata(&pb).map_err(|err| {
             Error::from_path(depth, pb.clone(), err)
         })?;
         Ok(DirEntry {
             path: pb,
             ty: md.file_type(),
-            follow_link: true,
+            follow_link: link,
             depth: depth,
         })
     }
@@ -1197,7 +1254,6 @@ impl Clone for DirEntry {
             ty: self.ty,
             follow_link: self.follow_link,
             depth: self.depth,
-            ino: self.ino,
         }
     }
 }
@@ -1577,10 +1633,12 @@ impl fmt::Display for Error {
 }
 
 impl From<Error> for io::Error {
-    /// Convert the [`Error`] to an [`io::Error`], preserving the original [`Error`] as the ["inner
-    /// error"]. Note that this also makes the display of the error include the context.
+    /// Convert the [`Error`] to an [`io::Error`], preserving the original
+    /// [`Error`] as the ["inner error"]. Note that this also makes the display
+    /// of the error include the context.
     ///
-    /// This is different from [`into_io_error`] which returns the original [`io::Error`].
+    /// This is different from [`into_io_error`] which returns the original
+    /// [`io::Error`].
     ///
     /// [`Error`]: struct.Error.html
     /// [`io::Error`]: https://doc.rust-lang.org/stable/std/io/struct.Error.html
@@ -1597,4 +1655,27 @@ impl From<Error> for io::Error {
         };
         io::Error::new(kind, walk_err)
     }
+}
+
+#[cfg(unix)]
+fn device_num<P: AsRef<Path>>(path: P)-> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+
+    path.as_ref().metadata().map(|md| md.dev())
+}
+
+ #[cfg(windows)]
+fn device_num<P: AsRef<Path>>(path: P) -> std::io::Result<u64> {
+    use winapi_util::{Handle, file};
+
+    let h = Handle::from_path_any(path)?;
+    file::information(h).map(|info| info.volume_serial_number())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn device_num<P: AsRef<Path>>(_: P)-> std::io::Result<u64> {
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "walkdir: same_file_system option not supported on this platform",
+    ))
 }

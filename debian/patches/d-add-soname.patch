@@ -24,7 +24,7 @@ Forwarded: no
          cmd.args(&rpath::get_rpath_flags(&mut rpath_config));
      }
  
-+    if (crate_type == config::CrateTypeDylib || crate_type == config::CrateTypeCdylib)
++    if (crate_type == config::CrateType::Dylib || crate_type == config::CrateType::Cdylib)
 +       && t.options.linker_is_gnu {
 +        let filename = String::from(out_filename.file_name().unwrap().to_str().unwrap());
 +        let soname = [String::from("-Wl,-soname=") + &filename];

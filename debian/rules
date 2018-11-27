@@ -32,8 +32,8 @@ export DEB_HOST_RUST_TYPE
 DEB_DESTDIR := $(CURDIR)/debian/tmp
 
 # Use system LLVM (comment out to use vendored LLVM)
-LLVM_VERSION = 6.0
-OLD_LLVM_VERSION = 4.0
+LLVM_VERSION = 7
+OLD_LLVM_VERSION = 6.0
 # Make it easier to test against a custom LLVM
 ifneq (,$(LLVM_DESTDIR))
 LLVM_LIBRARY_PATH := $(LLVM_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH):$(LLVM_DESTDIR)/usr/lib
@@ -147,7 +147,6 @@ debian/config.toml: debian/config.toml.in debian/rules
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
 		-DRELEASE_CHANNEL="$$channel" \
-		-DBUILD_DOCS="$(BUILD_DOCS)" \
 		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
 		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
@@ -155,15 +154,16 @@ debian/config.toml: debian/config.toml.in debian/rules
 		"$<" > "$@"
 	if $(DOWNLOAD_BOOTSTRAP) || [ $(HAVE_BINARY_TARBALL) != 0 ]; \
 	  then sed -i -e '/^rustc = /d' -e '/^cargo = /d' "$@"; fi
-	# Work around armhf issue: https://github.com/rust-lang/rust/issues/45854
-	[ $(DEB_BUILD_ARCH) != armhf -a \
-	  $(DEB_BUILD_ARCH) != armel ] || sed -i -e '/^debuginfo-only-std = /d' "$@"
+# Work around low-memory (32-bit) architectures: https://github.com/rust-lang/rust/issues/45854
+ifneq (,$(filter $(DEB_BUILD_ARCH), armhf armel mips mipsel powerpc powerpcspe))
+	sed -i -e '/^debuginfo-only-std = /d' "$@"
+endif
 
 debian/rust-src.%: debian/rust-src.%.in
 	m4  -DRUST_LONG_VERSION="$(RUST_LONG_VERSION)" \
 		"$<" > "$@"
 
-override_dh_auto_configure: debian/config.toml
+debian/dh_auto_configure.stamp: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
 	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
 	# fail the build if our version contains ~exp and we are not releasing to experimental
@@ -182,26 +182,28 @@ override_dh_auto_configure: debian/config.toml
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
+	touch "$@"
+
+override_dh_auto_configure-arch: debian/dh_auto_configure.stamp
+override_dh_auto_configure-indep: debian/dh_auto_configure.stamp
+ifeq (true,$(BUILD_DOCS))
+# Change config.toml now and not later, since that might trigger a rebuild
+	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
+endif
 
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
-	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links
+	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links debian/*.stamp
 	$(RM) -rf $(SRC_CLEAN) config.toml src/vendor/backtrace-sys/src/libbacktrace
 
-# upstream bundles this in the source, but in Debian we rebuild everything yo
-generate-sources:
-	true
-
-override_dh_auto_build-arch: generate-sources
+override_dh_auto_build-arch:
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
 
 # note: this is only for buildds that want to do a separate arch:all build;
 # there is no point running this yourself "to save time" since it implicitly
 # depends on build-arch anyways.
-override_dh_auto_build-indep: generate-sources
+override_dh_auto_build-indep:
 ifeq (true,$(BUILD_DOCS))
-# Rust has a weird way of configuring whether to build docs or not
-	sed -i -e 's/^docs = false/docs = true/' debian/config.toml
 	$(RUSTBUILD) doc $(RUSTBUILD_FLAGS)
 endif
 
@@ -209,11 +211,11 @@ TEST_LOG = debian/rustc-tests.log
 # This is advertised as "5 tests failed" in README.Debian because our counting
 # method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), armel))
-  FAILURES_ALLOWED = 36
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips64el))
+  FAILURES_ALLOWED = 12
 endif
-ifneq (,$(filter $(DEB_BUILD_ARCH), s390x))
-  FAILURES_ALLOWED = 25
+ifneq (,$(filter $(DEB_BUILD_ARCH), mips mipsel s390x))
+  FAILURES_ALLOWED = 20
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 180
@@ -240,7 +242,7 @@ ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	echo -n "$(FAILURES_ALLOWED) maximum allowed. "; \
 	if test "$$num_failures" -eq 0 -a "$$exit_code" -ne 0; then \
 	  echo "Aborting just in case, because we missed counting some test failures."; \
-	  echo "This is a bug in the Debian packaging, please file a report. "; \
+	  echo "This could happen if we failed to build the tests, or if the testsuite runner is buggy."; \
 	  false; \
 	elif test "$$num_failures" -le $(FAILURES_ALLOWED); then \
 	  echo "Continuing..."; \
@@ -267,7 +269,7 @@ endif
 run_rustbuild:
 	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) $(X_CMD) $(RUSTBUILD_FLAGS) $(X_FLAGS)
 
-override_dh_auto_install:
+debian/dh_auto_install.stamp:
 	DESTDIR=$(DEB_DESTDIR) $(RUSTBUILD) install $(RUSTBUILD_FLAGS)
 
 	mkdir -p $(DEB_DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/
@@ -283,6 +285,10 @@ override_dh_auto_install:
 	  fi; \
 	done
 
+	touch "$@"
+
+override_dh_auto_install-arch: debian/dh_auto_install.stamp
+override_dh_auto_install-indep: debian/dh_auto_install.stamp
 ifeq (true,$(BUILD_DOCS))
 	# Brute force to remove privacy-breach-logo lintian warning.
 	# We could have updated the upstream sources but it would complexify

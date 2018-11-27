@@ -15,10 +15,10 @@ use std::mem;
 
 use syntax::ast;
 use syntax::attr;
-use syntax::codemap::Spanned;
+use syntax::source_map::Spanned;
 use syntax_pos::{self, Span};
 
-use rustc::hir::map as hir_map;
+use rustc::hir::Node;
 use rustc::hir::def::Def;
 use rustc::hir::def_id::{DefId, LOCAL_CRATE};
 use rustc::middle::privacy::AccessLevel;
@@ -38,10 +38,10 @@ use doctree::*;
 // also, is there some reason that this doesn't use the 'visit'
 // framework from syntax?
 
-pub struct RustdocVisitor<'a, 'tcx: 'a, 'rcx: 'a> {
+pub struct RustdocVisitor<'a, 'tcx: 'a, 'rcx: 'a, 'cstore: 'rcx> {
     pub module: Module,
     pub attrs: hir::HirVec<ast::Attribute>,
-    pub cx: &'a core::DocContext<'a, 'tcx, 'rcx>,
+    pub cx: &'a core::DocContext<'a, 'tcx, 'rcx, 'cstore>,
     view_item_stack: FxHashSet<ast::NodeId>,
     inlining: bool,
     /// Is the current module and all of its parents public?
@@ -49,8 +49,10 @@ pub struct RustdocVisitor<'a, 'tcx: 'a, 'rcx: 'a> {
     exact_paths: Option<FxHashMap<DefId, Vec<String>>>,
 }
 
-impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
-    pub fn new(cx: &'a core::DocContext<'a, 'tcx, 'rcx>) -> RustdocVisitor<'a, 'tcx, 'rcx> {
+impl<'a, 'tcx, 'rcx, 'cstore> RustdocVisitor<'a, 'tcx, 'rcx, 'cstore> {
+    pub fn new(
+        cx: &'a core::DocContext<'a, 'tcx, 'rcx, 'cstore>
+    ) -> RustdocVisitor<'a, 'tcx, 'rcx, 'cstore> {
         // If the root is re-exported, terminate all recursion.
         let mut stack = FxHashSet();
         stack.insert(ast::CRATE_NODE_ID);
@@ -105,8 +107,8 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
     }
 
     pub fn visit_variant_data(&mut self, item: &hir::Item,
-                            name: ast::Name, sd: &hir::VariantData,
-                            generics: &hir::Generics) -> Struct {
+                              name: ast::Name, sd: &hir::VariantData,
+                              generics: &hir::Generics) -> Struct {
         debug!("Visiting struct");
         let struct_type = struct_type_from_def(&*sd);
         Struct {
@@ -265,7 +267,7 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
                 Def::Struct(did) |
                 Def::Union(did) |
                 Def::Enum(did) |
-                Def::TyForeign(did) |
+                Def::ForeignTy(did) |
                 Def::TyAlias(did) if !self_is_hidden => {
                     self.cx.access_levels.borrow_mut().map.insert(did, AccessLevel::Public);
                 },
@@ -293,7 +295,7 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
         if !self.view_item_stack.insert(def_node_id) { return false }
 
         let ret = match tcx.hir.get(def_node_id) {
-            hir_map::NodeItem(&hir::Item { node: hir::ItemKind::Mod(ref m), .. }) if glob => {
+            Node::Item(&hir::Item { node: hir::ItemKind::Mod(ref m), .. }) if glob => {
                 let prev = mem::replace(&mut self.inlining, true);
                 for i in &m.item_ids {
                     let i = self.cx.tcx.hir.expect_item(i.id);
@@ -302,13 +304,13 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
                 self.inlining = prev;
                 true
             }
-            hir_map::NodeItem(it) if !glob => {
+            Node::Item(it) if !glob => {
                 let prev = mem::replace(&mut self.inlining, true);
                 self.visit_item(it, renamed, om);
                 self.inlining = prev;
                 true
             }
-            hir_map::NodeForeignItem(it) if !glob => {
+            Node::ForeignItem(it) if !glob => {
                 // generate a fresh `extern {}` block if we want to inline a foreign item.
                 om.foreigns.push(hir::ForeignMod {
                     abi: tcx.hir.get_foreign_abi(it.id),
@@ -369,7 +371,7 @@ impl<'a, 'tcx, 'rcx> RustdocVisitor<'a, 'tcx, 'rcx> {
                 // struct and variant constructors always show up alongside their definitions, we've
                 // already processed them so just discard these.
                 match path.def {
-                    Def::StructCtor(..) | Def::VariantCtor(..) => return,
+                    Def::StructCtor(..) | Def::VariantCtor(..) | Def::SelfCtor(..) => return,
                     _ => {}
                 }
 

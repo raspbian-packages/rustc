@@ -21,14 +21,9 @@
 // The library infrastructure for slices is fairly messy. There's
 // a lot of stuff defined here. Let's keep it clean.
 //
-// Since slices don't support inherent methods; all operations
-// on them are defined on traits, which are then re-exported from
-// the prelude for convenience. So there are a lot of traits here.
-//
 // The layout of this file is thus:
 //
-// * Slice-specific 'extension' traits and their implementations. This
-//   is where most of the slice API resides.
+// * Inherent methods. This is where most of the slice API resides.
 // * Implementations of a few common traits with important slice ops.
 // * Definitions of a bunch of iterators.
 // * Free functions.
@@ -74,44 +69,6 @@ struct FatPtr<T> {
 //
 // Extension traits
 //
-
-// Use macros to be generic over const/mut
-macro_rules! slice_offset {
-    ($ptr:expr, $by:expr) => {{
-        let ptr = $ptr;
-        if size_from_ptr(ptr) == 0 {
-            (ptr as *mut i8).wrapping_offset($by) as _
-        } else {
-            ptr.offset($by)
-        }
-    }};
-}
-
-// make a &T from a *const T
-macro_rules! make_ref {
-    ($ptr:expr) => {{
-        let ptr = $ptr;
-        if size_from_ptr(ptr) == 0 {
-            // Use a non-null pointer value
-            &*(1 as *mut _)
-        } else {
-            &*ptr
-        }
-    }};
-}
-
-// make a &mut T from a *mut T
-macro_rules! make_ref_mut {
-    ($ptr:expr) => {{
-        let ptr = $ptr;
-        if size_from_ptr(ptr) == 0 {
-            // Use a non-null pointer value
-            &mut *(1 as *mut _)
-        } else {
-            &mut *ptr
-        }
-    }};
-}
 
 #[lang = "slice"]
 #[cfg(not(test))]
@@ -421,7 +378,7 @@ impl<T> [T] {
     ///
     /// unsafe {
     ///     for i in 0..x.len() {
-    ///         assert_eq!(x.get_unchecked(i), &*x_ptr.offset(i as isize));
+    ///         assert_eq!(x.get_unchecked(i), &*x_ptr.add(i));
     ///     }
     /// }
     /// ```
@@ -448,7 +405,7 @@ impl<T> [T] {
     ///
     /// unsafe {
     ///     for i in 0..x.len() {
-    ///         *x_ptr.offset(i as isize) += 2;
+    ///         *x_ptr.add(i) += 2;
     ///     }
     /// }
     /// assert_eq!(x, &[3, 4, 6]);
@@ -580,17 +537,18 @@ impl<T> [T] {
     #[inline]
     pub fn iter(&self) -> Iter<T> {
         unsafe {
-            let p = if mem::size_of::<T>() == 0 {
-                1 as *const _
+            let ptr = self.as_ptr();
+            assume(!ptr.is_null());
+
+            let end = if mem::size_of::<T>() == 0 {
+                (ptr as *const u8).wrapping_add(self.len()) as *const T
             } else {
-                let p = self.as_ptr();
-                assume(!p.is_null());
-                p
+                ptr.add(self.len())
             };
 
             Iter {
-                ptr: p,
-                end: slice_offset!(p, self.len() as isize),
+                ptr,
+                end,
                 _marker: marker::PhantomData
             }
         }
@@ -611,17 +569,18 @@ impl<T> [T] {
     #[inline]
     pub fn iter_mut(&mut self) -> IterMut<T> {
         unsafe {
-            let p = if mem::size_of::<T>() == 0 {
-                1 as *mut _
+            let ptr = self.as_mut_ptr();
+            assume(!ptr.is_null());
+
+            let end = if mem::size_of::<T>() == 0 {
+                (ptr as *mut u8).wrapping_add(self.len()) as *mut T
             } else {
-                let p = self.as_mut_ptr();
-                assume(!p.is_null());
-                p
+                ptr.add(self.len())
             };
 
             IterMut {
-                ptr: p,
-                end: slice_offset!(p, self.len() as isize),
+                ptr,
+                end,
                 _marker: marker::PhantomData
             }
         }
@@ -657,7 +616,7 @@ impl<T> [T] {
     #[inline]
     pub fn windows(&self, size: usize) -> Windows<T> {
         assert!(size != 0);
-        Windows { v: self, size: size }
+        Windows { v: self, size }
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a
@@ -688,7 +647,7 @@ impl<T> [T] {
     #[inline]
     pub fn chunks(&self, chunk_size: usize) -> Chunks<T> {
         assert!(chunk_size != 0);
-        Chunks { v: self, chunk_size: chunk_size }
+        Chunks { v: self, chunk_size }
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a time.
@@ -723,7 +682,7 @@ impl<T> [T] {
     #[inline]
     pub fn chunks_mut(&mut self, chunk_size: usize) -> ChunksMut<T> {
         assert!(chunk_size != 0);
-        ChunksMut { v: self, chunk_size: chunk_size }
+        ChunksMut { v: self, chunk_size }
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a
@@ -760,7 +719,7 @@ impl<T> [T] {
         let rem = self.len() % chunk_size;
         let len = self.len() - rem;
         let (fst, snd) = self.split_at(len);
-        ExactChunks { v: fst, rem: snd, chunk_size: chunk_size}
+        ExactChunks { v: fst, rem: snd, chunk_size }
     }
 
     /// Returns an iterator over `chunk_size` elements of the slice at a time.
@@ -802,7 +761,7 @@ impl<T> [T] {
         let rem = self.len() % chunk_size;
         let len = self.len() - rem;
         let (fst, snd) = self.split_at_mut(len);
-        ExactChunksMut { v: fst, rem: snd, chunk_size: chunk_size}
+        ExactChunksMut { v: fst, rem: snd, chunk_size }
     }
 
     /// Divides one slice into two at an index.
@@ -878,7 +837,7 @@ impl<T> [T] {
             assert!(mid <= len);
 
             (from_raw_parts_mut(ptr, mid),
-             from_raw_parts_mut(ptr.offset(mid as isize), len - mid))
+             from_raw_parts_mut(ptr.add(mid), len - mid))
         }
     }
 
@@ -952,7 +911,7 @@ impl<T> [T] {
     pub fn split_mut<F>(&mut self, pred: F) -> SplitMut<T, F>
         where F: FnMut(&T) -> bool
     {
-        SplitMut { v: self, pred: pred, finished: false }
+        SplitMut { v: self, pred, finished: false }
     }
 
     /// Returns an iterator over subslices separated by elements that match
@@ -1480,7 +1439,7 @@ impl<T> [T] {
 
         unsafe {
             let p = self.as_mut_ptr();
-            rotate::ptr_rotate(mid, p.offset(mid as isize), k);
+            rotate::ptr_rotate(mid, p.add(mid), k);
         }
     }
 
@@ -1521,7 +1480,7 @@ impl<T> [T] {
 
         unsafe {
             let p = self.as_mut_ptr();
-            rotate::ptr_rotate(mid, p.offset(mid as isize), k);
+            rotate::ptr_rotate(mid, p.add(mid), k);
         }
     }
 
@@ -1716,7 +1675,7 @@ impl<T> [T] {
         }
     }
 
-    /// Function to calculate lenghts of the middle and trailing slice for `align_to{,_mut}`.
+    /// Function to calculate lengths of the middle and trailing slice for `align_to{,_mut}`.
     fn align_to_offsets<U>(&self) -> (usize, usize) {
         // What we gonna do about `rest` is figure out what multiple of `U`s we can put in a
         // lowest number of `T`s. And how many `T`s we need for each such "multiple".
@@ -1763,7 +1722,7 @@ impl<T> [T] {
                     ctz_b = ::intrinsics::cttz_nonzero(b);
                 }
             }
-            return a << k;
+            a << k
         }
         let gcd: usize = gcd(::mem::size_of::<T>(), ::mem::size_of::<U>());
         let ts: usize = ::mem::size_of::<U>() / gcd;
@@ -1773,15 +1732,16 @@ impl<T> [T] {
         let us_len = self.len() / ts * us;
         // And how many `T`s will be in the trailing slice!
         let ts_len = self.len() % ts;
-        return (us_len, ts_len);
+        (us_len, ts_len)
     }
 
-    /// Transmute the slice to a slice of another type, ensuring aligment of the types is
+    /// Transmute the slice to a slice of another type, ensuring alignment of the types is
     /// maintained.
     ///
     /// This method splits the slice into three distinct slices: prefix, correctly aligned middle
-    /// slice of a new type, and the suffix slice. The middle slice will have the greatest length
-    /// possible for a given type and input slice.
+    /// slice of a new type, and the suffix slice. The method does a best effort to make the
+    /// middle slice the greatest length possible for a given type and input slice, but only
+    /// your algorithm's performance should depend on that, not its correctness.
     ///
     /// This method has no purpose when either input element `T` or output element `U` are
     /// zero-sized and will return the original slice without splitting anything.
@@ -1796,7 +1756,6 @@ impl<T> [T] {
     /// Basic usage:
     ///
     /// ```
-    /// # #![feature(slice_align_to)]
     /// unsafe {
     ///     let bytes: [u8; 7] = [1, 2, 3, 4, 5, 6, 7];
     ///     let (prefix, shorts, suffix) = bytes.align_to::<u16>();
@@ -1805,7 +1764,7 @@ impl<T> [T] {
     ///     // less_efficient_algorithm_for_bytes(suffix);
     /// }
     /// ```
-    #[unstable(feature = "slice_align_to", issue = "44488")]
+    #[stable(feature = "slice_align_to", since = "1.30.0")]
     pub unsafe fn align_to<U>(&self) -> (&[T], &[U], &[T]) {
         // Note that most of this function will be constant-evaluated,
         if ::mem::size_of::<U>() == 0 || ::mem::size_of::<T>() == 0 {
@@ -1818,22 +1777,24 @@ impl<T> [T] {
         let ptr = self.as_ptr();
         let offset = ::ptr::align_offset(ptr, ::mem::align_of::<U>());
         if offset > self.len() {
-            return (self, &[], &[]);
+            (self, &[], &[])
         } else {
             let (left, rest) = self.split_at(offset);
+            // now `rest` is definitely aligned, so `from_raw_parts_mut` below is okay
             let (us_len, ts_len) = rest.align_to_offsets::<U>();
-            return (left,
-                    from_raw_parts(rest.as_ptr() as *const U, us_len),
-                    from_raw_parts(rest.as_ptr().offset((rest.len() - ts_len) as isize), ts_len))
+            (left,
+             from_raw_parts(rest.as_ptr() as *const U, us_len),
+             from_raw_parts(rest.as_ptr().add(rest.len() - ts_len), ts_len))
         }
     }
 
-    /// Transmute the slice to a slice of another type, ensuring aligment of the types is
+    /// Transmute the slice to a slice of another type, ensuring alignment of the types is
     /// maintained.
     ///
     /// This method splits the slice into three distinct slices: prefix, correctly aligned middle
-    /// slice of a new type, and the suffix slice. The middle slice will have the greatest length
-    /// possible for a given type and input slice.
+    /// slice of a new type, and the suffix slice. The method does a best effort to make the
+    /// middle slice the greatest length possible for a given type and input slice, but only
+    /// your algorithm's performance should depend on that, not its correctness.
     ///
     /// This method has no purpose when either input element `T` or output element `U` are
     /// zero-sized and will return the original slice without splitting anything.
@@ -1848,7 +1809,6 @@ impl<T> [T] {
     /// Basic usage:
     ///
     /// ```
-    /// # #![feature(slice_align_to)]
     /// unsafe {
     ///     let mut bytes: [u8; 7] = [1, 2, 3, 4, 5, 6, 7];
     ///     let (prefix, shorts, suffix) = bytes.align_to_mut::<u16>();
@@ -1857,7 +1817,7 @@ impl<T> [T] {
     ///     // less_efficient_algorithm_for_bytes(suffix);
     /// }
     /// ```
-    #[unstable(feature = "slice_align_to", issue = "44488")]
+    #[stable(feature = "slice_align_to", since = "1.30.0")]
     pub unsafe fn align_to_mut<U>(&mut self) -> (&mut [T], &mut [U], &mut [T]) {
         // Note that most of this function will be constant-evaluated,
         if ::mem::size_of::<U>() == 0 || ::mem::size_of::<T>() == 0 {
@@ -1870,14 +1830,15 @@ impl<T> [T] {
         let ptr = self.as_ptr();
         let offset = ::ptr::align_offset(ptr, ::mem::align_of::<U>());
         if offset > self.len() {
-            return (self, &mut [], &mut []);
+            (self, &mut [], &mut [])
         } else {
             let (left, rest) = self.split_at_mut(offset);
+            // now `rest` is definitely aligned, so `from_raw_parts_mut` below is okay
             let (us_len, ts_len) = rest.align_to_offsets::<U>();
             let mut_ptr = rest.as_mut_ptr();
-            return (left,
-                    from_raw_parts_mut(mut_ptr as *mut U, us_len),
-                    from_raw_parts_mut(mut_ptr.offset((rest.len() - ts_len) as isize), ts_len))
+            (left,
+             from_raw_parts_mut(mut_ptr as *mut U, us_len),
+             from_raw_parts_mut(mut_ptr.add(rest.len() - ts_len), ts_len))
         }
     }
 }
@@ -2043,7 +2004,7 @@ pub trait SliceIndex<T: ?Sized>: private_slice_index::Sealed {
     fn index_mut(self, slice: &mut T) -> &mut Self::Output;
 }
 
-#[stable(feature = "slice-get-slice-impls", since = "1.15.0")]
+#[stable(feature = "slice_get_slice_impls", since = "1.15.0")]
 impl<T> SliceIndex<[T]> for usize {
     type Output = T;
 
@@ -2071,12 +2032,12 @@ impl<T> SliceIndex<[T]> for usize {
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &T {
-        &*slice.as_ptr().offset(self as isize)
+        &*slice.as_ptr().add(self)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut T {
-        &mut *slice.as_mut_ptr().offset(self as isize)
+        &mut *slice.as_mut_ptr().add(self)
     }
 
     #[inline]
@@ -2092,7 +2053,7 @@ impl<T> SliceIndex<[T]> for usize {
     }
 }
 
-#[stable(feature = "slice-get-slice-impls", since = "1.15.0")]
+#[stable(feature = "slice_get_slice_impls", since = "1.15.0")]
 impl<T> SliceIndex<[T]> for  ops::Range<usize> {
     type Output = [T];
 
@@ -2120,12 +2081,12 @@ impl<T> SliceIndex<[T]> for  ops::Range<usize> {
 
     #[inline]
     unsafe fn get_unchecked(self, slice: &[T]) -> &[T] {
-        from_raw_parts(slice.as_ptr().offset(self.start as isize), self.end - self.start)
+        from_raw_parts(slice.as_ptr().add(self.start), self.end - self.start)
     }
 
     #[inline]
     unsafe fn get_unchecked_mut(self, slice: &mut [T]) -> &mut [T] {
-        from_raw_parts_mut(slice.as_mut_ptr().offset(self.start as isize), self.end - self.start)
+        from_raw_parts_mut(slice.as_mut_ptr().add(self.start), self.end - self.start)
     }
 
     #[inline]
@@ -2153,7 +2114,7 @@ impl<T> SliceIndex<[T]> for  ops::Range<usize> {
     }
 }
 
-#[stable(feature = "slice-get-slice-impls", since = "1.15.0")]
+#[stable(feature = "slice_get_slice_impls", since = "1.15.0")]
 impl<T> SliceIndex<[T]> for ops::RangeTo<usize> {
     type Output = [T];
 
@@ -2188,7 +2149,7 @@ impl<T> SliceIndex<[T]> for ops::RangeTo<usize> {
     }
 }
 
-#[stable(feature = "slice-get-slice-impls", since = "1.15.0")]
+#[stable(feature = "slice_get_slice_impls", since = "1.15.0")]
 impl<T> SliceIndex<[T]> for ops::RangeFrom<usize> {
     type Output = [T];
 
@@ -2223,7 +2184,7 @@ impl<T> SliceIndex<[T]> for ops::RangeFrom<usize> {
     }
 }
 
-#[stable(feature = "slice-get-slice-impls", since = "1.15.0")]
+#[stable(feature = "slice_get_slice_impls", since = "1.15.0")]
 impl<T> SliceIndex<[T]> for ops::RangeFull {
     type Output = [T];
 
@@ -2373,14 +2334,88 @@ impl<'a, T> IntoIterator for &'a mut [T] {
     }
 }
 
-#[inline]
+// Macro helper functions
+#[inline(always)]
 fn size_from_ptr<T>(_: *const T) -> usize {
     mem::size_of::<T>()
 }
 
+// Inlining is_empty and len makes a huge performance difference
+macro_rules! is_empty {
+    // The way we encode the length of a ZST iterator, this works both for ZST
+    // and non-ZST.
+    ($self: ident) => {$self.ptr == $self.end}
+}
+// To get rid of some bounds checks (see `position`), we compute the length in a somewhat
+// unexpected way. (Tested by `codegen/slice-position-bounds-check`.)
+macro_rules! len {
+    ($self: ident) => {{
+        let start = $self.ptr;
+        let diff = ($self.end as usize).wrapping_sub(start as usize);
+        let size = size_from_ptr(start);
+        if size == 0 {
+            diff
+        } else {
+            // Using division instead of `offset_from` helps LLVM remove bounds checks
+            diff / size
+        }
+    }}
+}
+
 // The shared definition of the `Iter` and `IterMut` iterators
 macro_rules! iterator {
-    (struct $name:ident -> $ptr:ty, $elem:ty, $mkref:ident) => {
+    (struct $name:ident -> $ptr:ty, $elem:ty, $raw_mut:tt, $( $mut_:tt )*) => {
+        impl<'a, T> $name<'a, T> {
+            // Helper function for creating a slice from the iterator.
+            #[inline(always)]
+            fn make_slice(&self) -> &'a [T] {
+                unsafe { from_raw_parts(self.ptr, len!(self)) }
+            }
+
+            // Helper function for moving the start of the iterator forwards by `offset` elements,
+            // returning the old start.
+            // Unsafe because the offset must be in-bounds or one-past-the-end.
+            #[inline(always)]
+            unsafe fn post_inc_start(&mut self, offset: isize) -> * $raw_mut T {
+                if mem::size_of::<T>() == 0 {
+                    // This is *reducing* the length.  `ptr` never changes with ZST.
+                    self.end = (self.end as * $raw_mut u8).wrapping_offset(-offset) as * $raw_mut T;
+                    self.ptr
+                } else {
+                    let old = self.ptr;
+                    self.ptr = self.ptr.offset(offset);
+                    old
+                }
+            }
+
+            // Helper function for moving the end of the iterator backwards by `offset` elements,
+            // returning the new end.
+            // Unsafe because the offset must be in-bounds or one-past-the-end.
+            #[inline(always)]
+            unsafe fn pre_dec_end(&mut self, offset: isize) -> * $raw_mut T {
+                if mem::size_of::<T>() == 0 {
+                    self.end = (self.end as * $raw_mut u8).wrapping_offset(-offset) as * $raw_mut T;
+                    self.ptr
+                } else {
+                    self.end = self.end.offset(-offset);
+                    self.end
+                }
+            }
+        }
+
+        #[stable(feature = "rust1", since = "1.0.0")]
+        impl<'a, T> ExactSizeIterator for $name<'a, T> {
+            #[inline(always)]
+            fn len(&self) -> usize {
+                len!(self)
+            }
+
+            #[inline(always)]
+            fn is_empty(&self) -> bool {
+                is_empty!(self)
+            }
+        }
+
         #[stable(feature = "rust1", since = "1.0.0")]
         impl<'a, T> Iterator for $name<'a, T> {
             type Item = $elem;
@@ -2389,33 +2424,48 @@ macro_rules! iterator {
             fn next(&mut self) -> Option<$elem> {
                 // could be implemented with slices, but this avoids bounds checks
                 unsafe {
+                    assume(!self.ptr.is_null());
                     if mem::size_of::<T>() != 0 {
-                        assume(!self.ptr.is_null());
                         assume(!self.end.is_null());
                     }
-                    if self.ptr == self.end {
+                    if is_empty!(self) {
                         None
                     } else {
-                        Some($mkref!(self.ptr.post_inc()))
+                        Some(& $( $mut_ )* *self.post_inc_start(1))
                     }
                 }
             }
 
             #[inline]
             fn size_hint(&self) -> (usize, Option<usize>) {
-                let exact = unsafe { ptrdistance(self.ptr, self.end) };
+                let exact = len!(self);
                 (exact, Some(exact))
             }
 
             #[inline]
             fn count(self) -> usize {
-                self.len()
+                len!(self)
             }
 
             #[inline]
             fn nth(&mut self, n: usize) -> Option<$elem> {
-                // Call helper method. Can't put the definition here because mut versus const.
-                self.iter_nth(n)
+                if n >= len!(self) {
+                    // This iterator is now empty.
+                    if mem::size_of::<T>() == 0 {
+                        // We have to do it this way as `ptr` may never be 0, but `end`
+                        // could be (due to wrapping).
+                        self.end = self.ptr;
+                    } else {
+                        self.ptr = self.end;
+                    }
+                    return None;
+                }
+                // We are in bounds. `offset` does the right thing even for ZSTs.
+                unsafe {
+                    let elem = Some(& $( $mut_ )* *self.ptr.add(n));
+                    self.post_inc_start((n as isize).wrapping_add(1));
+                    elem
+                }
             }
 
             #[inline]
@@ -2430,14 +2480,14 @@ macro_rules! iterator {
                 // manual unrolling is needed when there are conditional exits from the loop
                 let mut accum = init;
                 unsafe {
-                    while ptrdistance(self.ptr, self.end) >= 4 {
-                        accum = f(accum, $mkref!(self.ptr.post_inc()))?;
-                        accum = f(accum, $mkref!(self.ptr.post_inc()))?;
-                        accum = f(accum, $mkref!(self.ptr.post_inc()))?;
-                        accum = f(accum, $mkref!(self.ptr.post_inc()))?;
+                    while len!(self) >= 4 {
+                        accum = f(accum, & $( $mut_ )* *self.post_inc_start(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.post_inc_start(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.post_inc_start(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.post_inc_start(1))?;
                     }
-                    while self.ptr != self.end {
-                        accum = f(accum, $mkref!(self.ptr.post_inc()))?;
+                    while !is_empty!(self) {
+                        accum = f(accum, & $( $mut_ )* *self.post_inc_start(1))?;
                     }
                 }
                 Try::from_ok(accum)
@@ -2462,9 +2512,8 @@ macro_rules! iterator {
                 Self: Sized,
                 P: FnMut(Self::Item) -> bool,
             {
-                // The addition might panic on overflow
-                // Use the len of the slice to hint optimizer to remove result index bounds check.
-                let n = make_slice!(self.ptr, self.end).len();
+                // The addition might panic on overflow.
+                let n = len!(self);
                 self.try_fold(0, move |i, x| {
                     if predicate(x) { Err(i) }
                     else { Ok(i + 1) }
@@ -2481,9 +2530,7 @@ macro_rules! iterator {
                 Self: Sized + ExactSizeIterator + DoubleEndedIterator
             {
                 // No need for an overflow check here, because `ExactSizeIterator`
-                // implies that the number of elements fits into a `usize`.
-                // Use the len of the slice to hint optimizer to remove result index bounds check.
-                let n = make_slice!(self.ptr, self.end).len();
+                let n = len!(self);
                 self.try_rfold(n, move |i, x| {
                     let i = i - 1;
                     if predicate(x) { Err(i) }
@@ -2502,14 +2549,14 @@ macro_rules! iterator {
             fn next_back(&mut self) -> Option<$elem> {
                 // could be implemented with slices, but this avoids bounds checks
                 unsafe {
+                    assume(!self.ptr.is_null());
                     if mem::size_of::<T>() != 0 {
-                        assume(!self.ptr.is_null());
                         assume(!self.end.is_null());
                     }
-                    if self.end == self.ptr {
+                    if is_empty!(self) {
                         None
                     } else {
-                        Some($mkref!(self.end.pre_dec()))
+                        Some(& $( $mut_ )* *self.pre_dec_end(1))
                     }
                 }
             }
@@ -2521,14 +2568,15 @@ macro_rules! iterator {
                 // manual unrolling is needed when there are conditional exits from the loop
                 let mut accum = init;
                 unsafe {
-                    while ptrdistance(self.ptr, self.end) >= 4 {
-                        accum = f(accum, $mkref!(self.end.pre_dec()))?;
-                        accum = f(accum, $mkref!(self.end.pre_dec()))?;
-                        accum = f(accum, $mkref!(self.end.pre_dec()))?;
-                        accum = f(accum, $mkref!(self.end.pre_dec()))?;
+                    while len!(self) >= 4 {
+                        accum = f(accum, & $( $mut_ )* *self.pre_dec_end(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.pre_dec_end(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.pre_dec_end(1))?;
+                        accum = f(accum, & $( $mut_ )* *self.pre_dec_end(1))?;
                     }
-                    while self.ptr != self.end {
-                        accum = f(accum, $mkref!(self.end.pre_dec()))?;
+                    // inlining is_empty everywhere makes a huge performance difference
+                    while !is_empty!(self) {
+                        accum = f(accum, & $( $mut_ )* *self.pre_dec_end(1))?;
                     }
                 }
                 Try::from_ok(accum)
@@ -2556,34 +2604,6 @@ macro_rules! iterator {
     }
 }
 
-macro_rules! make_slice {
-    ($start: expr, $end: expr) => {{
-        let start = $start;
-        let diff = ($end as usize).wrapping_sub(start as usize);
-        if size_from_ptr(start) == 0 {
-            // use a non-null pointer value
-            unsafe { from_raw_parts(1 as *const _, diff) }
-        } else {
-            let len = diff / size_from_ptr(start);
-            unsafe { from_raw_parts(start, len) }
-        }
-    }}
-}
-
-macro_rules! make_mut_slice {
-    ($start: expr, $end: expr) => {{
-        let start = $start;
-        let diff = ($end as usize).wrapping_sub(start as usize);
-        if size_from_ptr(start) == 0 {
-            // use a non-null pointer value
-            unsafe { from_raw_parts_mut(1 as *mut _, diff) }
-        } else {
-            let len = diff / size_from_ptr(start);
-            unsafe { from_raw_parts_mut(start, len) }
-        }
-    }}
-}
-
 /// Immutable slice iterator
 ///
 /// This struct is created by the [`iter`] method on [slices].
@@ -2607,7 +2627,9 @@ macro_rules! make_mut_slice {
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Iter<'a, T: 'a> {
     ptr: *const T,
-    end: *const T,
+    end: *const T, // If T is a ZST, this is actually ptr+len.  This encoding is picked so that
+                   // ptr == end is a quick test for the Iterator being empty, that works
+                   // for both ZST and non-ZST.
     _marker: marker::PhantomData<&'a T>,
 }
 
@@ -2652,32 +2674,11 @@ impl<'a, T> Iter<'a, T> {
     /// ```
     #[stable(feature = "iter_to_slice", since = "1.4.0")]
     pub fn as_slice(&self) -> &'a [T] {
-        make_slice!(self.ptr, self.end)
-    }
-
-    // Helper function for Iter::nth
-    fn iter_nth(&mut self, n: usize) -> Option<&'a T> {
-        match self.as_slice().get(n) {
-            Some(elem_ref) => unsafe {
-                self.ptr = slice_offset!(self.ptr, (n as isize).wrapping_add(1));
-                Some(elem_ref)
-            },
-            None => {
-                self.ptr = self.end;
-                None
-            }
-        }
+        self.make_slice()
     }
 }
 
-iterator!{struct Iter -> *const T, &'a T, make_ref}
-
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<'a, T> ExactSizeIterator for Iter<'a, T> {
-    fn is_empty(&self) -> bool {
-        self.ptr == self.end
-    }
-}
+iterator!{struct Iter -> *const T, &'a T, const, /* no mut */}
 
 #[stable(feature = "rust1", since = "1.0.0")]
 impl<'a, T> Clone for Iter<'a, T> {
@@ -2718,7 +2719,9 @@ impl<'a, T> AsRef<[T]> for Iter<'a, T> {
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct IterMut<'a, T: 'a> {
     ptr: *mut T,
-    end: *mut T,
+    end: *mut T, // If T is a ZST, this is actually ptr+len.  This encoding is picked so that
+                 // ptr == end is a quick test for the Iterator being empty, that works
+                 // for both ZST and non-ZST.
     _marker: marker::PhantomData<&'a mut T>,
 }
 
@@ -2726,7 +2729,7 @@ pub struct IterMut<'a, T: 'a> {
 impl<'a, T: 'a + fmt::Debug> fmt::Debug for IterMut<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_tuple("IterMut")
-            .field(&make_slice!(self.ptr, self.end))
+            .field(&self.make_slice())
             .finish()
     }
 }
@@ -2772,77 +2775,11 @@ impl<'a, T> IterMut<'a, T> {
     /// ```
     #[stable(feature = "iter_to_slice", since = "1.4.0")]
     pub fn into_slice(self) -> &'a mut [T] {
-        make_mut_slice!(self.ptr, self.end)
-    }
-
-    // Helper function for IterMut::nth
-    fn iter_nth(&mut self, n: usize) -> Option<&'a mut T> {
-        match make_mut_slice!(self.ptr, self.end).get_mut(n) {
-            Some(elem_ref) => unsafe {
-                self.ptr = slice_offset!(self.ptr, (n as isize).wrapping_add(1));
-                Some(elem_ref)
-            },
-            None => {
-                self.ptr = self.end;
-                None
-            }
-        }
+        unsafe { from_raw_parts_mut(self.ptr, len!(self)) }
     }
 }
 
-iterator!{struct IterMut -> *mut T, &'a mut T, make_ref_mut}
-
-#[stable(feature = "rust1", since = "1.0.0")]
-impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
-    fn is_empty(&self) -> bool {
-        self.ptr == self.end
-    }
-}
-
-// Return the number of elements of `T` from `start` to `end`.
-// Return the arithmetic difference if `T` is zero size.
-#[inline(always)]
-unsafe fn ptrdistance<T>(start: *const T, end: *const T) -> usize {
-    if mem::size_of::<T>() == 0 {
-        (end as usize).wrapping_sub(start as usize)
-    } else {
-        end.offset_from(start) as usize
-    }
-}
-
-// Extension methods for raw pointers, used by the iterators
-trait PointerExt : Copy {
-    unsafe fn slice_offset(self, i: isize) -> Self;
-
-    /// Increments `self` by 1, but returns the old value.
-    #[inline(always)]
-    unsafe fn post_inc(&mut self) -> Self {
-        let current = *self;
-        *self = self.slice_offset(1);
-        current
-    }
-
-    /// Decrements `self` by 1, and returns the new value.
-    #[inline(always)]
-    unsafe fn pre_dec(&mut self) -> Self {
-        *self = self.slice_offset(-1);
-        *self
-    }
-}
-
-impl<T> PointerExt for *const T {
-    #[inline(always)]
-    unsafe fn slice_offset(self, i: isize) -> Self {
-        slice_offset!(self, i)
-    }
-}
-
-impl<T> PointerExt for *mut T {
-    #[inline(always)]
-    unsafe fn slice_offset(self, i: isize) -> Self {
-        slice_offset!(self, i)
-    }
-}
+iterator!{struct IterMut -> *mut T, &'a mut T, mut, mut}
 
 /// An internal abstraction over the splitting iterators, so that
 /// splitn, splitn_mut etc can be implemented once.
@@ -3405,7 +3342,7 @@ impl<'a, T> FusedIterator for Windows<'a, T> {}
 #[doc(hidden)]
 unsafe impl<'a, T> TrustedRandomAccess for Windows<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a [T] {
-        from_raw_parts(self.v.as_ptr().offset(i as isize), self.size)
+        from_raw_parts(self.v.as_ptr().add(i), self.size)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -3532,7 +3469,7 @@ unsafe impl<'a, T> TrustedRandomAccess for Chunks<'a, T> {
             None => self.v.len(),
             Some(end) => cmp::min(end, self.v.len()),
         };
-        from_raw_parts(self.v.as_ptr().offset(start as isize), end - start)
+        from_raw_parts(self.v.as_ptr().add(start), end - start)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -3651,7 +3588,7 @@ unsafe impl<'a, T> TrustedRandomAccess for ChunksMut<'a, T> {
             None => self.v.len(),
             Some(end) => cmp::min(end, self.v.len()),
         };
-        from_raw_parts_mut(self.v.as_mut_ptr().offset(start as isize), end - start)
+        from_raw_parts_mut(self.v.as_mut_ptr().add(start), end - start)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -3774,7 +3711,7 @@ impl<'a, T> FusedIterator for ExactChunks<'a, T> {}
 unsafe impl<'a, T> TrustedRandomAccess for ExactChunks<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a [T] {
         let start = i * self.chunk_size;
-        from_raw_parts(self.v.as_ptr().offset(start as isize), self.chunk_size)
+        from_raw_parts(self.v.as_ptr().add(start), self.chunk_size)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -3889,7 +3826,7 @@ impl<'a, T> FusedIterator for ExactChunksMut<'a, T> {}
 unsafe impl<'a, T> TrustedRandomAccess for ExactChunksMut<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a mut [T] {
         let start = i * self.chunk_size;
-        from_raw_parts_mut(self.v.as_mut_ptr().offset(start as isize), self.chunk_size)
+        from_raw_parts_mut(self.v.as_mut_ptr().add(start), self.chunk_size)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -3927,31 +3864,35 @@ unsafe impl<'a, T> TrustedRandomAccess for ExactChunksMut<'a, T> {
 /// ```
 /// use std::slice;
 ///
-/// // manifest a slice out of thin air!
-/// let ptr = 0x1234 as *const usize;
-/// let amt = 10;
-/// unsafe {
-///     let slice = slice::from_raw_parts(ptr, amt);
-/// }
+/// // manifest a slice for a single element
+/// let x = 42;
+/// let ptr = &x as *const _;
+/// let slice = unsafe { slice::from_raw_parts(ptr, 1) };
+/// assert_eq!(slice[0], 42);
 /// ```
 ///
 /// [`NonNull::dangling()`]: ../../std/ptr/struct.NonNull.html#method.dangling
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_raw_parts<'a, T>(data: *const T, len: usize) -> &'a [T] {
+    debug_assert!(data as usize % mem::align_of::<T>() == 0, "attempt to create unaligned slice");
     Repr { raw: FatPtr { data, len } }.rust
 }
 
-/// Performs the same functionality as `from_raw_parts`, except that a mutable
-/// slice is returned.
+/// Performs the same functionality as [`from_raw_parts`], except that a
+/// mutable slice is returned.
 ///
-/// This function is unsafe for the same reasons as `from_raw_parts`, as well
+/// This function is unsafe for the same reasons as [`from_raw_parts`], as well
 /// as not being able to provide a non-aliasing guarantee of the returned
 /// mutable slice. `data` must be non-null and aligned even for zero-length
-/// slices as with `from_raw_parts`.
+/// slices as with [`from_raw_parts`]. See the documentation of
+/// [`from_raw_parts`] for more details.
+///
+/// [`from_raw_parts`]: ../../std/slice/fn.from_raw_parts.html
 #[inline]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub unsafe fn from_raw_parts_mut<'a, T>(data: *mut T, len: usize) -> &'a mut [T] {
+    debug_assert!(data as usize % mem::align_of::<T>() == 0, "attempt to create unaligned slice");
     Repr { raw: FatPtr { data, len} }.rust_mut
 }
 
@@ -4173,7 +4114,7 @@ impl_marker_for!(BytewiseEquality,
 #[doc(hidden)]
 unsafe impl<'a, T> TrustedRandomAccess for Iter<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a T {
-        &*self.ptr.offset(i as isize)
+        &*self.ptr.add(i)
     }
     fn may_have_side_effect() -> bool { false }
 }
@@ -4181,7 +4122,7 @@ unsafe impl<'a, T> TrustedRandomAccess for Iter<'a, T> {
 #[doc(hidden)]
 unsafe impl<'a, T> TrustedRandomAccess for IterMut<'a, T> {
     unsafe fn get_unchecked(&mut self, i: usize) -> &'a mut T {
-        &mut *self.ptr.offset(i as isize)
+        &mut *self.ptr.add(i)
     }
     fn may_have_side_effect() -> bool { false }
 }

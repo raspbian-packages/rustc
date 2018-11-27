@@ -1,9 +1,7 @@
-env_logger [![Build Status](https://travis-ci.org/sebasmagri/env_logger.svg?branch=master)](https://travis-ci.org/sebasmagri/env_logger)
+env_logger [![Build Status](https://travis-ci.org/sebasmagri/env_logger.svg?branch=master)](https://travis-ci.org/sebasmagri/env_logger) [![Maintenance](https://img.shields.io/badge/maintenance-actively%20maintained-brightgreen.svg)](https://github.com/sebasmagri/env_logger) [![crates.io](https://img.shields.io/crates/v/env_logger.svg)](https://crates.io/crates/env_logger) [![Documentation](https://img.shields.io/badge/docs-current-blue.svg)](https://docs.rs/env_logger)
 ==========
 
-Implements a logger that can be configured via an environment variable.
-
-* [`env_logger` documentation](https://docs.rs/env_logger)
+Implements a logger that can be configured via environment variables.
 
 ## Usage
 
@@ -18,7 +16,7 @@ It must be added along with `log` to the project dependencies:
 ```toml
 [dependencies]
 log = "0.4.0"
-env_logger = "0.5.10"
+env_logger = "0.5.12"
 ```
 
 `env_logger` must be initialized as early as possible in the project. After it's initialized, you can use the `log` macros to do actual logging.
@@ -54,7 +52,7 @@ Tests can use the `env_logger` crate to see log messages generated during that t
 log = "0.4.0"
 
 [dev-dependencies]
-env_logger = "0.5.10"
+env_logger = "0.5.12"
 ```
 
 ```rust

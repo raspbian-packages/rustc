@@ -19,61 +19,11 @@ use Mode;
 use Compiler;
 use builder::{Step, RunConfig, ShouldRun, Builder};
 use util::{exe, add_lib_path};
-use compile::{self, libtest_stamp, libstd_stamp, librustc_stamp};
+use compile;
 use native;
 use channel::GitInfo;
 use cache::Interned;
 use toolstate::ToolState;
-
-#[derive(Debug, Copy, Clone, Hash, PartialEq, Eq)]
-pub struct CleanTools {
-    pub compiler: Compiler,
-    pub target: Interned<String>,
-    pub cause: Mode,
-}
-
-impl Step for CleanTools {
-    type Output = ();
-
-    fn should_run(run: ShouldRun) -> ShouldRun {
-        run.never()
-    }
-
-    fn run(self, builder: &Builder) {
-        let compiler = self.compiler;
-        let target = self.target;
-        let cause = self.cause;
-
-        // This is for the original compiler, but if we're forced to use stage 1, then
-        // std/test/rustc stamps won't exist in stage 2, so we need to get those from stage 1, since
-        // we copy the libs forward.
-        let tools_dir = builder.stage_out(compiler, Mode::ToolRustc);
-        let compiler = if builder.force_use_stage1(compiler, target) {
-            builder.compiler(1, compiler.host)
-        } else {
-            compiler
-        };
-
-        for &cur_mode in &[Mode::Std, Mode::Test, Mode::Rustc] {
-            let stamp = match cur_mode {
-                Mode::Std => libstd_stamp(builder, compiler, target),
-                Mode::Test => libtest_stamp(builder, compiler, target),
-                Mode::Rustc => librustc_stamp(builder, compiler, target),
-                _ => panic!(),
-            };
-
-            if builder.clear_if_dirty(&tools_dir, &stamp) {
-                break;
-            }
-
-            // If we are a rustc tool, and std changed, we also need to clear ourselves out -- our
-            // dependencies depend on std. Therefore, we iterate up until our own mode.
-            if cause == cur_mode {
-                break;
-            }
-        }
-    }
-}
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub enum SourceType {
@@ -136,7 +86,7 @@ impl Step for ToolBuild {
         let _folder = builder.fold_output(|| format!("stage{}-{}", compiler.stage, tool));
         builder.info(&format!("Building stage{} tool {} ({})", compiler.stage, tool, target));
         let mut duplicates = Vec::new();
-        let is_expected = compile::stream_cargo(builder, &mut cargo, &mut |msg| {
+        let is_expected = compile::stream_cargo(builder, &mut cargo, vec![], &mut |msg| {
             // Only care about big things like the RLS/Cargo for now
             match tool {
                 | "rls"
@@ -183,7 +133,7 @@ impl Step for ToolBuild {
                 let mut artifacts = builder.tool_artifacts.borrow_mut();
                 let prev_artifacts = artifacts
                     .entry(target)
-                    .or_insert_with(Default::default);
+                    .or_default();
                 if let Some(prev) = prev_artifacts.get(&*id) {
                     if prev.1 != val.1 {
                         duplicates.push((
@@ -221,6 +171,10 @@ impl Step for ToolBuild {
                          prev.0, &prev_features - &cur_features, prev.1);
             }
             println!("");
+            println!("to fix this you will probably want to edit the local \
+                      src/tools/rustc-workspace-hack/Cargo.toml crate, as \
+                      that will update the dependency graph to ensure that \
+                      these crates all share the same feature set");
             panic!("tools should not compile multiple copies of the same crate");
         }
 

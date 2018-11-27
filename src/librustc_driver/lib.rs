@@ -20,6 +20,9 @@
 
 #![feature(box_syntax)]
 #![cfg_attr(unix, feature(libc))]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(option_replace)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_sort_by_cached_key)]
@@ -78,7 +81,6 @@ use rustc::session::filesearch;
 use rustc::session::{early_error, early_warn};
 use rustc::lint::Lint;
 use rustc::lint;
-use rustc::middle::cstore::CrateStore;
 use rustc_metadata::locator;
 use rustc_metadata::cstore::CStore;
 use rustc_metadata::dynamic_lib::DynamicLibrary;
@@ -106,10 +108,10 @@ use std::sync::{Once, ONCE_INIT};
 use std::thread;
 
 use syntax::ast;
-use syntax::codemap::{CodeMap, FileLoader, RealFileLoader};
+use syntax::source_map::{SourceMap, FileLoader, RealFileLoader};
 use syntax::feature_gate::{GatedCfg, UnstableFeatures};
 use syntax::parse::{self, PResult};
-use syntax_pos::{hygiene, DUMMY_SP, MultiSpan, FileName};
+use syntax_pos::{DUMMY_SP, MultiSpan, FileName};
 
 #[cfg(test)]
 mod test;
@@ -184,27 +186,29 @@ pub fn run<F>(run_compiler: F) -> isize
     where F: FnOnce() -> (CompileResult, Option<Session>) + Send + 'static
 {
     let result = monitor(move || {
-        let (result, session) = run_compiler();
-        if let Err(CompileIncomplete::Errored(_)) = result {
-            match session {
-                Some(sess) => {
-                    sess.abort_if_errors();
-                    panic!("error reported but abort_if_errors didn't abort???");
-                }
-                None => {
-                    let emitter =
-                        errors::emitter::EmitterWriter::stderr(errors::ColorConfig::Auto,
-                                                               None,
-                                                               true,
-                                                               false);
-                    let handler = errors::Handler::with_emitter(true, false, Box::new(emitter));
-                    handler.emit(&MultiSpan::new(),
-                                 "aborting due to previous error(s)",
-                                 errors::Level::Fatal);
-                    panic::resume_unwind(Box::new(errors::FatalErrorMarker));
+        syntax::with_globals(|| {
+            let (result, session) = run_compiler();
+            if let Err(CompileIncomplete::Errored(_)) = result {
+                match session {
+                    Some(sess) => {
+                        sess.abort_if_errors();
+                        panic!("error reported but abort_if_errors didn't abort???");
+                    }
+                    None => {
+                        let emitter =
+                            errors::emitter::EmitterWriter::stderr(errors::ColorConfig::Auto,
+                                                                None,
+                                                                true,
+                                                                false);
+                        let handler = errors::Handler::with_emitter(true, false, Box::new(emitter));
+                        handler.emit(&MultiSpan::new(),
+                                    "aborting due to previous error(s)",
+                                    errors::Level::Fatal);
+                        panic::resume_unwind(Box::new(errors::FatalErrorMarker));
+                    }
                 }
             }
-        }
+        });
     });
 
     match result {
@@ -470,18 +474,15 @@ pub fn run_compiler<'a>(args: &[String],
                         emitter_dest: Option<Box<dyn Write + Send>>)
                         -> (CompileResult, Option<Session>)
 {
-    syntax::with_globals(|| {
-        let matches = match handle_options(args) {
-            Some(matches) => matches,
-            None => return (Ok(()), None),
-        };
+    let matches = match handle_options(args) {
+        Some(matches) => matches,
+        None => return (Ok(()), None),
+    };
 
-        let (sopts, cfg) = config::build_session_options_and_crate_config(&matches);
-        hygiene::set_default_edition(sopts.edition);
+    let (sopts, cfg) = config::build_session_options_and_crate_config(&matches);
 
-        driver::spawn_thread_pool(sopts, |sopts| {
-            run_compiler_with_pool(matches, sopts, cfg, callbacks, file_loader, emitter_dest)
-        })
+    driver::spawn_thread_pool(sopts, |sopts| {
+        run_compiler_with_pool(matches, sopts, cfg, callbacks, file_loader, emitter_dest)
     })
 }
 
@@ -522,9 +523,9 @@ fn run_compiler_with_pool<'a>(
     };
 
     let loader = file_loader.unwrap_or(box RealFileLoader);
-    let codemap = Lrc::new(CodeMap::with_file_loader(loader, sopts.file_path_mapping()));
-    let mut sess = session::build_session_with_codemap(
-        sopts, input_file_path.clone(), descriptions, codemap, emitter_dest,
+    let source_map = Lrc::new(SourceMap::with_file_loader(loader, sopts.file_path_mapping()));
+    let mut sess = session::build_session_with_source_map(
+        sopts, input_file_path.clone(), descriptions, source_map, emitter_dest,
     );
 
     if let Some(err) = input_err {
@@ -676,7 +677,7 @@ pub trait CompilerCalls<'a> {
                      _: &dyn CodegenBackend,
                      _: &getopts::Matches,
                      _: &Session,
-                     _: &dyn CrateStore,
+                     _: &CStore,
                      _: &Input,
                      _: &Option<PathBuf>,
                      _: &Option<PathBuf>)
@@ -884,7 +885,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
                      codegen_backend: &dyn CodegenBackend,
                      matches: &getopts::Matches,
                      sess: &Session,
-                     cstore: &dyn CrateStore,
+                     cstore: &CStore,
                      input: &Input,
                      odir: &Option<PathBuf>,
                      ofile: &Option<PathBuf>)
@@ -990,7 +991,7 @@ pub fn enable_save_analysis(control: &mut CompileController) {
 
 impl RustcDefaultCalls {
     pub fn list_metadata(sess: &Session,
-                         cstore: &dyn CrateStore,
+                         cstore: &CStore,
                          matches: &getopts::Matches,
                          input: &Input)
                          -> Compilation {
@@ -1002,7 +1003,7 @@ impl RustcDefaultCalls {
                     let mut v = Vec::new();
                     locator::list_file_metadata(&sess.target.target,
                                                 path,
-                                                cstore.metadata_loader(),
+                                                &*cstore.metadata_loader,
                                                 &mut v)
                             .unwrap();
                     println!("{}", String::from_utf8(v).unwrap());
@@ -1512,7 +1513,7 @@ pub fn in_named_rustc_thread<F, R>(name: String, f: F) -> Result<R, Box<dyn Any 
             true
         } else if rlim.rlim_max < STACK_SIZE as libc::rlim_t {
             true
-        } else {
+        } else if rlim.rlim_cur < STACK_SIZE as libc::rlim_t {
             std::rt::deinit_stack_guard();
             rlim.rlim_cur = STACK_SIZE as libc::rlim_t;
             if libc::setrlimit(libc::RLIMIT_STACK, &mut rlim) != 0 {
@@ -1524,6 +1525,8 @@ pub fn in_named_rustc_thread<F, R>(name: String, f: F) -> Result<R, Box<dyn Any 
                 std::rt::update_stack_guard();
                 false
             }
+        } else {
+            false
         }
     };
 

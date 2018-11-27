@@ -307,7 +307,10 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         let body_id = body.id();
         self.body_id = body_id.node_id;
 
-        let call_site = region::Scope::CallSite(body.value.hir_id.local_id);
+        let call_site = region::Scope {
+            id: body.value.hir_id.local_id,
+            data: region::ScopeData::CallSite
+        };
         self.call_site_scope = Some(call_site);
 
         let fn_sig = {
@@ -333,7 +336,12 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
             &fn_sig_tys[..],
             body_id.node_id,
             span);
-        self.link_fn_args(region::Scope::Node(body.value.hir_id.local_id), &body.arguments);
+        self.link_fn_args(
+            region::Scope {
+                id: body.value.hir_id.local_id,
+                data: region::ScopeData::Node
+            },
+            &body.arguments);
         self.visit_body(body);
         self.visit_region_obligations(body_id.node_id);
 
@@ -347,8 +355,8 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                                        body_hir_id,
                                        call_site_region);
 
-        self.constrain_anon_types(
-            &self.fcx.anon_types.borrow(),
+        self.constrain_opaque_types(
+            &self.fcx.opaque_types.borrow(),
             self.outlives_environment.free_region_map(),
         );
     }
@@ -483,7 +491,10 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for RegionCtxt<'a, 'gcx, 'tcx> {
         let expr_ty = self.resolve_node_type(expr.hir_id);
         // the region corresponding to this expression
         let expr_region = self.tcx.mk_region(ty::ReScope(
-            region::Scope::Node(expr.hir_id.local_id)));
+            region::Scope {
+                id: expr.hir_id.local_id,
+                data: region::ScopeData::Node
+            }));
         self.type_must_outlive(infer::ExprTypeIsNotInScope(expr_ty, expr.span),
                                expr_ty, expr_region);
 
@@ -589,7 +600,7 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for RegionCtxt<'a, 'gcx, 'tcx> {
                 // For overloaded derefs, base_ty is the input to `Deref::deref`,
                 // but it's a reference type uing the same region as the output.
                 let base_ty = self.resolve_expr_type_adjusted(base);
-                if let ty::TyRef(r_ptr, _, _) = base_ty.sty {
+                if let ty::Ref(r_ptr, _, _) = base_ty.sty {
                     self.mk_subregion_due_to_dereference(expr.span, expr_region, r_ptr);
                 }
 
@@ -702,22 +713,22 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                from_ty,
                to_ty);
         match (&from_ty.sty, &to_ty.sty) {
-            /*From:*/ (&ty::TyRef(from_r, from_ty, _),
-            /*To:  */  &ty::TyRef(to_r, to_ty, _)) => {
+            /*From:*/ (&ty::Ref(from_r, from_ty, _),
+            /*To:  */  &ty::Ref(to_r, to_ty, _)) => {
                 // Target cannot outlive source, naturally.
                 self.sub_regions(infer::Reborrow(cast_expr.span), to_r, from_r);
                 self.walk_cast(cast_expr, from_ty, to_ty);
             }
 
             /*From:*/ (_,
-            /*To:  */  &ty::TyDynamic(.., r)) => {
+            /*To:  */  &ty::Dynamic(.., r)) => {
                 // When T is existentially quantified as a trait
                 // `Foo+'to`, it must outlive the region bound `'to`.
                 self.type_must_outlive(infer::RelateObjectBound(cast_expr.span), from_ty, r);
             }
 
-            /*From:*/ (&ty::TyAdt(from_def, _),
-            /*To:  */  &ty::TyAdt(to_def, _)) if from_def.is_box() && to_def.is_box() => {
+            /*From:*/ (&ty::Adt(from_def, _),
+            /*To:  */  &ty::Adt(to_def, _)) if from_def.is_box() && to_def.is_box() => {
                 self.walk_cast(cast_expr, from_ty.boxed_ty(), to_ty.boxed_ty());
             }
 
@@ -736,7 +747,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
     fn constrain_callee(&mut self, callee_expr: &hir::Expr) {
         let callee_ty = self.resolve_node_type(callee_expr.hir_id);
         match callee_ty.sty {
-            ty::TyFnDef(..) | ty::TyFnPtr(_) => { }
+            ty::FnDef(..) | ty::FnPtr(_) => { }
             _ => {
                 // this should not happen, but it does if the program is
                 // erroneous
@@ -766,7 +777,10 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         // call occurs.
         //
         // FIXME(#6268) to support nested method calls, should be callee_id
-        let callee_scope = region::Scope::Node(call_expr.hir_id.local_id);
+        let callee_scope = region::Scope {
+            id: call_expr.hir_id.local_id,
+            data: region::ScopeData::Node
+        };
         let callee_region = self.tcx.mk_region(ty::ReScope(callee_scope));
 
         debug!("callee_region={:?}", callee_region);
@@ -819,7 +833,10 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         self.check_safety_of_rvalue_destructor_if_necessary(&cmt, expr.span);
 
         let expr_region = self.tcx.mk_region(ty::ReScope(
-            region::Scope::Node(expr.hir_id.local_id)));
+            region::Scope {
+                id: expr.hir_id.local_id,
+                data: region::ScopeData::Node
+            }));
         for adjustment in adjustments {
             debug!("constrain_adjustments: adjustment={:?}, cmt={:?}",
                    adjustment, cmt);
@@ -913,10 +930,13 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         debug!("constrain_index(index_expr=?, indexed_ty={}",
                self.ty_to_string(indexed_ty));
 
-        let r_index_expr = ty::ReScope(region::Scope::Node(index_expr.hir_id.local_id));
-        if let ty::TyRef(r_ptr, r_ty, _) = indexed_ty.sty {
+        let r_index_expr = ty::ReScope(region::Scope {
+            id: index_expr.hir_id.local_id,
+            data: region::ScopeData::Node
+        });
+        if let ty::Ref(r_ptr, r_ty, _) = indexed_ty.sty {
             match r_ty.sty {
-                ty::TySlice(_) | ty::TyStr => {
+                ty::Slice(_) | ty::Str => {
                     self.sub_regions(infer::IndexSlice(index_expr.span),
                                      self.tcx.mk_region(r_index_expr), r_ptr);
                 }
@@ -1072,7 +1092,10 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
             }
 
             adjustment::AutoBorrow::RawPtr(m) => {
-                let r = self.tcx.mk_region(ty::ReScope(region::Scope::Node(expr.hir_id.local_id)));
+                let r = self.tcx.mk_region(ty::ReScope(region::Scope {
+                    id: expr.hir_id.local_id,
+                    data: region::ScopeData::Node
+                }));
                 self.link_region(expr.span, r, ty::BorrowKind::from_mutbl(m), expr_cmt);
             }
         }
@@ -1089,7 +1112,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
                id, mutbl, cmt_borrowed);
 
         let rptr_ty = self.resolve_node_type(id);
-        if let ty::TyRef(r, _, _) = rptr_ty.sty {
+        if let ty::Ref(r, _, _) = rptr_ty.sty {
             debug!("rptr_ty={}",  rptr_ty);
             self.link_region(span, r, ty::BorrowKind::from_mutbl(mutbl), cmt_borrowed);
         }
@@ -1284,7 +1307,7 @@ impl<'a, 'gcx, 'tcx> RegionCtxt<'a, 'gcx, 'tcx> {
         // how all the types get adjusted.)
         match ref_kind {
             ty::ImmBorrow => {
-                // The reference being reborrowed is a sharable ref of
+                // The reference being reborrowed is a shareable ref of
                 // type `&'a T`. In this case, it doesn't matter where we
                 // *found* the `&T` pointer, the memory it references will
                 // be valid and immutable for `'a`. So we can stop here.

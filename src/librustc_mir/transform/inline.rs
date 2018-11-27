@@ -14,7 +14,7 @@ use rustc::hir;
 use rustc::hir::CodegenFnAttrFlags;
 use rustc::hir::def_id::DefId;
 
-use rustc_data_structures::bitvec::BitVector;
+use rustc_data_structures::bitvec::BitArray;
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
 
 use rustc::mir::*;
@@ -95,7 +95,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                 let terminator = bb_data.terminator();
                 if let TerminatorKind::Call {
                     func: Operand::Constant(ref f), .. } = terminator.kind {
-                        if let ty::TyFnDef(callee_def_id, substs) = f.ty.sty {
+                        if let ty::FnDef(callee_def_id, substs) = f.ty.sty {
                             if let Some(instance) = Instance::resolve(self.tcx,
                                                                       param_env,
                                                                       callee_def_id,
@@ -158,7 +158,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                     let terminator = bb_data.terminator();
                     if let TerminatorKind::Call {
                         func: Operand::Constant(ref f), .. } = terminator.kind {
-                        if let ty::TyFnDef(callee_def_id, substs) = f.ty.sty {
+                        if let ty::FnDef(callee_def_id, substs) = f.ty.sty {
                             // Don't inline the same function multiple times.
                             if callsite.callee != callee_def_id {
                                 callsites.push_back(CallSite {
@@ -271,7 +271,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
         // Traverse the MIR manually so we can account for the effects of
         // inlining on the CFG.
         let mut work_list = vec![START_BLOCK];
-        let mut visited = BitVector::new(callee_mir.basic_blocks().len());
+        let mut visited = BitArray::new(callee_mir.basic_blocks().len());
         while let Some(bb) = work_list.pop() {
             if !visited.insert(bb.index()) { continue; }
             let blk = &callee_mir.basic_blocks()[bb];
@@ -314,7 +314,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
                 }
 
                 TerminatorKind::Call {func: Operand::Constant(ref f), .. } => {
-                    if let ty::TyFnDef(def_id, _) = f.ty.sty {
+                    if let ty::FnDef(def_id, _) = f.ty.sty {
                         // Don't give intrinsics the extra penalty for calls
                         let f = tcx.fn_sig(def_id);
                         if f.abi() == Abi::RustIntrinsic || f.abi() == Abi::PlatformIntrinsic {
@@ -538,7 +538,7 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             assert!(args.next().is_none());
 
             let tuple = Place::Local(tuple);
-            let tuple_tys = if let ty::TyTuple(s) = tuple.ty(caller_mir, tcx).to_ty(tcx).sty {
+            let tuple_tys = if let ty::Tuple(s) = tuple.ty(caller_mir, tcx).to_ty(tcx).sty {
                 s
             } else {
                 bug!("Closure arguments are not passed as a tuple");
@@ -704,7 +704,7 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
                     *unwind = Some(self.update_target(tgt));
                 } else if !self.in_cleanup_block {
                     // Unless this drop is in a cleanup block, add an unwind edge to
-                    // the orignal call's cleanup block
+                    // the original call's cleanup block
                     *unwind = self.cleanup_block;
                 }
             }
@@ -716,7 +716,7 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
                     *cleanup = Some(self.update_target(tgt));
                 } else if !self.in_cleanup_block {
                     // Unless this call is in a cleanup block, add an unwind edge to
-                    // the orignal call's cleanup block
+                    // the original call's cleanup block
                     *cleanup = self.cleanup_block;
                 }
             }
@@ -726,7 +726,7 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
                     *cleanup = Some(self.update_target(tgt));
                 } else if !self.in_cleanup_block {
                     // Unless this assert is in a cleanup block, add an unwind edge to
-                    // the orignal call's cleanup block
+                    // the original call's cleanup block
                     *cleanup = self.cleanup_block;
                 }
             }

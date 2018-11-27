@@ -12,8 +12,8 @@
 
 #![feature(arbitrary_self_types, async_await, await_macro, futures_api, pin)]
 
-use std::boxed::PinBox;
-use std::mem::PinMut;
+use std::pin::PinBox;
+use std::pin::PinMut;
 use std::future::Future;
 use std::sync::{
     Arc,
@@ -22,7 +22,7 @@ use std::sync::{
 use std::future::FutureObj;
 use std::task::{
     Context, Poll, Wake,
-    Executor, SpawnObjError,
+    Spawn, SpawnObjError,
     local_waker_from_nonlocal,
 };
 
@@ -36,8 +36,8 @@ impl Wake for Counter {
     }
 }
 
-struct NoopExecutor;
-impl Executor for NoopExecutor {
+struct NoopSpawner;
+impl Spawn for NoopSpawner {
     fn spawn_obj(&mut self, _: FutureObj<'static, ()>) -> Result<(), SpawnObjError> {
         Ok(())
     }
@@ -67,6 +67,13 @@ fn async_block(x: u8) -> impl Future<Output = u8> {
     }
 }
 
+fn async_block_with_borrow_named_lifetime<'a>(x: &'a u8) -> impl Future<Output = u8> + 'a {
+    async move {
+        await!(wake_and_yield_once());
+        *x
+    }
+}
+
 fn async_nonmove_block(x: u8) -> impl Future<Output = u8> {
     async move {
         let future = async {
@@ -90,6 +97,23 @@ async fn async_fn(x: u8) -> u8 {
 }
 
 async fn async_fn_with_borrow(x: &u8) -> u8 {
+    await!(wake_and_yield_once());
+    *x
+}
+
+async fn async_fn_with_borrow_named_lifetime<'a>(x: &'a u8) -> u8 {
+    await!(wake_and_yield_once());
+    *x
+}
+
+fn async_fn_with_impl_future_named_lifetime<'a>(x: &'a u8) -> impl Future<Output = u8> + 'a {
+    async move {
+        await!(wake_and_yield_once());
+        *x
+    }
+}
+
+async fn async_fn_with_named_lifetime_multiple_args<'a>(x: &'a u8, _y: &'a u8) -> u8 {
     await!(wake_and_yield_once());
     *x
 }
@@ -127,8 +151,8 @@ where
     let mut fut = PinBox::new(f(9));
     let counter = Arc::new(Counter { wakes: AtomicUsize::new(0) });
     let waker = local_waker_from_nonlocal(counter.clone());
-    let executor = &mut NoopExecutor;
-    let cx = &mut Context::new(&waker, executor);
+    let spawner = &mut NoopSpawner;
+    let cx = &mut Context::new(&waker, spawner);
 
     assert_eq!(0, counter.wakes.load(atomic::Ordering::SeqCst));
     assert_eq!(Poll::Pending, fut.as_pin_mut().poll(cx));
@@ -138,8 +162,18 @@ where
 
 fn main() {
     macro_rules! test {
-        ($($fn_name:ident,)*) => { $(
+        ($($fn_name:expr,)*) => { $(
             test_future_yields_once_then_returns($fn_name);
+        )* }
+    }
+
+    macro_rules! test_with_borrow {
+        ($($fn_name:expr,)*) => { $(
+            test_future_yields_once_then_returns(|x| {
+                async move {
+                    await!($fn_name(&x))
+                }
+            });
         )* }
     }
 
@@ -149,5 +183,23 @@ fn main() {
         async_closure,
         async_fn,
         async_fn_with_internal_borrow,
+        Foo::async_method,
+        |x| {
+            async move {
+                unsafe { await!(unsafe_async_fn(x)) }
+            }
+        },
+    }
+
+    test_with_borrow! {
+        async_block_with_borrow_named_lifetime,
+        async_fn_with_borrow,
+        async_fn_with_borrow_named_lifetime,
+        async_fn_with_impl_future_named_lifetime,
+        |x| {
+            async move {
+                await!(async_fn_with_named_lifetime_multiple_args(x, x))
+            }
+        },
     }
 }

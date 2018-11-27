@@ -121,7 +121,7 @@ pub fn resolve_interior<'a, 'gcx, 'tcx>(fcx: &'a FnCtxt<'a, 'gcx, 'tcx>,
     // Replace all regions inside the generator interior with late bound regions
     // Note that each region slot in the types gets a new fresh late bound region,
     // which means that none of the regions inside relate to any other, even if
-    // typeck had previously found contraints that would cause them to be related.
+    // typeck had previously found constraints that would cause them to be related.
     let mut counter = 0;
     let type_list = fcx.tcx.fold_regions(&type_list, &mut false, |_, current_depth| {
         counter += 1;
@@ -167,7 +167,13 @@ impl<'a, 'gcx, 'tcx> Visitor<'tcx> for InteriorVisitor<'a, 'gcx, 'tcx> {
 
         let scope = self.region_scope_tree.temporary_scope(expr.hir_id.local_id);
 
-        let ty = self.fcx.tables.borrow().expr_ty_adjusted(expr);
+        // Record the unadjusted type
+        let ty = self.fcx.tables.borrow().expr_ty(expr);
         self.record(ty, scope, Some(expr), expr.span);
+
+        // Also include the adjusted types, since these can result in MIR locals
+        for adjustment in self.fcx.tables.borrow().expr_adjustments(expr) {
+            self.record(adjustment.target, scope, Some(expr), expr.span);
+        }
     }
 }

@@ -1,6 +1,7 @@
 use super::TokenStreamExt;
 
 use std::borrow::Cow;
+use std::iter;
 
 use proc_macro2::{Group, Ident, Literal, Punct, Span, TokenStream, TokenTree};
 
@@ -72,6 +73,12 @@ pub trait ToTokens {
 }
 
 impl<'a, T: ?Sized + ToTokens> ToTokens for &'a T {
+    fn to_tokens(&self, tokens: &mut TokenStream) {
+        (**self).to_tokens(tokens);
+    }
+}
+
+impl<'a, T: ?Sized + ToTokens> ToTokens for &'a mut T {
     fn to_tokens(&self, tokens: &mut TokenStream) {
         (**self).to_tokens(tokens);
     }
@@ -181,7 +188,7 @@ impl ToTokens for TokenTree {
 
 impl ToTokens for TokenStream {
     fn to_tokens(&self, dst: &mut TokenStream) {
-        dst.append_all(self.clone().into_iter());
+        dst.extend(iter::once(self.clone()));
     }
 
     fn into_token_stream(self) -> TokenStream {

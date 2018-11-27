@@ -47,7 +47,6 @@ pub struct DeflateEncoder<R> {
     data: Compress,
 }
 
-
 impl<R: BufRead> DeflateEncoder<R> {
     /// Creates a new encoder which will read uncompressed data from the given
     /// stream and emit the compressed stream.
@@ -155,7 +154,7 @@ impl<R: AsyncWrite + BufRead> AsyncWrite for DeflateEncoder<R> {
 ///
 /// # fn main() {
 /// #    let mut e = DeflateEncoder::new(Vec::new(), Compression::default());
-/// #    e.write(b"Hello World").unwrap();
+/// #    e.write_all(b"Hello World").unwrap();
 /// #    let bytes = e.finish().unwrap();
 /// #    println!("{}", decode_reader(bytes).unwrap());
 /// # }

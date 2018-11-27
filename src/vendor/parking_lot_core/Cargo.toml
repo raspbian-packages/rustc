@@ -12,11 +12,11 @@
 
 [package]
 name = "parking_lot_core"
-version = "0.2.14"
+version = "0.3.0"
 authors = ["Amanieu d'Antras <amanieu@gmail.com>"]
 description = "An advanced API for creating custom synchronization primitives."
-documentation = "https://amanieu.github.io/parking_lot/parking_lot_core/index.html"
 keywords = ["mutex", "condvar", "rwlock", "once", "thread"]
+categories = ["concurrency"]
 license = "Apache-2.0/MIT"
 repository = "https://github.com/Amanieu/parking_lot"
 [dependencies.backtrace]
@@ -28,7 +28,7 @@ version = "0.4.5"
 optional = true
 
 [dependencies.rand]
-version = "0.4"
+version = "0.5"
 
 [dependencies.smallvec]
 version = "0.6"

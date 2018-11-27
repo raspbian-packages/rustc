@@ -16,7 +16,7 @@ use rustc::ty::TyCtxt;
 use rustc::util::nodemap::FxHashSet;
 use rustc_target::spec::abi::Abi;
 use syntax::attr;
-use syntax::codemap::Span;
+use syntax::source_map::Span;
 use syntax::feature_gate::{self, GateIssue};
 use syntax::symbol::Symbol;
 
@@ -207,7 +207,7 @@ impl<'a, 'tcx> Collector<'a, 'tcx> {
             }
         }
 
-        // Update kind and, optionally, the name of all native libaries
+        // Update kind and, optionally, the name of all native libraries
         // (there may be more than one) with the specified name.
         for &(ref name, ref new_name, kind) in &self.tcx.sess.opts.libs {
             let mut found = false;

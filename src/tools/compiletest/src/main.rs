@@ -10,7 +10,6 @@
 
 #![crate_name = "compiletest"]
 #![feature(test)]
-#![feature(slice_rotate)]
 #![deny(warnings)]
 
 extern crate diff;
@@ -23,7 +22,6 @@ extern crate libc;
 extern crate log;
 extern crate regex;
 #[macro_use]
-#[cfg(windows)]
 extern crate lazy_static;
 #[macro_use]
 extern crate serde_derive;

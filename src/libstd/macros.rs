@@ -157,12 +157,7 @@ macro_rules! print {
 macro_rules! println {
     () => (print!("\n"));
     ($($arg:tt)*) => ({
-        #[cfg(not(stage0))] {
-            ($crate::io::_print(format_args_nl!($($arg)*)));
-        }
-        #[cfg(stage0)] {
-            print!("{}\n", format_args!($($arg)*))
-        }
+        $crate::io::_print(format_args_nl!($($arg)*));
     })
 }
 
@@ -221,12 +216,7 @@ macro_rules! eprint {
 macro_rules! eprintln {
     () => (eprint!("\n"));
     ($($arg:tt)*) => ({
-        #[cfg(all(not(stage0), not(stage1)))] {
-            ($crate::io::_eprint(format_args_nl!($($arg)*)));
-        }
-        #[cfg(any(stage0, stage1))] {
-            eprint!("{}\n", format_args!($($arg)*))
-        }
+        $crate::io::_eprint(format_args_nl!($($arg)*));
     })
 }
 
@@ -237,14 +227,17 @@ macro_rules! eprintln {
 macro_rules! await {
     ($e:expr) => { {
         let mut pinned = $e;
-        let mut pinned = unsafe { $crate::mem::PinMut::new_unchecked(&mut pinned) };
         loop {
-            match $crate::future::poll_in_task_cx(&mut pinned) {
-                // FIXME(cramertj) prior to stabilizing await, we have to ensure that this
-                // can't be used to create a generator on stable via `|| await!()`.
-                $crate::task::Poll::Pending => yield,
-                $crate::task::Poll::Ready(x) => break x,
+            if let $crate::task::Poll::Ready(x) =
+                $crate::future::poll_in_task_cx(unsafe {
+                    $crate::pin::PinMut::new_unchecked(&mut pinned)
+                })
+            {
+                break x;
             }
+            // FIXME(cramertj) prior to stabilizing await, we have to ensure that this
+            // can't be used to create a generator on stable via `|| await!()`.
+            yield
         }
     } }
 }
@@ -316,7 +309,7 @@ macro_rules! assert_approx_eq {
 /// These macros do not have any corresponding definition with a `macro_rules!`
 /// macro, but are documented here. Their implementations can be found hardcoded
 /// into libsyntax itself.
-#[cfg(dox)]
+#[cfg(rustdoc)]
 mod builtin {
 
     /// Unconditionally causes compilation to fail with the given error message when encountered.

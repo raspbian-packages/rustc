@@ -809,7 +809,7 @@ pub fn walk_expr<'a, V: Visitor<'a>>(visitor: &mut V, expression: &'a Expr) {
         ExprKind::Try(ref subexpression) => {
             visitor.visit_expr(subexpression)
         }
-        ExprKind::Catch(ref body) => {
+        ExprKind::TryBlock(ref body) => {
             visitor.visit_block(body)
         }
     }
@@ -819,7 +819,11 @@ pub fn walk_expr<'a, V: Visitor<'a>>(visitor: &mut V, expression: &'a Expr) {
 
 pub fn walk_arm<'a, V: Visitor<'a>>(visitor: &mut V, arm: &'a Arm) {
     walk_list!(visitor, visit_pat, &arm.pats);
-    walk_list!(visitor, visit_expr, &arm.guard);
+    if let Some(ref g) = &arm.guard {
+        match g {
+            Guard::If(ref e) => visitor.visit_expr(e),
+        }
+    }
     visitor.visit_expr(&arm.body);
     walk_list!(visitor, visit_attribute, &arm.attrs);
 }

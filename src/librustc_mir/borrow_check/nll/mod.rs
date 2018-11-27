@@ -11,9 +11,9 @@
 use borrow_check::borrow_set::BorrowSet;
 use borrow_check::location::{LocationIndex, LocationTable};
 use borrow_check::nll::facts::AllFactsExt;
-use borrow_check::nll::type_check::MirTypeckRegionConstraints;
+use borrow_check::nll::type_check::{MirTypeckResults, MirTypeckRegionConstraints};
+use borrow_check::nll::type_check::liveness::liveness_map::NllLivenessMap;
 use borrow_check::nll::region_infer::values::RegionValueElements;
-use borrow_check::nll::liveness_map::{NllLivenessMap, LocalWithRegion};
 use dataflow::indexes::BorrowIndex;
 use dataflow::move_paths::MoveData;
 use dataflow::FlowAtLocation;
@@ -22,9 +22,7 @@ use rustc::hir::def_id::DefId;
 use rustc::infer::InferCtxt;
 use rustc::mir::{ClosureOutlivesSubject, ClosureRegionRequirements, Mir};
 use rustc::ty::{self, RegionKind, RegionVid};
-use rustc::util::nodemap::FxHashMap;
 use rustc_errors::Diagnostic;
-use std::collections::BTreeSet;
 use std::fmt::Debug;
 use std::env;
 use std::io;
@@ -32,12 +30,11 @@ use std::path::PathBuf;
 use std::rc::Rc;
 use std::str::FromStr;
 use transform::MirSource;
-use util::liveness::{LivenessResults, LiveVarSet};
 
 use self::mir_util::PassWhere;
 use polonius_engine::{Algorithm, Output};
 use util as mir_util;
-use util::pretty::{self, ALIGN};
+use util::pretty;
 
 mod constraint_generation;
 pub mod explain_borrow;
@@ -47,7 +44,6 @@ crate mod region_infer;
 mod renumber;
 crate mod type_check;
 mod universal_regions;
-crate mod liveness_map;
 
 mod constraints;
 
@@ -109,9 +105,10 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
     let elements = &Rc::new(RegionValueElements::new(mir));
 
     // Run the MIR type-checker.
-    let liveness_map = NllLivenessMap::compute(&mir);
-    let liveness = LivenessResults::compute(mir, &liveness_map);
-    let (constraint_sets, universal_region_relations) = type_check::type_check(
+    let MirTypeckResults {
+        constraints,
+        universal_region_relations,
+    } = type_check::type_check(
         infcx,
         param_env,
         mir,
@@ -119,12 +116,10 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
         &universal_regions,
         location_table,
         borrow_set,
-        &liveness,
         &mut all_facts,
         flow_inits,
         move_data,
         elements,
-        errors_buffer,
     );
 
     if let Some(all_facts) = &mut all_facts {
@@ -141,7 +136,7 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
         mut liveness_constraints,
         outlives_constraints,
         type_tests,
-    } = constraint_sets;
+    } = constraints;
 
     constraint_generation::generate_constraints(
         infcx,
@@ -204,7 +199,6 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
     // write unit-tests, as well as helping with debugging.
     dump_mir_results(
         infcx,
-        &liveness,
         MirSource::item(def_id),
         &mir,
         &regioncx,
@@ -220,7 +214,6 @@ pub(in borrow_check) fn compute_regions<'cx, 'gcx, 'tcx>(
 
 fn dump_mir_results<'a, 'gcx, 'tcx>(
     infcx: &InferCtxt<'a, 'gcx, 'tcx>,
-    liveness: &LivenessResults<LocalWithRegion>,
     source: MirSource,
     mir: &Mir<'tcx>,
     regioncx: &RegionInferenceContext,
@@ -229,36 +222,6 @@ fn dump_mir_results<'a, 'gcx, 'tcx>(
     if !mir_util::dump_enabled(infcx.tcx, "nll", source) {
         return;
     }
-
-    let map = &NllLivenessMap::compute(mir);
-
-    let regular_liveness_per_location: FxHashMap<_, _> = mir
-        .basic_blocks()
-        .indices()
-        .flat_map(|bb| {
-            let mut results = vec![];
-            liveness
-                .regular
-                .simulate_block(&mir, bb, map, |location, local_set| {
-                    results.push((location, local_set.clone()));
-                });
-            results
-        })
-        .collect();
-
-    let drop_liveness_per_location: FxHashMap<_, _> = mir
-        .basic_blocks()
-        .indices()
-        .flat_map(|bb| {
-            let mut results = vec![];
-            liveness
-                .drop
-                .simulate_block(&mir, bb, map, |location, local_set| {
-                    results.push((location, local_set.clone()));
-                });
-            results
-        })
-        .collect();
 
     mir_util::dump_mir(
         infcx.tcx,
@@ -282,26 +245,10 @@ fn dump_mir_results<'a, 'gcx, 'tcx>(
                     }
                 }
 
-                PassWhere::BeforeLocation(location) => {
-                    let s = live_variable_set(
-                        &regular_liveness_per_location[&location],
-                        &drop_liveness_per_location[&location],
-                    );
-                    writeln!(
-                        out,
-                        "{:ALIGN$} | Live variables on entry to {:?}: {}",
-                        "",
-                        location,
-                        s,
-                        ALIGN = ALIGN
-                    )?;
+                PassWhere::BeforeLocation(_) => {
                 }
 
-                // After each basic block, dump out the values
-                // that are live on exit from the basic block.
-                PassWhere::AfterTerminator(bb) => {
-                    let s = live_variable_set(&liveness.regular.outs[bb], &liveness.drop.outs[bb]);
-                    writeln!(out, "    | Live variables on exit from {:?}: {}", bb, s)?;
+                PassWhere::AfterTerminator(_) => {
                 }
 
                 PassWhere::BeforeBlock(_) | PassWhere::AfterLocation(_) | PassWhere::AfterCFG => {}
@@ -311,14 +258,14 @@ fn dump_mir_results<'a, 'gcx, 'tcx>(
     );
 
     // Also dump the inference graph constraints as a graphviz file.
-    let _: io::Result<()> = do catch {
+    let _: io::Result<()> = try_block! {
         let mut file =
             pretty::create_dump_file(infcx.tcx, "regioncx.all.dot", None, "nll", &0, source)?;
         regioncx.dump_graphviz_raw_constraints(&mut file)?;
     };
 
     // Also dump the inference graph constraints as a graphviz file.
-    let _: io::Result<()> = do catch {
+    let _: io::Result<()> = try_block! {
         let mut file =
             pretty::create_dump_file(infcx.tcx, "regioncx.scc.dot", None, "nll", &0, source)?;
         regioncx.dump_graphviz_scc_constraints(&mut file)?;
@@ -329,7 +276,7 @@ fn dump_annotation<'a, 'gcx, 'tcx>(
     infcx: &InferCtxt<'a, 'gcx, 'tcx>,
     mir: &Mir<'tcx>,
     mir_def_id: DefId,
-    regioncx: &RegionInferenceContext,
+    regioncx: &RegionInferenceContext<'tcx>,
     closure_region_requirements: &Option<ClosureRegionRequirements>,
     errors_buffer: &mut Vec<Diagnostic>,
 ) {
@@ -352,7 +299,7 @@ fn dump_annotation<'a, 'gcx, 'tcx>(
             .diagnostic()
             .span_note_diag(mir.span, "External requirements");
 
-        regioncx.annotate(&mut err);
+        regioncx.annotate(tcx, &mut err);
 
         err.note(&format!(
             "number of external vids: {}",
@@ -372,7 +319,7 @@ fn dump_annotation<'a, 'gcx, 'tcx>(
             .sess
             .diagnostic()
             .span_note_diag(mir.span, "No external requirements");
-        regioncx.annotate(&mut err);
+        regioncx.annotate(tcx, &mut err);
 
         err.buffer(errors_buffer);
     }
@@ -418,34 +365,4 @@ impl ToRegionVid for RegionVid {
     fn to_region_vid(self) -> RegionVid {
         self
     }
-}
-
-fn live_variable_set(
-    regular: &LiveVarSet<LocalWithRegion>,
-    drops: &LiveVarSet<LocalWithRegion>
-) -> String {
-    // sort and deduplicate:
-    let all_locals: BTreeSet<_> = regular.iter().chain(drops.iter()).collect();
-
-    // construct a string with each local, including `(drop)` if it is
-    // only dropped, versus a regular use.
-    let mut string = String::new();
-    for local in all_locals {
-        string.push_str(&format!("{:?}", local));
-
-        if !regular.contains(&local) {
-            assert!(drops.contains(&local));
-            string.push_str(" (drop)");
-        }
-
-        string.push_str(", ");
-    }
-
-    let len = if string.is_empty() {
-        0
-    } else {
-        string.len() - 2
-    };
-
-    format!("[{}]", &string[..len])
 }

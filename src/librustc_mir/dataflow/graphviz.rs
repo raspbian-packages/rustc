@@ -12,8 +12,7 @@
 
 use syntax::ast::NodeId;
 use rustc::mir::{BasicBlock, Mir};
-use rustc_data_structures::bitslice::bits_to_string;
-use rustc_data_structures::indexed_vec::Idx;
+use rustc_data_structures::bitvec::bits_to_string;
 
 use dot;
 use dot::IntoCow;
@@ -168,13 +167,13 @@ where MWF: MirWithFlowState<'tcx>,
         let i = n.index();
 
         macro_rules! dump_set_for {
-            ($set:ident) => {
+            ($set:ident, $interpret:ident) => {
                 write!(w, "<td>")?;
 
                 let flow = self.mbcx.flow_state();
-                let entry_interp = flow.interpret_set(&flow.operator,
-                                                      flow.sets.$set(i),
-                                                      &self.render_idx);
+                let entry_interp = flow.$interpret(&flow.operator,
+                                                   flow.sets.$set(i),
+                                                   &self.render_idx);
                 for e in &entry_interp {
                     write!(w, "{:?}<br/>", e)?;
                 }
@@ -184,7 +183,7 @@ where MWF: MirWithFlowState<'tcx>,
 
         write!(w, "<tr>")?;
         // Entry
-        dump_set_for!(on_entry_set_for);
+        dump_set_for!(on_entry_set_for, interpret_set);
 
         // MIR statements
         write!(w, "<td>")?;
@@ -198,10 +197,10 @@ where MWF: MirWithFlowState<'tcx>,
         write!(w, "</td>")?;
 
         // Gen
-        dump_set_for!(gen_set_for);
+        dump_set_for!(gen_set_for, interpret_hybrid_set);
 
         // Kill
-        dump_set_for!(kill_set_for);
+        dump_set_for!(kill_set_for, interpret_hybrid_set);
 
         write!(w, "</tr>")?;
 
@@ -217,19 +216,14 @@ where MWF: MirWithFlowState<'tcx>,
                                           -> io::Result<()> {
         let i = n.index();
 
-        macro_rules! dump_set_for {
-            ($set:ident) => {
-                let flow = self.mbcx.flow_state();
-                let bits_per_block = flow.sets.bits_per_block();
-                let set = flow.sets.$set(i);
-                write!(w, "<td>{:?}</td>",
-                       dot::escape_html(&bits_to_string(set.words(), bits_per_block)))?;
-            }
-        }
+        let flow = self.mbcx.flow_state();
+        let bits_per_block = flow.sets.bits_per_block();
 
         write!(w, "<tr>")?;
+
         // Entry
-        dump_set_for!(on_entry_set_for);
+        let set = flow.sets.on_entry_set_for(i);
+        write!(w, "<td>{:?}</td>", dot::escape_html(&bits_to_string(set.words(), bits_per_block)))?;
 
         // Terminator
         write!(w, "<td>")?;
@@ -242,10 +236,12 @@ where MWF: MirWithFlowState<'tcx>,
         write!(w, "</td>")?;
 
         // Gen
-        dump_set_for!(gen_set_for);
+        let set = flow.sets.gen_set_for(i);
+        write!(w, "<td>{:?}</td>", dot::escape_html(&format!("{:?}", set)))?;
 
         // Kill
-        dump_set_for!(kill_set_for);
+        let set = flow.sets.kill_set_for(i);
+        write!(w, "<td>{:?}</td>", dot::escape_html(&format!("{:?}", set)))?;
 
         write!(w, "</tr>")?;
 
@@ -268,15 +264,12 @@ impl<'a, 'tcx, MWF, P> dot::GraphWalk<'a> for Graph<'a, 'tcx, MWF, P>
 
     fn edges(&self) -> dot::Edges<Edge> {
         let mir = self.mbcx.mir();
-        // base initial capacity on assumption every block has at
-        // least one outgoing edge (Which should be true for all
-        // blocks but one, the exit-block).
-        let mut edges = Vec::with_capacity(mir.basic_blocks().len());
-        for bb in mir.basic_blocks().indices() {
-            let outgoing = outgoing(mir, bb);
-            edges.extend(outgoing.into_iter());
-        }
-        edges.into_cow()
+
+        mir.basic_blocks()
+           .indices()
+           .flat_map(|bb| outgoing(mir, bb))
+           .collect::<Vec<_>>()
+           .into_cow()
     }
 
     fn source(&self, edge: &Edge) -> Node {

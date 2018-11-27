@@ -13,12 +13,12 @@ use index_builder::{FromId, IndexBuilder, Untracked};
 use isolated_encoder::IsolatedEncoder;
 use schema::*;
 
-use rustc::middle::cstore::{LinkMeta, LinkagePreference, NativeLibrary,
+use rustc::middle::cstore::{LinkagePreference, NativeLibrary,
                             EncodedMetadata, ForeignModule};
 use rustc::hir::def::CtorKind;
 use rustc::hir::def_id::{CrateNum, CRATE_DEF_INDEX, DefIndex, DefId, LocalDefId, LOCAL_CRATE};
 use rustc::hir::map::definitions::DefPathTable;
-use rustc::ich::Fingerprint;
+use rustc_data_structures::fingerprint::Fingerprint;
 use rustc::middle::dependency_format::Linkage;
 use rustc::middle::exported_symbols::{ExportedSymbol, SymbolExportLevel,
                                       metadata_symbol_name};
@@ -28,7 +28,7 @@ use rustc::traits::specialization_graph;
 use rustc::ty::{self, Ty, TyCtxt, ReprOptions, SymbolName};
 use rustc::ty::codec::{self as ty_codec, TyEncoder};
 
-use rustc::session::config::{self, CrateTypeProcMacro};
+use rustc::session::config::{self, CrateType};
 use rustc::util::nodemap::FxHashMap;
 
 use rustc_data_structures::stable_hasher::StableHasher;
@@ -40,9 +40,9 @@ use rustc_data_structures::sync::Lrc;
 use std::u32;
 use syntax::ast::{self, CRATE_NODE_ID};
 use syntax::attr;
-use syntax::codemap::Spanned;
+use syntax::source_map::Spanned;
 use syntax::symbol::keywords;
-use syntax_pos::{self, hygiene, FileName, FileMap, Span};
+use syntax_pos::{self, hygiene, FileName, SourceFile, Span};
 
 use rustc::hir::{self, PatKind};
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
@@ -52,7 +52,6 @@ use rustc::hir::intravisit;
 pub struct EncodeContext<'a, 'tcx: 'a> {
     opaque: opaque::Encoder,
     pub tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    link_meta: &'a LinkMeta,
 
     lazy_state: LazyState,
     type_shorthands: FxHashMap<Ty<'tcx>, usize>,
@@ -62,7 +61,7 @@ pub struct EncodeContext<'a, 'tcx: 'a> {
     interpret_allocs_inverse: Vec<interpret::AllocId>,
 
     // This is used to speed up Span encoding.
-    filemap_cache: Lrc<FileMap>,
+    source_file_cache: Lrc<SourceFile>,
 }
 
 macro_rules! encoder_methods {
@@ -76,7 +75,7 @@ macro_rules! encoder_methods {
 impl<'a, 'tcx> Encoder for EncodeContext<'a, 'tcx> {
     type Error = <opaque::Encoder as Encoder>::Error;
 
-    fn emit_nil(&mut self) -> Result<(), Self::Error> {
+    fn emit_unit(&mut self) -> Result<(), Self::Error> {
         Ok(())
     }
 
@@ -157,13 +156,13 @@ impl<'a, 'tcx> SpecializedEncoder<Span> for EncodeContext<'a, 'tcx> {
         // The Span infrastructure should make sure that this invariant holds:
         debug_assert!(span.lo <= span.hi);
 
-        if !self.filemap_cache.contains(span.lo) {
-            let codemap = self.tcx.sess.codemap();
-            let filemap_index = codemap.lookup_filemap_idx(span.lo);
-            self.filemap_cache = codemap.files()[filemap_index].clone();
+        if !self.source_file_cache.contains(span.lo) {
+            let source_map = self.tcx.sess.source_map();
+            let source_file_index = source_map.lookup_source_file_idx(span.lo);
+            self.source_file_cache = source_map.files()[source_file_index].clone();
         }
 
-        if !self.filemap_cache.contains(span.hi) {
+        if !self.source_file_cache.contains(span.hi) {
             // Unfortunately, macro expansion still sometimes generates Spans
             // that malformed in this way.
             return TAG_INVALID_SPAN.encode(self)
@@ -337,36 +336,36 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         self.lazy(definitions.def_path_table())
     }
 
-    fn encode_codemap(&mut self) -> LazySeq<syntax_pos::FileMap> {
-        let codemap = self.tcx.sess.codemap();
-        let all_filemaps = codemap.files();
+    fn encode_source_map(&mut self) -> LazySeq<syntax_pos::SourceFile> {
+        let source_map = self.tcx.sess.source_map();
+        let all_source_files = source_map.files();
 
         let (working_dir, working_dir_was_remapped) = self.tcx.sess.working_dir.clone();
 
-        let adapted = all_filemaps.iter()
-            .filter(|filemap| {
-                // No need to re-export imported filemaps, as any downstream
+        let adapted = all_source_files.iter()
+            .filter(|source_file| {
+                // No need to re-export imported source_files, as any downstream
                 // crate will import them from their original source.
-                !filemap.is_imported()
+                !source_file.is_imported()
             })
-            .map(|filemap| {
-                // When exporting FileMaps, we expand all paths to absolute
+            .map(|source_file| {
+                // When exporting SourceFiles, we expand all paths to absolute
                 // paths because any relative paths are potentially relative to
                 // a wrong directory.
                 // However, if a path has been modified via
                 // `--remap-path-prefix` we assume the user has already set
                 // things up the way they want and don't touch the path values
                 // anymore.
-                match filemap.name {
+                match source_file.name {
                     FileName::Real(ref name) => {
-                        if filemap.name_was_remapped ||
+                        if source_file.name_was_remapped ||
                         (name.is_relative() && working_dir_was_remapped) {
-                            // This path of this FileMap has been modified by
+                            // This path of this SourceFile has been modified by
                             // path-remapping, so we use it verbatim (and avoid cloning
                             // the whole map in the process).
-                            filemap.clone()
+                            source_file.clone()
                         } else {
-                            let mut adapted = (**filemap).clone();
+                            let mut adapted = (**source_file).clone();
                             adapted.name = Path::new(&working_dir).join(name).into();
                             adapted.name_hash = {
                                 let mut hasher: StableHasher<u128> = StableHasher::new();
@@ -377,7 +376,7 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
                         }
                     },
                     // expanded code, not from a file
-                    _ => filemap.clone(),
+                    _ => source_file.clone(),
                 }
             })
             .collect::<Vec<_>>();
@@ -393,6 +392,11 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             IsolatedEncoder::encode_dylib_dependency_formats,
             ());
         let dep_bytes = self.position() - i;
+
+        // Encode the lib features.
+        i = self.position();
+        let lib_features = self.tracked(IsolatedEncoder::encode_lib_features, ());
+        let lib_feature_bytes = self.position() - i;
 
         // Encode the language items.
         i = self.position();
@@ -413,10 +417,10 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
             IsolatedEncoder::encode_foreign_modules,
             ());
 
-        // Encode codemap
+        // Encode source_map
         i = self.position();
-        let codemap = self.encode_codemap();
-        let codemap_bytes = self.position() - i;
+        let source_map = self.encode_source_map();
+        let source_map_bytes = self.position() - i;
 
         // Encode DefPathTable
         i = self.position();
@@ -477,20 +481,21 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
         let index_bytes = self.position() - i;
 
         let attrs = tcx.hir.krate_attrs();
-        let link_meta = self.link_meta;
-        let is_proc_macro = tcx.sess.crate_types.borrow().contains(&CrateTypeProcMacro);
+        let is_proc_macro = tcx.sess.crate_types.borrow().contains(&CrateType::ProcMacro);
         let has_default_lib_allocator = attr::contains_name(&attrs, "default_lib_allocator");
         let has_global_allocator = *tcx.sess.has_global_allocator.get();
+        let has_panic_handler = *tcx.sess.has_panic_handler.try_get().unwrap_or(&false);
 
         let root = self.lazy(&CrateRoot {
             name: tcx.crate_name(LOCAL_CRATE),
             extra_filename: tcx.sess.opts.cg.extra_filename.clone(),
             triple: tcx.sess.opts.target_triple.clone(),
-            hash: link_meta.crate_hash,
+            hash: tcx.crate_hash(LOCAL_CRATE),
             disambiguator: tcx.sess.local_crate_disambiguator(),
             panic_strategy: tcx.sess.panic_strategy(),
             edition: hygiene::default_edition(),
             has_global_allocator: has_global_allocator,
+            has_panic_handler: has_panic_handler,
             has_default_lib_allocator: has_default_lib_allocator,
             plugin_registrar_fn: tcx.sess
                 .plugin_registrar_fn
@@ -513,11 +518,12 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
 
             crate_deps,
             dylib_dependency_formats,
+            lib_features,
             lang_items,
             lang_items_missing,
             native_libraries,
             foreign_modules,
-            codemap,
+            source_map,
             def_path_table,
             impls,
             exported_symbols,
@@ -537,9 +543,10 @@ impl<'a, 'tcx> EncodeContext<'a, 'tcx> {
 
             println!("metadata stats:");
             println!("             dep bytes: {}", dep_bytes);
+            println!("     lib feature bytes: {}", lib_feature_bytes);
             println!("       lang item bytes: {}", lang_item_bytes);
             println!("          native bytes: {}", native_lib_bytes);
-            println!("         codemap bytes: {}", codemap_bytes);
+            println!("         source_map bytes: {}", source_map_bytes);
             println!("            impl bytes: {}", impl_bytes);
             println!("    exp. symbols bytes: {}", exported_symbols_bytes);
             println!("  def-path table bytes: {}", def_path_table_bytes);
@@ -735,7 +742,9 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
 
         // If the structure is marked as non_exhaustive then lower the visibility
         // to within the crate.
-        if adt_def.is_non_exhaustive() && ctor_vis == ty::Visibility::Public {
+        if adt_def.non_enum_variant().is_field_list_non_exhaustive() &&
+            ctor_vis == ty::Visibility::Public
+        {
             ctor_vis = ty::Visibility::Restricted(DefId::local(CRATE_DEF_INDEX));
         }
 
@@ -1106,7 +1115,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 let trait_ref = tcx.impl_trait_ref(def_id);
                 let parent = if let Some(trait_ref) = trait_ref {
                     let trait_def = tcx.trait_def(trait_ref.def_id);
-                    trait_def.ancestors(tcx, def_id).skip(1).next().and_then(|node| {
+                    trait_def.ancestors(tcx, def_id).nth(1).and_then(|node| {
                         match node {
                             specialization_graph::Node::Impl(parent) => Some(parent),
                             _ => None,
@@ -1255,12 +1264,9 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 hir::ItemKind::Const(..) => self.encode_optimized_mir(def_id),
                 hir::ItemKind::Fn(_, header, ..) => {
                     let generics = tcx.generics_of(def_id);
-                    let has_types = generics.params.iter().any(|param| match param.kind {
-                        ty::GenericParamDefKind::Type { .. } => true,
-                        _ => false,
-                    });
                     let needs_inline =
-                        (has_types || tcx.codegen_fn_attrs(def_id).requests_inline()) &&
+                        (generics.requires_monomorphization(tcx) ||
+                         tcx.codegen_fn_attrs(def_id).requests_inline()) &&
                             !self.metadata_output_only();
                     let always_encode_mir = self.tcx.sess.opts.debugging_opts.always_encode_mir;
                     if needs_inline
@@ -1340,7 +1346,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
         let node_id = self.tcx.hir.as_local_node_id(def_id).unwrap();
         let hir_id = self.tcx.hir.node_to_hir_id(node_id);
         let kind = match tables.node_id_to_type(hir_id).sty {
-            ty::TyGenerator(def_id, ..) => {
+            ty::Generator(def_id, ..) => {
                 let layout = self.tcx.generator_layout(def_id);
                 let data = GeneratorData {
                     layout: layout.clone(),
@@ -1348,7 +1354,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
                 EntryKind::Generator(self.lazy(&data))
             }
 
-            ty::TyClosure(def_id, substs) => {
+            ty::Closure(def_id, substs) => {
                 let sig = substs.closure_sig(def_id, self.tcx);
                 let data = ClosureData { sig: self.lazy(&sig) };
                 EntryKind::Closure(self.lazy(&data))
@@ -1456,6 +1462,12 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
         self.lazy_seq_ref(deps.iter().map(|&(_, ref dep)| dep))
     }
 
+    fn encode_lib_features(&mut self, _: ()) -> LazySeq<(ast::Name, Option<ast::Name>)> {
+        let tcx = self.tcx;
+        let lib_features = tcx.lib_features();
+        self.lazy_seq(lib_features.to_vec())
+    }
+
     fn encode_lang_items(&mut self, _: ()) -> LazySeq<(DefIndex, usize)> {
         let tcx = self.tcx;
         let lang_items = tcx.lang_items();
@@ -1542,7 +1554,7 @@ impl<'a, 'b: 'a, 'tcx: 'b> IsolatedEncoder<'a, 'b, 'tcx> {
     }
 
     fn encode_dylib_dependency_formats(&mut self, _: ()) -> LazySeq<Option<LinkagePreference>> {
-        match self.tcx.sess.dependency_formats.borrow().get(&config::CrateTypeDylib) {
+        match self.tcx.sess.dependency_formats.borrow().get(&config::CrateType::Dylib) {
             Some(arr) => {
                 self.lazy_seq(arr.iter().map(|slot| {
                     match *slot {
@@ -1670,15 +1682,17 @@ impl<'a, 'b, 'tcx> IndexBuilder<'a, 'b, 'tcx> {
     }
 
     fn encode_info_for_generics(&mut self, generics: &hir::Generics) {
-        generics.params.iter().for_each(|param| match param.kind {
-            hir::GenericParamKind::Lifetime { .. } => {}
-            hir::GenericParamKind::Type { ref default, .. } => {
-                let def_id = self.tcx.hir.local_def_id(param.id);
-                let has_default = Untracked(default.is_some());
-                let encode_info = IsolatedEncoder::encode_info_for_ty_param;
-                self.record(def_id, encode_info, (def_id, has_default));
+        for param in &generics.params {
+            match param.kind {
+                hir::GenericParamKind::Lifetime { .. } => {}
+                hir::GenericParamKind::Type { ref default, .. } => {
+                    let def_id = self.tcx.hir.local_def_id(param.id);
+                    let has_default = Untracked(default.is_some());
+                    let encode_info = IsolatedEncoder::encode_info_for_ty_param;
+                    self.record(def_id, encode_info, (def_id, has_default));
+                }
             }
-        });
+        }
     }
 
     fn encode_info_for_ty(&mut self, ty: &hir::Ty) {
@@ -1775,7 +1789,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for ImplVisitor<'a, 'tcx> {
             if let Some(trait_ref) = self.tcx.impl_trait_ref(impl_id) {
                 self.impls
                     .entry(trait_ref.def_id)
-                    .or_insert(vec![])
+                    .or_default()
                     .push(impl_id.index);
             }
         }
@@ -1811,8 +1825,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for ImplVisitor<'a, 'tcx> {
 // will allow us to slice the metadata to the precise length that we just
 // generated regardless of trailing bytes that end up in it.
 
-pub fn encode_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                                 link_meta: &LinkMeta)
+pub fn encode_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>)
                                  -> EncodedMetadata
 {
     let mut encoder = opaque::Encoder::new(vec![]);
@@ -1825,11 +1838,10 @@ pub fn encode_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let mut ecx = EncodeContext {
             opaque: encoder,
             tcx,
-            link_meta,
             lazy_state: LazyState::NoNode,
             type_shorthands: Default::default(),
             predicate_shorthands: Default::default(),
-            filemap_cache: tcx.sess.codemap().files()[0].clone(),
+            source_file_cache: tcx.sess.source_map().files()[0].clone(),
             interpret_allocs: Default::default(),
             interpret_allocs_inverse: Default::default(),
         };
@@ -1857,7 +1869,7 @@ pub fn encode_metadata<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 pub fn get_repr_options<'a, 'tcx, 'gcx>(tcx: &TyCtxt<'a, 'tcx, 'gcx>, did: DefId) -> ReprOptions {
     let ty = tcx.type_of(did);
     match ty.sty {
-        ty::TyAdt(ref def, _) => return def.repr,
+        ty::Adt(ref def, _) => return def.repr,
         _ => bug!("{} is not an ADT", ty),
     }
 }

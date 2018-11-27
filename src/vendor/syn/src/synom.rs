@@ -150,7 +150,10 @@
 //!
 //! *This module is available if Syn is built with the `"parsing"` feature.*
 
-#[cfg(feature = "proc-macro")]
+#[cfg(all(
+    not(all(target_arch = "wasm32", target_os = "unknown")),
+    feature = "proc-macro"
+))]
 use proc_macro;
 use proc_macro2::{Delimiter, Group, Ident, Literal, Punct, TokenStream, TokenTree};
 
@@ -251,17 +254,18 @@ impl Synom for Ident {
             _ => return parse_error(),
         };
         match &ident.to_string()[..] {
-			"_"
-			// From https://doc.rust-lang.org/grammar.html#keywords
-			| "abstract" | "alignof" | "as" | "become" | "box" | "break" | "const"
-			| "continue" | "crate" | "do" | "else" | "enum" | "extern" | "false" | "final"
-			| "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "macro" | "match"
-			| "mod" | "move" | "mut" | "offsetof" | "override" | "priv" | "proc" | "pub"
-			| "pure" | "ref" | "return" | "Self" | "self" | "sizeof" | "static" | "struct"
-			| "super" | "trait" | "true" | "type" | "typeof" | "unsafe" | "unsized" | "use"
-			| "virtual" | "where" | "while" | "yield" => return parse_error(),
-			_ => {}
-		}
+            "_"
+            // Based on https://doc.rust-lang.org/grammar.html#keywords
+            // and https://github.com/rust-lang/rfcs/blob/master/text/2421-unreservations-2018.md
+            | "abstract" | "as" | "become" | "box" | "break" | "const"
+            | "continue" | "crate" | "do" | "else" | "enum" | "extern" | "false" | "final"
+            | "fn" | "for" | "if" | "impl" | "in" | "let" | "loop" | "macro" | "match"
+            | "mod" | "move" | "mut" | "override" | "priv" | "proc" | "pub"
+            | "ref" | "return" | "Self" | "self" | "static" | "struct"
+            | "super" | "trait" | "true" | "type" | "typeof" | "unsafe" | "unsized" | "use"
+            | "virtual" | "where" | "while" | "yield" => return parse_error(),
+            _ => {}
+        }
 
         Ok((ident, rest))
     }
@@ -314,7 +318,10 @@ pub trait Parser: Sized {
     ///
     /// *This method is available if Syn is built with both the `"parsing"` and
     /// `"proc-macro"` features.*
-    #[cfg(feature = "proc-macro")]
+    #[cfg(all(
+        not(all(target_arch = "wasm32", target_os = "unknown")),
+        feature = "proc-macro"
+    ))]
     fn parse(self, tokens: proc_macro::TokenStream) -> Result<Self::Output, ParseError> {
         self.parse2(tokens.into())
     }

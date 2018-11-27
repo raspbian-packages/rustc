@@ -24,7 +24,7 @@ use util::nodemap::{NodeMap, FxHashSet};
 use mir::mono::Linkage;
 
 use syntax_pos::{Span, DUMMY_SP, symbol::InternedString};
-use syntax::codemap::{self, Spanned};
+use syntax::source_map::{self, Spanned};
 use rustc_target::spec::abi::Abi;
 use syntax::ast::{self, CrateSugar, Ident, Name, NodeId, DUMMY_NODE_ID, AsmDialect};
 use syntax::ast::{Attribute, Lit, StrStyle, FloatTy, IntTy, UintTy, MetaItem};
@@ -33,13 +33,13 @@ use syntax::ext::hygiene::SyntaxContext;
 use syntax::ptr::P;
 use syntax::symbol::{Symbol, keywords};
 use syntax::tokenstream::TokenStream;
-use syntax::util::ThinVec;
 use syntax::util::parser::ExprPrecedence;
 use ty::AdtKind;
 use ty::query::Providers;
 
 use rustc_data_structures::indexed_vec;
 use rustc_data_structures::sync::{ParallelIterator, par_iter, Send, Sync, scope};
+use rustc_data_structures::thin_vec::ThinVec;
 
 use serialize::{self, Encoder, Encodable, Decoder, Decodable};
 use std::collections::BTreeMap;
@@ -70,7 +70,6 @@ pub mod lowering;
 pub mod map;
 pub mod pat_util;
 pub mod print;
-pub mod svh;
 
 /// A HirId uniquely identifies a node in the HIR of the current crate. It is
 /// composed of the `owner`, which is the DefIndex of the directly enclosing
@@ -402,6 +401,13 @@ impl GenericArg {
             GenericArg::Type(t) => t.span,
         }
     }
+
+    pub fn id(&self) -> NodeId {
+        match self {
+            GenericArg::Lifetime(l) => l.id,
+            GenericArg::Type(t) => t.id,
+        }
+    }
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -445,6 +451,22 @@ impl GenericArgs {
             }
         }
         bug!("GenericArgs::inputs: not a `Fn(T) -> U`");
+    }
+
+    pub fn own_counts(&self) -> GenericParamCount {
+        // We could cache this as a property of `GenericParamCount`, but
+        // the aim is to refactor this away entirely eventually and the
+        // presence of this method will be a constant reminder.
+        let mut own_counts: GenericParamCount = Default::default();
+
+        for arg in &self.args {
+            match arg {
+                GenericArg::Lifetime(_) => own_counts.lifetimes += 1,
+                GenericArg::Type(_) => own_counts.types += 1,
+            };
+        }
+
+        own_counts
     }
 }
 
@@ -504,6 +526,7 @@ pub struct GenericParam {
     pub kind: GenericParamKind,
 }
 
+#[derive(Default)]
 pub struct GenericParamCount {
     pub lifetimes: usize,
     pub types: usize,
@@ -534,10 +557,7 @@ impl Generics {
         // We could cache this as a property of `GenericParamCount`, but
         // the aim is to refactor this away entirely eventually and the
         // presence of this method will be a constant reminder.
-        let mut own_counts = GenericParamCount {
-            lifetimes: 0,
-            types: 0,
-        };
+        let mut own_counts: GenericParamCount = Default::default();
 
         for param in &self.params {
             match param.kind {
@@ -811,9 +831,10 @@ impl Pat {
                 s.walk_(it)
             }
             PatKind::Slice(ref before, ref slice, ref after) => {
-                before.iter().all(|p| p.walk_(it)) &&
-                slice.iter().all(|p| p.walk_(it)) &&
-                after.iter().all(|p| p.walk_(it))
+                before.iter()
+                      .chain(slice.iter())
+                      .chain(after.iter())
+                      .all(|p| p.walk_(it))
             }
             PatKind::Wild |
             PatKind::Lit(_) |
@@ -852,23 +873,23 @@ pub struct FieldPat {
 /// inference.
 #[derive(Clone, PartialEq, RustcEncodable, RustcDecodable, Debug, Copy)]
 pub enum BindingAnnotation {
-  /// No binding annotation given: this means that the final binding mode
-  /// will depend on whether we have skipped through a `&` reference
-  /// when matching. For example, the `x` in `Some(x)` will have binding
-  /// mode `None`; if you do `let Some(x) = &Some(22)`, it will
-  /// ultimately be inferred to be by-reference.
-  ///
-  /// Note that implicit reference skipping is not implemented yet (#42640).
-  Unannotated,
+    /// No binding annotation given: this means that the final binding mode
+    /// will depend on whether we have skipped through a `&` reference
+    /// when matching. For example, the `x` in `Some(x)` will have binding
+    /// mode `None`; if you do `let Some(x) = &Some(22)`, it will
+    /// ultimately be inferred to be by-reference.
+    ///
+    /// Note that implicit reference skipping is not implemented yet (#42640).
+    Unannotated,
 
-  /// Annotated with `mut x` -- could be either ref or not, similar to `None`.
-  Mutable,
+    /// Annotated with `mut x` -- could be either ref or not, similar to `None`.
+    Mutable,
 
-  /// Annotated as `ref`, like `ref x`
-  Ref,
+    /// Annotated as `ref`, like `ref x`
+    Ref,
 
-  /// Annotated as `ref mut x`.
-  RefMut,
+    /// Annotated as `ref mut x`.
+    RefMut,
 }
 
 #[derive(Copy, Clone, PartialEq, RustcEncodable, RustcDecodable, Debug)]
@@ -1101,7 +1122,7 @@ pub type Stmt = Spanned<StmtKind>;
 impl fmt::Debug for StmtKind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         // Sadness.
-        let spanned = codemap::dummy_spanned(self.clone());
+        let spanned = source_map::dummy_spanned(self.clone());
         write!(f,
                "stmt({}: {})",
                spanned.node.id(),
@@ -1184,8 +1205,13 @@ impl DeclKind {
 pub struct Arm {
     pub attrs: HirVec<Attribute>,
     pub pats: HirVec<P<Pat>>,
-    pub guard: Option<P<Expr>>,
+    pub guard: Option<Guard>,
     pub body: P<Expr>,
+}
+
+#[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
+pub enum Guard {
+    If(P<Expr>),
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -1633,7 +1659,6 @@ pub struct TypeBinding {
     pub span: Span,
 }
 
-
 #[derive(Clone, RustcEncodable, RustcDecodable)]
 pub struct Ty {
     pub id: NodeId,
@@ -1652,12 +1677,12 @@ impl fmt::Debug for Ty {
 /// Not represented directly in the AST, referred to by name through a ty_path.
 #[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
 pub enum PrimTy {
-    TyInt(IntTy),
-    TyUint(UintTy),
-    TyFloat(FloatTy),
-    TyStr,
-    TyBool,
-    TyChar,
+    Int(IntTy),
+    Uint(UintTy),
+    Float(FloatTy),
+    Str,
+    Bool,
+    Char,
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -1912,6 +1937,7 @@ pub enum UseKind {
 pub struct TraitRef {
     pub path: Path,
     pub ref_id: NodeId,
+    pub hir_ref_id: HirId,
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -1931,7 +1957,7 @@ pub type Visibility = Spanned<VisibilityKind>;
 pub enum VisibilityKind {
     Public,
     Crate(CrateSugar),
-    Restricted { path: P<Path>, id: NodeId },
+    Restricted { path: P<Path>, id: NodeId, hir_id: HirId },
     Inherited,
 }
 
@@ -2258,7 +2284,6 @@ pub type TraitMap = NodeMap<Vec<TraitCandidate>>;
 // imported.
 pub type GlobMap = NodeMap<FxHashSet<Name>>;
 
-
 pub fn provide(providers: &mut Providers) {
     providers.describe_def = map::describe_def;
 }
@@ -2266,25 +2291,59 @@ pub fn provide(providers: &mut Providers) {
 #[derive(Clone, RustcEncodable, RustcDecodable)]
 pub struct CodegenFnAttrs {
     pub flags: CodegenFnAttrFlags,
+    /// Parsed representation of the `#[inline]` attribute
     pub inline: InlineAttr,
+    /// The `#[export_name = "..."]` attribute, indicating a custom symbol a
+    /// function should be exported under
     pub export_name: Option<Symbol>,
+    /// The `#[link_name = "..."]` attribute, indicating a custom symbol an
+    /// imported function should be imported as. Note that `export_name`
+    /// probably isn't set when this is set, this is for foreign items while
+    /// `#[export_name]` is for Rust-defined functions.
+    pub link_name: Option<Symbol>,
+    /// The `#[target_feature(enable = "...")]` attribute and the enabled
+    /// features (only enabled features are supported right now).
     pub target_features: Vec<Symbol>,
+    /// The `#[linkage = "..."]` attribute and the value we found.
     pub linkage: Option<Linkage>,
+    /// The `#[link_section = "..."]` attribute, or what executable section this
+    /// should be placed in.
     pub link_section: Option<Symbol>,
 }
 
 bitflags! {
     #[derive(RustcEncodable, RustcDecodable)]
     pub struct CodegenFnAttrFlags: u32 {
+        /// #[cold], a hint to LLVM that this function, when called, is never on
+        /// the hot path
         const COLD                      = 1 << 0;
+        /// #[allocator], a hint to LLVM that the pointer returned from this
+        /// function is never null
         const ALLOCATOR                 = 1 << 1;
+        /// #[unwind], an indicator that this function may unwind despite what
+        /// its ABI signature may otherwise imply
         const UNWIND                    = 1 << 2;
+        /// #[rust_allocator_nounwind], an indicator that an imported FFI
+        /// function will never unwind. Probably obsolete by recent changes with
+        /// #[unwind], but hasn't been removed/migrated yet
         const RUSTC_ALLOCATOR_NOUNWIND  = 1 << 3;
+        /// #[naked], indicates to LLVM that no function prologue/epilogue
+        /// should be generated
         const NAKED                     = 1 << 4;
+        /// #[no_mangle], the function's name should be the same as its symbol
         const NO_MANGLE                 = 1 << 5;
+        /// #[rustc_std_internal_symbol], and indicator that this symbol is a
+        /// "weird symbol" for the standard library in that it has slightly
+        /// different linkage, visibility, and reachability rules.
         const RUSTC_STD_INTERNAL_SYMBOL = 1 << 6;
+        /// #[no_debug], indicates that no debugging information should be
+        /// generated for this function by LLVM
         const NO_DEBUG                  = 1 << 7;
+        /// #[thread_local], indicates a static is actually a thread local
+        /// piece of memory
         const THREAD_LOCAL              = 1 << 8;
+        /// #[used], indicates that LLVM can't eliminate this function (but the
+        /// linker can!)
         const USED                      = 1 << 9;
     }
 }
@@ -2295,6 +2354,7 @@ impl CodegenFnAttrs {
             flags: CodegenFnAttrFlags::empty(),
             inline: InlineAttr::None,
             export_name: None,
+            link_name: None,
             target_features: vec![],
             linkage: None,
             link_section: None,
@@ -2313,4 +2373,33 @@ impl CodegenFnAttrs {
     pub fn contains_extern_indicator(&self) -> bool {
         self.flags.contains(CodegenFnAttrFlags::NO_MANGLE) || self.export_name.is_some()
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+pub enum Node<'hir> {
+    Item(&'hir Item),
+    ForeignItem(&'hir ForeignItem),
+    TraitItem(&'hir TraitItem),
+    ImplItem(&'hir ImplItem),
+    Variant(&'hir Variant),
+    Field(&'hir StructField),
+    AnonConst(&'hir AnonConst),
+    Expr(&'hir Expr),
+    Stmt(&'hir Stmt),
+    Ty(&'hir Ty),
+    TraitRef(&'hir TraitRef),
+    Binding(&'hir Pat),
+    Pat(&'hir Pat),
+    Block(&'hir Block),
+    Local(&'hir Local),
+    MacroDef(&'hir MacroDef),
+
+    /// StructCtor represents a tuple struct.
+    StructCtor(&'hir VariantData),
+
+    Lifetime(&'hir Lifetime),
+    GenericParam(&'hir GenericParam),
+    Visibility(&'hir Visibility),
+
+    Crate,
 }

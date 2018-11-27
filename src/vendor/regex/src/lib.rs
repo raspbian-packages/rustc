@@ -287,7 +287,7 @@ regexes.
 The syntax supported in this crate is documented below.
 
 Note that the regular expression parser and abstract syntax are exposed in
-a separate crate, [`regex-syntax`](../regex_syntax/index.html).
+a separate crate, [`regex-syntax`](https://docs.rs/regex-syntax).
 
 ## Matching one character
 
@@ -542,11 +542,11 @@ pub use re_builder::set_unicode::*;
 #[cfg(feature = "use_std")]
 pub use re_set::unicode::*;
 #[cfg(feature = "use_std")]
-pub use re_trait::Locations;
 #[cfg(feature = "use_std")]
 pub use re_unicode::{
     Regex, Match, Captures,
     CaptureNames, Matches, CaptureMatches, SubCaptureMatches,
+    CaptureLocations, Locations,
     Replacer, ReplacerRef, NoExpand, Split, SplitN,
     escape,
 };
@@ -644,7 +644,6 @@ pub mod bytes {
     pub use re_builder::set_bytes::*;
     pub use re_bytes::*;
     pub use re_set::bytes::*;
-    pub use re_trait::Locations;
 }
 
 mod backtrack;

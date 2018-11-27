@@ -7,6 +7,7 @@ src/doc/book/first-edition/src/the-stack-and-the-heap.md
 src/doc/book/*/tools/docx-to-md.xsl
 src/doc/rustc/src/lints/groups.md
 src/doc/rust-by-example/CODE_OF_CONDUCT.md
+src/doc/unstable-book/src/language-features/unsized-locals.md
 src/etc/third-party/README.txt
 src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
 src/libbacktrace/configure
@@ -49,6 +50,7 @@ src/stdsimd/.travis.yml
 src/tools/clippy/.github/deploy_key.enc
 src/vendor/num/ci/deploy.enc
 src/vendor/elasticlunr-rs/src/lang/*.rs
+src/vendor/cloudabi/cloudabi.rs
 
 # False-positive, hand-editable small image
 src/etc/installer/gfx/
@@ -74,6 +76,7 @@ src/stdsimd/crates/stdsimd-verify/x86-intel.xml
 src/stdsimd/stdsimd/arch/detect/test_data
 src/test/compile-fail/not-utf8.bin
 src/test/*/*.rs
+src/test/*/*/issues/*.rs
 src/test/*/*.stderr
 src/test/*/*/*.stderr
 src/test/*/*/*/*.stderr
@@ -88,9 +91,11 @@ src/vendor/html5ever/html5lib-tests/*/*.dat
 src/vendor/html5ever/html5lib-tests/*/*.test
 src/vendor/pretty_assertions/src/format_changeset.rs
 src/vendor/regex/src/testdata/basic.dat
+src/vendor/regex/tests/crates_regex.rs
 src/vendor/regex/tests/fowler.rs
 src/vendor/regex-0*/src/testdata/basic.dat
 src/vendor/regex-0*/tests/fowler.rs
+src/vendor/rustc-demangle/src/lib.rs
 src/vendor/tar/tests/archives/*.tar
 src/vendor/toml/tests/*/*.toml
 src/vendor/toml/tests/*/*.json

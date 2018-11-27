@@ -354,6 +354,7 @@ s! {
         pub portev_user: *mut ::c_void,
     }
 
+    #[cfg_attr(any(target_arch = "x86", target_arch = "x86_64"), repr(packed))]
     pub struct epoll_event {
         pub events: ::uint32_t,
         pub u64: ::uint64_t,
@@ -1193,6 +1194,9 @@ pub const PORT_SOURCE_MQ: ::c_int = 6;
 pub const PORT_SOURCE_FILE: ::c_int = 7;
 pub const PORT_SOURCE_POSTWAIT: ::c_int = 8;
 pub const PORT_SOURCE_SIGNAL: ::c_int = 9;
+
+pub const TIOCGWINSZ: ::c_int = 0x5468;
+pub const TIOCSWINSZ: ::c_int = 0x5467;
 
 pub const EPOLLIN: ::c_int = 0x1;
 pub const EPOLLPRI: ::c_int = 0x2;

@@ -1,13 +1,13 @@
 use std::cmp;
-use std::io::prelude::*;
 use std::io;
+use std::io::prelude::*;
 use std::mem;
 
 use super::{GzBuilder, GzHeader};
 use super::{FCOMMENT, FEXTRA, FHCRC, FNAME};
-use Compression;
 use crc::CrcReader;
 use deflate;
+use Compression;
 
 fn copy(into: &mut [u8], from: &[u8], pos: &mut usize) -> usize {
     let min = cmp::min(into.len(), from.len() - *pos);
@@ -17,7 +17,8 @@ fn copy(into: &mut [u8], from: &[u8], pos: &mut usize) -> usize {
     *pos += min;
     return min;
 }
-fn corrupt() -> io::Error {
+
+pub(crate) fn corrupt() -> io::Error {
     io::Error::new(
         io::ErrorKind::InvalidInput,
         "corrupt gzip stream does not have a matching checksum",
@@ -30,14 +31,14 @@ fn bad_header() -> io::Error {
 
 fn read_le_u16<R: Read>(r: &mut R) -> io::Result<u16> {
     let mut b = [0; 2];
-    try!(r.read_exact(&mut b));
+    r.read_exact(&mut b)?;
     Ok((b[0] as u16) | ((b[1] as u16) << 8))
 }
 
-fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
+pub(crate) fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
     let mut crc_reader = CrcReader::new(r);
     let mut header = [0; 10];
-    try!(crc_reader.read_exact(&mut header));
+    crc_reader.read_exact(&mut header)?;
 
     let id1 = header[0];
     let id2 = header[1];
@@ -50,15 +51,17 @@ fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
     }
 
     let flg = header[3];
-    let mtime = ((header[4] as u32) << 0) | ((header[5] as u32) << 8) | ((header[6] as u32) << 16) |
-        ((header[7] as u32) << 24);
+    let mtime = ((header[4] as u32) << 0)
+        | ((header[5] as u32) << 8)
+        | ((header[6] as u32) << 16)
+        | ((header[7] as u32) << 24);
     let _xfl = header[8];
     let os = header[9];
 
     let extra = if flg & FEXTRA != 0 {
-        let xlen = try!(read_le_u16(&mut crc_reader));
+        let xlen = read_le_u16(&mut crc_reader)?;
         let mut extra = vec![0; xlen as usize];
-        try!(crc_reader.read_exact(&mut extra));
+        crc_reader.read_exact(&mut extra)?;
         Some(extra)
     } else {
         None
@@ -67,7 +70,7 @@ fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
         // wow this is slow
         let mut b = Vec::new();
         for byte in crc_reader.by_ref().bytes() {
-            let byte = try!(byte);
+            let byte = byte?;
             if byte == 0 {
                 break;
             }
@@ -81,7 +84,7 @@ fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
         // wow this is slow
         let mut b = Vec::new();
         for byte in crc_reader.by_ref().bytes() {
-            let byte = try!(byte);
+            let byte = byte?;
             if byte == 0 {
                 break;
             }
@@ -94,7 +97,7 @@ fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
 
     if flg & FHCRC != 0 {
         let calced_crc = crc_reader.crc().sum() as u16;
-        let stored_crc = try!(read_le_u16(&mut crc_reader));
+        let stored_crc = read_le_u16(&mut crc_reader)?;
         if calced_crc != stored_crc {
             return Err(corrupt());
         }
@@ -108,7 +111,6 @@ fn read_gz_header<R: Read>(r: &mut R) -> io::Result<GzHeader> {
         mtime: mtime,
     })
 }
-
 
 /// A gzip streaming encoder
 ///
@@ -148,9 +150,7 @@ pub struct GzEncoder<R> {
     eof: bool,
 }
 
-pub fn gz_encoder<R: BufRead>(header: Vec<u8>, r: R, lvl: Compression)
-    -> GzEncoder<R>
-{
+pub fn gz_encoder<R: BufRead>(header: Vec<u8>, r: R, lvl: Compression) -> GzEncoder<R> {
     let crc = CrcReader::new(r);
     GzEncoder {
         inner: deflate::bufread::DeflateEncoder::new(crc, lvl),
@@ -224,7 +224,7 @@ impl<R: BufRead> Read for GzEncoder<R> {
             let tmp = into;
             into = &mut tmp[amt..];
         }
-        match try!(self.inner.read(into)) {
+        match self.inner.read(into)? {
             0 => {
                 self.eof = true;
                 self.pos = 0;
@@ -245,7 +245,6 @@ impl<R: BufRead + Write> Write for GzEncoder<R> {
     }
 }
 
-
 /// A gzip streaming decoder
 ///
 /// This structure exposes a [`ReadBuf`] interface that will consume compressed
@@ -264,7 +263,7 @@ impl<R: BufRead + Write> Write for GzEncoder<R> {
 ///
 /// # fn main() {
 /// #   let mut e = GzEncoder::new(Vec::new(), Compression::default());
-/// #   e.write(b"Hello World").unwrap();
+/// #   e.write_all(b"Hello World").unwrap();
 /// #   let bytes = e.finish().unwrap();
 /// #   println!("{}", decode_reader(bytes).unwrap());
 /// # }
@@ -282,10 +281,9 @@ impl<R: BufRead + Write> Write for GzEncoder<R> {
 #[derive(Debug)]
 pub struct GzDecoder<R> {
     inner: CrcReader<deflate::bufread::DeflateDecoder<R>>,
-    header: io::Result<GzHeader>,
+    header: Option<io::Result<GzHeader>>,
     finished: bool,
 }
-
 
 impl<R: BufRead> GzDecoder<R> {
     /// Creates a new decoder from the given reader, immediately parsing the
@@ -296,7 +294,7 @@ impl<R: BufRead> GzDecoder<R> {
         let flate = deflate::bufread::DeflateDecoder::new(r);
         GzDecoder {
             inner: CrcReader::new(flate),
-            header: header,
+            header: Some(header),
             finished: false,
         }
     }
@@ -310,18 +308,22 @@ impl<R: BufRead> GzDecoder<R> {
             let mut len = 0;
 
             while len < buf.len() {
-                match try!(self.inner.get_mut().get_mut().read(&mut buf[len..])) {
+                match self.inner.get_mut().get_mut().read(&mut buf[len..])? {
                     0 => return Err(corrupt()),
                     n => len += n,
                 }
             }
         }
 
-        let crc = ((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16) |
-            ((buf[3] as u32) << 24);
-        let amt = ((buf[4] as u32) << 0) | ((buf[5] as u32) << 8) | ((buf[6] as u32) << 16) |
-            ((buf[7] as u32) << 24);
-        if crc != self.inner.crc().sum() as u32 {
+        let crc = ((buf[0] as u32) << 0)
+            | ((buf[1] as u32) << 8)
+            | ((buf[2] as u32) << 16)
+            | ((buf[3] as u32) << 24);
+        let amt = ((buf[4] as u32) << 0)
+            | ((buf[5] as u32) << 8)
+            | ((buf[6] as u32) << 16)
+            | ((buf[7] as u32) << 24);
+        if crc != self.inner.crc().sum() {
             return Err(corrupt());
         }
         if amt != self.inner.crc().amount() {
@@ -335,7 +337,7 @@ impl<R: BufRead> GzDecoder<R> {
 impl<R> GzDecoder<R> {
     /// Returns the header associated with this stream, if it was valid
     pub fn header(&self) -> Option<&GzHeader> {
-        self.header.as_ref().ok()
+        self.header.as_ref().and_then(|h| h.as_ref().ok())
     }
 
     /// Acquires a reference to the underlying reader.
@@ -359,13 +361,20 @@ impl<R> GzDecoder<R> {
 
 impl<R: BufRead> Read for GzDecoder<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
-        if let Err(ref mut e) = self.header {
-            let another_error = io::ErrorKind::Other.into();
-            return Err(mem::replace(e, another_error))
+        match self.header {
+            None => return Ok(0), // error already returned,
+            Some(Ok(_)) => {}
+            Some(Err(_)) => match self.header.take().unwrap() {
+                Ok(_) => panic!(),
+                Err(e) => return Err(e),
+            },
         }
-        match try!(self.inner.read(into)) {
+        if into.is_empty() {
+            return Ok(0);
+        }
+        match self.inner.read(into)? {
             0 => {
-                try!(self.finish());
+                self.finish()?;
                 Ok(0)
             }
             n => Ok(n),
@@ -382,8 +391,6 @@ impl<R: BufRead + Write> Write for GzDecoder<R> {
         self.get_mut().flush()
     }
 }
-
-
 
 /// A gzip streaming decoder that decodes all members of a multistream
 ///
@@ -410,7 +417,7 @@ impl<R: BufRead + Write> Write for GzDecoder<R> {
 ///
 /// # fn main() {
 /// #   let mut e = GzEncoder::new(Vec::new(), Compression::default());
-/// #   e.write(b"Hello World").unwrap();
+/// #   e.write_all(b"Hello World").unwrap();
 /// #   let bytes = e.finish().unwrap();
 /// #   println!("{}", decode_reader(bytes).unwrap());
 /// # }
@@ -431,7 +438,6 @@ pub struct MultiGzDecoder<R> {
     header: io::Result<GzHeader>,
     finished: bool,
 }
-
 
 impl<R: BufRead> MultiGzDecoder<R> {
     /// Creates a new decoder from the given reader, immediately parsing the
@@ -457,17 +463,21 @@ impl<R: BufRead> MultiGzDecoder<R> {
             let mut len = 0;
 
             while len < buf.len() {
-                match try!(self.inner.get_mut().get_mut().read(&mut buf[len..])) {
+                match self.inner.get_mut().get_mut().read(&mut buf[len..])? {
                     0 => return Err(corrupt()),
                     n => len += n,
                 }
             }
         }
 
-        let crc = ((buf[0] as u32) << 0) | ((buf[1] as u32) << 8) | ((buf[2] as u32) << 16) |
-            ((buf[3] as u32) << 24);
-        let amt = ((buf[4] as u32) << 0) | ((buf[5] as u32) << 8) | ((buf[6] as u32) << 16) |
-            ((buf[7] as u32) << 24);
+        let crc = ((buf[0] as u32) << 0)
+            | ((buf[1] as u32) << 8)
+            | ((buf[2] as u32) << 16)
+            | ((buf[3] as u32) << 24);
+        let amt = ((buf[4] as u32) << 0)
+            | ((buf[5] as u32) << 8)
+            | ((buf[6] as u32) << 16)
+            | ((buf[7] as u32) << 24);
         if crc != self.inner.crc().sum() as u32 {
             return Err(corrupt());
         }
@@ -522,9 +532,9 @@ impl<R: BufRead> Read for MultiGzDecoder<R> {
     fn read(&mut self, into: &mut [u8]) -> io::Result<usize> {
         if let Err(ref mut e) = self.header {
             let another_error = io::ErrorKind::Other.into();
-            return Err(mem::replace(e, another_error))
+            return Err(mem::replace(e, another_error));
         }
-        match try!(self.inner.read(into)) {
+        match self.inner.read(into)? {
             0 => match self.finish_member() {
                 Ok(0) => Ok(0),
                 Ok(_) => self.read(into),

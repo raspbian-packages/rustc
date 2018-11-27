@@ -21,7 +21,7 @@ use borrowck;
 use borrowck::{BorrowckCtxt, LoanPath};
 use dot;
 use rustc::cfg::CFGIndex;
-use rustc::middle::dataflow::{DataFlowOperator, DataFlowContext, EntryOrExit};
+use dataflow::{DataFlowOperator, DataFlowContext, EntryOrExit};
 use std::rc::Rc;
 use dot::IntoCow;
 
@@ -53,7 +53,7 @@ impl<'a, 'tcx> DataflowLabeller<'a, 'tcx> {
     fn dataflow_for(&self, e: EntryOrExit, n: &Node<'a>) -> String {
         let id = n.1.data.id();
         debug!("dataflow_for({:?}, id={:?}) {:?}", e, id, self.variants);
-        let mut sets = "".to_string();
+        let mut sets = String::new();
         let mut seen_one = false;
         for &variant in &self.variants {
             if seen_one { sets.push_str(" "); } else { seen_one = true; }

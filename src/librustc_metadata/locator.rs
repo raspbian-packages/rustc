@@ -226,7 +226,8 @@ use cstore::{MetadataRef, MetadataBlob};
 use creader::Library;
 use schema::{METADATA_HEADER, rustc_version};
 
-use rustc::hir::svh::Svh;
+use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::svh::Svh;
 use rustc::middle::cstore::MetadataLoader;
 use rustc::session::{config, Session};
 use rustc::session::filesearch::{FileSearch, FileMatches, FileDoesntMatch};
@@ -239,7 +240,6 @@ use syntax_pos::Span;
 use rustc_target::spec::{Target, TargetTriple};
 
 use std::cmp;
-use std::collections::HashSet;
 use std::fmt;
 use std::fs;
 use std::io::{self, Read};
@@ -308,7 +308,7 @@ impl CratePaths {
 
 impl<'a> Context<'a> {
     pub fn maybe_load_library_crate(&mut self) -> Option<Library> {
-        let mut seen_paths = HashSet::new();
+        let mut seen_paths = FxHashSet::default();
         match self.extra_filename {
             Some(s) => self.find_library_crate(s, &mut seen_paths)
                 .or_else(|| self.find_library_crate("", &mut seen_paths)),
@@ -431,14 +431,19 @@ impl<'a> Context<'a> {
 
     fn find_library_crate(&mut self,
                           extra_prefix: &str,
-                          seen_paths: &mut HashSet<PathBuf>)
+                          seen_paths: &mut FxHashSet<PathBuf>)
                           -> Option<Library> {
         // If an SVH is specified, then this is a transitive dependency that
         // must be loaded via -L plus some filtering.
         if self.hash.is_none() {
             self.should_match_name = false;
             if let Some(s) = self.sess.opts.externs.get(&self.crate_name.as_str()) {
-                return self.find_commandline_library(s.iter());
+                // Only use `--extern crate_name=path` here, not `--extern crate_name`.
+                if s.iter().any(|l| l.is_some()) {
+                    return self.find_commandline_library(
+                        s.iter().filter_map(|l| l.as_ref()),
+                    );
+                }
             }
             self.should_match_name = true;
         }
@@ -451,7 +456,10 @@ impl<'a> Context<'a> {
         let rlib_prefix = format!("lib{}{}", self.crate_name, extra_prefix);
         let staticlib_prefix = format!("{}{}{}", staticpair.0, self.crate_name, extra_prefix);
 
-        let mut candidates = FxHashMap();
+        let mut candidates: FxHashMap<
+            _,
+            (FxHashMap<_, _>, FxHashMap<_, _>, FxHashMap<_, _>),
+        > = FxHashMap();
         let mut staticlibs = vec![];
 
         // First, find all possible candidate rlibs and dylibs purely based on
@@ -493,8 +501,7 @@ impl<'a> Context<'a> {
             info!("lib candidate: {}", path.display());
 
             let hash_str = hash.to_string();
-            let slot = candidates.entry(hash_str)
-                .or_insert_with(|| (FxHashMap(), FxHashMap(), FxHashMap()));
+            let slot = candidates.entry(hash_str).or_default();
             let (ref mut rlibs, ref mut rmetas, ref mut dylibs) = *slot;
             fs::canonicalize(path)
                 .map(|p| {

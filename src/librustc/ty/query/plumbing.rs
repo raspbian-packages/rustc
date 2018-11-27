@@ -32,7 +32,7 @@ use std::mem;
 use std::ptr;
 use std::collections::hash_map::Entry;
 use syntax_pos::Span;
-use syntax::codemap::DUMMY_SP;
+use syntax::source_map::DUMMY_SP;
 
 pub struct QueryCache<'tcx, D: QueryConfig<'tcx> + ?Sized> {
     pub(super) results: FxHashMap<D::Key, QueryValue<D::Value>>,
@@ -118,6 +118,11 @@ impl<'a, 'tcx, Q: QueryDescription<'tcx>> JobOwner<'a, 'tcx, Q> {
             let mut lock = cache.borrow_mut();
             if let Some(value) = lock.results.get(key) {
                 profq_msg!(tcx, ProfileQueriesMsg::CacheHit);
+                tcx.sess.profiler(|p| {
+                    p.record_query(Q::CATEGORY);
+                    p.record_query_hit(Q::CATEGORY);
+                });
+
                 let result = Ok((value.value.clone(), value.index));
                 return TryGetJob::JobCompleted(result);
             }
@@ -246,7 +251,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         assert!(!stack.is_empty());
 
         let fix_span = |span: Span, query: &Query<'gcx>| {
-            self.sess.codemap().def_span(query.default_span(self, span))
+            self.sess.source_map().def_span(query.default_span(self, span))
         };
 
         // Disable naming impls with types in this path, since that
@@ -294,7 +299,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                  i,
                                  query.info.query.name(),
                                  query.info.query.describe(icx.tcx)));
-                    db.set_span(icx.tcx.sess.codemap().def_span(query.info.span));
+                    db.set_span(icx.tcx.sess.source_map().def_span(query.info.span));
                     icx.tcx.sess.diagnostic().force_print_db(db);
 
                     current_query = query.parent.clone();
@@ -358,10 +363,13 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             )
         );
 
+        self.sess.profiler(|p| p.record_query(Q::CATEGORY));
+
         let job = match JobOwner::try_get(self, span, &key) {
             TryGetJob::NotYetStarted(job) => job,
             TryGetJob::JobCompleted(result) => {
                 return result.map(|(v, index)| {
+                    self.sess.profiler(|p| p.record_query_hit(Q::CATEGORY));
                     self.dep_graph.read_index(index);
                     v
                 })
@@ -379,6 +387,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
         if dep_node.kind.is_anon() {
             profq_msg!(self, ProfileQueriesMsg::ProviderBegin);
+            self.sess.profiler(|p| p.start_activity(Q::CATEGORY));
 
             let res = job.start(self, |tcx| {
                 tcx.dep_graph.with_anon_task(dep_node.kind, || {
@@ -386,6 +395,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 })
             });
 
+            self.sess.profiler(|p| p.end_activity(Q::CATEGORY));
             profq_msg!(self, ProfileQueriesMsg::ProviderEnd);
             let ((result, dep_node_index), diagnostics) = res;
 
@@ -402,6 +412,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         if !dep_node.kind.is_input() {
             if let Some(dep_node_index) = self.try_mark_green_and_read(&dep_node) {
                 profq_msg!(self, ProfileQueriesMsg::CacheHit);
+                self.sess.profiler(|p| p.record_query_hit(Q::CATEGORY));
+
                 return self.load_from_disk_and_cache_in_memory::<Q>(key,
                                                                     job,
                                                                     dep_node_index,
@@ -523,6 +535,11 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 key, dep_node);
 
         profq_msg!(self, ProfileQueriesMsg::ProviderBegin);
+        self.sess.profiler(|p| {
+            p.start_activity(Q::CATEGORY);
+            p.record_query(Q::CATEGORY);
+        });
+
         let res = job.start(self, |tcx| {
             if dep_node.kind.is_eval_always() {
                 tcx.dep_graph.with_eval_always_task(dep_node,
@@ -536,6 +553,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                                         Q::compute)
             }
         });
+
+        self.sess.profiler(|p| p.end_activity(Q::CATEGORY));
         profq_msg!(self, ProfileQueriesMsg::ProviderEnd);
 
         let ((result, dep_node_index), diagnostics) = res;
@@ -574,7 +593,15 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             // DepNodeIndex. We must invoke the query itself. The performance cost
             // this introduces should be negligible as we'll immediately hit the
             // in-memory cache, or another query down the line will.
+
+            self.sess.profiler(|p| {
+                p.start_activity(Q::CATEGORY);
+                p.record_query(Q::CATEGORY);
+            });
+
             let _ = self.get_query::<Q>(DUMMY_SP, key);
+
+            self.sess.profiler(|p| p.end_activity(Q::CATEGORY));
         }
     }
 
@@ -655,6 +682,7 @@ macro_rules! define_queries_inner {
             rustc_data_structures::stable_hasher::StableHasher,
             ich::StableHashingContext
         };
+        use util::profiling::ProfileCategory;
 
         define_queries_struct! {
             tcx: $tcx,
@@ -664,10 +692,12 @@ macro_rules! define_queries_inner {
         impl<$tcx> Queries<$tcx> {
             pub fn new(
                 providers: IndexVec<CrateNum, Providers<$tcx>>,
+                fallback_extern_providers: Providers<$tcx>,
                 on_disk_cache: OnDiskCache<'tcx>,
             ) -> Self {
                 Queries {
                     providers,
+                    fallback_extern_providers: Box::new(fallback_extern_providers),
                     on_disk_cache,
                     $($name: Lock::new(QueryCache::new())),*
                 }
@@ -690,7 +720,7 @@ macro_rules! define_queries_inner {
             }
         }
 
-        #[allow(bad_style)]
+        #[allow(nonstandard_style)]
         #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
         pub enum Query<$tcx> {
             $($(#[$attr])* $name($K)),*
@@ -747,7 +777,7 @@ macro_rules! define_queries_inner {
         pub mod queries {
             use std::marker::PhantomData;
 
-            $(#[allow(bad_style)]
+            $(#[allow(nonstandard_style)]
             pub struct $name<$tcx> {
                 data: PhantomData<&$tcx ()>
             })*
@@ -768,6 +798,7 @@ macro_rules! define_queries_inner {
             type Value = $V;
 
             const NAME: &'static str = stringify!($name);
+            const CATEGORY: ProfileCategory = $category;
         }
 
         impl<$tcx> QueryAccessors<$tcx> for queries::$name<$tcx> {
@@ -789,7 +820,13 @@ macro_rules! define_queries_inner {
             #[inline]
             fn compute(tcx: TyCtxt<'_, 'tcx, '_>, key: Self::Key) -> Self::Value {
                 __query_compute::$name(move || {
-                    let provider = tcx.queries.providers[key.query_crate()].$name;
+                    let provider = tcx.queries.providers.get(key.query_crate())
+                        // HACK(eddyb) it's possible crates may be loaded after
+                        // the query engine is created, and because crate loading
+                        // is not yet integrated with the query engine, such crates
+                        // would be be missing appropriate entries in `providers`.
+                        .unwrap_or(&tcx.queries.fallback_extern_providers)
+                        .$name;
                     provider(tcx.global_tcx(), key)
                 })
             }
@@ -870,6 +907,7 @@ macro_rules! define_queries_struct {
             pub(crate) on_disk_cache: OnDiskCache<'tcx>,
 
             providers: IndexVec<CrateNum, Providers<$tcx>>,
+            fallback_extern_providers: Box<Providers<$tcx>>,
 
             $($(#[$attr])*  $name: Lock<QueryCache<$tcx, queries::$name<$tcx>>>,)*
         }
@@ -1033,7 +1071,6 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::FulfillObligation |
         DepKind::VtableMethods |
         DepKind::EraseRegionsTy |
-        DepKind::ConstValueToAllocation |
         DepKind::NormalizeProjectionTy |
         DepKind::NormalizeTyAfterErasingRegions |
         DepKind::ImpliedOutlivesBounds |
@@ -1140,6 +1177,7 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::IsPanicRuntime => { force!(is_panic_runtime, krate!()); }
         DepKind::IsCompilerBuiltins => { force!(is_compiler_builtins, krate!()); }
         DepKind::HasGlobalAllocator => { force!(has_global_allocator, krate!()); }
+        DepKind::HasPanicHandler => { force!(has_panic_handler, krate!()); }
         DepKind::ExternCrate => { force!(extern_crate, def_id!()); }
         DepKind::LintLevels => { force!(lint_levels, LOCAL_CRATE); }
         DepKind::InScopeTraits => { force!(in_scope_traits_map, def_id!().index); }
@@ -1189,6 +1227,8 @@ pub fn force_from_dep_node<'a, 'gcx, 'lcx>(tcx: TyCtxt<'a, 'gcx, 'lcx>,
         DepKind::CrateName => { force!(crate_name, krate!()); }
         DepKind::ItemChildren => { force!(item_children, def_id!()); }
         DepKind::ExternModStmtCnum => { force!(extern_mod_stmt_cnum, def_id!()); }
+        DepKind::GetLibFeatures => { force!(get_lib_features, LOCAL_CRATE); }
+        DepKind::DefinedLibFeatures => { force!(defined_lib_features, krate!()); }
         DepKind::GetLangItems => { force!(get_lang_items, LOCAL_CRATE); }
         DepKind::DefinedLangItems => { force!(defined_lang_items, krate!()); }
         DepKind::MissingLangItems => { force!(missing_lang_items, krate!()); }

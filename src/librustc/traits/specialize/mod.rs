@@ -90,7 +90,7 @@ pub fn translate_substs<'a, 'gcx, 'tcx>(infcx: &InferCtxt<'a, 'gcx, 'tcx>,
                                 .unwrap()
                                 .subst(infcx.tcx, &source_substs);
 
-    // translate the Self and TyParam parts of the substitution, since those
+    // translate the Self and Param parts of the substitution, since those
     // vary across impls
     let target_substs = match target_node {
         specialization_graph::Node::Impl(target_impl) => {
@@ -344,7 +344,7 @@ pub(super) fn specialization_graph_provider<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx
                         }),
                     if used_to_be_allowed { " (E0119)" } else { "" }
                 );
-                let impl_span = tcx.sess.codemap().def_span(
+                let impl_span = tcx.sess.source_map().def_span(
                     tcx.span_of_impl(impl_def_id).unwrap()
                 );
                 let mut err = if used_to_be_allowed {
@@ -363,7 +363,7 @@ pub(super) fn specialization_graph_provider<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx
 
                 match tcx.span_of_impl(overlap.with_impl) {
                     Ok(span) => {
-                        err.span_label(tcx.sess.codemap().def_span(span),
+                        err.span_label(tcx.sess.source_map().def_span(span),
                                        "first implementation here".to_string());
                         err.span_label(impl_span,
                                        format!("conflicting implementation{}",

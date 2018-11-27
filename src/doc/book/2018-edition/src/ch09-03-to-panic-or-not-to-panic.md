@@ -81,14 +81,11 @@ bug in their code so they can fix it during development. Similarly, `panic!` is
 often appropriate if you’re calling external code that is out of your control
 and it returns an invalid state that you have no way of fixing.
 
-When a bad state is reached, but it’s expected to happen no matter how well you
-write your code, it’s still more appropriate to return a `Result` rather than
-to make a `panic!` call. Examples include a parser being given malformed data
-or an HTTP request returning a status that indicates you have hit a rate limit.
-In these cases, you should indicate that failure is an expected possibility by
-returning a `Result` to propagate these bad states upward so the calling code
-can decide how to handle the problem. To call `panic!` wouldn’t be the best way
-to handle these cases.
+However, when failure is expected, it is more appropriate to return a `Result`
+than to make a `panic!` call. Examples include a parser being given malformed
+data or an HTTP request returning a status that indicates you have hit a rate
+limit. In these cases, returning a `Result` indicates that failure is an
+expected possibility that the calling code must decide how to handle.
 
 When your code performs operations on values, your code should verify the
 values are valid first and panic if the values aren’t valid. This is mostly for
@@ -172,11 +169,11 @@ receives a value between 1 and 100:
 
 ```rust
 pub struct Guess {
-    value: u32,
+    value: i32,
 }
 
 impl Guess {
-    pub fn new(value: u32) -> Guess {
+    pub fn new(value: i32) -> Guess {
         if value < 1 || value > 100 {
             panic!("Guess value must be between 1 and 100, got {}.", value);
         }
@@ -186,7 +183,7 @@ impl Guess {
         }
     }
 
-    pub fn value(&self) -> u32 {
+    pub fn value(&self) -> i32 {
         self.value
     }
 }
@@ -196,11 +193,11 @@ impl Guess {
 values between 1 and 100</span>
 
 First, we define a struct named `Guess` that has a field named `value` that
-holds a `u32`. This is where the number will be stored.
+holds a `i32`. This is where the number will be stored.
 
 Then we implement an associated function named `new` on `Guess` that creates
 instances of `Guess` values. The `new` function is defined to have one
-parameter named `value` of type `u32` and to return a `Guess`. The code in the
+parameter named `value` of type `i32` and to return a `Guess`. The code in the
 body of the `new` function tests `value` to make sure it’s between 1 and 100.
 If `value` doesn’t pass this test, we make a `panic!` call, which will alert
 the programmer who is writing the calling code that they have a bug they need
@@ -213,7 +210,7 @@ of a `panic!` in the API documentation that you create in Chapter 14. If
 to the `value` parameter and return the `Guess`.
 
 Next, we implement a method named `value` that borrows `self`, doesn’t have any
-other parameters, and returns a `u32`. This kind of method is sometimes called
+other parameters, and returns a `i32`. This kind of method is sometimes called
 a *getter*, because its purpose is to get some data from its fields and return
 it. This public method is necessary because the `value` field of the `Guess`
 struct is private. It’s important that the `value` field be private so code
@@ -224,7 +221,7 @@ hasn’t been checked by the conditions in the `Guess::new` function.
 
 A function that has a parameter or returns only numbers between 1 and 100 could
 then declare in its signature that it takes or returns a `Guess` rather than a
-`u32` and wouldn’t need to do any additional checks in its body.
+`i32` and wouldn’t need to do any additional checks in its body.
 
 ## Summary
 

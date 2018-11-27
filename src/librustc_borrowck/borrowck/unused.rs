@@ -13,6 +13,7 @@ use rustc::hir::{self, HirId};
 use rustc::lint::builtin::UNUSED_MUT;
 use rustc::ty;
 use rustc::util::nodemap::{FxHashMap, FxHashSet};
+use errors::Applicability;
 use std::slice;
 use syntax::ptr::P;
 
@@ -44,7 +45,7 @@ struct UnusedMutCx<'a, 'tcx: 'a> {
 impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
     fn check_unused_mut_pat(&self, pats: &[P<hir::Pat>]) {
         let tcx = self.bccx.tcx;
-        let mut mutables = FxHashMap();
+        let mut mutables: FxHashMap<_, Vec<_>> = FxHashMap();
         for p in pats {
             p.each_binding(|_, hir_id, span, ident| {
                 // Skip anything that looks like `_foo`
@@ -60,7 +61,7 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
                         _ => return,
                     }
 
-                    mutables.entry(ident.name).or_insert(Vec::new()).push((hir_id, span));
+                    mutables.entry(ident.name).or_default().push((hir_id, span));
                 } else {
                     tcx.sess.delay_span_bug(span, "missing binding mode");
                 }
@@ -75,7 +76,7 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
             }
 
             let (hir_id, span) = ids[0];
-            let mut_span = tcx.sess.codemap().span_until_non_whitespace(span);
+            let mut_span = tcx.sess.source_map().span_until_non_whitespace(span);
 
             // Ok, every name wasn't used mutably, so issue a warning that this
             // didn't need to be mutable.
@@ -83,7 +84,11 @@ impl<'a, 'tcx> UnusedMutCx<'a, 'tcx> {
                                      hir_id,
                                      span,
                                      "variable does not need to be mutable")
-                .span_suggestion_short(mut_span, "remove this `mut`", "".to_owned())
+                .span_suggestion_short_with_applicability(
+                    mut_span,
+                    "remove this `mut`",
+                    String::new(),
+                    Applicability::MachineApplicable)
                 .emit();
         }
     }

@@ -20,6 +20,7 @@ use rustc::ty::adjustment::{Adjustment, Adjust, AllowTwoPhase, AutoBorrow, AutoB
 use rustc_target::spec::abi;
 use syntax::ast::Ident;
 use syntax_pos::Span;
+use errors::Applicability;
 
 use rustc::hir;
 
@@ -95,13 +96,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         // If the callee is a bare function or a closure, then we're all set.
         match adjusted_ty.sty {
-            ty::TyFnDef(..) | ty::TyFnPtr(_) => {
+            ty::FnDef(..) | ty::FnPtr(_) => {
                 let adjustments = autoderef.adjust_steps(Needs::None);
                 self.apply_adjustments(callee_expr, adjustments);
                 return Some(CallStep::Builtin(adjusted_ty));
             }
 
-            ty::TyClosure(def_id, substs) => {
+            ty::Closure(def_id, substs) => {
                 assert_eq!(def_id.krate, LOCAL_CRATE);
 
                 // Check whether this is a call to a closure where we
@@ -135,7 +136,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             // over the top. The simplest fix by far is to just ignore
             // this case and deref again, so we wind up with
             // `FnMut::call_mut(&mut *x, ())`.
-            ty::TyRef(..) if autoderef.step_count() == 0 => {
+            ty::Ref(..) if autoderef.step_count() == 0 => {
                 return None;
             }
 
@@ -175,7 +176,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     let method = self.register_infer_ok_obligations(ok);
                     let mut autoref = None;
                     if borrow {
-                        if let ty::TyRef(region, _, mutbl) = method.sig.inputs()[0].sty {
+                        if let ty::Ref(region, _, mutbl) = method.sig.inputs()[0].sty {
                             let mutbl = match mutbl {
                                 hir::MutImmutable => AutoBorrowMutability::Immutable,
                                 hir::MutMutable => AutoBorrowMutability::Mutable {
@@ -206,13 +207,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             expected: Expectation<'tcx>)
                             -> Ty<'tcx> {
         let (fn_sig, def_span) = match callee_ty.sty {
-            ty::TyFnDef(def_id, _) => {
+            ty::FnDef(def_id, _) => {
                 (callee_ty.fn_sig(self.tcx), self.tcx.hir.span_if_local(def_id))
             }
-            ty::TyFnPtr(sig) => (sig, None),
+            ty::FnPtr(sig) => (sig, None),
             ref t => {
                 let mut unit_variant = None;
-                if let &ty::TyAdt(adt_def, ..) = t {
+                if let &ty::Adt(adt_def, ..) = t {
                     if adt_def.is_enum() {
                         if let hir::ExprKind::Call(ref expr, _) = call_expr.node {
                             unit_variant = Some(self.tcx.hir.node_to_pretty_string(expr.id))
@@ -234,10 +235,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 err.span_label(call_expr.span, "not a function");
 
                 if let Some(ref path) = unit_variant {
-                    err.span_suggestion(call_expr.span,
-                                        &format!("`{}` is a unit variant, you need to write it \
-                                                  without the parenthesis", path),
-                                        path.to_string());
+                    err.span_suggestion_with_applicability(
+                        call_expr.span,
+                        &format!("`{}` is a unit variant, you need to write it \
+                                 without the parenthesis", path),
+                        path.to_string(),
+                        Applicability::MachineApplicable
+                    );
                 }
 
                 if let hir::ExprKind::Call(ref expr, _) = call_expr.node {

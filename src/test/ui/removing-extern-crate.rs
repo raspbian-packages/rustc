@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition 2018
+// edition:2018
 // aux-build:removing-extern-crate.rs
 // run-rustfix
 // compile-pass
@@ -16,12 +16,12 @@
 #![warn(rust_2018_idioms)]
 #![allow(unused_imports)]
 
-extern crate std as foo;
+extern crate removing_extern_crate as foo;
 extern crate core;
 
 mod another {
-    extern crate std as foo;
-    extern crate std;
+    extern crate removing_extern_crate as foo;
+    extern crate core;
 }
 
 fn main() {}

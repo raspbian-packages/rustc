@@ -918,7 +918,7 @@ extern "rust-intrinsic" {
     ///         // treat it as "dead", and therefore, you only have two real
     ///         // mutable slices.
     ///         (slice::from_raw_parts_mut(ptr, mid),
-    ///          slice::from_raw_parts_mut(ptr.offset(mid as isize), len - mid))
+    ///          slice::from_raw_parts_mut(ptr.add(mid), len - mid))
     ///     }
     /// }
     /// ```
@@ -1087,11 +1087,9 @@ extern "rust-intrinsic" {
 
     /// Perform a volatile load from the `src` pointer
     /// The pointer is not required to be aligned.
-    #[cfg(not(stage0))]
     pub fn unaligned_volatile_load<T>(src: *const T) -> T;
     /// Perform a volatile store to the `dst` pointer.
     /// The pointer is not required to be aligned.
-    #[cfg(not(stage0))]
     pub fn unaligned_volatile_store<T>(dst: *mut T, val: T);
 
     /// Returns the square root of an `f32`

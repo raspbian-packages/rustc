@@ -71,6 +71,10 @@ pub struct Config {
     env: Vec<(OsString, OsString)>,
     static_crt: Option<bool>,
     uses_cxx11: bool,
+    always_configure: bool,
+    no_build_target: bool,
+    verbose_cmake: bool,
+    verbose_make: bool,
 }
 
 /// Builds the native library rooted at `path` with the default cmake options.
@@ -112,7 +116,11 @@ impl Config {
             cmake_target: None,
             env: Vec::new(),
             static_crt: None,
-            uses_cxx11: false
+            uses_cxx11: false,
+            always_configure: true,
+            no_build_target: false,
+            verbose_cmake: false,
+            verbose_make: false,
         }
     }
 
@@ -165,6 +173,12 @@ impl Config {
         self
     }
 
+    /// Disables the target option for this compilation.
+    pub fn no_build_target(&mut self, no_build_target: bool) -> &mut Config {
+        self.no_build_target = no_build_target;
+        self
+    }
+
     /// Sets the host triple for this compilation.
     ///
     /// This is automatically scraped from `$HOST` which is set for Cargo
@@ -183,10 +197,16 @@ impl Config {
         self
     }
 
-    /// Sets the profile for this compilation.
+    /// Sets the `CMAKE_BUILD_TYPE=build_type` variable.
     ///
-    /// This is automatically scraped from `$PROFILE` which is set for Cargo
-    /// build scripts so it's not necessary to call this from a build script.
+    /// By default, this value is automatically inferred from Rust's compilation
+    /// profile as follows:
+    ///
+    /// * if `opt-level=0` then `CMAKE_BUILD_TYPE=Debug`,
+    /// * if `opt-level={1,2,3}` and:
+    ///   * `debug=false` then `CMAKE_BUILD_TYPE=Release`
+    ///   * otherwise `CMAKE_BUILD_TYPE=RelWithDebInfo`
+    /// * if `opt-level={s,z}` then `CMAKE_BUILD_TYPE=MinSizeRel`
     pub fn profile(&mut self, profile: &str) -> &mut Config {
         self.profile = Some(profile.to_string());
         self
@@ -231,6 +251,22 @@ impl Config {
     /// -std=c++11 or -stdlib=libc++.
     pub fn uses_cxx11(&mut self) -> &mut Config {
         self.uses_cxx11 = true;
+        self
+    }
+
+    /// Forces CMake to always run before building the custom target.
+    ///
+    /// In some cases, when you have a big project, you can disable
+    /// subsequents runs of cmake to make `cargo build` faster.
+    pub fn always_configure(&mut self, always_configure: bool) -> &mut Config {
+        self.always_configure = always_configure;
+        self
+    }
+
+    /// Sets very verbose output.
+    pub fn very_verbose(&mut self, value: bool) -> &mut Config {
+        self.verbose_cmake = value;
+        self.verbose_make = value;
         self
     }
 
@@ -286,6 +322,7 @@ impl Config {
         // Add all our dependencies to our cmake paths
         let mut cmake_prefix_path = Vec::new();
         for dep in &self.deps {
+            let dep = dep.to_uppercase().replace('-', "_");
             if let Some(root) = env::var_os(&format!("DEP_{}_ROOT", dep)) {
                 cmake_prefix_path.push(PathBuf::from(root));
             }
@@ -299,6 +336,12 @@ impl Config {
         // Build up the first cmake command to build the build system.
         let executable = env::var("CMAKE").unwrap_or("cmake".to_owned());
         let mut cmd = Command::new(executable);
+
+        if self.verbose_cmake {
+            cmd.arg("-Wdev");
+            cmd.arg("--debug-output");
+        }
+
         cmd.arg(&self.path)
            .current_dir(&build);
         if target.contains("windows-gnu") {
@@ -307,7 +350,21 @@ impl Config {
                 // studio build system but instead use makefiles that MinGW can
                 // use to build.
                 if self.generator.is_none() {
-                    cmd.arg("-G").arg("MSYS Makefiles");
+                    // If make.exe isn't found, that means we may be using a MinGW
+                    // toolchain instead of a MSYS2 toolchain. If neither is found,
+                    // the build cannot continue.
+                    let has_msys2 = Command::new("make").arg("--version").output().err()
+                        .map(|e| e.kind() != ErrorKind::NotFound).unwrap_or(true);
+                    let has_mingw32 = Command::new("mingw32-make").arg("--version").output().err()
+                        .map(|e| e.kind() != ErrorKind::NotFound).unwrap_or(true);
+
+                    let generator = match (has_msys2, has_mingw32) {
+                        (true, _) => "MSYS Makefiles",
+                        (false, true) => "MinGW Makefiles",
+                        (false, false) => fail("no valid generator found for GNU toolchain; MSYS or MinGW must be installed")
+                    };
+
+                    cmd.arg("-G").arg(generator);
                 }
             } else {
                 // If we're cross compiling onto windows, then set some
@@ -352,9 +409,68 @@ impl Config {
             is_ninja = generator.to_string_lossy().contains("Ninja");
         }
         let profile = self.profile.clone().unwrap_or_else(|| {
-            match &getenv_unwrap("PROFILE")[..] {
-                "bench" | "release" => "Release",
-                _ => "Debug",
+            // Automatically set the `CMAKE_BUILD_TYPE` if the user did not
+            // specify one.
+
+            // Determine Rust's profile, optimization level, and debug info:
+            #[derive(PartialEq)]
+            enum RustProfile {
+                Debug,
+                Release,
+            }
+            #[derive(PartialEq, Debug)]
+            enum OptLevel {
+                Debug,
+                Release,
+                Size,
+            }
+
+            let rust_profile = match &getenv_unwrap("PROFILE")[..] {
+                "debug" => RustProfile::Debug,
+                "release" | "bench" => RustProfile::Release,
+                unknown => {
+                    eprintln!(
+                        "Warning: unknown Rust profile={}; defaulting to a release build.",
+                        unknown
+                    );
+                    RustProfile::Release
+                }
+            };
+
+            let opt_level = match &getenv_unwrap("OPT_LEVEL")[..] {
+                "0" => OptLevel::Debug,
+                "1" | "2" | "3" => OptLevel::Release,
+                "s" | "z" => OptLevel::Size,
+                unknown => {
+                    let default_opt_level = match rust_profile {
+                        RustProfile::Debug => OptLevel::Debug,
+                        RustProfile::Release => OptLevel::Release,
+                    };
+                    eprintln!(
+                        "Warning: unknown opt-level={}; defaulting to a {:?} build.",
+                        unknown, default_opt_level
+                    );
+                    default_opt_level
+                }
+            };
+
+            let debug_info: bool = match &getenv_unwrap("DEBUG")[..] {
+                "false" => false,
+                "true" => true,
+                unknown => {
+                    eprintln!(
+                        "Warning: unknown debug={}; defaulting to `true`.",
+                        unknown
+                    );
+                    true
+                }
+            };
+
+            match (opt_level, debug_info) {
+                (OptLevel::Debug, _) => "Debug",
+                (OptLevel::Release, false) => "Release",
+                (OptLevel::Release, true) => "RelWithDebInfo",
+                (OptLevel::Size, _) => "MinSizeRel",
             }.to_string()
         });
         for &(ref k, ref v) in &self.defines {
@@ -472,6 +588,10 @@ impl Config {
             cmd.arg(&format!("-DCMAKE_BUILD_TYPE={}", profile));
         }
 
+        if self.verbose_make {
+            cmd.arg("-DCMAKE_VERBOSE_MAKEFILE:BOOL=ON");
+        }
+
         if !self.defined("CMAKE_TOOLCHAIN_FILE") {
             if let Ok(s) = env::var("CMAKE_TOOLCHAIN_FILE") {
                 cmd.arg(&format!("-DCMAKE_TOOLCHAIN_FILE={}", s));
@@ -482,7 +602,11 @@ impl Config {
             cmd.env(k, v);
         }
 
-        run(cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path), "cmake");
+        if self.always_configure || !build.join("CMakeCache.txt").exists() {
+            run(cmd.env("CMAKE_PREFIX_PATH", cmake_prefix_path), "cmake");
+        } else {
+            println!("CMake project was already configured. Skipping configuration step.");
+        }
 
         let mut makeflags = None;
         let mut parallel_args = Vec::new();
@@ -528,12 +652,18 @@ impl Config {
         if let Some(flags) = makeflags {
             cmd.env("MAKEFLAGS", flags);
         }
-        run(cmd.arg("--build").arg(".")
-               .arg("--target").arg(target)
-               .arg("--config").arg(&profile)
-               .arg("--").args(&self.build_args)
-               .args(&parallel_args)
-               .current_dir(&build), "cmake");
+
+        cmd.arg("--build").arg(".");
+
+        if !self.no_build_target {
+            cmd.arg("--target").arg(target);
+        }
+        cmd.arg("--config").arg(&profile)
+            .arg("--").args(&self.build_args)
+            .args(&parallel_args)
+            .current_dir(&build);
+
+        run(&mut cmd, "cmake");
 
         println!("cargo:root={}", dst.display());
         return dst

@@ -513,7 +513,11 @@ impl str {
         unsafe { String::from_utf8_unchecked(slice.into_vec()) }
     }
 
-    /// Create a [`String`] by repeating a string `n` times.
+    /// Creates a new [`String`] by repeating a string `n` times.
+    ///
+    /// # Panics
+    ///
+    /// This function will panic if the capacity would overflow.
     ///
     /// [`String`]: string/struct.String.html
     ///
@@ -523,6 +527,15 @@ impl str {
     ///
     /// ```
     /// assert_eq!("abc".repeat(4), String::from("abcabcabcabc"));
+    /// ```
+    ///
+    /// A panic upon overflow:
+    ///
+    /// ```should_panic
+    /// fn main() {
+    ///     // this will panic at runtime
+    ///     "0123456789abcdef".repeat(usize::max_value());
+    /// }
     /// ```
     #[stable(feature = "repeat_str", since = "1.16.0")]
     pub fn repeat(&self, n: usize) -> String {

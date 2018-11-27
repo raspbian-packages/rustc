@@ -11,6 +11,7 @@
 use lint;
 use rustc::ty::TyCtxt;
 
+use errors::Applicability;
 use syntax::ast;
 use syntax_pos::Span;
 
@@ -71,7 +72,7 @@ impl<'a, 'tcx> CheckVisitor<'a, 'tcx> {
             return;
         }
 
-        let msg = if let Ok(snippet) = self.tcx.sess.codemap().span_to_snippet(span) {
+        let msg = if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(span) {
             format!("unused import: `{}`", snippet)
         } else {
             "unused import".to_string()
@@ -116,6 +117,7 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
             !tcx.is_compiler_builtins(cnum)
                 && !tcx.is_panic_runtime(cnum)
                 && !tcx.has_global_allocator(cnum)
+                && !tcx.has_panic_handler(cnum)
         })
         .cloned()
         .collect();
@@ -128,24 +130,35 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
     });
 
     for extern_crate in &crates_to_lint {
-        assert!(extern_crate.def_id.is_local());
+        let id = tcx.hir.as_local_node_id(extern_crate.def_id).unwrap();
+        let item = tcx.hir.expect_item(id);
 
         // If the crate is fully unused, we suggest removing it altogether.
         // We do this in any edition.
-        if let Some(&span) = unused_extern_crates.get(&extern_crate.def_id) {
-            assert_eq!(extern_crate.def_id.krate, LOCAL_CRATE);
-            let hir_id = tcx.hir.definitions().def_index_to_hir_id(extern_crate.def_id.index);
-            let id = tcx.hir.hir_to_node_id(hir_id);
-            let msg = "unused extern crate";
-            tcx.struct_span_lint_node(lint, id, span, msg)
-                .span_suggestion_short(span, "remove it", "".to_string())
-                .emit();
-            continue;
+        if extern_crate.warn_if_unused {
+            if let Some(&span) = unused_extern_crates.get(&extern_crate.def_id) {
+                let msg = "unused extern crate";
+                tcx.struct_span_lint_node(lint, id, span, msg)
+                    .span_suggestion_short_with_applicability(
+                        span,
+                        "remove it",
+                        String::new(),
+                        Applicability::MachineApplicable)
+                    .emit();
+                continue;
+            }
         }
 
         // If we are not in Rust 2018 edition, then we don't make any further
         // suggestions.
         if !tcx.sess.rust_2018() {
+            continue;
+        }
+
+        // If the extern crate isn't in the extern prelude,
+        // there is no way it can be written as an `use`.
+        let orig_name = extern_crate.orig_name.unwrap_or(item.name);
+        if !tcx.extern_prelude.contains(&orig_name) {
             continue;
         }
 
@@ -157,9 +170,6 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
         }
 
         // Otherwise, we can convert it into a `use` of some kind.
-        let hir_id = tcx.hir.definitions().def_index_to_hir_id(extern_crate.def_id.index);
-        let id = tcx.hir.hir_to_node_id(hir_id);
-        let item = tcx.hir.expect_item(id);
         let msg = "`extern crate` is not idiomatic in the new edition";
         let help = format!(
             "convert it to a `{}`",
@@ -171,7 +181,12 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
         };
         let replacement = visibility_qualified(&item.vis, &base_replacement);
         tcx.struct_span_lint_node(lint, id, extern_crate.span, msg)
-            .span_suggestion_short(extern_crate.span, &help, replacement)
+            .span_suggestion_short_with_applicability(
+                extern_crate.span,
+                &help,
+                replacement,
+                Applicability::MachineApplicable,
+            )
             .emit();
     }
 }
@@ -192,6 +207,10 @@ struct ExternCrateToLint {
     /// crate_name`), and -- perhaps surprisingly -- this stores the
     /// *original* name (`item.name` will contain the new name)
     orig_name: Option<ast::Name>,
+
+    /// if `false`, the original name started with `_`, so we shouldn't lint
+    /// about it going unused (but we should still emit idiom lints).
+    warn_if_unused: bool,
 }
 
 impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CollectExternCrateVisitor<'a, 'tcx> {
@@ -203,6 +222,7 @@ impl<'a, 'tcx, 'v> ItemLikeVisitor<'v> for CollectExternCrateVisitor<'a, 'tcx> {
                     def_id: extern_crate_def_id,
                     span: item.span,
                     orig_name,
+                    warn_if_unused: !item.name.as_str().starts_with('_'),
                 }
             );
         }

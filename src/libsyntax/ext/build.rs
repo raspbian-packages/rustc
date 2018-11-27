@@ -12,10 +12,11 @@ use rustc_target::spec::abi::Abi;
 use ast::{self, Ident, Generics, Expr, BlockCheckMode, UnOp, PatKind};
 use attr;
 use syntax_pos::{Pos, Span, DUMMY_SP};
-use codemap::{dummy_spanned, respan, Spanned};
+use source_map::{dummy_spanned, respan, Spanned};
 use ext::base::ExtCtxt;
 use ptr::P;
 use symbol::{Symbol, keywords};
+use ThinVec;
 
 // Transitional re-exports so qquote can find the paths it is looking for
 mod syntax {
@@ -519,7 +520,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             init: Some(ex),
             id: ast::DUMMY_NODE_ID,
             span: sp,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         });
         ast::Stmt {
             id: ast::DUMMY_NODE_ID,
@@ -547,7 +548,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             init: Some(ex),
             id: ast::DUMMY_NODE_ID,
             span: sp,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         });
         ast::Stmt {
             id: ast::DUMMY_NODE_ID,
@@ -564,7 +565,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             init: None,
             id: ast::DUMMY_NODE_ID,
             span,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         });
         ast::Stmt {
             id: ast::DUMMY_NODE_ID,
@@ -603,7 +604,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             id: ast::DUMMY_NODE_ID,
             node,
             span,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         })
     }
 
@@ -678,7 +679,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
             expr: e,
             span,
             is_shorthand: false,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         }
     }
     fn expr_struct(&self, span: Span, path: ast::Path, fields: Vec<ast::Field>) -> P<ast::Expr> {
@@ -763,7 +764,7 @@ impl<'a> AstBuilder for ExtCtxt<'a> {
     }
 
     fn expr_fail(&self, span: Span, msg: Symbol) -> P<ast::Expr> {
-        let loc = self.codemap().lookup_char_pos(span.lo());
+        let loc = self.source_map().lookup_char_pos(span.lo());
         let expr_file = self.expr_str(span, Symbol::intern(&loc.file.name.to_string()));
         let expr_line = self.expr_u32(span, loc.line as u32);
         let expr_col = self.expr_u32(span, loc.col.to_usize() as u32 + 1);

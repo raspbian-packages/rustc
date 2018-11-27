@@ -125,7 +125,7 @@ impl<'a> Iterator for Memchr<'a> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
-        iter_next!(self, memchr(self.needle, &self.haystack))
+        iter_next!(self, memchr(self.needle, self.haystack))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -135,7 +135,7 @@ impl<'a> Iterator for Memchr<'a> {
 
 impl<'a> DoubleEndedIterator for Memchr<'a> {
     fn next_back(&mut self) -> Option<Self::Item> {
-        iter_next_back!(self, memrchr(self.needle, &self.haystack))
+        iter_next_back!(self, memrchr(self.needle, self.haystack))
     }
 }
 
@@ -282,7 +282,7 @@ impl<'a> Iterator for Memchr2<'a> {
     type Item = usize;
 
     fn next(&mut self) -> Option<usize> {
-        iter_next!(self, memchr2(self.needle1, self.needle2, &self.haystack))
+        iter_next!(self, memchr2(self.needle1, self.needle2, self.haystack))
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -337,7 +337,7 @@ pub struct Memchr3<'a> {
 }
 
 impl<'a> Memchr3<'a> {
-    /// Create a new Memchr2 that's initalized to zero with a haystack
+    /// Create a new `Memchr3` that's initialized to zero with a haystack
     pub fn new(
         needle1: u8,
         needle2: u8,
@@ -360,7 +360,7 @@ impl<'a> Iterator for Memchr3<'a> {
     fn next(&mut self) -> Option<usize> {
         iter_next!(
             self,
-            memchr3(self.needle1, self.needle2, self.needle3, &self.haystack)
+            memchr3(self.needle1, self.needle2, self.needle3, self.haystack)
         )
     }
 
@@ -424,12 +424,12 @@ mod fallback {
         contains_zero_byte, repeat_byte,
     };
 
-    /// Return the first index matching the byte `a` in `text`.
+    /// Return the first index matching the byte `x` in `text`.
     pub fn memchr(x: u8, text: &[u8]) -> Option<usize> {
         // Scan for a single byte value by reading two `usize` words at a time.
         //
         // Split `text` in three parts
-        // - unaligned inital part, before first word aligned address in text
+        // - unaligned initial part, before first word aligned address in text
         // - body, scan by 2 words at a time
         // - the last remaining part, < 2 word size
         let len = text.len();
@@ -473,7 +473,7 @@ mod fallback {
         text[offset..].iter().position(|elt| *elt == x).map(|i| offset + i)
     }
 
-    /// Return the last index matching the byte `a` in `text`.
+    /// Return the last index matching the byte `x` in `text`.
     pub fn memrchr(x: u8, text: &[u8]) -> Option<usize> {
         // Scan for a single byte value by reading two `usize` words at a time.
         //

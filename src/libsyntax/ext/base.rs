@@ -12,7 +12,7 @@ pub use self::SyntaxExtension::*;
 
 use ast::{self, Attribute, Name, PatKind, MetaItem};
 use attr::HasAttrs;
-use codemap::{self, CodeMap, Spanned, respan};
+use source_map::{self, SourceMap, Spanned, respan};
 use syntax_pos::{Span, MultiSpan, DUMMY_SP};
 use edition::Edition;
 use errors::{DiagnosticBuilder, DiagnosticId};
@@ -22,10 +22,11 @@ use fold::{self, Folder};
 use parse::{self, parser, DirectoryOwnership};
 use parse::token;
 use ptr::P;
+use OneVector;
 use symbol::{keywords, Ident, Symbol};
-use util::small_vector::SmallVector;
+use ThinVec;
 
-use std::collections::HashMap;
+use rustc_data_structures::fx::FxHashMap;
 use std::iter;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -315,11 +316,11 @@ impl<F> IdentMacroExpander for F
 // Use a macro because forwarding to a simple function has type system issues
 macro_rules! make_stmts_default {
     ($me:expr) => {
-        $me.make_expr().map(|e| SmallVector::one(ast::Stmt {
+        $me.make_expr().map(|e| smallvec![ast::Stmt {
             id: ast::DUMMY_NODE_ID,
             span: e.span,
             node: ast::StmtKind::Expr(e),
-        }))
+        }])
     }
 }
 
@@ -331,22 +332,22 @@ pub trait MacResult {
         None
     }
     /// Create zero or more items.
-    fn make_items(self: Box<Self>) -> Option<SmallVector<P<ast::Item>>> {
+    fn make_items(self: Box<Self>) -> Option<OneVector<P<ast::Item>>> {
         None
     }
 
     /// Create zero or more impl items.
-    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<ast::ImplItem>> {
+    fn make_impl_items(self: Box<Self>) -> Option<OneVector<ast::ImplItem>> {
         None
     }
 
     /// Create zero or more trait items.
-    fn make_trait_items(self: Box<Self>) -> Option<SmallVector<ast::TraitItem>> {
+    fn make_trait_items(self: Box<Self>) -> Option<OneVector<ast::TraitItem>> {
         None
     }
 
     /// Create zero or more items in an `extern {}` block
-    fn make_foreign_items(self: Box<Self>) -> Option<SmallVector<ast::ForeignItem>> { None }
+    fn make_foreign_items(self: Box<Self>) -> Option<OneVector<ast::ForeignItem>> { None }
 
     /// Create a pattern.
     fn make_pat(self: Box<Self>) -> Option<P<ast::Pat>> {
@@ -357,7 +358,7 @@ pub trait MacResult {
     ///
     /// By default this attempts to create an expression statement,
     /// returning None if that fails.
-    fn make_stmts(self: Box<Self>) -> Option<SmallVector<ast::Stmt>> {
+    fn make_stmts(self: Box<Self>) -> Option<OneVector<ast::Stmt>> {
         make_stmts_default!(self)
     }
 
@@ -393,11 +394,11 @@ macro_rules! make_MacEager {
 make_MacEager! {
     expr: P<ast::Expr>,
     pat: P<ast::Pat>,
-    items: SmallVector<P<ast::Item>>,
-    impl_items: SmallVector<ast::ImplItem>,
-    trait_items: SmallVector<ast::TraitItem>,
-    foreign_items: SmallVector<ast::ForeignItem>,
-    stmts: SmallVector<ast::Stmt>,
+    items: OneVector<P<ast::Item>>,
+    impl_items: OneVector<ast::ImplItem>,
+    trait_items: OneVector<ast::TraitItem>,
+    foreign_items: OneVector<ast::ForeignItem>,
+    stmts: OneVector<ast::Stmt>,
     ty: P<ast::Ty>,
 }
 
@@ -406,23 +407,23 @@ impl MacResult for MacEager {
         self.expr
     }
 
-    fn make_items(self: Box<Self>) -> Option<SmallVector<P<ast::Item>>> {
+    fn make_items(self: Box<Self>) -> Option<OneVector<P<ast::Item>>> {
         self.items
     }
 
-    fn make_impl_items(self: Box<Self>) -> Option<SmallVector<ast::ImplItem>> {
+    fn make_impl_items(self: Box<Self>) -> Option<OneVector<ast::ImplItem>> {
         self.impl_items
     }
 
-    fn make_trait_items(self: Box<Self>) -> Option<SmallVector<ast::TraitItem>> {
+    fn make_trait_items(self: Box<Self>) -> Option<OneVector<ast::TraitItem>> {
         self.trait_items
     }
 
-    fn make_foreign_items(self: Box<Self>) -> Option<SmallVector<ast::ForeignItem>> {
+    fn make_foreign_items(self: Box<Self>) -> Option<OneVector<ast::ForeignItem>> {
         self.foreign_items
     }
 
-    fn make_stmts(self: Box<Self>) -> Option<SmallVector<ast::Stmt>> {
+    fn make_stmts(self: Box<Self>) -> Option<OneVector<ast::Stmt>> {
         match self.stmts.as_ref().map_or(0, |s| s.len()) {
             0 => make_stmts_default!(self),
             _ => self.stmts,
@@ -480,9 +481,9 @@ impl DummyResult {
     pub fn raw_expr(sp: Span) -> P<ast::Expr> {
         P(ast::Expr {
             id: ast::DUMMY_NODE_ID,
-            node: ast::ExprKind::Lit(P(codemap::respan(sp, ast::LitKind::Bool(false)))),
+            node: ast::ExprKind::Lit(P(source_map::respan(sp, ast::LitKind::Bool(false)))),
             span: sp,
-            attrs: ast::ThinVec::new(),
+            attrs: ThinVec::new(),
         })
     }
 
@@ -513,45 +514,45 @@ impl MacResult for DummyResult {
         Some(P(DummyResult::raw_pat(self.span)))
     }
 
-    fn make_items(self: Box<DummyResult>) -> Option<SmallVector<P<ast::Item>>> {
+    fn make_items(self: Box<DummyResult>) -> Option<OneVector<P<ast::Item>>> {
         // this code needs a comment... why not always just return the Some() ?
         if self.expr_only {
             None
         } else {
-            Some(SmallVector::new())
+            Some(OneVector::new())
         }
     }
 
-    fn make_impl_items(self: Box<DummyResult>) -> Option<SmallVector<ast::ImplItem>> {
+    fn make_impl_items(self: Box<DummyResult>) -> Option<OneVector<ast::ImplItem>> {
         if self.expr_only {
             None
         } else {
-            Some(SmallVector::new())
+            Some(OneVector::new())
         }
     }
 
-    fn make_trait_items(self: Box<DummyResult>) -> Option<SmallVector<ast::TraitItem>> {
+    fn make_trait_items(self: Box<DummyResult>) -> Option<OneVector<ast::TraitItem>> {
         if self.expr_only {
             None
         } else {
-            Some(SmallVector::new())
+            Some(OneVector::new())
         }
     }
 
-    fn make_foreign_items(self: Box<Self>) -> Option<SmallVector<ast::ForeignItem>> {
+    fn make_foreign_items(self: Box<Self>) -> Option<OneVector<ast::ForeignItem>> {
         if self.expr_only {
             None
         } else {
-            Some(SmallVector::new())
+            Some(OneVector::new())
         }
     }
 
-    fn make_stmts(self: Box<DummyResult>) -> Option<SmallVector<ast::Stmt>> {
-        Some(SmallVector::one(ast::Stmt {
+    fn make_stmts(self: Box<DummyResult>) -> Option<OneVector<ast::Stmt>> {
+        Some(smallvec![ast::Stmt {
             id: ast::DUMMY_NODE_ID,
             node: ast::StmtKind::Expr(DummyResult::raw_expr(self.span)),
             span: self.span,
-        }))
+        }])
     }
 
     fn make_ty(self: Box<DummyResult>) -> Option<P<ast::Ty>> {
@@ -588,6 +589,9 @@ impl MacroKind {
 
 /// An enum representing the different kinds of syntax extensions.
 pub enum SyntaxExtension {
+    /// A trivial "extension" that does nothing, only keeps the attribute and marks it as known.
+    NonMacroAttr { mark_used: bool },
+
     /// A syntax extension that is attached to an item and creates new items
     /// based upon it.
     ///
@@ -667,6 +671,7 @@ impl SyntaxExtension {
             SyntaxExtension::IdentTT(..) |
             SyntaxExtension::ProcMacro { .. } =>
                 MacroKind::Bang,
+            SyntaxExtension::NonMacroAttr { .. } |
             SyntaxExtension::MultiDecorator(..) |
             SyntaxExtension::MultiModifier(..) |
             SyntaxExtension::AttrProcMacro(..) =>
@@ -696,6 +701,7 @@ impl SyntaxExtension {
             SyntaxExtension::AttrProcMacro(.., edition) |
             SyntaxExtension::ProcMacroDerive(.., edition) => edition,
             // Unstable legacy stuff
+            SyntaxExtension::NonMacroAttr { .. } |
             SyntaxExtension::IdentTT(..) |
             SyntaxExtension::MultiDecorator(..) |
             SyntaxExtension::MultiModifier(..) |
@@ -721,10 +727,12 @@ pub trait Resolver {
     fn find_legacy_attr_invoc(&mut self, attrs: &mut Vec<Attribute>, allow_derive: bool)
                               -> Option<Attribute>;
 
-    fn resolve_invoc(&mut self, invoc: &mut Invocation, scope: Mark, force: bool)
-                     -> Result<Option<Lrc<SyntaxExtension>>, Determinacy>;
-    fn resolve_macro(&mut self, scope: Mark, path: &ast::Path, kind: MacroKind, force: bool)
-                     -> Result<Lrc<SyntaxExtension>, Determinacy>;
+    fn resolve_macro_invocation(&mut self, invoc: &Invocation, invoc_id: Mark, force: bool)
+                                -> Result<Option<Lrc<SyntaxExtension>>, Determinacy>;
+    fn resolve_macro_path(&mut self, path: &ast::Path, kind: MacroKind, invoc_id: Mark,
+                          derives_in_scope: Vec<ast::Path>, force: bool)
+                          -> Result<Lrc<SyntaxExtension>, Determinacy>;
+
     fn check_unused_macros(&self);
 }
 
@@ -732,6 +740,12 @@ pub trait Resolver {
 pub enum Determinacy {
     Determined,
     Undetermined,
+}
+
+impl Determinacy {
+    pub fn determined(determined: bool) -> Determinacy {
+        if determined { Determinacy::Determined } else { Determinacy::Undetermined }
+    }
 }
 
 pub struct DummyResolver;
@@ -749,12 +763,13 @@ impl Resolver for DummyResolver {
     fn resolve_imports(&mut self) {}
     fn find_legacy_attr_invoc(&mut self, _attrs: &mut Vec<Attribute>, _allow_derive: bool)
                               -> Option<Attribute> { None }
-    fn resolve_invoc(&mut self, _invoc: &mut Invocation, _scope: Mark, _force: bool)
-                     -> Result<Option<Lrc<SyntaxExtension>>, Determinacy> {
+    fn resolve_macro_invocation(&mut self, _invoc: &Invocation, _invoc_id: Mark, _force: bool)
+                                -> Result<Option<Lrc<SyntaxExtension>>, Determinacy> {
         Err(Determinacy::Determined)
     }
-    fn resolve_macro(&mut self, _scope: Mark, _path: &ast::Path, _kind: MacroKind,
-                     _force: bool) -> Result<Lrc<SyntaxExtension>, Determinacy> {
+    fn resolve_macro_path(&mut self, _path: &ast::Path, _kind: MacroKind, _invoc_id: Mark,
+                          _derives_in_scope: Vec<ast::Path>, _force: bool)
+                          -> Result<Lrc<SyntaxExtension>, Determinacy> {
         Err(Determinacy::Determined)
     }
     fn check_unused_macros(&self) {}
@@ -785,7 +800,7 @@ pub struct ExtCtxt<'a> {
     pub resolver: &'a mut dyn Resolver,
     pub resolve_err_count: usize,
     pub current_expansion: ExpansionData,
-    pub expansions: HashMap<Span, Vec<String>>,
+    pub expansions: FxHashMap<Span, Vec<String>>,
 }
 
 impl<'a> ExtCtxt<'a> {
@@ -806,7 +821,7 @@ impl<'a> ExtCtxt<'a> {
                 directory_ownership: DirectoryOwnership::Owned { relative: None },
                 crate_span: None,
             },
-            expansions: HashMap::new(),
+            expansions: FxHashMap::default(),
         }
     }
 
@@ -824,7 +839,7 @@ impl<'a> ExtCtxt<'a> {
     pub fn new_parser_from_tts(&self, tts: &[tokenstream::TokenTree]) -> parser::Parser<'a> {
         parse::stream_to_parser(self.parse_sess, tts.iter().cloned().collect())
     }
-    pub fn codemap(&self) -> &'a CodeMap { self.parse_sess.codemap() }
+    pub fn source_map(&self) -> &'a SourceMap { self.parse_sess.source_map() }
     pub fn parse_sess(&self) -> &'a parse::ParseSess { self.parse_sess }
     pub fn cfg(&self) -> &ast::CrateConfig { &self.parse_sess.config }
     pub fn call_site(&self) -> Span {

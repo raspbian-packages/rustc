@@ -139,8 +139,6 @@ Maintaining this package
 Import of a new upstream version
 --------------------------------
 
-# Make sure you apply the patch mentioned in #855464 to /usr/bin/mk-origtargz
-
 $ sudo mk-build-deps -irt 'aptitude -R'
 $ uscan --verbose                       # or debian/rules source_orig-beta, for beta
 $ ver=UPDATE-ME                         # whatever it is, probably X.YY.Z or X.YY.Z~beta.N

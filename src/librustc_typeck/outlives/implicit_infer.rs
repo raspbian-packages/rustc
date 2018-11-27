@@ -9,6 +9,7 @@
 // except according to those terms.
 
 use rustc::hir;
+use hir::Node;
 use rustc::hir::def_id::DefId;
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
 use rustc::ty::subst::{Kind, Subst, UnpackedKind};
@@ -65,13 +66,12 @@ impl<'cx, 'tcx> ItemLikeVisitor<'tcx> for InferVisitor<'cx, 'tcx> {
 
         debug!("InferVisitor::visit_item(item={:?})", item_did);
 
-        let node_id = self
-            .tcx
+        let node_id = self.tcx
             .hir
             .as_local_node_id(item_did)
             .expect("expected local def-id");
         let item = match self.tcx.hir.get(node_id) {
-            hir::map::NodeItem(item) => item,
+            Node::Item(item) => item,
             _ => bug!(),
         };
 
@@ -85,7 +85,7 @@ impl<'cx, 'tcx> ItemLikeVisitor<'tcx> for InferVisitor<'cx, 'tcx> {
                     // Calculating the predicate requirements necessary
                     // for item_did.
                     //
-                    // For field of type &'a T (reference) or TyAdt
+                    // For field of type &'a T (reference) or Adt
                     // (struct/enum/union) there will be outlive
                     // requirements for adt_def.
                     let field_ty = self.tcx.type_of(field_def.did);
@@ -108,8 +108,7 @@ impl<'cx, 'tcx> ItemLikeVisitor<'tcx> for InferVisitor<'cx, 'tcx> {
         // Therefore mark `predicates_added` as true and which will ensure
         // we walk the crates again and re-calculate predicates for all
         // items.
-        let item_predicates_len: usize = self
-            .global_inferred_outlives
+        let item_predicates_len: usize = self.global_inferred_outlives
             .get(&item_did)
             .map(|p| p.len())
             .unwrap_or(0);
@@ -138,16 +137,16 @@ fn insert_required_predicates_to_be_wf<'tcx>(
             // a predicate requirement of T: 'a (T outlives 'a).
             //
             // We also want to calculate potential predicates for the T
-            ty::TyRef(region, rty, _) => {
-                debug!("TyRef");
+            ty::Ref(region, rty, _) => {
+                debug!("Ref");
                 insert_outlives_predicate(tcx, rty.into(), region, required_predicates);
             }
 
-            // For each TyAdt (struct/enum/union) type `Foo<'a, T>`, we
+            // For each Adt (struct/enum/union) type `Foo<'a, T>`, we
             // can load the current set of inferred and explicit
             // predicates from `global_inferred_outlives` and filter the
             // ones that are TypeOutlives.
-            ty::TyAdt(def, substs) => {
+            ty::Adt(def, substs) => {
                 // First check the inferred predicates
                 //
                 // Example 1:
@@ -166,7 +165,7 @@ fn insert_required_predicates_to_be_wf<'tcx>(
                 // round we will get `U: 'b`. We then apply the substitution
                 // `['b => 'a, U => T]` and thus get the requirement that `T:
                 // 'a` holds for `Foo`.
-                debug!("TyAdt");
+                debug!("Adt");
                 if let Some(unsubstituted_predicates) = global_inferred_outlives.get(&def.did) {
                     for unsubstituted_predicate in unsubstituted_predicates {
                         // `unsubstituted_predicate` is `U: 'b` in the
@@ -191,45 +190,52 @@ fn insert_required_predicates_to_be_wf<'tcx>(
                     substs,
                     required_predicates,
                     explicit_map,
-                    false,
+                    IgnoreSelfTy(false),
                 );
             }
 
-            ty::TyDynamic(obj, ..) => {
+            ty::Dynamic(obj, ..) => {
                 // This corresponds to `dyn Trait<..>`. In this case, we should
                 // use the explicit predicates as well.
 
-                // We are passing type `ty` as a placeholder value with the function
-                // `with_self_ty`, since there is no concrete type `Self` for a
-                // `dyn Trait` at this stage. Therefore when checking explicit
-                // predicates in `check_explicit_predicates` we need to ignore
-                // checking the explicit_map for Self type.
-                debug!("TyDynamic");
+                debug!("Dynamic");
                 debug!("field_ty = {}", &field_ty);
                 debug!("ty in field = {}", &ty);
                 if let Some(ex_trait_ref) = obj.principal() {
+                    // Here, we are passing the type `usize` as a
+                    // placeholder value with the function
+                    // `with_self_ty`, since there is no concrete type
+                    // `Self` for a `dyn Trait` at this
+                    // stage. Therefore when checking explicit
+                    // predicates in `check_explicit_predicates` we
+                    // need to ignore checking the explicit_map for
+                    // Self type.
+                    let substs = ex_trait_ref
+                        .with_self_ty(tcx, tcx.types.usize)
+                        .skip_binder()
+                        .substs;
                     check_explicit_predicates(
                         tcx,
                         &ex_trait_ref.skip_binder().def_id,
-                        ex_trait_ref.with_self_ty(tcx, ty).skip_binder().substs,
+                        substs,
                         required_predicates,
                         explicit_map,
-                        true,
+                        IgnoreSelfTy(true),
                     );
                 }
             }
 
-            ty::TyProjection(obj) => {
+            ty::Projection(obj) => {
                 // This corresponds to `<T as Foo<'a>>::Bar`. In this case, we should use the
                 // explicit predicates as well.
-                debug!("TyProjection");
+                debug!("Projection");
                 check_explicit_predicates(
                     tcx,
                     &tcx.associated_item(obj.item_def_id).container.id(),
                     obj.substs,
                     required_predicates,
                     explicit_map,
-                    false,
+                    IgnoreSelfTy(false),
                 );
             }
 
@@ -237,6 +243,8 @@ fn insert_required_predicates_to_be_wf<'tcx>(
         }
     }
 }
+
+pub struct IgnoreSelfTy(bool);
 
 /// We also have to check the explicit predicates
 /// declared on the type.
@@ -259,7 +267,7 @@ pub fn check_explicit_predicates<'tcx>(
     substs: &[Kind<'tcx>],
     required_predicates: &mut RequiredPredicates<'tcx>,
     explicit_map: &mut ExplicitPredicatesMap<'tcx>,
-    ignore_self_ty: bool,
+    ignore_self_ty: IgnoreSelfTy,
 ) {
     debug!("def_id = {:?}", &def_id);
     debug!("substs = {:?}", &substs);
@@ -297,7 +305,7 @@ pub fn check_explicit_predicates<'tcx>(
         // to apply the substs, and not filter this predicate, we might then falsely
         // conclude that e.g. `X: 'x` was a reasonable inferred requirement.
         if let UnpackedKind::Type(ty) = outlives_predicate.0.unpack() {
-            if ty.is_self() && ignore_self_ty {
+            if ty.is_self() && ignore_self_ty.0 {
                 debug!("skipping self ty = {:?}", &ty);
                 continue;
             }
@@ -307,5 +315,4 @@ pub fn check_explicit_predicates<'tcx>(
         debug!("predicate = {:?}", &predicate);
         insert_outlives_predicate(tcx, predicate.0.into(), predicate.1, required_predicates);
     }
-    // }
 }

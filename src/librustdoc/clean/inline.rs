@@ -19,13 +19,19 @@ use syntax_pos::Span;
 use rustc::hir;
 use rustc::hir::def::{Def, CtorKind};
 use rustc::hir::def_id::DefId;
-use rustc::middle::cstore::LoadedMacro;
+use rustc_metadata::cstore::LoadedMacro;
 use rustc::ty;
 use rustc::util::nodemap::FxHashSet;
 
 use core::{DocContext, DocAccessLevels};
 use doctree;
-use clean::{self, GetDefId, ToSource, get_auto_traits_with_def_id};
+use clean::{
+    self,
+    GetDefId,
+    ToSource,
+    get_auto_traits_with_def_id,
+    get_blanket_impls_with_def_id,
+};
 
 use super::Clean;
 
@@ -77,7 +83,7 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name, visited: &mut FxHa
             ret.extend(build_impls(cx, did, true));
             clean::EnumItem(build_enum(cx, did))
         }
-        Def::TyForeign(did) => {
+        Def::ForeignTy(did) => {
             record_extern_fqn(cx, did, clean::TypeKind::Foreign);
             ret.extend(build_impls(cx, did, false));
             clean::ForeignTypeItem
@@ -87,7 +93,8 @@ pub fn try_inline(cx: &DocContext, def: Def, name: ast::Name, visited: &mut FxHa
         // Assume that enum variants and struct types are re-exported next to
         // their constructors.
         Def::VariantCtor(..) |
-        Def::StructCtor(..) => return Some(Vec::new()),
+        Def::StructCtor(..) |
+        Def::SelfCtor(..) => return Some(Vec::new()),
         Def::Mod(did) => {
             record_extern_fqn(cx, did, clean::TypeKind::Module);
             clean::ModuleItem(build_module(cx, did, visited))
@@ -168,7 +175,7 @@ pub fn record_extern_fqn(cx: &DocContext, did: DefId, kind: clean::TypeKind) {
         }
     });
     let fqn = if let clean::TypeKind::Macro = kind {
-        vec![crate_name, relative.last().unwrap()]
+        vec![crate_name, relative.last().expect("relative was empty")]
     } else {
         once(crate_name).chain(relative).collect()
     };
@@ -274,11 +281,14 @@ pub fn build_impls(cx: &DocContext, did: DefId, auto_traits: bool) -> Vec<clean:
 
     if auto_traits {
         let auto_impls = get_auto_traits_with_def_id(cx, did);
-        let mut renderinfo = cx.renderinfo.borrow_mut();
-        let new_impls: Vec<clean::Item> = auto_impls.into_iter()
-            .filter(|i| renderinfo.inlined.insert(i.def_id)).collect();
+        {
+            let mut renderinfo = cx.renderinfo.borrow_mut();
+            let new_impls: Vec<clean::Item> = auto_impls.into_iter()
+                .filter(|i| renderinfo.inlined.insert(i.def_id)).collect();
 
-        impls.extend(new_impls);
+            impls.extend(new_impls);
+        }
+        impls.extend(get_blanket_impls_with_def_id(cx, did));
     }
 
     // If this is the first time we've inlined something from another crate, then
@@ -336,10 +346,13 @@ pub fn build_impls(cx: &DocContext, did: DefId, auto_traits: bool) -> Vec<clean:
             build_impl(cx, def_id, &mut impls);
 
             let auto_impls = get_auto_traits_with_def_id(cx, def_id);
+            let blanket_impls = get_blanket_impls_with_def_id(cx, def_id);
             let mut renderinfo = cx.renderinfo.borrow_mut();
 
             let new_impls: Vec<clean::Item> = auto_impls.into_iter()
-                .filter(|i| renderinfo.inlined.insert(i.def_id)).collect();
+                .chain(blanket_impls.into_iter())
+                .filter(|i| renderinfo.inlined.insert(i.def_id))
+                .collect();
 
             impls.extend(new_impls);
         }

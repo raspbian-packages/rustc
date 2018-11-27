@@ -97,7 +97,7 @@ h1, h2, h3:not(.impl):not(.method):not(.type):not(.tymethod):not(.important), h4
 h1.fqn {
 	border-bottom: 1px dashed;
 	margin-top: 0;
-	position: relative;
+	overflow: auto;
 }
 h2, h3:not(.impl):not(.method):not(.type):not(.tymethod), h4:not(.method):not(.type):not(.tymethod):not(.associatedconstant) {
 	border-bottom: 1px solid;
@@ -114,7 +114,7 @@ h3.impl, h3.method, h3.type {
 
 h1, h2, h3, h4,
 .sidebar, a.source, .search-input, .content table :not(code)>a,
-.collapse-toggle, ul.item-list > li > .out-of-band {
+.collapse-toggle, div.item-list .out-of-band {
 	font-family: "Fira Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
@@ -352,14 +352,11 @@ nav.sub {
 }
 
 .content .out-of-band {
+	float: right;
 	font-size: 23px;
 	margin: 0px;
 	padding: 0px;
-	text-align: right;
-	display: inline-block;
 	font-weight: normal;
-	position: absolute;
-	right: 0;
 }
 
 h3.impl > .out-of-band {
@@ -367,10 +364,6 @@ h3.impl > .out-of-band {
 }
 
 h4.method > .out-of-band {
-	font-size: 19px;
-}
-
-ul.item-list > li > .out-of-band {
 	font-size: 19px;
 }
 
@@ -439,10 +432,6 @@ h4 > code, h3 > code, .invisible > code {
 	padding: 0;
 }
 
-.content .item-list li {
-	margin-bottom: 1em;
-}
-
 .content .multi-column {
 	-moz-column-count: 5;
 	-moz-column-gap: 2.5em;
@@ -476,6 +465,11 @@ h4 > code, h3 > code, .invisible > code {
 .content .impl-items .docblock, .content .impl-items .stability {
 	margin-bottom: .6em;
 }
+
+.content .impl-items > .stability {
+	margin-left: 40px;
+}
+
 .content .docblock > .impl-items {
 	margin-left: 20px;
 	margin-top: -34px;
@@ -498,6 +492,27 @@ h4 > code, h3 > code, .invisible > code {
 
 .content .stability code {
 	font-size: 90%;
+}
+
+.content .stability {
+	position: relative;
+	margin-left: 33px;
+	margin-top: -13px;
+}
+
+.content .stability::before {
+	content: '˪';
+	font-size: 30px;
+	position: absolute;
+	top: -9px;
+	left: -13px;
+}
+.methods > .stability {
+	margin-top: -8px;
+}
+
+#main > .stability {
+	margin-top: 0;
 }
 
 nav {
@@ -548,10 +563,8 @@ a {
 	left: -5px;
 }
 .small-section-header > .anchor {
-	left: -20px;
-}
-.small-section-header > .anchor:not(.field) {
 	left: -28px;
+	padding-right: 10px; /* avoid gap that causes hover to disappear */
 }
 .anchor:before {
 	content: '\2002\00a7\2002';
@@ -560,6 +573,14 @@ a {
 .docblock a:not(.srclink):not(.test-arrow):hover,
 .docblock-short a:not(.srclink):not(.test-arrow):hover, .stability a {
 	text-decoration: underline;
+}
+
+.invisible > .srclink {
+	position: absolute;
+	top: 0;
+	right: 0;
+	font-size: 17px;
+	font-weight: normal;
 }
 
 .block a.current.crate { font-weight: 500; }
@@ -610,10 +631,15 @@ a {
 
 .content .search-results td:first-child {
 	padding-right: 0;
-	width: 75%;
+	width: 50%;
 }
 .content .search-results td:first-child a {
 	padding-right: 10px;
+}
+.content .search-results td:first-child a:after {
+    clear: both;
+    content: "";
+    display: block;
 }
 .content .search-results td:first-child a span {
 	float: left;
@@ -743,6 +769,7 @@ a.test-arrow:hover{
 .section-header:hover a:before {
 	position: absolute;
 	left: -25px;
+	padding-right: 10px; /* avoid gap that causes hover to disappear */
 	content: '\2002\00a7\2002';
 }
 
@@ -1340,6 +1367,15 @@ kbd {
 	position: relative;
 	font-size: 19px;
 	display: block;
+}
+#implementors-list > .impl-items .table-display .out-of-band {
+	font-size: 17px;
+}
+
+.table-display td:hover .anchor {
+	display: block;
+	top: 2px;
+	left: -5px;
 }
 
 #main > ul {

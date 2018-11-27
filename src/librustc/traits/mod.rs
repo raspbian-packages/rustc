@@ -24,7 +24,7 @@ use infer::outlives::env::OutlivesEnvironment;
 use middle::region;
 use mir::interpret::ConstEvalErr;
 use ty::subst::Substs;
-use ty::{self, AdtKind, Slice, Ty, TyCtxt, GenericParamDefKind, ToPredicate};
+use ty::{self, AdtKind, List, Ty, TyCtxt, GenericParamDefKind, ToPredicate};
 use ty::error::{ExpectedFound, TypeError};
 use ty::fold::{TypeFolder, TypeFoldable, TypeVisitor};
 use infer::{InferCtxt};
@@ -142,7 +142,7 @@ impl<'tcx> ObligationCause<'tcx> {
             ObligationCauseCode::CompareImplMethodObligation { .. } |
             ObligationCauseCode::MainFunctionType |
             ObligationCauseCode::StartFunctionType => {
-                tcx.sess.codemap().def_span(self.span)
+                tcx.sess.source_map().def_span(self.span)
             }
             _ => self.span,
         }
@@ -185,6 +185,8 @@ pub enum ObligationCauseCode<'tcx> {
     StructInitializerSized,
     /// Type of each variable must be Sized
     VariableType(ast::NodeId),
+    /// Argument type must be Sized
+    SizedArgumentType,
     /// Return type must be Sized
     SizedReturnType,
     /// Yield type must be Sized
@@ -192,8 +194,8 @@ pub enum ObligationCauseCode<'tcx> {
     /// [T,..n] --> T must be Copy
     RepeatVec,
 
-    /// Types of fields (other than the last) in a struct must be sized.
-    FieldSized(AdtKind),
+    /// Types of fields (other than the last, except for packed structs) in a struct must be sized.
+    FieldSized { adt_kind: AdtKind, last: bool },
 
     /// Constant expressions must be sized.
     ConstSized,
@@ -323,7 +325,7 @@ pub enum Goal<'tcx> {
     CannotProve,
 }
 
-pub type Goals<'tcx> = &'tcx Slice<Goal<'tcx>>;
+pub type Goals<'tcx> = &'tcx List<Goal<'tcx>>;
 
 impl<'tcx> DomainGoal<'tcx> {
     pub fn into_goal(self) -> Goal<'tcx> {
@@ -355,7 +357,7 @@ pub enum Clause<'tcx> {
 }
 
 /// Multiple clauses.
-pub type Clauses<'tcx> = &'tcx Slice<Clause<'tcx>>;
+pub type Clauses<'tcx> = &'tcx List<Clause<'tcx>>;
 
 /// A "program clause" has the form `D :- G1, ..., Gn`. It is saying
 /// that the domain goal `D` is true if `G1...Gn` are provable. This

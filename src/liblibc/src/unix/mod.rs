@@ -104,8 +104,10 @@ s! {
         pub s_addr: in_addr_t,
     }
 
+    #[cfg_attr(feature = "align", repr(align(4)))]
     pub struct in6_addr {
         pub s6_addr: [u8; 16],
+        #[cfg(not(feature = "align"))]
         __align: [u32; 0],
     }
 
@@ -294,11 +296,11 @@ cfg_if! {
     } else if #[cfg(target_os = "emscripten")] {
         #[link(name = "c")]
         extern {}
-    } else if #[cfg(all(target_os = "netbsd"))] {
+    } else if #[cfg(all(target_os = "netbsd",
+                        feature = "stdbuild", target_vendor = "rumprun"))] {
         // Since we don't use -nodefaultlibs on Rumprun, libc is always pulled
         // in automatically by the linker. We avoid passing it explicitly, as it
         // causes some versions of binutils to crash with an assertion failure.
-        #[cfg_attr(feature = "stdbuild", target_vendor = "rumprun")]
         #[link(name = "m")]
         extern {}
     } else if #[cfg(any(target_os = "macos",
@@ -320,6 +322,11 @@ cfg_if! {
     } else if #[cfg(target_env = "newlib")] {
         #[link(name = "c")]
         #[link(name = "m")]
+        extern {}
+    } else if #[cfg(target_os = "hermit")] {
+        // no_default_libraries is set to false for HermitCore, so only a link
+        // to "pthread" needs to be added.
+        #[link(name = "pthread")]
         extern {}
     } else {
         #[link(name = "c")]
@@ -929,6 +936,7 @@ extern {
     pub fn openlog(ident: *const ::c_char, logopt: ::c_int, facility: ::c_int);
     pub fn closelog();
     pub fn setlogmask(maskpri: ::c_int) -> ::c_int;
+    #[cfg_attr(target_os = "macos", link_name = "syslog$DARWIN_EXTSN")]
     pub fn syslog(priority: ::c_int, message: *const ::c_char, ...);
     #[cfg_attr(all(target_os = "macos", target_arch = "x86"),
                link_name = "nice$UNIX2003")]
@@ -968,6 +976,9 @@ cfg_if! {
     } else if #[cfg(target_os = "haiku")] {
         mod haiku;
         pub use self::haiku::*;
+    } else if #[cfg(target_os = "hermit")] {
+        mod hermit;
+        pub use self::hermit::*;
     } else {
         // Unknown target_os
     }

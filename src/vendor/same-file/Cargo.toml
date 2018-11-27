@@ -12,7 +12,7 @@
 
 [package]
 name = "same-file"
-version = "1.0.2"
+version = "1.0.3"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 description = "A simple crate for determining whether two file paths point to the same file.\n"
 homepage = "https://github.com/BurntSushi/same-file"
@@ -23,6 +23,5 @@ license = "Unlicense/MIT"
 repository = "https://github.com/BurntSushi/same-file"
 [dev-dependencies.rand]
 version = "0.4"
-[target."cfg(windows)".dependencies.winapi]
-version = "0.3"
-features = ["std", "fileapi", "minwindef", "processenv", "winbase"]
+[target."cfg(windows)".dependencies.winapi-util]
+version = "0.1.1"

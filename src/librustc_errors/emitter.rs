@@ -10,18 +10,18 @@
 
 use self::Destination::*;
 
-use syntax_pos::{FileMap, Span, MultiSpan};
+use syntax_pos::{SourceFile, Span, MultiSpan};
 
-use {Level, CodeSuggestion, DiagnosticBuilder, SubDiagnostic, CodeMapperDyn, DiagnosticId};
+use {Level, CodeSuggestion, DiagnosticBuilder, SubDiagnostic, SourceMapperDyn, DiagnosticId};
 use snippet::{Annotation, AnnotationType, Line, MultilineAnnotation, StyledString, Style};
 use styled_buffer::StyledBuffer;
 
+use rustc_data_structures::fx::FxHashMap;
 use rustc_data_structures::sync::Lrc;
 use atty;
 use std::borrow::Cow;
 use std::io::prelude::*;
 use std::io;
-use std::collections::HashMap;
 use std::cmp::{min, Reverse};
 use termcolor::{StandardStream, ColorChoice, ColorSpec, BufferWriter};
 use termcolor::{WriteColor, Color, Buffer};
@@ -120,21 +120,21 @@ impl ColorConfig {
 
 pub struct EmitterWriter {
     dst: Destination,
-    cm: Option<Lrc<CodeMapperDyn>>,
+    cm: Option<Lrc<SourceMapperDyn>>,
     short_message: bool,
     teach: bool,
     ui_testing: bool,
 }
 
 struct FileWithAnnotatedLines {
-    file: Lrc<FileMap>,
+    file: Lrc<SourceFile>,
     lines: Vec<Line>,
     multiline_depth: usize,
 }
 
 impl EmitterWriter {
     pub fn stderr(color_config: ColorConfig,
-                  code_map: Option<Lrc<CodeMapperDyn>>,
+                  code_map: Option<Lrc<SourceMapperDyn>>,
                   short_message: bool,
                   teach: bool)
                   -> EmitterWriter {
@@ -149,7 +149,7 @@ impl EmitterWriter {
     }
 
     pub fn new(dst: Box<dyn Write + Send>,
-               code_map: Option<Lrc<CodeMapperDyn>>,
+               code_map: Option<Lrc<SourceMapperDyn>>,
                short_message: bool,
                teach: bool)
                -> EmitterWriter {
@@ -177,7 +177,7 @@ impl EmitterWriter {
 
     fn preprocess_annotations(&mut self, msp: &MultiSpan) -> Vec<FileWithAnnotatedLines> {
         fn add_annotation_to_file(file_vec: &mut Vec<FileWithAnnotatedLines>,
-                                  file: Lrc<FileMap>,
+                                  file: Lrc<SourceFile>,
                                   line_index: usize,
                                   ann: Annotation) {
 
@@ -307,7 +307,7 @@ impl EmitterWriter {
 
     fn render_source_line(&self,
                           buffer: &mut StyledBuffer,
-                          file: Lrc<FileMap>,
+                          file: Lrc<SourceFile>,
                           line: &Line,
                           width_offset: usize,
                           code_offset: usize) -> Vec<(usize, Style)> {
@@ -798,7 +798,7 @@ impl EmitterWriter {
                                                          // at by "in this macro invocation"
                                                          format!(" (#{})", i + 1)
                                                      } else {
-                                                         "".to_string()
+                                                         String::new()
                                                      })));
                         }
                         // Check to make sure we're not in any <*macros>
@@ -813,7 +813,7 @@ impl EmitterWriter {
                                                          // backtrace is multiple levels deep
                                                          format!(" (#{})", i + 1)
                                                      } else {
-                                                         "".to_string()
+                                                         String::new()
                                                      })));
                             if !always_backtrace {
                                 break;
@@ -1021,7 +1021,7 @@ impl EmitterWriter {
         // Print out the annotate source lines that correspond with the error
         for annotated_file in annotated_files {
             // we can't annotate anything if the source is unavailable.
-            if !cm.ensure_filemap_source_present(annotated_file.file.clone()) {
+            if !cm.ensure_source_file_source_present(annotated_file.file.clone()) {
                 continue;
             }
 
@@ -1065,7 +1065,7 @@ impl EmitterWriter {
                     let col = if let Some(first_annotation) = first_line.annotations.first() {
                         format!(":{}", first_annotation.start_col + 1)
                     } else {
-                        "".to_string()
+                        String::new()
                     };
                     format!("{}:{}{}",
                             annotated_file.file.name,
@@ -1090,7 +1090,7 @@ impl EmitterWriter {
                                             max_line_num_len + 1);
 
                 // Contains the vertical lines' positions for active multiline annotations
-                let mut multilines = HashMap::new();
+                let mut multilines = FxHashMap::default();
 
                 // Next, output the annotate source for this file
                 for line_idx in 0..annotated_file.lines.len() {
@@ -1109,7 +1109,7 @@ impl EmitterWriter {
                                                          width_offset,
                                                          code_offset);
 
-                    let mut to_add = HashMap::new();
+                    let mut to_add = FxHashMap::default();
 
                     for (depth, style) in depths {
                         if multilines.get(&depth).is_some() {
@@ -1295,7 +1295,7 @@ impl EmitterWriter {
                 }
 
                 // if we elided some lines, add an ellipsis
-                if let Some(_) = lines.next() {
+                if lines.next().is_some() {
                     buffer.puts(row_num, max_line_num_len - 1, "...", Style::LineNumber);
                 } else if !show_underline {
                     draw_col_separator_no_space(&mut buffer, row_num, max_line_num_len + 1);

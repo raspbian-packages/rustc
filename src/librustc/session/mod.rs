@@ -8,24 +8,23 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-pub use self::code_stats::{CodeStats, DataTypeKind, FieldInfo};
-pub use self::code_stats::{SizeKind, TypeSizeInfo, VariantInfo};
+pub use self::code_stats::{DataTypeKind, SizeKind, FieldInfo, VariantInfo};
+use self::code_stats::CodeStats;
 
 use hir::def_id::CrateNum;
-use ich::Fingerprint;
+use rustc_data_structures::fingerprint::Fingerprint;
 
-use ich;
 use lint;
 use lint::builtin::BuiltinLintDiagnostics;
 use middle::allocator::AllocatorKind;
 use middle::dependency_format;
 use session::search_paths::PathKind;
-use session::config::{OutputType};
-use ty::tls;
+use session::config::{OutputType, Lto};
 use util::nodemap::{FxHashMap, FxHashSet};
 use util::common::{duration_to_secs_str, ErrorReported};
 use util::common::ProfileQueriesMsg;
 
+use rustc_data_structures::base_n;
 use rustc_data_structures::sync::{self, Lrc, Lock, LockCell, OneThread, Once, RwLock};
 
 use syntax::ast::NodeId;
@@ -34,21 +33,20 @@ use errors::emitter::{Emitter, EmitterWriter};
 use syntax::edition::Edition;
 use syntax::json::JsonEmitter;
 use syntax::feature_gate;
-use syntax::symbol::Symbol;
 use syntax::parse;
 use syntax::parse::ParseSess;
-use syntax::{ast, codemap};
+use syntax::{ast, source_map};
 use syntax::feature_gate::AttributeType;
 use syntax_pos::{MultiSpan, Span};
+use util::profiling::SelfProfiler;
 
-use rustc_target::spec::{LinkerFlavor, PanicStrategy};
+use rustc_target::spec::PanicStrategy;
 use rustc_target::spec::{Target, TargetTriple};
 use rustc_data_structures::flock;
 use jobserver::Client;
 
 use std;
 use std::cell::{self, Cell, RefCell};
-use std::collections::HashMap;
 use std::env;
 use std::fmt;
 use std::io::Write;
@@ -123,15 +121,15 @@ pub struct Session {
     /// Map from imported macro spans (which consist of
     /// the localized span for the macro body) to the
     /// macro name and definition span in the source crate.
-    pub imported_macro_spans: OneThread<RefCell<HashMap<Span, (String, Span)>>>,
+    pub imported_macro_spans: OneThread<RefCell<FxHashMap<Span, (String, Span)>>>,
 
     incr_comp_session: OneThread<RefCell<IncrCompSession>>,
 
-    /// A cache of attributes ignored by StableHashingContext
-    pub ignored_attr_names: FxHashSet<Symbol>,
-
     /// Used by -Z profile-queries in util::common
     pub profile_channel: Lock<Option<mpsc::Sender<ProfileQueriesMsg>>>,
+
+    /// Used by -Z self-profile
+    pub self_profiling: Lock<SelfProfiler>,
 
     /// Some measurements that are being gathered during compilation.
     pub perf_stats: PerfStats,
@@ -160,6 +158,9 @@ pub struct Session {
 
     /// Metadata about the allocators for the current crate being compiled
     pub has_global_allocator: Once<bool>,
+
+    /// Metadata about the panic handlers for the current crate being compiled
+    pub has_panic_handler: Once<bool>,
 
     /// Cap lint level specified by a driver specifically.
     pub driver_lint_caps: FxHashMap<lint::LintId, lint::Level>,
@@ -485,8 +486,8 @@ impl Session {
         );
     }
 
-    pub fn codemap<'a>(&'a self) -> &'a codemap::CodeMap {
-        self.parse_sess.codemap()
+    pub fn source_map<'a>(&'a self) -> &'a source_map::SourceMap {
+        self.parse_sess.source_map()
     }
     pub fn verbose(&self) -> bool {
         self.opts.debugging_opts.verbose
@@ -549,9 +550,27 @@ impl Session {
         // lto` and we've for whatever reason forced off ThinLTO via the CLI,
         // then ensure we can't use a ThinLTO.
         match self.opts.cg.lto {
-            config::Lto::No => {}
-            config::Lto::Yes if self.opts.cli_forced_thinlto_off => return config::Lto::Fat,
-            other => return other,
+            config::LtoCli::Unspecified => {
+                // The compiler was invoked without the `-Clto` flag. Fall
+                // through to the default handling
+            }
+            config::LtoCli::No => {
+                // The user explicitly opted out of any kind of LTO
+                return config::Lto::No;
+            }
+            config::LtoCli::Yes |
+            config::LtoCli::Fat |
+            config::LtoCli::NoParam => {
+                // All of these mean fat LTO
+                return config::Lto::Fat;
+            }
+            config::LtoCli::Thin => {
+                return if self.opts.cli_forced_thinlto_off {
+                    config::Lto::Fat
+                } else {
+                    config::Lto::Thin
+                };
+            }
         }
 
         // Ok at this point the target doesn't require anything and the user
@@ -582,11 +601,6 @@ impl Session {
             return config::Lto::No;
         }
 
-        // Right now ThinLTO isn't compatible with incremental compilation.
-        if self.opts.incremental.is_some() {
-            return config::Lto::No;
-        }
-
         // Now we're in "defaults" territory. By default we enable ThinLTO for
         // optimized compiles (anything greater than O0).
         match self.opts.optimize {
@@ -603,13 +617,6 @@ impl Session {
             .panic
             .unwrap_or(self.target.target.options.panic_strategy)
     }
-    pub fn linker_flavor(&self) -> LinkerFlavor {
-        self.opts
-            .debugging_opts
-            .linker_flavor
-            .unwrap_or(self.target.target.linker_flavor)
-    }
-
     pub fn fewer_names(&self) -> bool {
         let more_names = self.opts
             .output_types
@@ -654,13 +661,6 @@ impl Session {
             !found_negative
         } else {
             found_positive
-        }
-    }
-
-    pub fn target_cpu(&self) -> &str {
-        match self.opts.cg.target_cpu {
-            Some(ref s) => &**s,
-            None => &*self.target.target.options.cpu
         }
     }
 
@@ -825,6 +825,21 @@ impl Session {
         }
     }
 
+    pub fn profiler<F: FnOnce(&mut SelfProfiler) -> ()>(&self, f: F) {
+        let mut profiler = self.self_profiling.borrow_mut();
+        f(&mut profiler);
+    }
+
+    pub fn print_profiler_results(&self) {
+        let mut profiler = self.self_profiling.borrow_mut();
+        profiler.print_results(&self.opts);
+    }
+
+    pub fn save_json_results(&self) {
+        let profiler = self.self_profiling.borrow();
+        profiler.save_results(&self.opts);
+    }
+
     pub fn print_perf_stats(&self) {
         println!(
             "Total time spent computing symbol hashes:      {}",
@@ -946,7 +961,7 @@ impl Session {
     }
 
     pub fn teach(&self, code: &DiagnosticId) -> bool {
-        self.opts.debugging_opts.teach && self.parse_sess.span_diagnostic.must_teach(code)
+        self.opts.debugging_opts.teach && self.diagnostic().must_teach(code)
     }
 
     /// Are we allowed to use features from the Rust 2018 edition?
@@ -966,20 +981,20 @@ pub fn build_session(
 ) -> Session {
     let file_path_mapping = sopts.file_path_mapping();
 
-    build_session_with_codemap(
+    build_session_with_source_map(
         sopts,
         local_crate_source_file,
         registry,
-        Lrc::new(codemap::CodeMap::new(file_path_mapping)),
+        Lrc::new(source_map::SourceMap::new(file_path_mapping)),
         None,
     )
 }
 
-pub fn build_session_with_codemap(
+pub fn build_session_with_source_map(
     sopts: config::Options,
     local_crate_source_file: Option<PathBuf>,
     registry: errors::registry::Registry,
-    codemap: Lrc<codemap::CodeMap>,
+    source_map: Lrc<source_map::SourceMap>,
     emitter_dest: Option<Box<dyn Write + Send>>,
 ) -> Session {
     // FIXME: This is not general enough to make the warning lint completely override
@@ -1006,19 +1021,19 @@ pub fn build_session_with_codemap(
             (config::ErrorOutputType::HumanReadable(color_config), None) => Box::new(
                 EmitterWriter::stderr(
                     color_config,
-                    Some(codemap.clone()),
+                    Some(source_map.clone()),
                     false,
                     sopts.debugging_opts.teach,
                 ).ui_testing(sopts.debugging_opts.ui_testing),
             ),
             (config::ErrorOutputType::HumanReadable(_), Some(dst)) => Box::new(
-                EmitterWriter::new(dst, Some(codemap.clone()), false, false)
+                EmitterWriter::new(dst, Some(source_map.clone()), false, false)
                     .ui_testing(sopts.debugging_opts.ui_testing),
             ),
             (config::ErrorOutputType::Json(pretty), None) => Box::new(
                 JsonEmitter::stderr(
                     Some(registry),
-                    codemap.clone(),
+                    source_map.clone(),
                     pretty,
                 ).ui_testing(sopts.debugging_opts.ui_testing),
             ),
@@ -1026,15 +1041,15 @@ pub fn build_session_with_codemap(
                 JsonEmitter::new(
                     dst,
                     Some(registry),
-                    codemap.clone(),
+                    source_map.clone(),
                     pretty,
                 ).ui_testing(sopts.debugging_opts.ui_testing),
             ),
             (config::ErrorOutputType::Short(color_config), None) => Box::new(
-                EmitterWriter::stderr(color_config, Some(codemap.clone()), true, false),
+                EmitterWriter::stderr(color_config, Some(source_map.clone()), true, false),
             ),
             (config::ErrorOutputType::Short(_), Some(dst)) => {
-                Box::new(EmitterWriter::new(dst, Some(codemap.clone()), true, false))
+                Box::new(EmitterWriter::new(dst, Some(source_map.clone()), true, false))
             }
         };
 
@@ -1049,14 +1064,14 @@ pub fn build_session_with_codemap(
         },
     );
 
-    build_session_(sopts, local_crate_source_file, diagnostic_handler, codemap)
+    build_session_(sopts, local_crate_source_file, diagnostic_handler, source_map)
 }
 
 pub fn build_session_(
     sopts: config::Options,
     local_crate_source_file: Option<PathBuf>,
     span_diagnostic: errors::Handler,
-    codemap: Lrc<codemap::CodeMap>,
+    source_map: Lrc<source_map::SourceMap>,
 ) -> Session {
     let host_triple = TargetTriple::from_triple(config::host_triple());
     let host = match Target::search(&host_triple) {
@@ -1069,7 +1084,7 @@ pub fn build_session_(
     };
     let target_cfg = config::build_target_config(&sopts, &span_diagnostic);
 
-    let p_s = parse::ParseSess::with_span_handler(span_diagnostic, codemap);
+    let p_s = parse::ParseSess::with_span_handler(span_diagnostic, source_map);
     let default_sysroot = match sopts.maybe_sysroot {
         Some(_) => None,
         None => Some(filesearch::get_or_default_sysroot()),
@@ -1122,9 +1137,9 @@ pub fn build_session_(
         injected_allocator: Once::new(),
         allocator_kind: Once::new(),
         injected_panic_runtime: Once::new(),
-        imported_macro_spans: OneThread::new(RefCell::new(HashMap::new())),
+        imported_macro_spans: OneThread::new(RefCell::new(FxHashMap::default())),
         incr_comp_session: OneThread::new(RefCell::new(IncrCompSession::NotInitialized)),
-        ignored_attr_names: ich::compute_ignored_attr_names(),
+        self_profiling: Lock::new(SelfProfiler::new()),
         profile_channel: Lock::new(None),
         perf_stats: PerfStats {
             symbol_hash_time: Lock::new(Duration::from_secs(0)),
@@ -1166,10 +1181,45 @@ pub fn build_session_(
             (*GLOBAL_JOBSERVER).clone()
         },
         has_global_allocator: Once::new(),
+        has_panic_handler: Once::new(),
         driver_lint_caps: FxHashMap(),
     };
 
+    validate_commandline_args_with_session_available(&sess);
+
     sess
+}
+
+// If it is useful to have a Session available already for validating a
+// commandline argument, you can do so here.
+fn validate_commandline_args_with_session_available(sess: &Session) {
+
+    if sess.opts.incremental.is_some() {
+        match sess.lto() {
+            Lto::Thin |
+            Lto::Fat => {
+                sess.err("can't perform LTO when compiling incrementally");
+            }
+            Lto::ThinLocal |
+            Lto::No => {
+                // This is fine
+            }
+        }
+    }
+
+    // Since we don't know if code in an rlib will be linked to statically or
+    // dynamically downstream, rustc generates `__imp_` symbols that help the
+    // MSVC linker deal with this lack of knowledge (#27438). Unfortunately,
+    // these manually generated symbols confuse LLD when it tries to merge
+    // bitcode during ThinLTO. Therefore we disallow dynamic linking on MSVC
+    // when compiling for LLD ThinLTO. This way we can validly just not generate
+    // the `dllimport` attributes and `__imp_` symbols in that case.
+    if sess.opts.debugging_opts.cross_lang_lto.enabled() &&
+       sess.opts.cg.prefer_dynamic &&
+       sess.target.target.options.is_like_msvc {
+        sess.err("Linker plugin based LTO is not supported together with \
+                  `-C prefer-dynamic` when targeting MSVC");
+    }
 }
 
 /// Hash value constructed out of all the `-C metadata` arguments passed to the
@@ -1184,13 +1234,21 @@ impl CrateDisambiguator {
     }
 }
 
+impl fmt::Display for CrateDisambiguator {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let (a, b) = self.0.as_value();
+        let as_u128 = a as u128 | ((b as u128) << 64);
+        f.write_str(&base_n::encode(as_u128, base_n::CASE_INSENSITIVE))
+    }
+}
+
 impl From<Fingerprint> for CrateDisambiguator {
     fn from(fingerprint: Fingerprint) -> CrateDisambiguator {
         CrateDisambiguator(fingerprint)
     }
 }
 
-impl_stable_hash_for!(tuple_struct CrateDisambiguator { fingerprint });
+impl_stable_hash_via_hash!(CrateDisambiguator);
 
 /// Holds data on the current incremental compilation session, if there is one.
 #[derive(Debug)]
@@ -1261,40 +1319,4 @@ pub fn compile_result_from_err_count(err_count: usize) -> CompileResult {
     } else {
         Err(CompileIncomplete::Errored(ErrorReported))
     }
-}
-
-#[cold]
-#[inline(never)]
-pub fn bug_fmt(file: &'static str, line: u32, args: fmt::Arguments) -> ! {
-    // this wrapper mostly exists so I don't have to write a fully
-    // qualified path of None::<Span> inside the bug!() macro definition
-    opt_span_bug_fmt(file, line, None::<Span>, args);
-}
-
-#[cold]
-#[inline(never)]
-pub fn span_bug_fmt<S: Into<MultiSpan>>(
-    file: &'static str,
-    line: u32,
-    span: S,
-    args: fmt::Arguments,
-) -> ! {
-    opt_span_bug_fmt(file, line, Some(span), args);
-}
-
-fn opt_span_bug_fmt<S: Into<MultiSpan>>(
-    file: &'static str,
-    line: u32,
-    span: Option<S>,
-    args: fmt::Arguments,
-) -> ! {
-    tls::with_opt(move |tcx| {
-        let msg = format!("{}:{}: {}", file, line, args);
-        match (tcx, span) {
-            (Some(tcx), Some(span)) => tcx.sess.diagnostic().span_bug(span, &msg),
-            (Some(tcx), None) => tcx.sess.diagnostic().bug(&msg),
-            (None, _) => panic!(msg),
-        }
-    });
-    unreachable!();
 }

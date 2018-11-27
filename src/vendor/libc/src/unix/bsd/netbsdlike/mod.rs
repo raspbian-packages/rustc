@@ -421,10 +421,6 @@ pub const IPV6_RECVPKTINFO: ::c_int = 36;
 pub const IPV6_PKTINFO: ::c_int = 46;
 
 pub const TCP_NODELAY:    ::c_int = 0x01;
-pub const TCP_KEEPIDLE:   ::c_int = 3;
-pub const TCP_KEEPINTVL:  ::c_int = 5;
-pub const TCP_KEEPCNT:    ::c_int = 6;
-pub const TCP_KEEPINIT:   ::c_int = 7;
 
 pub const SOL_SOCKET: ::c_int = 0xffff;
 pub const SO_DEBUG: ::c_int = 0x01;
@@ -630,8 +626,6 @@ extern {
                    winp: *mut ::winsize) -> ::pid_t;
     pub fn getpriority(which: ::c_int, who: ::id_t) -> ::c_int;
     pub fn setpriority(which: ::c_int, who: ::id_t, prio: ::c_int) -> ::c_int;
-
-    pub fn fdopendir(fd: ::c_int) -> *mut ::DIR;
 
     pub fn mknodat(dirfd: ::c_int, pathname: *const ::c_char,
                    mode: ::mode_t, dev: dev_t) -> ::c_int;

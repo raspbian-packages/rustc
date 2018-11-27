@@ -185,7 +185,9 @@ pub fn extract(attrs: &[ast::Attribute]) -> Option<(Symbol, Span)> {
             if let Some(value) = attribute.value_str() {
                 return Some((value, attribute.span));
             }
-        } else if attribute.check_name("panic_implementation") {
+        } else if attribute.check_name("panic_implementation") ||
+            attribute.check_name("panic_handler")
+        {
             return Some((Symbol::intern("panic_impl"), attribute.span))
         } else if attribute.check_name("alloc_error_handler") {
             return Some((Symbol::intern("oom"), attribute.span))
@@ -305,6 +307,8 @@ language_item_table! {
     PanicBoundsCheckFnLangItem,      "panic_bounds_check",      panic_bounds_check_fn;
     PanicInfoLangItem,               "panic_info",              panic_info;
     PanicImplLangItem,               "panic_impl",              panic_impl;
+    // Libstd panic entry point. Necessary for const eval to be able to catch it
+    BeginPanicFnLangItem,            "begin_panic",             begin_panic_fn;
 
     ExchangeMallocFnLangItem,        "exchange_malloc",         exchange_malloc_fn;
     BoxFreeFnLangItem,               "box_free",                box_free_fn;
@@ -321,8 +325,6 @@ language_item_table! {
     OwnedBoxLangItem,                "owned_box",               owned_box;
 
     PhantomDataItem,                 "phantom_data",            phantom_data;
-
-    NonZeroItem,                     "non_zero",                non_zero;
 
     ManuallyDropItem,                "manually_drop",           manually_drop;
 

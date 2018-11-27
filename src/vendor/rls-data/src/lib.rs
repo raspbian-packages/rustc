@@ -34,6 +34,7 @@ use config::Config;
 pub struct Analysis {
     /// The Config used to generate this analysis data.
     pub config: Config,
+    pub version: Option<String>,
     pub prelude: Option<CratePreludeData>,
     pub imports: Vec<Import>,
     pub defs: Vec<Def>,
@@ -50,6 +51,7 @@ impl Analysis {
     pub fn new(config: Config) -> Analysis {
         Analysis {
             config,
+            version: option_env!("CARGO_PKG_VERSION").map(|s| s.to_string()),
             prelude: None,
             imports: vec![],
             defs: vec![],
@@ -64,6 +66,7 @@ impl Analysis {
     pub fn new(config: Config) -> Analysis {
         Analysis {
             config,
+            version: option_env!("CARGO_PKG_VERSION").map(|s| s.to_string()),
             prelude: None,
             imports: vec![],
             defs: vec![],
@@ -195,6 +198,7 @@ pub enum DefKind {
     Trait,
     // value = type + generics
     Function,
+    ForeignFunction,
     // value = type + generics
     Method,
     // No id, no value.
@@ -206,6 +210,7 @@ pub enum DefKind {
     // value = type and init expression (for all variable kinds).
     Local,
     Static,
+    ForeignStatic,
     Const,
     Field,
     // no value

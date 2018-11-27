@@ -13,14 +13,16 @@
        html_root_url = "https://doc.rust-lang.org/nightly/")]
 
 #![feature(box_patterns)]
-#![feature(fs_read_write)]
 #![feature(libc)]
 #![feature(macro_at_most_once_rep)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(proc_macro_internals)]
 #![feature(proc_macro_quote)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(slice_sort_by_cached_key)]
+#![feature(crate_visibility_modifier)]
 #![feature(specialization)]
 #![feature(rustc_private)]
 
@@ -37,6 +39,7 @@ extern crate serialize as rustc_serialize; // used by deriving
 extern crate rustc_errors as errors;
 extern crate syntax_ext;
 extern crate proc_macro;
+extern crate rustc_metadata_utils;
 
 #[macro_use]
 extern crate rustc;

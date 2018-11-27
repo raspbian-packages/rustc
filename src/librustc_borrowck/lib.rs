@@ -14,7 +14,8 @@
 
 #![allow(non_camel_case_types)]
 
-#![feature(from_ref)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(quote)]
 
 #![recursion_limit="256"]
@@ -38,5 +39,7 @@ pub use borrowck::build_borrowck_dataflow_data_for_fn;
 mod borrowck;
 
 pub mod graphviz;
+
+mod dataflow;
 
 pub use borrowck::provide;

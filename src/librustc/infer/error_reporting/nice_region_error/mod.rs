@@ -11,7 +11,7 @@
 use infer::InferCtxt;
 use infer::lexical_region_resolve::RegionResolutionError;
 use infer::lexical_region_resolve::RegionResolutionError::*;
-use syntax::codemap::Span;
+use syntax::source_map::Span;
 use ty::{self, TyCtxt};
 use util::common::ErrorReported;
 
@@ -62,6 +62,12 @@ impl<'cx, 'gcx, 'tcx> NiceRegionError<'cx, 'gcx, 'tcx> {
         tables: Option<&'cx ty::TypeckTables<'tcx>>,
     ) -> Self {
         Self { tcx, error: None, regions: Some((span, sub, sup)), tables }
+    }
+
+    pub fn try_report_from_nll(&self) -> Option<ErrorReported> {
+        // Due to the improved diagnostics returned by the MIR borrow checker, only a subset of
+        // the nice region errors are required when running under the MIR borrow checker.
+        self.try_report_named_anon_conflict()
     }
 
     pub fn try_report(&self) -> Option<ErrorReported> {

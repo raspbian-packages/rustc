@@ -12,27 +12,25 @@ use attr::HasAttrs;
 use feature_gate::{feature_err, EXPLAIN_STMT_ATTR_SYNTAX, Features, get_features, GateIssue};
 use {fold, attr};
 use ast;
-use codemap::Spanned;
+use source_map::Spanned;
 use edition::Edition;
 use parse::{token, ParseSess};
+use OneVector;
 
 use ptr::P;
-use util::small_vector::SmallVector;
 
 /// A folder that strips out items that do not belong in the current configuration.
 pub struct StripUnconfigured<'a> {
-    pub should_test: bool,
     pub sess: &'a ParseSess,
     pub features: Option<&'a Features>,
 }
 
 // `cfg_attr`-process the crate's attributes and compute the crate's features.
-pub fn features(mut krate: ast::Crate, sess: &ParseSess, should_test: bool, edition: Edition)
+pub fn features(mut krate: ast::Crate, sess: &ParseSess, edition: Edition)
                 -> (ast::Crate, Features) {
     let features;
     {
         let mut strip_unconfigured = StripUnconfigured {
-            should_test,
             sess,
             features: None,
         };
@@ -90,7 +88,8 @@ impl<'a> StripUnconfigured<'a> {
             let cfg = parser.parse_meta_item()?;
             parser.expect(&token::Comma)?;
             let lo = parser.span.lo();
-            let (path, tokens) = parser.parse_path_and_tokens()?;
+            let (path, tokens) = parser.parse_meta_item_unrestricted()?;
+            parser.eat(&token::Comma); // Optional trailing comma
             parser.expect(&token::CloseDelim(token::Paren))?;
             Ok((cfg, path, tokens, parser.prev_span.with_lo(lo)))
         }) {
@@ -118,11 +117,6 @@ impl<'a> StripUnconfigured<'a> {
     // Determine if a node with the given attributes should be included in this configuration.
     pub fn in_cfg(&mut self, attrs: &[ast::Attribute]) -> bool {
         attrs.iter().all(|attr| {
-            // When not compiling with --test we should not compile the #[test] functions
-            if !self.should_test && is_test_or_bench(attr) {
-                return false;
-            }
-
             if !is_cfg(attr) {
                 return true;
             }
@@ -269,7 +263,7 @@ impl<'a> StripUnconfigured<'a> {
         //
         // NB: This is intentionally not part of the fold_expr() function
         //     in order for fold_opt_expr() to be able to avoid this check
-        if let Some(attr) = expr.attrs().iter().find(|a| is_cfg(a) || is_test_or_bench(a)) {
+        if let Some(attr) = expr.attrs().iter().find(|a| is_cfg(a)) {
             let msg = "removing an expression is not supported in this position";
             self.sess.span_diagnostic.span_err(attr.span, msg);
         }
@@ -339,22 +333,22 @@ impl<'a> fold::Folder for StripUnconfigured<'a> {
         Some(P(fold::noop_fold_expr(expr, self)))
     }
 
-    fn fold_stmt(&mut self, stmt: ast::Stmt) -> SmallVector<ast::Stmt> {
+    fn fold_stmt(&mut self, stmt: ast::Stmt) -> OneVector<ast::Stmt> {
         match self.configure_stmt(stmt) {
             Some(stmt) => fold::noop_fold_stmt(stmt, self),
-            None => return SmallVector::new(),
+            None => return OneVector::new(),
         }
     }
 
-    fn fold_item(&mut self, item: P<ast::Item>) -> SmallVector<P<ast::Item>> {
+    fn fold_item(&mut self, item: P<ast::Item>) -> OneVector<P<ast::Item>> {
         fold::noop_fold_item(configure!(self, item), self)
     }
 
-    fn fold_impl_item(&mut self, item: ast::ImplItem) -> SmallVector<ast::ImplItem> {
+    fn fold_impl_item(&mut self, item: ast::ImplItem) -> OneVector<ast::ImplItem> {
         fold::noop_fold_impl_item(configure!(self, item), self)
     }
 
-    fn fold_trait_item(&mut self, item: ast::TraitItem) -> SmallVector<ast::TraitItem> {
+    fn fold_trait_item(&mut self, item: ast::TraitItem) -> OneVector<ast::TraitItem> {
         fold::noop_fold_trait_item(configure!(self, item), self)
     }
 
@@ -371,8 +365,4 @@ impl<'a> fold::Folder for StripUnconfigured<'a> {
 
 fn is_cfg(attr: &ast::Attribute) -> bool {
     attr.check_name("cfg")
-}
-
-pub fn is_test_or_bench(attr: &ast::Attribute) -> bool {
-    attr.check_name("test") || attr.check_name("bench")
 }

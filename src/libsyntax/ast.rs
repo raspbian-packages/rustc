@@ -13,22 +13,23 @@
 pub use self::UnsafeSource::*;
 pub use self::GenericArgs::*;
 pub use symbol::{Ident, Symbol as Name};
-pub use util::ThinVec;
 pub use util::parser::ExprPrecedence;
 
 use syntax_pos::{Span, DUMMY_SP};
-use codemap::{dummy_spanned, respan, Spanned};
+use source_map::{dummy_spanned, respan, Spanned};
 use rustc_target::spec::abi::Abi;
 use ext::hygiene::{Mark, SyntaxContext};
 use print::pprust;
 use ptr::P;
 use rustc_data_structures::indexed_vec;
+use rustc_data_structures::indexed_vec::Idx;
 use symbol::{Symbol, keywords};
+use ThinVec;
 use tokenstream::{ThinTokenStream, TokenStream};
 
 use serialize::{self, Encoder, Decoder};
-use std::collections::HashSet;
 use std::fmt;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::sync::Lrc;
 use std::u32;
 
@@ -100,7 +101,7 @@ impl Path {
     // or starts with something like `self`/`super`/`$crate`/etc.
     pub fn make_root(&self) -> Option<PathSegment> {
         if let Some(ident) = self.segments.get(0).map(|seg| seg.ident) {
-            if ident.is_path_segment_keyword() && ident.name != keywords::Crate.name() {
+            if ident.is_path_segment_keyword() {
                 return None;
             }
         }
@@ -406,7 +407,7 @@ pub struct WhereEqPredicate {
 
 /// The set of MetaItems that define the compilation environment of the crate,
 /// used to drive conditional compilation
-pub type CrateConfig = HashSet<(Name, Option<Symbol>)>;
+pub type CrateConfig = FxHashSet<(Name, Option<Symbol>)>;
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
 pub struct Crate {
@@ -500,7 +501,11 @@ impl Pat {
             PatKind::Slice(pats, None, _) if pats.len() == 1 =>
                 pats[0].to_ty().map(TyKind::Slice)?,
             PatKind::Tuple(pats, None) => {
-                let tys = pats.iter().map(|pat| pat.to_ty()).collect::<Option<Vec<_>>>()?;
+                let mut tys = Vec::with_capacity(pats.len());
+                // FIXME(#48994) - could just be collected into an Option<Vec>
+                for pat in pats {
+                    tys.push(pat.to_ty()?);
+                }
                 TyKind::Tup(tys)
             }
             _ => return None,
@@ -852,8 +857,13 @@ pub struct Local {
 pub struct Arm {
     pub attrs: Vec<Attribute>,
     pub pats: Vec<P<Pat>>,
-    pub guard: Option<P<Expr>>,
+    pub guard: Option<Guard>,
     pub body: P<Expr>,
+}
+
+#[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
+pub enum Guard {
+    If(P<Expr>),
 }
 
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
@@ -982,7 +992,7 @@ impl Expr {
             ExprKind::Match(..) => ExprPrecedence::Match,
             ExprKind::Closure(..) => ExprPrecedence::Closure,
             ExprKind::Block(..) => ExprPrecedence::Block,
-            ExprKind::Catch(..) => ExprPrecedence::Catch,
+            ExprKind::TryBlock(..) => ExprPrecedence::TryBlock,
             ExprKind::Async(..) => ExprPrecedence::Async,
             ExprKind::Assign(..) => ExprPrecedence::Assign,
             ExprKind::AssignOp(..) => ExprPrecedence::AssignOp,
@@ -1103,8 +1113,8 @@ pub enum ExprKind {
     /// created during lowering cannot be made the parent of any other
     /// preexisting defs.
     Async(CaptureBy, NodeId, P<Block>),
-    /// A catch block (`catch { ... }`)
-    Catch(P<Block>),
+    /// A try block (`try { ... }`)
+    TryBlock(P<Block>),
 
     /// An assignment (`a = foo()`)
     Assign(P<Expr>, P<Expr>),
@@ -1577,7 +1587,7 @@ impl TyKind {
         if let TyKind::ImplicitSelf = *self { true } else { false }
     }
 
-    crate fn is_unit(&self) -> bool {
+    pub fn is_unit(&self) -> bool {
         if let TyKind::Tup(ref tys) = *self { tys.is_empty() } else { false }
     }
 }
@@ -1910,8 +1920,17 @@ pub enum AttrStyle {
     Inner,
 }
 
-#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, Copy)]
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug, PartialOrd, Ord, Copy)]
 pub struct AttrId(pub usize);
+
+impl Idx for AttrId {
+    fn new(idx: usize) -> Self {
+        AttrId(idx)
+    }
+    fn index(self) -> usize {
+        self.0
+    }
+}
 
 /// Meta-data associated with an item
 /// Doc-comments are promoted to attributes that have is_sugared_doc = true

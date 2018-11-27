@@ -226,8 +226,8 @@ unsafe fn swap_nonoverlapping_bytes(x: *mut u8, y: *mut u8, len: usize) {
         // Declaring `t` here avoids aligning the stack when this loop is unused
         let mut t: Block = mem::uninitialized();
         let t = &mut t as *mut _ as *mut u8;
-        let x = x.offset(i as isize);
-        let y = y.offset(i as isize);
+        let x = x.add(i);
+        let y = y.add(i);
 
         // Swap a block of bytes of x & y, using t as a temporary buffer
         // This should be optimized into efficient SIMD operations where available
@@ -243,8 +243,8 @@ unsafe fn swap_nonoverlapping_bytes(x: *mut u8, y: *mut u8, len: usize) {
         let rem = len - i;
 
         let t = &mut t as *mut _ as *mut u8;
-        let x = x.offset(i as isize);
-        let y = y.offset(i as isize);
+        let x = x.add(i);
+        let y = y.add(i);
 
         copy_nonoverlapping(x, t, rem);
         copy_nonoverlapping(y, x, rem);
@@ -448,6 +448,12 @@ pub unsafe fn write_unaligned<T>(dst: *mut T, src: T) {
 /// `write_bytes`, or `copy`). Note that `*src = foo` counts as a use
 /// because it will attempt to drop the value previously at `*src`.
 ///
+/// Just like in C, whether an operation is volatile has no bearing whatsoever
+/// on questions involving concurrent access from multiple threads. Volatile
+/// accesses behave exactly like non-atomic accesses in that regard. In particular,
+/// a race between a `read_volatile` and any write operation to the same location
+/// is undefined behavior.
+///
 /// # Examples
 ///
 /// Basic usage:
@@ -497,6 +503,12 @@ pub unsafe fn read_volatile<T>(src: *const T) -> T {
 ///
 /// This is appropriate for initializing uninitialized memory, or overwriting
 /// memory that has previously been `read` from.
+///
+/// Just like in C, whether an operation is volatile has no bearing whatsoever
+/// on questions involving concurrent access from multiple threads. Volatile
+/// accesses behave exactly like non-atomic accesses in that regard. In particular,
+/// a race between a `write_volatile` and any other operation (reading or writing)
+/// on the same location is undefined behavior.
 ///
 /// # Examples
 ///
@@ -570,6 +582,21 @@ impl<T: ?Sized> *const T {
     ///     }
     /// }
     /// ```
+    ///
+    /// # Null-unchecked version
+    ///
+    /// If you are sure the pointer can never be null and are looking for some kind of
+    /// `as_ref_unchecked` that returns the `&T` instead of `Option<&T>, know that you can
+    /// dereference the pointer directly.
+    ///
+    /// ```
+    /// let ptr: *const u8 = &10u8 as *const u8;
+    ///
+    /// unsafe {
+    ///     let val_back = &*ptr;
+    ///     println!("We got back the value: {}!", val_back);
+    /// }
+    /// ```
     #[stable(feature = "ptr_as_ref", since = "1.9.0")]
     #[inline]
     pub unsafe fn as_ref<'a>(self) -> Option<&'a T> {
@@ -601,7 +628,7 @@ impl<T: ?Sized> *const T {
     /// The compiler and standard library generally tries to ensure allocations
     /// never reach a size where an offset is a concern. For instance, `Vec`
     /// and `Box` ensure they never allocate more than `isize::MAX` bytes, so
-    /// `vec.as_ptr().offset(vec.len() as isize)` is always safe.
+    /// `vec.as_ptr().add(vec.len())` is always safe.
     ///
     /// Most platforms fundamentally can't even construct such an allocation.
     /// For instance, no known 64-bit platform can ever serve a request
@@ -677,46 +704,6 @@ impl<T: ?Sized> *const T {
     pub fn wrapping_offset(self, count: isize) -> *const T where T: Sized {
         unsafe {
             intrinsics::arith_offset(self, count)
-        }
-    }
-
-    /// Calculates the distance between two pointers. The returned value is in
-    /// units of T: the distance in bytes is divided by `mem::size_of::<T>()`.
-    ///
-    /// If the address different between the two pointers ia not a multiple of
-    /// `mem::size_of::<T>()` then the result of the division is rounded towards
-    /// zero.
-    ///
-    /// This function returns `None` if `T` is a zero-sized type.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// #![feature(offset_to)]
-    /// #![allow(deprecated)]
-    ///
-    /// fn main() {
-    ///     let a = [0; 5];
-    ///     let ptr1: *const i32 = &a[1];
-    ///     let ptr2: *const i32 = &a[3];
-    ///     assert_eq!(ptr1.offset_to(ptr2), Some(2));
-    ///     assert_eq!(ptr2.offset_to(ptr1), Some(-2));
-    ///     assert_eq!(unsafe { ptr1.offset(2) }, ptr2);
-    ///     assert_eq!(unsafe { ptr2.offset(-2) }, ptr1);
-    /// }
-    /// ```
-    #[unstable(feature = "offset_to", issue = "41079")]
-    #[rustc_deprecated(since = "1.27.0", reason = "Replaced by `wrapping_offset_from`, with the \
-        opposite argument order.  If you're writing unsafe code, consider `offset_from`.")]
-    #[inline]
-    pub fn offset_to(self, other: *const T) -> Option<isize> where T: Sized {
-        let size = mem::size_of::<T>();
-        if size == 0 {
-            None
-        } else {
-            Some(other.wrapping_offset_from(self))
         }
     }
 
@@ -1097,6 +1084,12 @@ impl<T: ?Sized> *const T {
     /// `write_bytes`, or `copy`). Note that `*self = foo` counts as a use
     /// because it will attempt to drop the value previously at `*self`.
     ///
+    /// Just like in C, whether an operation is volatile has no bearing whatsoever
+    /// on questions involving concurrent access from multiple threads. Volatile
+    /// accesses behave exactly like non-atomic accesses in that regard. In particular,
+    /// a race between a `read_volatile` and any write operation to the same location
+    /// is undefined behavior.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -1253,7 +1246,7 @@ impl<T: ?Sized> *const T {
     /// let ptr = &x[n] as *const u8;
     /// let offset = ptr.align_offset(align_of::<u16>());
     /// if offset < x.len() - n - 1 {
-    ///     let u16_ptr = ptr.offset(offset as isize) as *const u16;
+    ///     let u16_ptr = ptr.add(offset) as *const u16;
     ///     assert_ne!(*u16_ptr, 500);
     /// } else {
     ///     // while the pointer can be aligned via `offset`, it would point
@@ -1325,6 +1318,21 @@ impl<T: ?Sized> *mut T {
     ///     }
     /// }
     /// ```
+    ///
+    /// # Null-unchecked version
+    ///
+    /// If you are sure the pointer can never be null and are looking for some kind of
+    /// `as_ref_unchecked` that returns the `&T` instead of `Option<&T>, know that you can
+    /// dereference the pointer directly.
+    ///
+    /// ```
+    /// let ptr: *mut u8 = &mut 10u8 as *mut u8;
+    ///
+    /// unsafe {
+    ///     let val_back = &*ptr;
+    ///     println!("We got back the value: {}!", val_back);
+    /// }
+    /// ```
     #[stable(feature = "ptr_as_ref", since = "1.9.0")]
     #[inline]
     pub unsafe fn as_ref<'a>(self) -> Option<&'a T> {
@@ -1356,7 +1364,7 @@ impl<T: ?Sized> *mut T {
     /// The compiler and standard library generally tries to ensure allocations
     /// never reach a size where an offset is a concern. For instance, `Vec`
     /// and `Box` ensure they never allocate more than `isize::MAX` bytes, so
-    /// `vec.as_ptr().offset(vec.len() as isize)` is always safe.
+    /// `vec.as_ptr().add(vec.len())` is always safe.
     ///
     /// Most platforms fundamentally can't even construct such an allocation.
     /// For instance, no known 64-bit platform can ever serve a request
@@ -1461,46 +1469,6 @@ impl<T: ?Sized> *mut T {
             None
         } else {
             Some(&mut *self)
-        }
-    }
-
-    /// Calculates the distance between two pointers. The returned value is in
-    /// units of T: the distance in bytes is divided by `mem::size_of::<T>()`.
-    ///
-    /// If the address different between the two pointers ia not a multiple of
-    /// `mem::size_of::<T>()` then the result of the division is rounded towards
-    /// zero.
-    ///
-    /// This function returns `None` if `T` is a zero-sized type.
-    ///
-    /// # Examples
-    ///
-    /// Basic usage:
-    ///
-    /// ```
-    /// #![feature(offset_to)]
-    /// #![allow(deprecated)]
-    ///
-    /// fn main() {
-    ///     let mut a = [0; 5];
-    ///     let ptr1: *mut i32 = &mut a[1];
-    ///     let ptr2: *mut i32 = &mut a[3];
-    ///     assert_eq!(ptr1.offset_to(ptr2), Some(2));
-    ///     assert_eq!(ptr2.offset_to(ptr1), Some(-2));
-    ///     assert_eq!(unsafe { ptr1.offset(2) }, ptr2);
-    ///     assert_eq!(unsafe { ptr2.offset(-2) }, ptr1);
-    /// }
-    /// ```
-    #[unstable(feature = "offset_to", issue = "41079")]
-    #[rustc_deprecated(since = "1.27.0", reason = "Replaced by `wrapping_offset_from`, with the \
-        opposite argument order.  If you're writing unsafe code, consider `offset_from`.")]
-    #[inline]
-    pub fn offset_to(self, other: *const T) -> Option<isize> where T: Sized {
-        let size = mem::size_of::<T>();
-        if size == 0 {
-            None
-        } else {
-            Some(other.wrapping_offset_from(self))
         }
     }
 
@@ -1870,6 +1838,12 @@ impl<T: ?Sized> *mut T {
     /// `write_bytes`, or `copy`). Note that `*self = foo` counts as a use
     /// because it will attempt to drop the value previously at `*self`.
     ///
+    /// Just like in C, whether an operation is volatile has no bearing whatsoever
+    /// on questions involving concurrent access from multiple threads. Volatile
+    /// accesses behave exactly like non-atomic accesses in that regard. In particular,
+    /// a race between a `read_volatile` and any write operation to the same location
+    /// is undefined behavior.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -2185,6 +2159,12 @@ impl<T: ?Sized> *mut T {
     /// This is appropriate for initializing uninitialized memory, or overwriting
     /// memory that has previously been `read` from.
     ///
+    /// Just like in C, whether an operation is volatile has no bearing whatsoever
+    /// on questions involving concurrent access from multiple threads. Volatile
+    /// accesses behave exactly like non-atomic accesses in that regard. In particular,
+    /// a race between a `write_volatile` and any other operation (reading or writing)
+    /// on the same location is undefined behavior.
+    ///
     /// # Examples
     ///
     /// Basic usage:
@@ -2311,7 +2291,7 @@ impl<T: ?Sized> *mut T {
     /// let ptr = &x[n] as *const u8;
     /// let offset = ptr.align_offset(align_of::<u16>());
     /// if offset < x.len() - n - 1 {
-    ///     let u16_ptr = ptr.offset(offset as isize) as *const u16;
+    ///     let u16_ptr = ptr.add(offset) as *const u16;
     ///     assert_ne!(*u16_ptr, 500);
     /// } else {
     ///     // while the pointer can be aligned via `offset`, it would point
@@ -2341,7 +2321,7 @@ impl<T: ?Sized> *mut T {
 ///
 /// If we ever decide to make it possible to call the intrinsic with `a` that is not a
 /// power-of-two, it will probably be more prudent to just change to a naive implementation rather
-/// than trying to adapt this to accomodate that change.
+/// than trying to adapt this to accommodate that change.
 ///
 /// Any questions go to @nagisa.
 #[lang="align_offset"]
@@ -2368,7 +2348,7 @@ pub(crate) unsafe fn align_offset<T: Sized>(p: *const T, a: usize) -> usize {
 
         let table_inverse = INV_TABLE_MOD_16[(x & (INV_TABLE_MOD - 1)) >> 1];
         if m <= INV_TABLE_MOD {
-            return table_inverse & (m - 1);
+            table_inverse & (m - 1)
         } else {
             // We iterate "up" using the following formula:
             //
@@ -2455,7 +2435,7 @@ pub(crate) unsafe fn align_offset<T: Sized>(p: *const T, a: usize) -> usize {
     }
 
     // Cannot be aligned at all.
-    return usize::max_value();
+    usize::max_value()
 }
 
 

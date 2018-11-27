@@ -21,8 +21,7 @@ use edition::Edition;
 use symbol::Symbol;
 
 use serialize::{Encodable, Decodable, Encoder, Decoder};
-use std::collections::HashMap;
-use rustc_data_structures::fx::FxHashSet;
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use std::fmt;
 
 /// A SyntaxContext represents a chain of macro expansions (represented by marks).
@@ -99,6 +98,11 @@ impl Mark {
     #[inline]
     pub fn from_u32(raw: u32) -> Mark {
         Mark(raw)
+    }
+
+    #[inline]
+    pub fn parent(self) -> Mark {
+        HygieneData::with(|data| data.marks[self.0 as usize].parent)
     }
 
     #[inline]
@@ -190,7 +194,7 @@ impl Mark {
 crate struct HygieneData {
     marks: Vec<MarkData>,
     syntax_contexts: Vec<SyntaxContextData>,
-    markings: HashMap<(SyntaxContext, Mark, Transparency), SyntaxContext>,
+    markings: FxHashMap<(SyntaxContext, Mark, Transparency), SyntaxContext>,
     default_edition: Edition,
 }
 
@@ -212,7 +216,7 @@ impl HygieneData {
                 opaque: SyntaxContext(0),
                 opaque_and_semitransparent: SyntaxContext(0),
             }],
-            markings: HashMap::new(),
+            markings: FxHashMap::default(),
             default_edition: Edition::Edition2015,
         }
     }
@@ -231,7 +235,7 @@ pub fn set_default_edition(edition: Edition) {
 }
 
 pub fn clear_markings() {
-    HygieneData::with(|data| data.markings = HashMap::new());
+    HygieneData::with(|data| data.markings = FxHashMap::default());
 }
 
 impl SyntaxContext {
@@ -587,9 +591,8 @@ impl ExpnFormat {
 /// The kind of compiler desugaring.
 #[derive(Clone, Copy, Hash, Debug, PartialEq, Eq, RustcEncodable, RustcDecodable)]
 pub enum CompilerDesugaringKind {
-    DotFill,
     QuestionMark,
-    Catch,
+    TryBlock,
     /// Desugaring of an `impl Trait` in return type position
     /// to an `existential type Foo: Trait;` + replacing the
     /// `impl Trait` with `Foo`.
@@ -602,9 +605,8 @@ impl CompilerDesugaringKind {
     pub fn name(self) -> Symbol {
         Symbol::intern(match self {
             CompilerDesugaringKind::Async => "async",
-            CompilerDesugaringKind::DotFill => "...",
             CompilerDesugaringKind::QuestionMark => "?",
-            CompilerDesugaringKind::Catch => "do catch",
+            CompilerDesugaringKind::TryBlock => "try block",
             CompilerDesugaringKind::ExistentialReturnType => "existential type",
             CompilerDesugaringKind::ForLoop => "for loop",
         })

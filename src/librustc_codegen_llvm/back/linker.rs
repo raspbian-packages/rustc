@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use std::collections::HashMap;
+use rustc_data_structures::fx::FxHashMap;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, File};
 use std::io::prelude::*;
@@ -21,16 +21,17 @@ use back::symbol_export;
 use rustc::hir::def_id::{LOCAL_CRATE, CrateNum};
 use rustc::middle::dependency_format::Linkage;
 use rustc::session::Session;
-use rustc::session::config::{self, CrateType, OptLevel, DebugInfoLevel,
+use rustc::session::config::{self, CrateType, OptLevel, DebugInfo,
                              CrossLangLto};
 use rustc::ty::TyCtxt;
 use rustc_target::spec::{LinkerFlavor, LldFlavor};
 use serialize::{json, Encoder};
+use llvm_util;
 
 /// For all the linkers we support, and information they might
 /// need out of the shared crate context before we get rid of it.
 pub struct LinkerInfo {
-    exports: HashMap<CrateType, Vec<String>>,
+    exports: FxHashMap<CrateType, Vec<String>>,
 }
 
 impl LinkerInfo {
@@ -44,8 +45,9 @@ impl LinkerInfo {
 
     pub fn to_linker<'a>(&'a self,
                          cmd: Command,
-                         sess: &'a Session) -> Box<dyn Linker+'a> {
-        match sess.linker_flavor() {
+                         sess: &'a Session,
+                         flavor: LinkerFlavor) -> Box<dyn Linker+'a> {
+        match flavor {
             LinkerFlavor::Lld(LldFlavor::Link) |
             LinkerFlavor::Msvc => {
                 Box::new(MsvcLinker {
@@ -201,15 +203,14 @@ impl<'a> GccLinker<'a> {
         };
 
         self.linker_arg(&format!("-plugin-opt={}", opt_level));
-        self.linker_arg(&format!("-plugin-opt=mcpu={}", self.sess.target_cpu()));
+        self.linker_arg(&format!("-plugin-opt=mcpu={}", llvm_util::target_cpu(self.sess)));
 
-        match self.sess.opts.cg.lto {
+        match self.sess.lto() {
             config::Lto::Thin |
             config::Lto::ThinLocal => {
                 self.linker_arg("-plugin-opt=thin");
             }
             config::Lto::Fat |
-            config::Lto::Yes |
             config::Lto::No => {
                 // default to regular LTO
             }
@@ -338,7 +339,7 @@ impl<'a> Linker for GccLinker<'a> {
 
     fn debuginfo(&mut self) {
         match self.sess.opts.debuginfo {
-            DebugInfoLevel::NoDebugInfo => {
+            DebugInfo::None => {
                 // If we are building without debuginfo enabled and we were called with
                 // `-Zstrip-debuginfo-if-disabled=yes`, tell the linker to strip any debuginfo
                 // found when linking to get rid of symbols from libstd.
@@ -387,8 +388,8 @@ impl<'a> Linker for GccLinker<'a> {
         // exported symbols to ensure we don't expose any more. The object files
         // have far more public symbols than we actually want to export, so we
         // hide them all here.
-        if crate_type == CrateType::CrateTypeDylib ||
-           crate_type == CrateType::CrateTypeProcMacro {
+        if crate_type == CrateType::Dylib ||
+           crate_type == CrateType::ProcMacro {
             return
         }
 
@@ -826,9 +827,9 @@ impl<'a> Linker for EmLinker<'a> {
     fn debuginfo(&mut self) {
         // Preserve names or generate source maps depending on debug info
         self.cmd.arg(match self.sess.opts.debuginfo {
-            DebugInfoLevel::NoDebugInfo => "-g0",
-            DebugInfoLevel::LimitedDebugInfo => "-g3",
-            DebugInfoLevel::FullDebugInfo => "-g4"
+            DebugInfo::None => "-g0",
+            DebugInfo::Limited => "-g3",
+            DebugInfo::Full => "-g4"
         });
     }
 
@@ -1066,6 +1067,9 @@ impl<'a> Linker for WasmLd<'a> {
 
         // For now we just never have an entry symbol
         self.cmd.arg("--no-entry");
+
+        // Make the default table accessible
+        self.cmd.arg("--export-table");
 
         let mut cmd = Command::new("");
         ::std::mem::swap(&mut cmd, &mut self.cmd);

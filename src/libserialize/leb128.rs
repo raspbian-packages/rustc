@@ -103,8 +103,8 @@ pub fn write_signed_leb128_to<W>(mut value: i128, mut write: W)
     loop {
         let mut byte = (value as u8) & 0x7f;
         value >>= 7;
-        let more = !((((value == 0) && ((byte & 0x40) == 0)) ||
-                      ((value == -1) && ((byte & 0x40) != 0))));
+        let more = !(((value == 0) && ((byte & 0x40) == 0)) ||
+                     ((value == -1) && ((byte & 0x40) != 0)));
 
         if more {
             byte |= 0x80; // Mark this byte to show that more bytes will follow.
@@ -118,6 +118,7 @@ pub fn write_signed_leb128_to<W>(mut value: i128, mut write: W)
     }
 }
 
+#[inline]
 pub fn write_signed_leb128(out: &mut Vec<u8>, value: i128) {
     write_signed_leb128_to(value, |v| write_to_vec(out, v))
 }

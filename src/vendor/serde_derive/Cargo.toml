@@ -12,7 +12,7 @@
 
 [package]
 name = "serde_derive"
-version = "1.0.70"
+version = "1.0.75"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "crates-io.md", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]"
@@ -30,7 +30,7 @@ proc-macro = true
 version = "0.4"
 
 [dependencies.quote]
-version = "0.6"
+version = "0.6.3"
 
 [dependencies.syn]
 version = "0.14"
@@ -41,5 +41,8 @@ version = "1.0"
 [features]
 default = []
 deserialize_in_place = []
+[badges.appveyor]
+repository = "serde-rs/serde"
+
 [badges.travis-ci]
 repository = "serde-rs/serde"

@@ -549,6 +549,14 @@ s! {
         pub shm_internal: *mut ::c_void,
 
     }
+
+    pub struct arphdr {
+        pub ar_hrd: u16,
+        pub ar_pro: u16,
+        pub ar_hln: u8,
+        pub ar_pln: u8,
+        pub ar_op: u16,
+    }
 }
 
 pub const _UTX_USERSIZE: usize = 256;
@@ -757,16 +765,8 @@ pub const VM_FLAGS_SUPERPAGE_MASK: ::c_int = 0x70000;
 pub const VM_FLAGS_RETURN_DATA_ADDR: ::c_int = 0x100000;
 pub const VM_FLAGS_RETURN_4K_DATA_ADDR: ::c_int = 0x800000;
 pub const VM_FLAGS_ALIAS_MASK: ::c_int = 0xFF000000;
-pub const VM_FLAGS_USER_ALLOCATE: ::c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE |
-                                            VM_FLAGS_PURGABLE |
-                                            VM_FLAGS_RANDOM_ADDR |
-                                            VM_FLAGS_NO_CACHE |
-                                            VM_FLAGS_OVERWRITE |
-                                            VM_FLAGS_SUPERPAGE_MASK |
-                                            VM_FLAGS_ALIAS_MASK;
-pub const VM_FLAGS_USER_MAP: ::c_int = VM_FLAGS_USER_ALLOCATE |
-                                       VM_FLAGS_RETURN_4K_DATA_ADDR |
-                                       VM_FLAGS_RETURN_DATA_ADDR;
+pub const VM_FLAGS_USER_ALLOCATE: ::c_int = 0xff07401b;
+pub const VM_FLAGS_USER_MAP: ::c_int = 0xff97401b;
 pub const VM_FLAGS_USER_REMAP: ::c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE |
                                         VM_FLAGS_RANDOM_ADDR |
                                         VM_FLAGS_OVERWRITE |
@@ -1077,6 +1077,13 @@ pub const TIOCPTYGRANT: ::c_uint = 0x20007454;
 pub const TIOCPTYGNAME: ::c_uint = 0x40807453;
 pub const TIOCPTYUNLK: ::c_uint = 0x20007452;
 
+pub const FIONCLEX: ::c_uint = 0x20006602;
+pub const FIONREAD: ::c_ulong = 0x4004667f;
+pub const FIOASYNC: ::c_ulong = 0x8004667d;
+pub const FIOSETOWN: ::c_ulong = 0x8004667c;
+pub const FIOGETOWN: ::c_ulong = 0x4004667b;
+pub const FIODTYPE: ::c_ulong = 0x4004667a;
+
 pub const B0: speed_t = 0;
 pub const B50: speed_t = 50;
 pub const B75: speed_t = 75;
@@ -1151,6 +1158,7 @@ pub const _SC_XOPEN_SHM: ::c_int = 113;
 pub const _SC_XOPEN_UNIX: ::c_int = 115;
 pub const _SC_XOPEN_VERSION: ::c_int = 116;
 pub const _SC_XOPEN_XCU_VERSION: ::c_int = 121;
+pub const _SC_PHYS_PAGES: ::c_int = 200;
 
 pub const PTHREAD_PROCESS_PRIVATE: ::c_int = 2;
 pub const PTHREAD_PROCESS_SHARED: ::c_int = 1;
@@ -1859,6 +1867,9 @@ pub const NI_MAXHOST: ::socklen_t = 1025;
 pub const Q_GETQUOTA: ::c_int = 0x300;
 pub const Q_SETQUOTA: ::c_int = 0x400;
 
+pub const RENAME_SWAP: ::c_uint = 0x00000002;
+pub const RENAME_EXCL: ::c_uint = 0x00000004;
+
 pub const RTLD_LOCAL: ::c_int = 0x4;
 pub const RTLD_FIRST: ::c_int = 0x100;
 pub const RTLD_NODELETE: ::c_int = 0x80;
@@ -2241,10 +2252,14 @@ pub const DLT_LOOP: ::c_uint = 108;
 // sizeof(int32_t)
 pub const BPF_ALIGNMENT: ::c_int = 4;
 
+// sys/spawn.h:
 pub const POSIX_SPAWN_RESETIDS: ::c_int = 0x01;
 pub const POSIX_SPAWN_SETPGROUP: ::c_int = 0x02;
 pub const POSIX_SPAWN_SETSIGDEF: ::c_int = 0x04;
 pub const POSIX_SPAWN_SETSIGMASK: ::c_int = 0x08;
+pub const POSIX_SPAWN_SETEXEC: ::c_int = 0x40;
+pub const POSIX_SPAWN_START_SUSPENDED: ::c_int = 0x80;
+pub const POSIX_SPAWN_CLOEXEC_DEFAULT: ::c_int = 0x4000;
 
 // sys/ipc.h:
 pub const IPC_CREAT: ::c_int = 0x200;
@@ -2451,6 +2466,11 @@ extern {
                       size: ::size_t, flags: ::c_int) -> ::ssize_t;
     pub fn removexattr(path: *const ::c_char, name: *const ::c_char,
                        flags: ::c_int) -> ::c_int;
+    pub fn renamex_np(from: *const ::c_char, to: *const ::c_char,
+                      flags: ::c_uint) -> ::c_int;
+    pub fn renameatx_np(fromfd: ::c_int, from: *const ::c_char,
+                        tofd: ::c_int, to: *const ::c_char,
+                        flags: ::c_uint) -> ::c_int;
     pub fn fremovexattr(filedes: ::c_int, name: *const ::c_char,
                         flags: ::c_int) -> ::c_int;
 

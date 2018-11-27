@@ -148,7 +148,7 @@ impl<R: AsyncRead + AsyncWrite> AsyncWrite for ZlibEncoder<R> {
 ///
 /// # fn main() {
 /// # let mut e = ZlibEncoder::new(Vec::new(), Compression::default());
-/// # e.write(b"Hello World").unwrap();
+/// # e.write_all(b"Hello World").unwrap();
 /// # let bytes = e.finish().unwrap();
 /// # println!("{}", decode_reader(bytes).unwrap());
 /// # }
@@ -167,7 +167,6 @@ impl<R: AsyncRead + AsyncWrite> AsyncWrite for ZlibEncoder<R> {
 pub struct ZlibDecoder<R> {
     inner: bufread::ZlibDecoder<BufReader<R>>,
 }
-
 
 impl<R: Read> ZlibDecoder<R> {
     /// Creates a new decoder which will decompress data read from the given

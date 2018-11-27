@@ -50,12 +50,15 @@ use hir::GenericArg;
 use lint::builtin::{self, PARENTHESIZED_PARAMS_IN_TYPES_AND_MODULES,
                     ELIDED_LIFETIMES_IN_PATHS};
 use middle::cstore::CrateStore;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::indexed_vec::IndexVec;
+use rustc_data_structures::small_vec::OneVector;
+use rustc_data_structures::thin_vec::ThinVec;
 use session::Session;
 use util::common::FN_OUTPUT_NAME;
 use util::nodemap::{DefIdMap, NodeMap};
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::fmt::Debug;
 use std::iter;
 use std::mem;
@@ -64,14 +67,14 @@ use syntax::ast;
 use syntax::ast::*;
 use syntax::errors;
 use syntax::ext::hygiene::{Mark, SyntaxContext};
+use syntax::feature_gate::{emit_feature_err, GateIssue};
 use syntax::print::pprust;
 use syntax::ptr::P;
-use syntax::codemap::{self, respan, CompilerDesugaringKind, Spanned};
+use syntax::source_map::{self, respan, CompilerDesugaringKind, Spanned};
 use syntax::std_inject;
 use syntax::symbol::{keywords, Symbol};
 use syntax::tokenstream::{Delimited, TokenStream, TokenTree};
 use syntax::parse::token::Token;
-use syntax::util::small_vector::SmallVector;
 use syntax::visit::{self, Visitor};
 use syntax_pos::{Span, MultiSpan};
 
@@ -123,8 +126,8 @@ pub struct LoweringContext<'a> {
     // Whether or not in-band lifetimes are being collected. This is used to
     // indicate whether or not we're in a place where new lifetimes will result
     // in in-band lifetime definitions, such a function or an impl header.
-    // This will always be false unless the `in_band_lifetimes` feature is
-    // enabled.
+    // This will always be false unless the `in_band_lifetimes` or
+    // `impl_header_lifetime_elision` feature is enabled.
     is_collecting_in_band_lifetimes: bool,
 
     // Currently in-scope lifetimes defined in impl headers, fn headers, or HRTB.
@@ -594,7 +597,7 @@ impl<'a> LoweringContext<'a> {
         })
     }
 
-    fn expect_full_def_from_use(&mut self, id: NodeId) -> impl Iterator<Item=Def> {
+    fn expect_full_def_from_use(&mut self, id: NodeId) -> impl Iterator<Item = Def> {
         self.resolver.get_import(id).present_items().map(|pr| {
             if pr.unresolved_segments() != 0 {
                 bug!("path not fully resolved: {:?}", pr);
@@ -613,14 +616,14 @@ impl<'a> LoweringContext<'a> {
 
     fn allow_internal_unstable(&self, reason: CompilerDesugaringKind, span: Span) -> Span {
         let mark = Mark::fresh(Mark::root());
-        mark.set_expn_info(codemap::ExpnInfo {
+        mark.set_expn_info(source_map::ExpnInfo {
             call_site: span,
             def_site: Some(span),
-            format: codemap::CompilerDesugaring(reason),
+            format: source_map::CompilerDesugaring(reason),
             allow_internal_unstable: true,
             allow_internal_unsafe: false,
             local_inner_macros: false,
-            edition: codemap::hygiene::default_edition(),
+            edition: source_map::hygiene::default_edition(),
         });
         span.with_ctxt(SyntaxContext::empty().apply_mark(mark))
     }
@@ -658,9 +661,11 @@ impl<'a> LoweringContext<'a> {
         assert!(self.lifetimes_to_define.is_empty());
         let old_anonymous_lifetime_mode = self.anonymous_lifetime_mode;
 
-        self.is_collecting_in_band_lifetimes = self.sess.features_untracked().in_band_lifetimes;
-        if self.is_collecting_in_band_lifetimes {
+        if self.sess.features_untracked().impl_header_lifetime_elision {
             self.anonymous_lifetime_mode = anonymous_lifetime_mode;
+            self.is_collecting_in_band_lifetimes = true;
+        } else if self.sess.features_untracked().in_band_lifetimes {
+            self.is_collecting_in_band_lifetimes = true;
         }
 
         let (in_band_ty_params, res) = f(self);
@@ -715,6 +720,10 @@ impl<'a> LoweringContext<'a> {
     /// added to the appropriate generics.
     fn maybe_collect_in_band_lifetime(&mut self, ident: Ident) {
         if !self.is_collecting_in_band_lifetimes {
+            return;
+        }
+
+        if !self.sess.features_untracked().in_band_lifetimes {
             return;
         }
 
@@ -981,7 +990,7 @@ impl<'a> LoweringContext<'a> {
             None => {
                 self.loop_scopes
                     .last()
-                    .map(|innermost_loop_id| *innermost_loop_id)
+                    .cloned()
                     .map(|id| Ok(self.lower_node_id(id).node_id))
                     .unwrap_or(Err(hir::LoopIdError::OutsideLoopScope))
                     .into()
@@ -1046,7 +1055,10 @@ impl<'a> LoweringContext<'a> {
         hir::Arm {
             attrs: self.lower_attrs(&arm.attrs),
             pats: arm.pats.iter().map(|x| self.lower_pat(x)).collect(),
-            guard: arm.guard.as_ref().map(|ref x| P(self.lower_expr(x))),
+            guard: match arm.guard {
+                Some(Guard::If(ref x)) => Some(hir::Guard::If(P(self.lower_expr(x)))),
+                _ => None,
+            },
             body: P(self.lower_expr(&arm.body)),
         }
     }
@@ -1176,7 +1188,7 @@ impl<'a> LoweringContext<'a> {
                     }
                     ImplTraitContext::Universal(in_band_ty_params) => {
                         self.lower_node_id(def_node_id);
-                        // Add a definition for the in-band TyParam
+                        // Add a definition for the in-band Param
                         let def_index = self
                             .resolver
                             .definitions()
@@ -1335,7 +1347,7 @@ impl<'a> LoweringContext<'a> {
             exist_ty_id: NodeId,
             collect_elided_lifetimes: bool,
             currently_bound_lifetimes: Vec<hir::LifetimeName>,
-            already_defined_lifetimes: HashSet<hir::LifetimeName>,
+            already_defined_lifetimes: FxHashSet<hir::LifetimeName>,
             output_lifetimes: Vec<hir::GenericArg>,
             output_lifetime_params: Vec<hir::GenericParam>,
         }
@@ -1469,7 +1481,7 @@ impl<'a> LoweringContext<'a> {
             exist_ty_id,
             collect_elided_lifetimes: true,
             currently_bound_lifetimes: Vec::new(),
-            already_defined_lifetimes: HashSet::new(),
+            already_defined_lifetimes: FxHashSet::default(),
             output_lifetimes: Vec::new(),
             output_lifetime_params: Vec::new(),
         };
@@ -2149,12 +2161,14 @@ impl<'a> LoweringContext<'a> {
             let future_path =
                 this.std_path(span, &["future", "Future"], Some(future_params), false);
 
+            let LoweredNodeId { node_id, hir_id } = this.next_id();
             let mut bounds = vec![
                 hir::GenericBound::Trait(
                     hir::PolyTraitRef {
                         trait_ref: hir::TraitRef {
                             path: future_path,
-                            ref_id: this.next_id().node_id,
+                            ref_id: node_id,
+                            hir_ref_id: hir_id,
                         },
                         bound_generic_params: hir_vec![],
                         span,
@@ -2325,7 +2339,7 @@ impl<'a> LoweringContext<'a> {
         // FIXME: This could probably be done with less rightward drift. Also looks like two control
         //        paths where report_error is called are also the only paths that advance to after
         //        the match statement, so the error reporting could probably just be moved there.
-        let mut add_bounds = NodeMap();
+        let mut add_bounds: NodeMap<Vec<_>> = NodeMap();
         for pred in &generics.where_clause.predicates {
             if let WherePredicate::BoundPredicate(ref bound_pred) = *pred {
                 'next_bound: for bound in &bound_pred.bounds {
@@ -2355,7 +2369,7 @@ impl<'a> LoweringContext<'a> {
                                                 GenericParamKind::Type { .. } => {
                                                     if node_id == param.id {
                                                         add_bounds.entry(param.id)
-                                                            .or_insert(Vec::new())
+                                                            .or_default()
                                                             .push(bound.clone());
                                                         continue 'next_bound;
                                                     }
@@ -2476,9 +2490,11 @@ impl<'a> LoweringContext<'a> {
             hir::QPath::Resolved(None, path) => path.and_then(|path| path),
             qpath => bug!("lower_trait_ref: unexpected QPath `{:?}`", qpath),
         };
+        let LoweredNodeId { node_id, hir_id } = self.lower_node_id(p.ref_id);
         hir::TraitRef {
             path,
-            ref_id: self.lower_node_id(p.ref_id).node_id,
+            ref_id: node_id,
+            hir_ref_id: hir_id,
         }
     }
 
@@ -2719,7 +2735,7 @@ impl<'a> LoweringContext<'a> {
 
                         if let Some(ref trait_ref) = trait_ref {
                             if let Def::Trait(def_id) = trait_ref.path.def {
-                                this.trait_impls.entry(def_id).or_insert(vec![]).push(id);
+                                this.trait_impls.entry(def_id).or_default().push(id);
                             }
                         }
 
@@ -2837,11 +2853,13 @@ impl<'a> LoweringContext<'a> {
                             hir::VisibilityKind::Public => hir::VisibilityKind::Public,
                             hir::VisibilityKind::Crate(sugar) => hir::VisibilityKind::Crate(sugar),
                             hir::VisibilityKind::Inherited => hir::VisibilityKind::Inherited,
-                            hir::VisibilityKind::Restricted { ref path, id: _ } => {
+                            hir::VisibilityKind::Restricted { ref path, id: _, hir_id: _ } => {
+                                let id = this.next_id();
                                 hir::VisibilityKind::Restricted {
                                     path: path.clone(),
                                     // We are allocating a new NodeId here
-                                    id: this.next_id().node_id,
+                                    id: id.node_id,
+                                    hir_id: id.hir_id,
                                 }
                             }
                         };
@@ -2910,11 +2928,13 @@ impl<'a> LoweringContext<'a> {
                             hir::VisibilityKind::Public => hir::VisibilityKind::Public,
                             hir::VisibilityKind::Crate(sugar) => hir::VisibilityKind::Crate(sugar),
                             hir::VisibilityKind::Inherited => hir::VisibilityKind::Inherited,
-                            hir::VisibilityKind::Restricted { ref path, id: _ } => {
+                            hir::VisibilityKind::Restricted { ref path, id: _, hir_id: _ } => {
+                                let id = this.next_id();
                                 hir::VisibilityKind::Restricted {
                                     path: path.clone(),
                                     // We are allocating a new NodeId here
-                                    id: this.next_id().node_id,
+                                    id: id.node_id,
+                                    hir_id: id.hir_id,
                                 }
                             }
                         };
@@ -3122,12 +3142,12 @@ impl<'a> LoweringContext<'a> {
         &mut self,
         decl: &FnDecl,
         header: &FnHeader,
-        ids: &mut SmallVector<hir::ItemId>,
+        ids: &mut OneVector<hir::ItemId>,
     ) {
         if let Some(id) = header.asyncness.opt_return_id() {
             ids.push(hir::ItemId { id });
         }
-        struct IdVisitor<'a> { ids: &'a mut SmallVector<hir::ItemId> }
+        struct IdVisitor<'a> { ids: &'a mut OneVector<hir::ItemId> }
         impl<'a, 'b> Visitor<'a> for IdVisitor<'b> {
             fn visit_ty(&mut self, ty: &'a Ty) {
                 match ty.node {
@@ -3160,21 +3180,21 @@ impl<'a> LoweringContext<'a> {
         }
     }
 
-    fn lower_item_id(&mut self, i: &Item) -> SmallVector<hir::ItemId> {
+    fn lower_item_id(&mut self, i: &Item) -> OneVector<hir::ItemId> {
         match i.node {
             ItemKind::Use(ref use_tree) => {
-                let mut vec = SmallVector::one(hir::ItemId { id: i.id });
+                let mut vec = smallvec![hir::ItemId { id: i.id }];
                 self.lower_item_id_use_tree(use_tree, i.id, &mut vec);
                 vec
             }
-            ItemKind::MacroDef(..) => SmallVector::new(),
+            ItemKind::MacroDef(..) => OneVector::new(),
             ItemKind::Fn(ref decl, ref header, ..) => {
-                let mut ids = SmallVector::one(hir::ItemId { id: i.id });
+                let mut ids = smallvec![hir::ItemId { id: i.id }];
                 self.lower_impl_trait_ids(decl, header, &mut ids);
                 ids
             },
             ItemKind::Impl(.., None, _, ref items) => {
-                let mut ids = SmallVector::one(hir::ItemId { id: i.id });
+                let mut ids = smallvec![hir::ItemId { id: i.id }];
                 for item in items {
                     if let ImplItemKind::Method(ref sig, _) = item.node {
                         self.lower_impl_trait_ids(&sig.decl, &sig.header, &mut ids);
@@ -3182,14 +3202,14 @@ impl<'a> LoweringContext<'a> {
                 }
                 ids
             },
-            _ => SmallVector::one(hir::ItemId { id: i.id }),
+            _ => smallvec![hir::ItemId { id: i.id }],
         }
     }
 
     fn lower_item_id_use_tree(&mut self,
                               tree: &UseTree,
                               base_id: NodeId,
-                              vec: &mut SmallVector<hir::ItemId>)
+                              vec: &mut OneVector<hir::ItemId>)
     {
         match tree.kind {
             UseTreeKind::Nested(ref nested_vec) => for &(ref nested, id) in nested_vec {
@@ -3410,19 +3430,24 @@ impl<'a> LoweringContext<'a> {
                     ParamMode::Optional,
                     ImplTraitContext::Disallowed,
                 );
+                self.check_self_struct_ctor_feature(&qpath);
                 hir::PatKind::TupleStruct(
                     qpath,
                     pats.iter().map(|x| self.lower_pat(x)).collect(),
                     ddpos,
                 )
             }
-            PatKind::Path(ref qself, ref path) => hir::PatKind::Path(self.lower_qpath(
-                p.id,
-                qself,
-                path,
-                ParamMode::Optional,
-                ImplTraitContext::Disallowed,
-            )),
+            PatKind::Path(ref qself, ref path) => {
+                let qpath = self.lower_qpath(
+                    p.id,
+                    qself,
+                    path,
+                    ParamMode::Optional,
+                    ImplTraitContext::Disallowed,
+                );
+                self.check_self_struct_ctor_feature(&qpath);
+                hir::PatKind::Path(qpath)
+            }
             PatKind::Struct(ref path, ref fields, etc) => {
                 let qpath = self.lower_qpath(
                     p.id,
@@ -3598,15 +3623,15 @@ impl<'a> LoweringContext<'a> {
                     hir::LoopSource::Loop,
                 )
             }),
-            ExprKind::Catch(ref body) => {
+            ExprKind::TryBlock(ref body) => {
                 self.with_catch_scope(body.id, |this| {
                     let unstable_span =
-                        this.allow_internal_unstable(CompilerDesugaringKind::Catch, body.span);
+                        this.allow_internal_unstable(CompilerDesugaringKind::TryBlock, body.span);
                     let mut block = this.lower_block(body, true).into_inner();
                     let tail = block.expr.take().map_or_else(
                         || {
                             let LoweredNodeId { node_id, hir_id } = this.next_id();
-                            let span = this.sess.codemap().end_point(unstable_span);
+                            let span = this.sess.source_map().end_point(unstable_span);
                             hir::Expr {
                                 id: node_id,
                                 span,
@@ -3753,16 +3778,14 @@ impl<'a> LoweringContext<'a> {
             }
             // Desugar `<start>..=<end>` to `std::ops::RangeInclusive::new(<start>, <end>)`
             ExprKind::Range(Some(ref e1), Some(ref e2), RangeLimits::Closed) => {
-                // FIXME: Use e.span directly after RangeInclusive::new() is stabilized in stage0.
-                let span = self.allow_internal_unstable(CompilerDesugaringKind::DotFill, e.span);
                 let id = self.next_id();
                 let e1 = self.lower_expr(e1);
                 let e2 = self.lower_expr(e2);
-                let ty_path = P(self.std_path(span, &["ops", "RangeInclusive"], None, false));
-                let ty = P(self.ty_path(id, span, hir::QPath::Resolved(None, ty_path)));
+                let ty_path = P(self.std_path(e.span, &["ops", "RangeInclusive"], None, false));
+                let ty = P(self.ty_path(id, e.span, hir::QPath::Resolved(None, ty_path)));
                 let new_seg = P(hir::PathSegment::from_ident(Ident::from_str("new")));
                 let new_path = hir::QPath::TypeRelative(ty, new_seg);
-                let new = P(self.expr(span, hir::ExprKind::Path(new_path), ThinVec::new()));
+                let new = P(self.expr(e.span, hir::ExprKind::Path(new_path), ThinVec::new()));
                 hir::ExprKind::Call(new, hir_vec![e1, e2])
             }
             ExprKind::Range(ref e1, ref e2, lims) => {
@@ -3785,20 +3808,16 @@ impl<'a> LoweringContext<'a> {
                     .chain(e2.iter().map(|e| ("end", e)))
                     .map(|(s, e)| {
                         let expr = P(self.lower_expr(&e));
-                        let unstable_span =
-                            self.allow_internal_unstable(CompilerDesugaringKind::DotFill, e.span);
-                        let ident = Ident::new(Symbol::intern(s), unstable_span);
-                        self.field(ident, expr, unstable_span)
+                        let ident = Ident::new(Symbol::intern(s), e.span);
+                        self.field(ident, expr, e.span)
                     })
                     .collect::<P<[hir::Field]>>();
 
                 let is_unit = fields.is_empty();
-                let unstable_span =
-                    self.allow_internal_unstable(CompilerDesugaringKind::DotFill, e.span);
                 let struct_path = iter::once("ops")
                     .chain(iter::once(path))
                     .collect::<Vec<_>>();
-                let struct_path = self.std_path(unstable_span, &struct_path, None, is_unit);
+                let struct_path = self.std_path(e.span, &struct_path, None, is_unit);
                 let struct_path = hir::QPath::Resolved(None, P(struct_path));
 
                 let LoweredNodeId { node_id, hir_id } = self.lower_node_id(e.id);
@@ -3811,17 +3830,21 @@ impl<'a> LoweringContext<'a> {
                     } else {
                         hir::ExprKind::Struct(struct_path, fields, None)
                     },
-                    span: unstable_span,
+                    span: e.span,
                     attrs: e.attrs.clone(),
                 };
             }
-            ExprKind::Path(ref qself, ref path) => hir::ExprKind::Path(self.lower_qpath(
-                e.id,
-                qself,
-                path,
-                ParamMode::Optional,
-                ImplTraitContext::Disallowed,
-            )),
+            ExprKind::Path(ref qself, ref path) => {
+                let qpath = self.lower_qpath(
+                    e.id,
+                    qself,
+                    path,
+                    ParamMode::Optional,
+                    ImplTraitContext::Disallowed,
+                );
+                self.check_self_struct_ctor_feature(&qpath);
+                hir::ExprKind::Path(qpath)
+            }
             ExprKind::Break(opt_label, ref opt_expr) => {
                 let destination = if self.is_in_loop_condition && opt_label.is_none() {
                     hir::Destination {
@@ -4287,8 +4310,8 @@ impl<'a> LoweringContext<'a> {
         }
     }
 
-    fn lower_stmt(&mut self, s: &Stmt) -> SmallVector<hir::Stmt> {
-        SmallVector::one(match s.node {
+    fn lower_stmt(&mut self, s: &Stmt) -> OneVector<hir::Stmt> {
+        smallvec![match s.node {
             StmtKind::Local(ref l) => Spanned {
                 node: hir::StmtKind::Decl(
                     P(Spanned {
@@ -4327,7 +4350,7 @@ impl<'a> LoweringContext<'a> {
                 span: s.span,
             },
             StmtKind::Mac(..) => panic!("Shouldn't exist here"),
-        })
+        }]
     }
 
     fn lower_capture_clause(&mut self, c: CaptureBy) -> hir::CaptureClause {
@@ -4350,13 +4373,17 @@ impl<'a> LoweringContext<'a> {
         let node = match v.node {
             VisibilityKind::Public => hir::VisibilityKind::Public,
             VisibilityKind::Crate(sugar) => hir::VisibilityKind::Crate(sugar),
-            VisibilityKind::Restricted { ref path, id } => hir::VisibilityKind::Restricted {
-                path: P(self.lower_path(id, path, ParamMode::Explicit)),
-                id: if let Some(owner) = explicit_owner {
-                    self.lower_node_id_with_owner(id, owner).node_id
+            VisibilityKind::Restricted { ref path, id } => {
+                let lowered_id = if let Some(owner) = explicit_owner {
+                    self.lower_node_id_with_owner(id, owner)
                 } else {
-                    self.lower_node_id(id).node_id
-                },
+                    self.lower_node_id(id)
+                };
+                hir::VisibilityKind::Restricted {
+                    path: P(self.lower_path(id, path, ParamMode::Explicit)),
+                    id: lowered_id.node_id,
+                    hir_id: lowered_id.hir_id,
+                }
             },
             VisibilityKind::Inherited => hir::VisibilityKind::Inherited,
         };
@@ -4675,6 +4702,7 @@ impl<'a> LoweringContext<'a> {
                         trait_ref: hir::TraitRef {
                             path: path.and_then(|path| path),
                             ref_id: id.node_id,
+                            hir_ref_id: id.hir_id,
                         },
                         span,
                     };
@@ -4796,6 +4824,18 @@ impl<'a> LoweringContext<'a> {
         let from_err = P(self.expr_std_path(unstable_span, path, None,
                                             ThinVec::new()));
         P(self.expr_call(e.span, from_err, hir_vec![e]))
+    }
+
+    fn check_self_struct_ctor_feature(&self, qp: &hir::QPath) {
+        if let hir::QPath::Resolved(_, ref p) = qp {
+            if p.segments.len() == 1 &&
+               p.segments[0].ident.name == keywords::SelfType.name() &&
+               !self.sess.features_untracked().self_struct_ctor {
+                emit_feature_err(&self.sess.parse_sess, "self_struct_ctor",
+                                 p.span, GateIssue::Language,
+                                 "`Self` struct constructors are unstable");
+            }
+        }
     }
 }
 

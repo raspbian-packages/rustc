@@ -82,7 +82,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 
 // Serde types in rustdoc of other crates get linked to here.
-#![doc(html_root_url = "https://docs.rs/serde/1.0.70")]
+#![doc(html_root_url = "https://docs.rs/serde/1.0.75")]
 // Support using Serde without the standard library!
 #![cfg_attr(not(feature = "std"), no_std)]
 // Unstable functionality only if the user asks for it. For tracking and
@@ -96,8 +96,15 @@
 #![cfg_attr(
     feature = "cargo-clippy",
     allow(
-        cast_lossless, const_static_lifetime, doc_markdown, linkedlist, needless_pass_by_value,
-        redundant_field_names, type_complexity, unreadable_literal, zero_prefixed_literal
+        cast_lossless,
+        const_static_lifetime,
+        doc_markdown,
+        linkedlist,
+        needless_pass_by_value,
+        redundant_field_names,
+        type_complexity,
+        unreadable_literal,
+        zero_prefixed_literal
     )
 )]
 // Whitelisted clippy_pedantic lints
@@ -148,7 +155,7 @@ mod lib {
         pub use std::*;
     }
 
-    pub use self::core::{cmp, iter, mem, num, ops, slice, str};
+    pub use self::core::{cmp, iter, mem, num, slice, str};
     pub use self::core::{f32, f64};
     pub use self::core::{i16, i32, i64, i8, isize};
     pub use self::core::{u16, u32, u64, u8, usize};
@@ -159,6 +166,7 @@ mod lib {
     pub use self::core::default::{self, Default};
     pub use self::core::fmt::{self, Debug, Display};
     pub use self::core::marker::{self, PhantomData};
+    pub use self::core::ops::Range;
     pub use self::core::option::{self, Option};
     pub use self::core::result::{self, Result};
 
@@ -188,7 +196,7 @@ mod lib {
     pub use std::rc::{Rc, Weak as RcWeak};
 
     #[cfg(all(feature = "rc", feature = "alloc", not(feature = "std")))]
-    pub use alloc::arc::{Arc, Weak as ArcWeak};
+    pub use alloc::sync::{Arc, Weak as ArcWeak};
     #[cfg(all(feature = "rc", feature = "std"))]
     pub use std::sync::{Arc, Weak as ArcWeak};
 
@@ -219,6 +227,9 @@ mod lib {
 
     #[cfg(any(core_duration, feature = "std"))]
     pub use self::core::time::Duration;
+
+    #[cfg(range_inclusive)]
+    pub use self::core::ops::RangeInclusive;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

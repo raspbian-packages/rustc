@@ -389,7 +389,7 @@ fn fill_other<'a>(source: &'a str, v: &mut Vec<Token<'a>>, start: usize, pos: us
                 let s = &source[start..pos];
                 if !s.starts_with(':') && !s.starts_with('.') && !s.starts_with('#') &&
                    !s.starts_with('@') {
-                   v.push(Token::Other(s));
+                    v.push(Token::Other(s));
                }
             }
         } else {
@@ -421,68 +421,81 @@ pub fn tokenize<'a>(source: &'a str) -> Result<Tokens<'a>, &'static str> {
             is_in_media = is_in_media || v.last()
                                           .unwrap_or(&Token::Char(ReservedChar::Space))
                                           .is_media("media");
-            if c == ReservedChar::Quote || c == ReservedChar::DoubleQuote {
-                if let Some(s) = get_string(source, &mut iterator, &mut pos, c) {
-                    v.push(s);
-                }
-            } else if c == ReservedChar::Star &&
-                      *v.last().unwrap_or(&Token::Char(ReservedChar::Space)) == ReservedChar::Slash {
-                v.pop();
-                if let Some(s) = get_comment(source, &mut iterator, &mut pos) {
-                    v.push(s);
-                }
-            } else if c == ReservedChar::Slash &&
-                      *v.last().unwrap_or(&Token::Char(ReservedChar::Space)) == ReservedChar::Slash {
-                v.pop();
-                if let Some(s) = get_line_comment(source, &mut iterator, &mut pos) {
-                    v.push(s);
-                }
-            } else if c == ReservedChar::OpenBracket {
-                if is_in_attribute_selector {
-                    return Err("Already in attribute selector");
-                }
-                is_in_attribute_selector = true;
-                v.push(Token::Char(c));
-            } else if c == ReservedChar::CloseBracket {
-                if !is_in_attribute_selector {
-                    return Err("Unexpected ']'");
-                }
-                is_in_attribute_selector = false;
-                v.push(Token::Char(c));
-            } else if c == ReservedChar::OpenCurlyBrace {
-                is_in_block += 1;
-                v.push(Token::Char(c));
-            } else if c == ReservedChar::CloseCurlyBrace {
-                is_in_block -= 1;
-                if is_in_block < 0 {
-                    return Err("Too much '}'");
-                } else if is_in_block == 0 {
-                    is_in_media = false;
-                }
-                v.push(Token::Char(c));
-            } else if c == ReservedChar::EqualSign {
-                match match v.last()
-                             .unwrap_or(&Token::Char(ReservedChar::Space))
-                             .get_char()
-                             .unwrap_or(ReservedChar::Space) {
-                    ReservedChar::Tilde => Some(SelectorOperator::OneAttributeEquals),
-                    ReservedChar::Pipe => Some(SelectorOperator::EqualsOrStartsWithFollowedByDash),
-                    ReservedChar::Dollar => Some(SelectorOperator::EndsWith),
-                    ReservedChar::Circumflex => Some(SelectorOperator::FirstStartsWith),
-                    ReservedChar::Star => Some(SelectorOperator::Contains),
-                    _ => None,
-                } {
-                    Some(r) => {
-                        v.pop();
-                        v.push(Token::SelectorOperator(r));
+            if_match! {
+                c == ReservedChar::Quote || c == ReservedChar::DoubleQuote => {
+                    if let Some(s) = get_string(source, &mut iterator, &mut pos, c) {
+                        v.push(s);
                     }
-                    None => v.push(Token::Char(c)),
-                }
-            } else if !c.is_useless() {
-                v.push(Token::Char(c));
-            } else if !v.last().unwrap_or(&Token::Char(ReservedChar::Space)).is_useless() &&
-                      !v.last().unwrap_or(&Token::Char(ReservedChar::OpenCurlyBrace)).is_char() {
-                v.push(Token::Char(ReservedChar::Space));
+                },
+                c == ReservedChar::Star &&
+                *v.last().unwrap_or(&Token::Char(ReservedChar::Space)) == ReservedChar::Slash => {
+                    v.pop();
+                    if let Some(s) = get_comment(source, &mut iterator, &mut pos) {
+                        v.push(s);
+                    }
+                },
+                c == ReservedChar::Slash &&
+                *v.last().unwrap_or(&Token::Char(ReservedChar::Space)) == ReservedChar::Slash => {
+                    v.pop();
+                    if let Some(s) = get_line_comment(source, &mut iterator, &mut pos) {
+                        v.push(s);
+                    }
+                },
+                c == ReservedChar::OpenBracket => {
+                    if is_in_attribute_selector {
+                        return Err("Already in attribute selector");
+                    }
+                    is_in_attribute_selector = true;
+                    v.push(Token::Char(c));
+                },
+                c == ReservedChar::CloseBracket => {
+                    if !is_in_attribute_selector {
+                        return Err("Unexpected ']'");
+                    }
+                    is_in_attribute_selector = false;
+                    v.push(Token::Char(c));
+                },
+                c == ReservedChar::OpenCurlyBrace => {
+                    is_in_block += 1;
+                    v.push(Token::Char(c));
+                },
+                c == ReservedChar::CloseCurlyBrace => {
+                    is_in_block -= 1;
+                    if is_in_block < 0 {
+                        return Err("Too much '}'");
+                    } else if is_in_block == 0 {
+                        is_in_media = false;
+                    }
+                    v.push(Token::Char(c));
+                },
+                c == ReservedChar::EqualSign => {
+                    match match v.last()
+                                 .unwrap_or(&Token::Char(ReservedChar::Space))
+                                 .get_char()
+                                 .unwrap_or(ReservedChar::Space) {
+                        ReservedChar::Tilde => Some(SelectorOperator::OneAttributeEquals),
+                        ReservedChar::Pipe => Some(SelectorOperator::EqualsOrStartsWithFollowedByDash),
+                        ReservedChar::Dollar => Some(SelectorOperator::EndsWith),
+                        ReservedChar::Circumflex => Some(SelectorOperator::FirstStartsWith),
+                        ReservedChar::Star => Some(SelectorOperator::Contains),
+                        _ => None,
+                    } {
+                        Some(r) => {
+                            v.pop();
+                            v.push(Token::SelectorOperator(r));
+                        }
+                        None => v.push(Token::Char(c)),
+                    }
+                },
+                !c.is_useless() => {
+                    v.push(Token::Char(c));
+                },
+                !v.last().unwrap_or(&Token::Char(ReservedChar::Space)).is_useless() &&
+                (!v.last().unwrap_or(&Token::Char(ReservedChar::OpenCurlyBrace)).is_char() ||
+                 v.last().unwrap_or(&Token::Char(ReservedChar::OpenCurlyBrace))
+                         .get_char() == Some(ReservedChar::CloseParenthese)) => {
+                    v.push(Token::Char(ReservedChar::Space));
+                },
             }
             start = pos + 1;
         }
@@ -495,7 +508,8 @@ fn clean_tokens<'a>(mut v: Vec<Token<'a>>) -> Vec<Token<'a>> {
 
     while i < v.len() {
         if v[i].is_useless() {
-            if (i > 0 && (v[i - 1].is_char() ||
+            if (i > 0 && ((v[i - 1].is_char() &&
+                           v[i - 1] != Token::Char(ReservedChar::CloseParenthese)) ||
                           v[i - 1].is_a_media() ||
                           v[i - 1].is_a_license())) ||
                (i < v.len() - 1 && v[i + 1].is_char()) {
@@ -695,6 +709,28 @@ fn check_media() {
                         Token::SelectorElement(SelectorElement::Tag("color")),
                         Token::Char(ReservedChar::Colon),
                         Token::Other("red"),
+                        Token::Char(ReservedChar::SemiColon),
+                        Token::Char(ReservedChar::CloseCurlyBrace)];
+
+    assert_eq!(tokenize(s), Ok(Tokens(expected)));
+}
+
+#[test]
+fn check_calc() {
+    let s = ".foo { width: calc(100% - 34px); }";
+
+    let expected = vec![Token::SelectorElement(SelectorElement::Class("foo")),
+                        Token::Char(ReservedChar::OpenCurlyBrace),
+                        Token::Other("width"),
+                        Token::Char(ReservedChar::Colon),
+                        Token::Other("calc"),
+                        Token::Char(ReservedChar::OpenParenthese),
+                        Token::Other("100%"),
+                        Token::Char(ReservedChar::Space),
+                        Token::Other("-"),
+                        Token::Char(ReservedChar::Space),
+                        Token::Other("34px"),
+                        Token::Char(ReservedChar::CloseParenthese),
                         Token::Char(ReservedChar::SemiColon),
                         Token::Char(ReservedChar::CloseCurlyBrace)];
     assert_eq!(tokenize(s), Ok(Tokens(expected)));

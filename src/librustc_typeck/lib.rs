@@ -74,9 +74,9 @@ This API is completely unstable and subject to change.
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(crate_visibility_modifier)]
-#![feature(from_ref)]
 #![feature(exhaustive_patterns)]
-#![feature(iterator_find_map)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(quote)]
 #![feature(refcell_replace_swap)]
 #![feature(rustc_diagnostic_macros)]
@@ -96,6 +96,7 @@ extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_data_structures;
 extern crate rustc_errors as errors;
 extern crate rustc_target;
+extern crate smallvec;
 
 use rustc::hir;
 use rustc::lint;
@@ -103,12 +104,13 @@ use rustc::middle;
 use rustc::session;
 use rustc::util;
 
-use hir::map as hir_map;
+use hir::Node;
 use rustc::infer::InferOk;
 use rustc::ty::subst::Substs;
 use rustc::ty::{self, Ty, TyCtxt};
 use rustc::ty::query::Providers;
 use rustc::traits::{ObligationCause, ObligationCauseCode, TraitEngine, TraitEngineExt};
+use rustc::util::profiling::ProfileCategory;
 use session::{CompileIncomplete, config};
 use util::common::time;
 
@@ -184,9 +186,9 @@ fn check_main_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let main_def_id = tcx.hir.local_def_id(main_id);
     let main_t = tcx.type_of(main_def_id);
     match main_t.sty {
-        ty::TyFnDef(..) => {
+        ty::FnDef(..) => {
             match tcx.hir.find(main_id) {
-                Some(hir_map::NodeItem(it)) => {
+                Some(Node::Item(it)) => {
                     match it.node {
                         hir::ItemKind::Fn(.., ref generics, _) => {
                             let mut error = false;
@@ -223,7 +225,7 @@ fn check_main_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 actual.output().skip_binder()
             } else {
                 // standard () main return type
-                tcx.mk_nil()
+                tcx.mk_unit()
             };
 
             let se_ty = tcx.mk_fn_ptr(ty::Binder::bind(
@@ -256,9 +258,9 @@ fn check_start_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     let start_def_id = tcx.hir.local_def_id(start_id);
     let start_t = tcx.type_of(start_def_id);
     match start_t.sty {
-        ty::TyFnDef(..) => {
+        ty::FnDef(..) => {
             match tcx.hir.find(start_id) {
-                Some(hir_map::NodeItem(it)) => {
+                Some(Node::Item(it)) => {
                     match it.node {
                         hir::ItemKind::Fn(.., ref generics, _) => {
                             let mut error = false;
@@ -317,8 +319,8 @@ fn check_start_fn_ty<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 fn check_for_entry_fn<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     if let Some((id, sp, entry_type)) = *tcx.sess.entry_fn.borrow() {
         match entry_type {
-            config::EntryMain => check_main_fn_ty(tcx, id, sp),
-            config::EntryStart => check_start_fn_ty(tcx, id, sp),
+            config::EntryFnType::Main => check_main_fn_ty(tcx, id, sp),
+            config::EntryFnType::Start => check_start_fn_ty(tcx, id, sp),
         }
     }
 }
@@ -334,6 +336,8 @@ pub fn provide(providers: &mut Providers) {
 pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>)
                              -> Result<(), CompileIncomplete>
 {
+    tcx.sess.profiler(|p| p.start_activity(ProfileCategory::TypeChecking));
+
     // this ensures that later parts of type checking can assume that items
     // have valid types and not error
     tcx.sess.track_errors(|| {
@@ -370,6 +374,8 @@ pub fn check_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>)
 
     check_unused::check_crate(tcx);
     check_for_entry_fn(tcx);
+
+    tcx.sess.profiler(|p| p.end_activity(ProfileCategory::TypeChecking));
 
     tcx.sess.compile_status()
 }

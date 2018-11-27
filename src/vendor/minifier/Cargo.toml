@@ -12,9 +12,9 @@
 
 [package]
 name = "minifier"
-version = "0.0.14"
+version = "0.0.19"
 authors = ["Guillaume Gomez <guillaume1.gomez@gmail.com>"]
-description = "Minifier tool/lib for JS/CSS/HTML files"
+description = "Minifier tool/lib for JS/CSS/JSON files"
 documentation = "https://docs.rs/minifier-rs"
 readme = "README.md"
 keywords = ["minify", "minifier", "JS", "HTML", "CSS"]
@@ -27,8 +27,15 @@ name = "minifier"
 [[bin]]
 name = "minifier"
 doc = false
+[dependencies.macro-utils]
+version = "^0.1"
+
 [dependencies.regex]
-version = "0.2"
+version = "1.0"
+optional = true
+
+[features]
+html = ["regex"]
 [badges.appveyor]
 repository = "GuillaumeGomez/minifier-rs"
 service = "github"

@@ -45,7 +45,7 @@ fn place_context<'a, 'tcx, D>(
                     // A Deref projection may restrict the context, this depends on the type
                     // being deref'd.
                     let context = match ty.sty {
-                        ty::TyRef(re, _, mutbl) => {
+                        ty::Ref(re, _, mutbl) => {
                             let re = match re {
                                 &RegionKind::ReScope(ce) => Some(ce),
                                 &RegionKind::ReErased =>
@@ -54,12 +54,12 @@ fn place_context<'a, 'tcx, D>(
                             };
                             (re, mutbl)
                         }
-                        ty::TyRawPtr(_) =>
+                        ty::RawPtr(_) =>
                             // There is no guarantee behind even a mutable raw pointer,
                             // no write locks are acquired there, so we also don't want to
                             // release any.
                             (None, hir::MutImmutable),
-                        ty::TyAdt(adt, _) if adt.is_box() => (None, hir::MutMutable),
+                        ty::Adt(adt, _) if adt.is_box() => (None, hir::MutMutable),
                         _ => bug!("Deref on a non-pointer type {:?}", ty),
                     };
                     // "Intersect" this restriction with proj.base.
@@ -85,7 +85,7 @@ fn place_context<'a, 'tcx, D>(
 fn fn_contains_unsafe<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, src: MirSource) -> bool {
     use rustc::hir::intravisit::{self, Visitor, FnKind};
     use rustc::hir::map::blocks::FnLikeNode;
-    use rustc::hir::map::Node;
+    use rustc::hir::Node;
 
     /// Decide if this is an unsafe block
     fn block_is_unsafe(block: &hir::Block) -> bool {
@@ -142,13 +142,13 @@ fn fn_contains_unsafe<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, src: MirSource) -> 
             }
             // Check if this is an unsafe block, or an item
             match node {
-                Node::NodeExpr(&hir::Expr { node: hir::ExprKind::Block(ref block, _), ..}) => {
+                Node::Expr(&hir::Expr { node: hir::ExprKind::Block(ref block, _), ..}) => {
                     if block_is_unsafe(&*block) {
                         // Found an unsafe block, we can bail out here.
                         return true;
                     }
                 }
-                Node::NodeItem(..) => {
+                Node::Item(..) => {
                     // No walking up beyond items.  This makes sure the loop always terminates.
                     break;
                 }

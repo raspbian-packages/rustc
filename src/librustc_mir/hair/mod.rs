@@ -18,7 +18,7 @@ use rustc::mir::{BinOp, BorrowKind, Field, UnOp};
 use rustc::hir::def_id::DefId;
 use rustc::middle::region;
 use rustc::ty::subst::Substs;
-use rustc::ty::{AdtDef, UpvarSubsts, Region, Ty, Const};
+use rustc::ty::{AdtDef, CanonicalTy, UpvarSubsts, Region, Ty, Const};
 use rustc::hir;
 use syntax::ast;
 use syntax_pos::Span;
@@ -93,11 +93,10 @@ pub enum StmtKind<'tcx> {
         /// lifetime of temporaries
         init_scope: region::Scope,
 
-        /// let <PAT>: ty = ...
+        /// `let <PAT> = ...`
+        ///
+        /// if a type is included, it is added as an ascription pattern
         pattern: Pattern<'tcx>,
-
-        /// let pat: <TY> = init ...
-        ty: Option<hir::HirId>,
 
         /// let pat: ty = <INIT> ...
         initializer: Option<ExprRef<'tcx>>,
@@ -261,6 +260,11 @@ pub enum ExprKind<'tcx> {
         adt_def: &'tcx AdtDef,
         variant_index: usize,
         substs: &'tcx Substs<'tcx>,
+
+        /// Optional user-given substs: for something like `let x =
+        /// Bar::<T> { ... }`.
+        user_ty: Option<CanonicalTy<'tcx>>,
+
         fields: Vec<FieldExprRef<'tcx>>,
         base: Option<FruInfo<'tcx>>
     },
@@ -272,6 +276,13 @@ pub enum ExprKind<'tcx> {
     },
     Literal {
         literal: &'tcx Const<'tcx>,
+
+        /// Optional user-given type: for something like
+        /// `collect::<Vec<_>>`, this would be present and would
+        /// indicate that `Vec<_>` was explicitly specified.
+        ///
+        /// Needed for NLL to impose user-given type constraints.
+        user_ty: Option<CanonicalTy<'tcx>>,
     },
     InlineAsm {
         asm: &'tcx hir::InlineAsm,
@@ -304,9 +315,14 @@ pub struct FruInfo<'tcx> {
 #[derive(Clone, Debug)]
 pub struct Arm<'tcx> {
     pub patterns: Vec<Pattern<'tcx>>,
-    pub guard: Option<ExprRef<'tcx>>,
+    pub guard: Option<Guard<'tcx>>,
     pub body: ExprRef<'tcx>,
     pub lint_level: LintLevel,
+}
+
+#[derive(Clone, Debug)]
+pub enum Guard<'tcx> {
+    If(ExprRef<'tcx>),
 }
 
 #[derive(Copy, Clone, Debug)]

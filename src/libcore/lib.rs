@@ -77,12 +77,11 @@
 #![feature(arbitrary_self_types)]
 #![feature(asm)]
 #![feature(associated_type_defaults)]
-#![feature(attr_literals)]
 #![feature(cfg_target_has_atomic)]
 #![feature(concat_idents)]
 #![feature(const_fn)]
 #![feature(const_int_ops)]
-#![feature(core_float)]
+#![feature(const_fn_union)]
 #![feature(custom_attribute)]
 #![feature(doc_cfg)]
 #![feature(doc_spotlight)]
@@ -92,6 +91,8 @@
 #![feature(lang_items)]
 #![feature(link_llvm_intrinsics)]
 #![feature(never_type)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(exhaustive_patterns)]
 #![feature(macro_at_most_once_rep)]
 #![feature(no_core)]
@@ -102,8 +103,6 @@
 #![feature(rustc_attrs)]
 #![feature(rustc_const_unstable)]
 #![feature(simd_ffi)]
-#![feature(core_slice_ext)]
-#![feature(core_str_ext)]
 #![feature(specialization)]
 #![feature(staged_api)]
 #![feature(stmt_expr_attributes)]
@@ -111,7 +110,6 @@
 #![feature(untagged_unions)]
 #![feature(unwind_attributes)]
 #![feature(doc_alias)]
-#![feature(inclusive_range_methods)]
 #![feature(mmx_target_feature)]
 #![feature(tbm_target_feature)]
 #![feature(sse4a_target_feature)]
@@ -122,6 +120,14 @@
 #![feature(const_slice_len)]
 #![feature(const_str_as_bytes)]
 #![feature(const_str_len)]
+#![feature(const_let)]
+#![feature(const_int_rotate)]
+#![feature(const_int_wrapping)]
+#![feature(const_int_sign)]
+#![feature(const_int_conversion)]
+#![feature(const_transmute)]
+#![feature(reverse_bits)]
+#![feature(non_exhaustive)]
 
 #[prelude_import]
 #[allow(unused)]
@@ -192,10 +198,12 @@ pub mod cell;
 pub mod char;
 pub mod panic;
 pub mod panicking;
+pub mod pin;
 pub mod iter;
 pub mod option;
 pub mod raw;
 pub mod result;
+pub mod ffi;
 
 pub mod slice;
 pub mod str;

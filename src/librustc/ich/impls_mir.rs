@@ -24,6 +24,7 @@ impl_stable_hash_for!(enum mir::LocalKind { Var, Temp, Arg, ReturnPointer });
 impl_stable_hash_for!(struct mir::LocalDecl<'tcx> {
     mutability,
     ty,
+    user_ty,
     name,
     source_info,
     visibility_scope,
@@ -65,6 +66,7 @@ for mir::UnsafetyViolationKind {
 
         match *self {
             mir::UnsafetyViolationKind::General => {}
+            mir::UnsafetyViolationKind::MinConstFn => {}
             mir::UnsafetyViolationKind::ExternStatic(lint_node_id) |
             mir::UnsafetyViolationKind::BorrowPacked(lint_node_id) => {
                 lint_node_id.hash_stable(hcx, hasher);
@@ -101,7 +103,6 @@ impl<'a> HashStable<StableHashingContext<'a>> for mir::Local {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
-        use rustc_data_structures::indexed_vec::Idx;
         self.index().hash_stable(hcx, hasher);
     }
 }
@@ -111,7 +112,6 @@ impl<'a> HashStable<StableHashingContext<'a>> for mir::BasicBlock {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
-        use rustc_data_structures::indexed_vec::Idx;
         self.index().hash_stable(hcx, hasher);
     }
 }
@@ -121,7 +121,6 @@ impl<'a> HashStable<StableHashingContext<'a>> for mir::Field {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
-        use rustc_data_structures::indexed_vec::Idx;
         self.index().hash_stable(hcx, hasher);
     }
 }
@@ -132,7 +131,6 @@ for mir::SourceScope {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
-        use rustc_data_structures::indexed_vec::Idx;
         self.index().hash_stable(hcx, hasher);
     }
 }
@@ -142,7 +140,6 @@ impl<'a> HashStable<StableHashingContext<'a>> for mir::Promoted {
     fn hash_stable<W: StableHasherResult>(&self,
                                           hcx: &mut StableHashingContext<'a>,
                                           hasher: &mut StableHasher<W>) {
-        use rustc_data_structures::indexed_vec::Idx;
         self.index().hash_stable(hcx, hasher);
     }
 }
@@ -259,9 +256,10 @@ for mir::StatementKind<'gcx> {
                 op.hash_stable(hcx, hasher);
                 places.hash_stable(hcx, hasher);
             }
-            mir::StatementKind::UserAssertTy(ref c_ty, ref local) => {
+            mir::StatementKind::AscribeUserType(ref place, ref variance, ref c_ty) => {
+                place.hash_stable(hcx, hasher);
+                variance.hash_stable(hcx, hasher);
                 c_ty.hash_stable(hcx, hasher);
-                local.hash_stable(hcx, hasher);
             }
             mir::StatementKind::Nop => {}
             mir::StatementKind::InlineAsm { ref asm, ref outputs, ref inputs } => {
@@ -479,10 +477,11 @@ for mir::AggregateKind<'gcx> {
             mir::AggregateKind::Array(t) => {
                 t.hash_stable(hcx, hasher);
             }
-            mir::AggregateKind::Adt(adt_def, idx, substs, active_field) => {
+            mir::AggregateKind::Adt(adt_def, idx, substs, user_substs, active_field) => {
                 adt_def.hash_stable(hcx, hasher);
                 idx.hash_stable(hcx, hasher);
                 substs.hash_stable(hcx, hasher);
+                user_substs.hash_stable(hcx, hasher);
                 active_field.hash_stable(hcx, hasher);
             }
             mir::AggregateKind::Closure(def_id, ref substs) => {
@@ -528,7 +527,7 @@ impl_stable_hash_for!(enum mir::NullOp {
     SizeOf
 });
 
-impl_stable_hash_for!(struct mir::Constant<'tcx> { span, ty, literal });
+impl_stable_hash_for!(struct mir::Constant<'tcx> { span, ty, user_ty, literal });
 
 impl_stable_hash_for!(struct mir::Location { block, statement_index });
 

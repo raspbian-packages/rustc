@@ -8,7 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use hir::map as hir_map;
+use hir::Node;
 use rustc::hir;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::ty::query::Providers;
@@ -40,7 +40,7 @@ fn inferred_outlives_of<'a, 'tcx>(
         .expect("expected local def-id");
 
     match tcx.hir.get(id) {
-        hir_map::NodeItem(item) => match item.node {
+        Node::Item(item) => match item.node {
             hir::ItemKind::Struct(..) | hir::ItemKind::Enum(..) | hir::ItemKind::Union(..) => {
                 let crate_map = tcx.inferred_outlives_crate(LOCAL_CRATE);
 
@@ -59,8 +59,7 @@ fn inferred_outlives_of<'a, 'tcx>(
                             ty::Predicate::TypeOutlives(p) => p.to_string(),
 
                             err => bug!("unexpected predicate {:?}", err),
-                        })
-                        .collect();
+                        }).collect();
                     pred.sort();
 
                     let span = tcx.def_span(item_def_id);
@@ -117,11 +116,9 @@ fn inferred_outlives_crate<'tcx>(
                             ty::Binder::bind(ty::OutlivesPredicate(region1, region2)),
                         ),
                     },
-                )
-                .collect();
+                ).collect();
             (def_id, Lrc::new(vec))
-        })
-        .collect();
+        }).collect();
 
     let empty_predicate = Lrc::new(Vec::new());
 

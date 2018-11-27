@@ -12,7 +12,7 @@
 
 [package]
 name = "chalk-engine"
-version = "0.6.0"
+version = "0.7.0"
 authors = ["Rust Compiler Team", "Chalk developers"]
 description = "Core trait engine from Chalk project"
 readme = "README.md"

@@ -12,7 +12,7 @@
 
 [package]
 name = "walkdir"
-version = "2.1.4"
+version = "2.2.5"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 description = "Recursively walk a directory."
 homepage = "https://github.com/BurntSushi/walkdir"
@@ -23,16 +23,16 @@ categories = ["filesystem"]
 license = "Unlicense/MIT"
 repository = "https://github.com/BurntSushi/walkdir"
 [dependencies.same-file]
-version = "1"
+version = "1.0.1"
 [dev-dependencies.docopt]
-version = "0.8"
+version = "1.0.1"
 
 [dev-dependencies.quickcheck]
-version = "0.6"
+version = "0.7"
 default-features = false
 
 [dev-dependencies.rand]
-version = "0.4"
+version = "0.5"
 
 [dev-dependencies.serde]
 version = "1"
@@ -42,6 +42,9 @@ version = "1"
 [target."cfg(windows)".dependencies.winapi]
 version = "0.3"
 features = ["std", "winnt"]
+
+[target."cfg(windows)".dependencies.winapi-util]
+version = "0.1.1"
 [badges.appveyor]
 repository = "BurntSushi/walkdir"
 

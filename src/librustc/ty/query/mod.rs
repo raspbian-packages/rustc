@@ -13,7 +13,7 @@ use errors::DiagnosticBuilder;
 use hir::def_id::{CrateNum, DefId, DefIndex};
 use hir::def::{Def, Export};
 use hir::{self, TraitCandidate, ItemLocalId, CodegenFnAttrs};
-use hir::svh::Svh;
+use rustc_data_structures::svh::Svh;
 use infer::canonical::{self, Canonical};
 use lint;
 use middle::borrowck::BorrowCheckResult;
@@ -24,12 +24,13 @@ use middle::reachable::ReachableSet;
 use middle::region;
 use middle::resolve_lifetime::{ResolveLifetimes, Region, ObjectLifetimeDefault};
 use middle::stability::{self, DeprecationEntry};
+use middle::lib_features::LibFeatures;
 use middle::lang_items::{LanguageItems, LangItem};
 use middle::exported_symbols::{SymbolExportLevel, ExportedSymbol};
 use mir::interpret::ConstEvalResult;
-use mir::mono::{CodegenUnit, Stats};
+use mir::mono::CodegenUnit;
 use mir;
-use mir::interpret::{GlobalId, Allocation};
+use mir::interpret::GlobalId;
 use session::{CompileResult, CrateDisambiguator};
 use session::config::OutputFilenames;
 use traits::{self, Vtable};
@@ -46,8 +47,9 @@ use ty::steal::Steal;
 use ty::subst::Substs;
 use util::nodemap::{DefIdSet, DefIdMap, ItemLocalSet};
 use util::common::{ErrorReported};
+use util::profiling::ProfileCategory::*;
 
-use rustc_data_structures::indexed_set::IdxSetBuf;
+use rustc_data_structures::indexed_set::IdxSet;
 use rustc_target::spec::PanicStrategy;
 use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
@@ -206,7 +208,7 @@ define_queries! { <'tcx>
         /// Maps DefId's that have an associated Mir to the result
         /// of the MIR qualify_consts pass. The actual meaning of
         /// the value isn't known except to the pass itself.
-        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Lrc<IdxSetBuf<mir::Local>>),
+        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Lrc<IdxSet<mir::Local>>),
 
         /// Fetch the MIR for a given def-id right after it's built - this includes
         /// unreachable code.
@@ -284,11 +286,6 @@ define_queries! { <'tcx>
         /// other items (such as enum variant explicit discriminants).
         [] fn const_eval: const_eval_dep_node(ty::ParamEnvAnd<'tcx, GlobalId<'tcx>>)
             -> ConstEvalResult<'tcx>,
-
-        /// Converts a constant value to an constant allocation
-        [] fn const_value_to_allocation: const_value_to_allocation(
-            &'tcx ty::Const<'tcx>
-        ) -> &'tcx Allocation,
     },
 
     TypeChecking {
@@ -384,6 +381,7 @@ define_queries! { <'tcx>
         [fatal_cycle] fn is_panic_runtime: IsPanicRuntime(CrateNum) -> bool,
         [fatal_cycle] fn is_compiler_builtins: IsCompilerBuiltins(CrateNum) -> bool,
         [fatal_cycle] fn has_global_allocator: HasGlobalAllocator(CrateNum) -> bool,
+        [fatal_cycle] fn has_panic_handler: HasPanicHandler(CrateNum) -> bool,
         [fatal_cycle] fn is_sanitizer_runtime: IsSanitizerRuntime(CrateNum) -> bool,
         [fatal_cycle] fn is_profiler_runtime: IsProfilerRuntime(CrateNum) -> bool,
         [fatal_cycle] fn panic_strategy: GetPanicStrategy(CrateNum) -> PanicStrategy,
@@ -491,6 +489,9 @@ define_queries! { <'tcx>
         [] fn item_children: ItemChildren(DefId) -> Lrc<Vec<Export>>,
         [] fn extern_mod_stmt_cnum: ExternModStmtCnum(DefId) -> Option<CrateNum>,
 
+        [] fn get_lib_features: get_lib_features_node(CrateNum) -> Lrc<LibFeatures>,
+        [] fn defined_lib_features: DefinedLibFeatures(CrateNum)
+            -> Lrc<Vec<(Symbol, Option<Symbol>)>>,
         [] fn get_lang_items: get_lang_items_node(CrateNum) -> Lrc<LanguageItems>,
         [] fn defined_lang_items: DefinedLangItems(CrateNum) -> Lrc<Vec<(DefId, usize)>>,
         [] fn missing_lang_items: MissingLangItems(CrateNum) -> Lrc<Vec<LangItem>>,
@@ -525,7 +526,6 @@ define_queries! { <'tcx>
             -> (Arc<DefIdSet>, Arc<Vec<Arc<CodegenUnit<'tcx>>>>),
         [] fn is_codegened_item: IsCodegenedItem(DefId) -> bool,
         [] fn codegen_unit: CodegenUnit(InternedString) -> Arc<CodegenUnit<'tcx>>,
-        [] fn compile_codegen_unit: CompileCodegenUnit(InternedString) -> Stats,
     },
 
     Other {
@@ -701,12 +701,6 @@ fn erase_regions_ty<'tcx>(ty: Ty<'tcx>) -> DepConstructor<'tcx> {
     DepConstructor::EraseRegionsTy { ty }
 }
 
-fn const_value_to_allocation<'tcx>(
-    val: &'tcx ty::Const<'tcx>,
-) -> DepConstructor<'tcx> {
-    DepConstructor::ConstValueToAllocation { val }
-}
-
 fn type_param_predicates<'tcx>((item_id, param_id): (DefId, DefId)) -> DepConstructor<'tcx> {
     DepConstructor::TypeParamPredicates {
         item_id,
@@ -797,6 +791,10 @@ fn implementations_of_trait_node<'tcx>((krate, trait_id): (CrateNum, DefId))
 
 fn link_args_node<'tcx>(_: CrateNum) -> DepConstructor<'tcx> {
     DepConstructor::LinkArgs
+}
+
+fn get_lib_features_node<'tcx>(_: CrateNum) -> DepConstructor<'tcx> {
+    DepConstructor::GetLibFeatures
 }
 
 fn get_lang_items_node<'tcx>(_: CrateNum) -> DepConstructor<'tcx> {

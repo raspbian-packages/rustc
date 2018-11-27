@@ -264,12 +264,12 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
     // The core logic responsible for computing the bounds for our synthesized impl.
     //
     // To calculate the bounds, we call SelectionContext.select in a loop. Like FulfillmentContext,
-    // we recursively select the nested obligations of predicates we encounter. However, whenver we
+    // we recursively select the nested obligations of predicates we encounter. However, whenever we
     // encounter an UnimplementedError involving a type parameter, we add it to our ParamEnv. Since
     // our goal is to determine when a particular type implements an auto trait, Unimplemented
     // errors tell us what conditions need to be met.
     //
-    // This method ends up working somewhat similary to FulfillmentContext, but with a few key
+    // This method ends up working somewhat similarly to FulfillmentContext, but with a few key
     // differences. FulfillmentContext works under the assumption that it's dealing with concrete
     // user code. According, it considers all possible ways that a Predicate could be met - which
     // isn't always what we want for a synthesized impl. For example, given the predicate 'T:
@@ -289,11 +289,11 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
     // we'll pick up any nested bounds, without ever inferring that 'T: IntoIterator' needs to
     // hold.
     //
-    // One additonal consideration is supertrait bounds. Normally, a ParamEnv is only ever
+    // One additional consideration is supertrait bounds. Normally, a ParamEnv is only ever
     // consutrcted once for a given type. As part of the construction process, the ParamEnv will
     // have any supertrait bounds normalized - e.g. if we have a type 'struct Foo<T: Copy>', the
     // ParamEnv will contain 'T: Copy' and 'T: Clone', since 'Copy: Clone'. When we construct our
-    // own ParamEnv, we need to do this outselves, through traits::elaborate_predicates, or else
+    // own ParamEnv, we need to do this ourselves, through traits::elaborate_predicates, or else
     // SelectionContext will choke on the missing predicates. However, this should never show up in
     // the final synthesized generics: we don't want our generated docs page to contain something
     // like 'T: Copy + Clone', as that's redundant. Therefore, we keep track of a separate
@@ -358,7 +358,8 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                 &Err(SelectionError::Unimplemented) => {
                     if self.is_of_param(pred.skip_binder().trait_ref.substs) {
                         already_visited.remove(&pred);
-                        user_computed_preds.insert(ty::Predicate::Trait(pred.clone()));
+                        self.add_user_pred(&mut user_computed_preds,
+                                           ty::Predicate::Trait(pred.clone()));
                         predicates.push_back(pred);
                     } else {
                         debug!(
@@ -391,6 +392,92 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
         );
 
         return Some((new_env, final_user_env));
+    }
+
+    // This method is designed to work around the following issue:
+    // When we compute auto trait bounds, we repeatedly call SelectionContext.select,
+    // progressively building a ParamEnv based on the results we get.
+    // However, our usage of SelectionContext differs from its normal use within the compiler,
+    // in that we capture and re-reprocess predicates from Unimplemented errors.
+    //
+    // This can lead to a corner case when dealing with region parameters.
+    // During our selection loop in evaluate_predicates, we might end up with
+    // two trait predicates that differ only in their region parameters:
+    // one containing a HRTB lifetime parameter, and one containing a 'normal'
+    // lifetime parameter. For example:
+    //
+    // T as MyTrait<'a>
+    // T as MyTrait<'static>
+    //
+    // If we put both of these predicates in our computed ParamEnv, we'll
+    // confuse SelectionContext, since it will (correctly) view both as being applicable.
+    //
+    // To solve this, we pick the 'more strict' lifetime bound - i.e. the HRTB
+    // Our end goal is to generate a user-visible description of the conditions
+    // under which a type implements an auto trait. A trait predicate involving
+    // a HRTB means that the type needs to work with any choice of lifetime,
+    // not just one specific lifetime (e.g. 'static).
+    fn add_user_pred<'c>(&self, user_computed_preds: &mut FxHashSet<ty::Predicate<'c>>,
+                         new_pred: ty::Predicate<'c>) {
+        let mut should_add_new = true;
+        user_computed_preds.retain(|&old_pred| {
+            match (&new_pred, old_pred) {
+                (&ty::Predicate::Trait(new_trait), ty::Predicate::Trait(old_trait)) => {
+                    if new_trait.def_id() == old_trait.def_id() {
+                        let new_substs = new_trait.skip_binder().trait_ref.substs;
+                        let old_substs = old_trait.skip_binder().trait_ref.substs;
+                        if !new_substs.types().eq(old_substs.types()) {
+                            // We can't compare lifetimes if the types are different,
+                            // so skip checking old_pred
+                            return true
+                        }
+
+                        for (new_region, old_region) in new_substs
+                            .regions()
+                            .zip(old_substs.regions()) {
+
+                            match (new_region, old_region) {
+                                // If both predicates have an 'ReLateBound' (a HRTB) in the
+                                // same spot, we do nothing
+                                (
+                                    ty::RegionKind::ReLateBound(_, _),
+                                    ty::RegionKind::ReLateBound(_, _)
+                                ) => {},
+
+                                (ty::RegionKind::ReLateBound(_, _), _) => {
+                                    // The new predicate has a HRTB in a spot where the old
+                                    // predicate does not (if they both had a HRTB, the previous
+                                    // match arm would have executed).
+                                    //
+                                    // The means we want to remove the older predicate from
+                                    // user_computed_preds, since having both it and the new
+                                    // predicate in a ParamEnv would confuse SelectionContext
+                                    // We're currently in the predicate passed to 'retain',
+                                    // so we return 'false' to remove the old predicate from
+                                    // user_computed_preds
+                                    return false;
+                                },
+                                (_, ty::RegionKind::ReLateBound(_, _)) => {
+                                    // This is the opposite situation as the previous arm - the
+                                    // old predicate has a HRTB lifetime in a place where the
+                                    // new predicate does not. We want to leave the old
+                                    // predicate in user_computed_preds, and skip adding
+                                    // new_pred to user_computed_params.
+                                    should_add_new = false
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                },
+                _ => {}
+            }
+            return true
+        });
+
+        if should_add_new {
+            user_computed_preds.insert(new_pred);
+        }
     }
 
     pub fn region_name(&self, region: Region) -> Option<String> {
@@ -426,26 +513,26 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                     {
                         let deps1 = vid_map
                             .entry(RegionTarget::RegionVid(r1))
-                            .or_insert_with(|| Default::default());
+                            .or_default();
                         deps1.larger.insert(RegionTarget::RegionVid(r2));
                     }
 
                     let deps2 = vid_map
                         .entry(RegionTarget::RegionVid(r2))
-                        .or_insert_with(|| Default::default());
+                        .or_default();
                     deps2.smaller.insert(RegionTarget::RegionVid(r1));
                 }
                 &Constraint::RegSubVar(region, vid) => {
                     {
                         let deps1 = vid_map
                             .entry(RegionTarget::Region(region))
-                            .or_insert_with(|| Default::default());
+                            .or_default();
                         deps1.larger.insert(RegionTarget::RegionVid(vid));
                     }
 
                     let deps2 = vid_map
                         .entry(RegionTarget::RegionVid(vid))
-                        .or_insert_with(|| Default::default());
+                        .or_default();
                     deps2.smaller.insert(RegionTarget::Region(region));
                 }
                 &Constraint::VarSubReg(vid, region) => {
@@ -455,13 +542,13 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                     {
                         let deps1 = vid_map
                             .entry(RegionTarget::Region(r1))
-                            .or_insert_with(|| Default::default());
+                            .or_default();
                         deps1.larger.insert(RegionTarget::Region(r2));
                     }
 
                     let deps2 = vid_map
                         .entry(RegionTarget::Region(r2))
-                        .or_insert_with(|| Default::default());
+                        .or_default();
                     deps2.smaller.insert(RegionTarget::Region(r1));
                 }
             }
@@ -519,8 +606,8 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
         }
 
         return match substs.type_at(0).sty {
-            ty::TyParam(_) => true,
-            ty::TyProjection(p) => self.is_of_param(p.substs),
+            ty::Param(_) => true,
+            ty::Projection(p) => self.is_of_param(p.substs),
             _ => false,
         };
     }
@@ -555,7 +642,7 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                     let substs = &p.skip_binder().trait_ref.substs;
 
                     if self.is_of_param(substs) && !only_projections && is_new_pred {
-                        computed_preds.insert(predicate);
+                        self.add_user_pred(computed_preds, predicate);
                     }
                     predicates.push_back(p.clone());
                 }
@@ -563,7 +650,7 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                     // If the projection isn't all type vars, then
                     // we don't want to add it as a bound
                     if self.is_of_param(p.skip_binder().projection_ty.substs) && is_new_pred {
-                        computed_preds.insert(predicate);
+                        self.add_user_pred(computed_preds, predicate);
                     } else {
                         match poly_project_and_unify_type(select, &obligation.with(p.clone())) {
                             Err(e) => {
@@ -594,10 +681,7 @@ impl<'a, 'tcx> AutoTraitFinder<'a, 'tcx> {
                     }
                 }
                 &ty::Predicate::RegionOutlives(ref binder) => {
-                    if let Err(_) = select
-                        .infcx()
-                        .region_outlives_predicate(&dummy_cause, binder)
-                    {
+                    if select.infcx().region_outlives_predicate(&dummy_cause, binder).is_err() {
                         return false;
                     }
                 }

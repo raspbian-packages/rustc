@@ -9,7 +9,7 @@
 // except according to those terms.
 
 #![feature(box_syntax, plugin, plugin_registrar, rustc_private)]
-#![feature(macro_vis_matcher)]
+#![cfg_attr(stage0, feature(macro_vis_matcher))]
 #![feature(macro_at_most_once_rep)]
 #![crate_type = "dylib"]
 
@@ -27,9 +27,10 @@ use syntax::symbol::Symbol;
 use rustc::hir;
 use rustc::hir::intravisit;
 use rustc::hir::map as hir_map;
+use hir::Node;
 use rustc::lint::{LateContext, LintPass, LintArray, LateLintPass, LintContext};
 use rustc::ty;
-use syntax::{ast, codemap};
+use syntax::{ast, source_map};
 
 #[plugin_registrar]
 pub fn plugin_registrar(reg: &mut Registry) {
@@ -54,11 +55,11 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingWhitelistedAttrPass {
                 _: intravisit::FnKind<'tcx>,
                 _: &'tcx hir::FnDecl,
                 _: &'tcx hir::Body,
-                span: codemap::Span,
+                span: source_map::Span,
                 id: ast::NodeId) {
 
         let item = match cx.tcx.hir.get(id) {
-            hir_map::Node::NodeItem(item) => item,
+            Node::Item(item) => item,
             _ => cx.tcx.hir.expect_item(cx.tcx.hir.get_parent(id)),
         };
 

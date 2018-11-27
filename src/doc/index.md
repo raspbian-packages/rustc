@@ -34,7 +34,7 @@ minimum. It also includes exercises!
 
 # Use Rust
 
-Once you've gotten familliar with the language, these resources can help you
+Once you've gotten familiar with the language, these resources can help you
 when you're actually using it day-to-day.
 
 ## The Standard Library
@@ -42,6 +42,13 @@ when you're actually using it day-to-day.
 Rust's standard library has [extensive API documentation](std/index.html),
 with explanations of how to use various things, as well as example code for
 accomplishing various tasks.
+
+<div>
+  <form action="std/index.html" method="get">
+    <input type="search" name="search"/>
+    <button>Search</button>
+  </form>
+</div>
 
 ## The Rustc Book
 

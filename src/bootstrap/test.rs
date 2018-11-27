@@ -34,7 +34,7 @@ use tool::{self, Tool, SourceType};
 use toolstate::ToolState;
 use util::{self, dylib_path, dylib_path_var};
 use Crate as CargoCrate;
-use {DocTests, Mode};
+use {DocTests, Mode, GitRepo};
 
 const ADB_TEST_DIR: &str = "/data/tmp/work";
 
@@ -237,6 +237,8 @@ impl Step for Cargo {
         // Don't run cross-compile tests, we may not have cross-compiled libstd libs
         // available.
         cargo.env("CFG_DISABLE_CROSS_TESTS", "1");
+        // Disable a test that has issues with mingw.
+        cargo.env("CARGO_TEST_DISABLE_GIT_CLI", "1");
 
         try_run(
             builder,
@@ -298,6 +300,8 @@ impl Step for Rls {
         cargo.env("RLS_TEST_WORKSPACE_DIR", test_workspace_path);
 
         builder.add_rustc_lib_path(compiler, &mut cargo);
+        cargo.arg("--")
+            .args(builder.config.cmd.test_args());
 
         if try_run(builder, &mut cargo) {
             builder.save_toolstate("rls", ToolState::TestPass);
@@ -973,9 +977,19 @@ impl Step for Compiletest {
             builder.ensure(compile::Rustc { compiler, target });
         }
 
-        if builder.no_std(target) != Some(true) {
+        if builder.no_std(target) == Some(true) {
+            // the `test` doesn't compile for no-std targets
+            builder.ensure(compile::Std { compiler, target });
+        } else {
             builder.ensure(compile::Test { compiler, target });
         }
+
+        if builder.no_std(target) == Some(true) {
+            // for no_std run-make (e.g. thumb*),
+            // we need a host compiler which is called by cargo.
+            builder.ensure(compile::Std { compiler, target: compiler.host });
+        }
+
         builder.ensure(native::TestHelpers { target });
         builder.ensure(RemoteCopyLibs { compiler, target });
 
@@ -1128,7 +1142,7 @@ impl Step for Compiletest {
                     .arg("--cxx")
                     .arg(builder.cxx(target).unwrap())
                     .arg("--cflags")
-                    .arg(builder.cflags(target).join(" "))
+                    .arg(builder.cflags(target, GitRepo::Rustc).join(" "))
                     .arg("--llvm-components")
                     .arg(llvm_components.trim())
                     .arg("--llvm-cxxflags")

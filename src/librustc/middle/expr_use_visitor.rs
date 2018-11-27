@@ -317,7 +317,11 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
             debug!("consume_body: arg_ty = {:?}", arg_ty);
 
             let fn_body_scope_r =
-                self.tcx().mk_region(ty::ReScope(region::Scope::Node(body.value.hir_id.local_id)));
+                self.tcx().mk_region(ty::ReScope(
+                    region::Scope {
+                        id: body.value.hir_id.local_id,
+                        data: region::ScopeData::Node
+                    }));
             let arg_cmt = Rc::new(self.mc.cat_rvalue(
                 arg.hir_id,
                 arg.pat.span,
@@ -457,7 +461,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // make sure that the thing we are pointing out stays valid
                 // for the lifetime `scope_r` of the resulting ptr:
                 let expr_ty = return_if_err!(self.mc.expr_ty(expr));
-                if let ty::TyRef(r, _, _) = expr_ty.sty {
+                if let ty::Ref(r, _, _) = expr_ty.sty {
                     let bk = ty::BorrowKind::from_mutbl(m);
                     self.borrow_expr(&base, r, bk, AddrOf);
                 }
@@ -551,14 +555,17 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         debug!("walk_callee: callee={:?} callee_ty={:?}",
                callee, callee_ty);
         match callee_ty.sty {
-            ty::TyFnDef(..) | ty::TyFnPtr(_) => {
+            ty::FnDef(..) | ty::FnPtr(_) => {
                 self.consume_expr(callee);
             }
-            ty::TyError => { }
+            ty::Error => { }
             _ => {
                 if let Some(def) = self.mc.tables.type_dependent_defs().get(call.hir_id) {
                     let def_id = def.def_id();
-                    let call_scope = region::Scope::Node(call.hir_id.local_id);
+                    let call_scope = region::Scope {
+                        id: call.hir_id.local_id,
+                        data: region::ScopeData::Node
+                    };
                     match OverloadedCallType::from_method_id(self.tcx(), def_id) {
                         FnMutOverloadedCall => {
                             let call_scope_r = self.tcx().mk_region(ty::ReScope(call_scope));
@@ -659,7 +666,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         // Select just those fields of the `with`
         // expression that will actually be used
         match with_cmt.ty.sty {
-            ty::TyAdt(adt, substs) if adt.is_struct() => {
+            ty::Adt(adt, substs) if adt.is_struct() => {
                 // Consume those fields of the with expression that are needed.
                 for (f_index, with_field) in adt.non_enum_variant().fields.iter().enumerate() {
                     let is_mentioned = fields.iter().any(|f| {
@@ -766,7 +773,10 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                 // treated as borrowing it for the enclosing temporary
                 // scope.
                 let r = self.tcx().mk_region(ty::ReScope(
-                    region::Scope::Node(expr.hir_id.local_id)));
+                    region::Scope {
+                        id: expr.hir_id.local_id,
+                        data: region::ScopeData::Node
+                    }));
 
                 self.delegate.borrow(expr.id,
                                      expr.span,
@@ -792,7 +802,9 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
         }
 
         if let Some(ref guard) = arm.guard {
-            self.consume_expr(&guard);
+            match guard {
+                hir::Guard::If(ref e) => self.consume_expr(e),
+            }
         }
 
         self.consume_expr(&arm.body);
@@ -867,7 +879,7 @@ impl<'a, 'gcx, 'tcx> ExprUseVisitor<'a, 'gcx, 'tcx> {
                     // It is also a borrow or copy/move of the value being matched.
                     match bm {
                         ty::BindByReference(m) => {
-                            if let ty::TyRef(r, _, _) = pat_ty.sty {
+                            if let ty::Ref(r, _, _) = pat_ty.sty {
                                 let bk = ty::BorrowKind::from_mutbl(m);
                                 delegate.borrow(pat.id, pat.span, &cmt_pat, r, bk, RefBinding);
                             }

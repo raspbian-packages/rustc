@@ -42,7 +42,7 @@ use util::nodemap::FxHashMap;
 use std::default::Default as StdDefault;
 use syntax::ast;
 use syntax::edition;
-use syntax_pos::{MultiSpan, Span};
+use syntax_pos::{MultiSpan, Span, symbol::LocalInternedString};
 use errors::DiagnosticBuilder;
 use hir;
 use hir::def_id::LOCAL_CRATE;
@@ -67,9 +67,10 @@ pub struct LintStore {
     /// Lints indexed by name.
     by_name: FxHashMap<String, TargetLint>,
 
-    /// Map of registered lint groups to what lints they expand to. The bool
-    /// is true if the lint group was added by a plugin.
-    lint_groups: FxHashMap<&'static str, (Vec<LintId>, bool)>,
+    /// Map of registered lint groups to what lints they expand to. The first
+    /// bool is true if the lint group was added by a plugin. The optional string
+    /// is used to store the new names of deprecated lint group names.
+    lint_groups: FxHashMap<&'static str, (Vec<LintId>, bool, Option<&'static str>)>,
 
     /// Extra info for future incompatibility lints, describing the
     /// issue or RFC that caused the incompatibility.
@@ -133,6 +134,12 @@ pub enum CheckLintNameResult<'a> {
     /// The lint is either renamed or removed. This is the warning
     /// message, and an optional new name (`None` if removed).
     Warning(String, Option<String>),
+    /// The lint is from a tool. If the Option is None, then either
+    /// the lint does not exist in the tool or the code was not
+    /// compiled with the tool and therefore the lint was never
+    /// added to the `LintStore`. Otherwise the `LintId` will be
+    /// returned as if it where a rustc lint.
+    Tool(Result<&'a [LintId], (Option<&'a [LintId]>, String)>),
 }
 
 impl LintStore {
@@ -215,7 +222,7 @@ impl LintStore {
             let lints = lints.iter().filter(|f| f.edition == Some(*edition)).map(|f| f.id)
                              .collect::<Vec<_>>();
             if !lints.is_empty() {
-                self.register_group(sess, false, edition.lint_name(), lints)
+                self.register_group(sess, false, edition.lint_name(), None, lints)
             }
         }
 
@@ -225,19 +232,35 @@ impl LintStore {
             self.future_incompatible.insert(lint.id, lint);
         }
 
-        self.register_group(sess, false, "future_incompatible", future_incompatible);
-
-
+        self.register_group(
+            sess,
+            false,
+            "future_incompatible",
+            None,
+            future_incompatible,
+        );
     }
 
     pub fn future_incompatible(&self, id: LintId) -> Option<&FutureIncompatibleInfo> {
         self.future_incompatible.get(&id)
     }
 
-    pub fn register_group(&mut self, sess: Option<&Session>,
-                          from_plugin: bool, name: &'static str,
-                          to: Vec<LintId>) {
-        let new = self.lint_groups.insert(name, (to, from_plugin)).is_none();
+    pub fn register_group(
+        &mut self,
+        sess: Option<&Session>,
+        from_plugin: bool,
+        name: &'static str,
+        deprecated_name: Option<&'static str>,
+        to: Vec<LintId>,
+    ) {
+        let new = self
+            .lint_groups
+            .insert(name, (to, from_plugin, None))
+            .is_none();
+        if let Some(deprecated) = deprecated_name {
+            self.lint_groups
+                .insert(deprecated, (vec![], from_plugin, Some(name)));
+        }
 
         if !new {
             let msg = format!("duplicate specification of lint group {}", name);
@@ -288,7 +311,7 @@ impl LintStore {
                                    sess: &Session,
                                    lint_name: &str,
                                    level: Level) {
-        let db = match self.check_lint_name(lint_name) {
+        let db = match self.check_lint_name(lint_name, None) {
             CheckLintNameResult::Ok(_) => None,
             CheckLintNameResult::Warning(ref msg, _) => {
                 Some(sess.struct_warn(msg))
@@ -296,6 +319,15 @@ impl LintStore {
             CheckLintNameResult::NoLint => {
                 Some(struct_err!(sess, E0602, "unknown lint: `{}`", lint_name))
             }
+            CheckLintNameResult::Tool(result) => match result {
+                Err((Some(_), new_name)) => Some(sess.struct_warn(&format!(
+                    "lint name `{}` is deprecated \
+                     and does not have an effect anymore. \
+                     Use: {}",
+                    lint_name, new_name
+                ))),
+                _ => None,
+            },
         };
 
         if let Some(mut db) = db {
@@ -319,27 +351,87 @@ impl LintStore {
     /// it emits non-fatal warnings and there are *two* lint passes that
     /// inspect attributes, this is only run from the late pass to avoid
     /// printing duplicate warnings.
-    pub fn check_lint_name(&self, lint_name: &str) -> CheckLintNameResult {
-        match self.by_name.get(lint_name) {
-            Some(&Renamed(ref new_name, _)) => {
-                CheckLintNameResult::Warning(
-                    format!("lint `{}` has been renamed to `{}`", lint_name, new_name),
-                    Some(new_name.to_owned())
-                )
-            },
-            Some(&Removed(ref reason)) => {
-                CheckLintNameResult::Warning(
-                    format!("lint `{}` has been removed: `{}`", lint_name, reason),
-                    None
-                )
-            },
-            None => {
-                match self.lint_groups.get(lint_name) {
-                    None => CheckLintNameResult::NoLint,
-                    Some(ids) => CheckLintNameResult::Ok(&ids.0),
-                }
+    pub fn check_lint_name(
+        &self,
+        lint_name: &str,
+        tool_name: Option<LocalInternedString>,
+    ) -> CheckLintNameResult {
+        let complete_name = if let Some(tool_name) = tool_name {
+            format!("{}::{}", tool_name, lint_name)
+        } else {
+            lint_name.to_string()
+        };
+        // If the lint was scoped with `tool::` check if the tool lint exists
+        if let Some(_) = tool_name {
+            match self.by_name.get(&complete_name) {
+                None => match self.lint_groups.get(&*complete_name) {
+                    None => return CheckLintNameResult::Tool(Err((None, String::new()))),
+                    Some(ids) => return CheckLintNameResult::Tool(Ok(&ids.0)),
+                },
+                Some(&Id(ref id)) => return CheckLintNameResult::Tool(Ok(slice::from_ref(id))),
+                // If the lint was registered as removed or renamed by the lint tool, we don't need
+                // to treat tool_lints and rustc lints different and can use the code below.
+                _ => {}
             }
+        }
+        match self.by_name.get(&complete_name) {
+            Some(&Renamed(ref new_name, _)) => CheckLintNameResult::Warning(
+                format!(
+                    "lint `{}` has been renamed to `{}`",
+                    complete_name, new_name
+                ),
+                Some(new_name.to_owned()),
+            ),
+            Some(&Removed(ref reason)) => CheckLintNameResult::Warning(
+                format!("lint `{}` has been removed: `{}`", complete_name, reason),
+                None,
+            ),
+            None => match self.lint_groups.get(&*complete_name) {
+                // If neither the lint, nor the lint group exists check if there is a `clippy::`
+                // variant of this lint
+                None => self.check_tool_name_for_backwards_compat(&complete_name, "clippy"),
+                Some(ids) => {
+                    // Check if the lint group name is deprecated
+                    if let Some(new_name) = ids.2 {
+                        let lint_ids = self.lint_groups.get(new_name).unwrap();
+                        return CheckLintNameResult::Tool(Err((
+                            Some(&lint_ids.0),
+                            new_name.to_string(),
+                        )));
+                    }
+                    CheckLintNameResult::Ok(&ids.0)
+                }
+            },
             Some(&Id(ref id)) => CheckLintNameResult::Ok(slice::from_ref(id)),
+        }
+    }
+
+    fn check_tool_name_for_backwards_compat(
+        &self,
+        lint_name: &str,
+        tool_name: &str,
+    ) -> CheckLintNameResult {
+        let complete_name = format!("{}::{}", tool_name, lint_name);
+        match self.by_name.get(&complete_name) {
+            None => match self.lint_groups.get(&*complete_name) {
+                // Now we are sure, that this lint exists nowhere
+                None => CheckLintNameResult::NoLint,
+                Some(ids) => {
+                    // Reaching this would be weird, but lets cover this case anyway
+                    if let Some(new_name) = ids.2 {
+                        let lint_ids = self.lint_groups.get(new_name).unwrap();
+                        return CheckLintNameResult::Tool(Err((
+                            Some(&lint_ids.0),
+                            new_name.to_string(),
+                        )));
+                    }
+                    CheckLintNameResult::Tool(Err((Some(&ids.0), complete_name)))
+                }
+            },
+            Some(&Id(ref id)) => {
+                CheckLintNameResult::Tool(Err((Some(slice::from_ref(id)), complete_name)))
+            }
+            _ => CheckLintNameResult::NoLint,
         }
     }
 }
@@ -847,7 +939,7 @@ impl<'a, 'tcx> hir_visit::Visitor<'tcx> for LateContext<'a, 'tcx> {
         hir_visit::walk_lifetime(self, lt);
     }
 
-    fn visit_path(&mut self, p: &'tcx hir::Path, id: ast::NodeId) {
+    fn visit_path(&mut self, p: &'tcx hir::Path, id: hir::HirId) {
         run_lints!(self, check_path, p, id);
         hir_visit::walk_path(self, p);
     }
@@ -1024,7 +1116,14 @@ impl<'a> ast_visit::Visitor<'a> for EarlyContext<'a> {
         self.check_id(id);
     }
 
-    fn visit_mac(&mut self, mac: &'ast ast::Mac) {
+    fn visit_mac(&mut self, mac: &'a ast::Mac) {
+        // FIXME(#54110): So, this setup isn't really right. I think
+        // that (a) the libsyntax visitor ought to be doing this as
+        // part of `walk_mac`, and (b) we should be calling
+        // `visit_path`, *but* that would require a `NodeId`, and I
+        // want to get #53686 fixed quickly. -nmatsakis
+        ast_visit::walk_path(self, &mac.node.path);
+
         run_lints!(self, check_mac, mac);
     }
 }

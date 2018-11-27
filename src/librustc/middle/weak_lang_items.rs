@@ -13,6 +13,7 @@
 use session::config;
 use middle::lang_items;
 
+use rustc_data_structures::fx::FxHashSet;
 use rustc_target::spec::PanicStrategy;
 use syntax::ast;
 use syntax::symbol::Symbol;
@@ -22,8 +23,6 @@ use hir::intravisit::{Visitor, NestedVisitorMap};
 use hir::intravisit;
 use hir;
 use ty::TyCtxt;
-
-use std::collections::HashSet;
 
 macro_rules! weak_lang_items {
     ($($name:ident, $item:ident, $sym:ident;)*) => (
@@ -89,19 +88,19 @@ fn verify<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     // emitting something that's not an rlib.
     let needs_check = tcx.sess.crate_types.borrow().iter().any(|kind| {
         match *kind {
-            config::CrateTypeDylib |
-            config::CrateTypeProcMacro |
-            config::CrateTypeCdylib |
-            config::CrateTypeExecutable |
-            config::CrateTypeStaticlib => true,
-            config::CrateTypeRlib => false,
+            config::CrateType::Dylib |
+            config::CrateType::ProcMacro |
+            config::CrateType::Cdylib |
+            config::CrateType::Executable |
+            config::CrateType::Staticlib => true,
+            config::CrateType::Rlib => false,
         }
     });
     if !needs_check {
         return
     }
 
-    let mut missing = HashSet::new();
+    let mut missing = FxHashSet::default();
     for &cnum in tcx.crates().iter() {
         for &item in tcx.missing_lang_items(cnum).iter() {
             missing.insert(item);
@@ -113,7 +112,7 @@ fn verify<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
            !whitelisted(tcx, lang_items::$item) &&
            items.$name().is_none() {
             if lang_items::$item == lang_items::PanicImplLangItem {
-                tcx.sess.err(&format!("`#[panic_implementation]` function required, \
+                tcx.sess.err(&format!("`#[panic_handler]` function required, \
                                         but not found"));
             } else if lang_items::$item == lang_items::OomLangItem {
                 tcx.sess.err(&format!("`#[alloc_error_handler]` function required, \

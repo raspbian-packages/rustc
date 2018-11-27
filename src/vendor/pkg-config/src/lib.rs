@@ -80,11 +80,8 @@ pub fn target_supported() -> bool {
     let host = env::var("HOST").unwrap_or_else(|_| String::new());
 
     // Only use pkg-config in host == target situations by default (allowing an
-    // override) and then also don't use pkg-config on MSVC as it's really not
-    // meant to work there but when building MSVC code in a MSYS shell we may be
-    // able to run pkg-config anyway.
-    (host == target || env::var_os("PKG_CONFIG_ALLOW_CROSS").is_some()) &&
-    !target.contains("msvc")
+    // override).
+    (host == target || env::var_os("PKG_CONFIG_ALLOW_CROSS").is_some())
 }
 
 #[derive(Clone, Default)]
@@ -121,9 +118,6 @@ pub enum Error {
     /// Override with `PKG_CONFIG_ALLOW_CROSS=1`.
     CrossCompilation,
 
-    /// Attempted to compile using the MSVC ABI build
-    MSVC,
-
     /// Failed to run `pkg-config`.
     ///
     /// Contains the command and the cause.
@@ -147,7 +141,6 @@ impl error::Error for Error {
                 "pkg-config doesn't handle cross compilation. \
                  Use PKG_CONFIG_ALLOW_CROSS=1 to override"
             }
-            Error::MSVC => "pkg-config is incompatible with the MSVC ABI build.",
             Error::Command { .. } => "failed to run pkg-config",
             Error::Failure { .. } => "pkg-config did not exit sucessfully",
             Error::__Nonexhaustive => panic!(),
@@ -198,7 +191,6 @@ impl fmt::Debug for Error {
                  .finish()
             }
             Error::CrossCompilation => write!(f, "CrossCompilation"),
-            Error::MSVC => write!(f, "MSVC"),
             Error::Command { ref command, ref cause } => {
                 f.debug_struct("Command")
                  .field("command", command)
@@ -225,10 +217,6 @@ impl fmt::Display for Error {
             Error::CrossCompilation => {
                 write!(f, "Cross compilation detected. \
                        Use PKG_CONFIG_ALLOW_CROSS=1 to override")
-            }
-            Error::MSVC => {
-                write!(f, "MSVC target detected. If you are using the MSVC ABI \
-                       rust build, please use the GNU ABI build instead.")
             }
             Error::Command { ref command, ref cause } => {
                 write!(f, "Failed to run `{}`: {}", command, cause)
@@ -346,12 +334,7 @@ impl Config {
         if self.env_var_os(&abort_var_name).is_some() {
             return Err(Error::EnvNoPkgConfig(abort_var_name))
         } else if !target_supported() {
-            if self.env_var("TARGET").unwrap_or_else(|_| String::new()).contains("msvc") {
-                return Err(Error::MSVC);
-            }
-            else {
-                return Err(Error::CrossCompilation);
-            }
+            return Err(Error::CrossCompilation);
         }
 
         let mut library = Library::new();
@@ -470,6 +453,13 @@ impl Library {
     }
 
     fn parse_libs_cflags(&mut self, name: &str, output: &[u8], config: &Config) {
+        let mut is_msvc = false;
+        if let Ok(target) = env::var("TARGET") {
+            if target.contains("msvc") {
+                is_msvc = true;
+            }
+        }
+
         let words = split_flags(output);
         let parts = words.iter()
                           .filter(|l| l.len() > 2)
@@ -495,14 +485,28 @@ impl Library {
                     self.include_paths.push(PathBuf::from(val));
                 }
                 "-l" => {
-                    self.libs.push(val.to_string());
+                    let libname = if is_msvc {
+                        // These are provided by the CRT with MSVC
+                        if ["m", "c", "pthread"].contains(&val) {
+                            continue;
+                        }
+
+                        // We need to convert -lfoo to foo.lib for MSVC as that
+                        // is the name of the import library
+                        format!("{}.lib", val)
+                    } else {
+                        val.to_string()
+                    };
+
                     if statik && is_static_available(val, &dirs) {
-                        let meta = format!("rustc-link-lib=static={}", val);
+                        let meta = format!("rustc-link-lib=static={}", libname);
                         config.print_metadata(&meta);
                     } else {
-                        let meta = format!("rustc-link-lib={}", val);
+                        let meta = format!("rustc-link-lib={}", libname);
                         config.print_metadata(&meta);
                     }
+
+                    self.libs.push(libname);
                 }
                 "-D" => {
                     let mut iter = val.split("=");

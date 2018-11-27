@@ -227,8 +227,7 @@ seq_impl!(VecDeque<T>);
 
 ////////////////////////////////////////////////////////////////////////////////
 
-#[cfg(feature = "std")]
-impl<Idx> Serialize for ops::Range<Idx>
+impl<Idx> Serialize for Range<Idx>
 where
     Idx: Serialize,
 {
@@ -240,6 +239,25 @@ where
         let mut state = try!(serializer.serialize_struct("Range", 2));
         try!(state.serialize_field("start", &self.start));
         try!(state.serialize_field("end", &self.end));
+        state.end()
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+#[cfg(range_inclusive)]
+impl<Idx> Serialize for RangeInclusive<Idx>
+where
+    Idx: Serialize,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        use super::SerializeStruct;
+        let mut state = try!(serializer.serialize_struct("RangeInclusive", 2));
+        try!(state.serialize_field("start", &self.start()));
+        try!(state.serialize_field("end", &self.end()));
         state.end()
     }
 }

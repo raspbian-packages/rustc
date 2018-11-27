@@ -20,6 +20,7 @@ use rustc::mir;
 use rustc::session::CrateDisambiguator;
 use rustc::ty::{self, Ty, ReprOptions};
 use rustc_target::spec::{PanicStrategy, TargetTriple};
+use rustc_data_structures::svh::Svh;
 
 use rustc_serialize as serialize;
 use syntax::{ast, attr};
@@ -187,22 +188,24 @@ pub struct CrateRoot {
     pub name: Symbol,
     pub triple: TargetTriple,
     pub extra_filename: String,
-    pub hash: hir::svh::Svh,
+    pub hash: Svh,
     pub disambiguator: CrateDisambiguator,
     pub panic_strategy: PanicStrategy,
     pub edition: Edition,
     pub has_global_allocator: bool,
+    pub has_panic_handler: bool,
     pub has_default_lib_allocator: bool,
     pub plugin_registrar_fn: Option<DefIndex>,
     pub macro_derive_registrar: Option<DefIndex>,
 
     pub crate_deps: LazySeq<CrateDep>,
     pub dylib_dependency_formats: LazySeq<Option<LinkagePreference>>,
+    pub lib_features: LazySeq<(Symbol, Option<Symbol>)>,
     pub lang_items: LazySeq<(DefIndex, usize)>,
     pub lang_items_missing: LazySeq<lang_items::LangItem>,
     pub native_libraries: LazySeq<NativeLibrary>,
     pub foreign_modules: LazySeq<ForeignModule>,
-    pub codemap: LazySeq<syntax_pos::FileMap>,
+    pub source_map: LazySeq<syntax_pos::SourceFile>,
     pub def_path_table: Lazy<hir::map::definitions::DefPathTable>,
     pub impls: LazySeq<TraitImpls>,
     pub exported_symbols: EncodedExportedSymbols,
@@ -222,7 +225,7 @@ pub struct CrateRoot {
 #[derive(RustcEncodable, RustcDecodable)]
 pub struct CrateDep {
     pub name: ast::Name,
-    pub hash: hir::svh::Svh,
+    pub hash: Svh,
     pub kind: DepKind,
     pub extra_filename: String,
 }

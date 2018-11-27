@@ -287,6 +287,31 @@ impl DefPath {
         s
     }
 
+    /// Return filename friendly string of the DefPah with the
+    /// crate-prefix.
+    pub fn to_string_friendly<F>(&self, crate_imported_name: F) -> String
+        where F: FnOnce(CrateNum) -> Symbol
+    {
+        let crate_name_str = crate_imported_name(self.krate).as_str();
+        let mut s = String::with_capacity(crate_name_str.len() + self.data.len() * 16);
+
+        write!(s, "::{}", crate_name_str).unwrap();
+
+        for component in &self.data {
+            if component.disambiguator == 0 {
+                write!(s, "::{}", component.data.as_interned_str()).unwrap();
+            } else {
+                write!(s,
+                       "{}[{}]",
+                       component.data.as_interned_str(),
+                       component.disambiguator)
+                    .unwrap();
+            }
+        }
+
+        s
+    }
+
     /// Return filename friendly string of the DefPah without
     /// the crate-prefix. This method is useful if you don't have
     /// a TyCtxt available.
@@ -317,10 +342,8 @@ pub enum DefPathData {
     // they are treated specially by the `def_path` function.
     /// The crate root (marker)
     CrateRoot,
-
     // Catch-all for random DefId things like DUMMY_NODE_ID
     Misc,
-
     // Different kinds of items and item-like things:
     /// An impl
     Impl,
@@ -342,7 +365,6 @@ pub enum DefPathData {
     MacroDef(InternedString),
     /// A closure expression
     ClosureExpr,
-
     // Subportions of items
     /// A type parameter (generic parameter)
     TypeParam(InternedString),
@@ -358,7 +380,6 @@ pub enum DefPathData {
     AnonConst,
     /// An `impl Trait` type node
     ImplTrait,
-
     /// GlobalMetaData identifies a piece of crate metadata that is global to
     /// a whole crate (as opposed to just one item). GlobalMetaData components
     /// are only supposed to show up right below the crate root.
@@ -380,6 +401,17 @@ impl Borrow<Fingerprint> for DefPathHash {
 
 impl Definitions {
     /// Create new empty definition map.
+    ///
+    /// The DefIndex returned from a new Definitions are as follows:
+    /// 1. At DefIndexAddressSpace::Low,
+    ///     CRATE_ROOT has index 0:0, and then new indexes are allocated in
+    ///     ascending order.
+    /// 2. At DefIndexAddressSpace::High,
+    ///     the first FIRST_FREE_HIGH_DEF_INDEX indexes are reserved for
+    ///     internal use, then 1:FIRST_FREE_HIGH_DEF_INDEX are allocated in
+    ///     ascending order.
+    ///
+    /// FIXME: there is probably a better place to put this comment.
     pub fn new() -> Definitions {
         Definitions {
             table: DefPathTable {
@@ -645,10 +677,8 @@ impl DefPathData {
             GlobalMetaData(name) => {
                 return name
             }
-
             // note that this does not show up in user printouts
             CrateRoot => "{{root}}",
-
             Impl => "{{impl}}",
             Misc => "{{?}}",
             ClosureExpr => "{{closure}}",
@@ -665,6 +695,11 @@ impl DefPathData {
     }
 }
 
+macro_rules! count {
+    () => (0usize);
+    ( $x:tt $($xs:tt)* ) => (1usize + count!($($xs)*));
+}
+
 // We define the GlobalMetaDataKind enum with this macro because we want to
 // make sure that we exhaustively iterate over all variants when registering
 // the corresponding DefIndices in the DefTable.
@@ -678,6 +713,7 @@ macro_rules! define_global_metadata_kind {
         }
 
         const GLOBAL_MD_ADDRESS_SPACE: DefIndexAddressSpace = DefIndexAddressSpace::High;
+        pub const FIRST_FREE_HIGH_DEF_INDEX: usize = count!($($variant)*);
 
         impl GlobalMetaDataKind {
             fn allocate_def_indices(definitions: &mut Definitions) {
@@ -739,7 +775,7 @@ define_global_metadata_kind!(pub enum GlobalMetaDataKind {
     LangItems,
     LangItemsMissing,
     NativeLibraries,
-    CodeMap,
+    SourceMap,
     Impls,
     ExportedSymbols
 });

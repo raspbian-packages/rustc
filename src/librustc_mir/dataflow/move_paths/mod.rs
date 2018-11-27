@@ -196,10 +196,19 @@ impl fmt::Debug for MoveOut {
 pub struct Init {
     /// path being initialized
     pub path: MovePathIndex,
-    /// span of initialization
-    pub span: Span,
+    /// location of initialization
+    pub location: InitLocation,
     /// Extra information about this initialization
     pub kind: InitKind,
+}
+
+
+/// Initializations can be from an argument or from a statement. Arguments
+/// do not have locations, in those cases the `Local` is kept..
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum InitLocation {
+    Argument(Local),
+    Statement(Location),
 }
 
 /// Additional information about the initialization.
@@ -215,7 +224,16 @@ pub enum InitKind {
 
 impl fmt::Debug for Init {
     fn fmt(&self, fmt: &mut fmt::Formatter) -> fmt::Result {
-        write!(fmt, "{:?}@{:?} ({:?})", self.path, self.span, self.kind)
+        write!(fmt, "{:?}@{:?} ({:?})", self.path, self.location, self.kind)
+    }
+}
+
+impl Init {
+    crate fn span<'gcx>(&self, mir: &Mir<'gcx>) -> Span {
+        match self.location {
+            InitLocation::Argument(local) => mir.local_decls[local].source_info.span,
+            InitLocation::Statement(location) => mir.source_info(location).span,
+        }
     }
 }
 
@@ -313,7 +331,17 @@ impl<'tcx> MoveError<'tcx> {
 
 impl<'a, 'gcx, 'tcx> MoveData<'tcx> {
     pub fn gather_moves(mir: &Mir<'tcx>, tcx: TyCtxt<'a, 'gcx, 'tcx>)
-                        -> Result<Self, (Self, Vec<MoveError<'tcx>>)> {
+                        -> Result<Self, (Self, Vec<(Place<'tcx>, MoveError<'tcx>)>)> {
         builder::gather_moves(mir, tcx)
+    }
+
+    /// For the move path `mpi`, returns the root local variable (if any) that starts the path.
+    /// (e.g., for a path like `a.b.c` returns `Some(a)`)
+    pub fn base_local(&self, mut mpi: MovePathIndex) -> Option<Local> {
+        loop {
+            let path = &self.move_paths[mpi];
+            if let Place::Local(l) = path.place { return Some(l); }
+            if let Some(parent) = path.parent { mpi = parent; continue } else { return None }
+        }
     }
 }

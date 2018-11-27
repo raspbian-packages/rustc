@@ -15,4 +15,6 @@
             reason = "internal implementation detail of rustc right now",
             issue = "0")]
 #![allow(unused_features)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![feature(staged_api)]

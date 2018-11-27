@@ -366,7 +366,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
 
         let ty = ty.super_fold_with(self);
         match ty.sty {
-            ty::TyAnon(def_id, substs) if !substs.has_escaping_regions() => { // (*)
+            ty::Opaque(def_id, substs) if !substs.has_escaping_regions() => { // (*)
                 // Only normalize `impl Trait` after type-checking, usually in codegen.
                 match self.param_env.reveal {
                     Reveal::UserFacing => ty,
@@ -393,7 +393,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for AssociatedTypeNormalizer<'a,
                 }
             }
 
-            ty::TyProjection(ref data) if !data.has_escaping_regions() => { // (*)
+            ty::Projection(ref data) if !data.has_escaping_regions() => { // (*)
 
                 // (*) This is kind of hacky -- we need to be able to
                 // handle normalization within binders because
@@ -812,10 +812,10 @@ fn get_paranoid_cache_value_obligation<'a, 'gcx, 'tcx>(
 /// return an associated obligation that, when fulfilled, will lead to
 /// an error.
 ///
-/// Note that we used to return `TyError` here, but that was quite
+/// Note that we used to return `Error` here, but that was quite
 /// dubious -- the premise was that an error would *eventually* be
 /// reported, when the obligation was processed. But in general once
-/// you see a `TyError` you are supposed to be able to assume that an
+/// you see a `Error` you are supposed to be able to assume that an
 /// error *has been* reported, so that you can take whatever heuristic
 /// paths you want to take. To make things worse, it was possible for
 /// cycles to arise, where you basically had a setup like `<MyType<$0>
@@ -983,11 +983,11 @@ fn assemble_candidates_from_trait_def<'cx, 'gcx, 'tcx>(
     let tcx = selcx.tcx();
     // Check whether the self-type is itself a projection.
     let (def_id, substs) = match obligation_trait_ref.self_ty().sty {
-        ty::TyProjection(ref data) => {
+        ty::Projection(ref data) => {
             (data.trait_ref(tcx).def_id, data.substs)
         }
-        ty::TyAnon(def_id, substs) => (def_id, substs),
-        ty::TyInfer(ty::TyVar(_)) => {
+        ty::Opaque(def_id, substs) => (def_id, substs),
+        ty::Infer(ty::TyVar(_)) => {
             // If the self-type is an inference variable, then it MAY wind up
             // being a projected type, so induce an ambiguity.
             candidate_set.mark_ambiguous();
@@ -1142,7 +1142,7 @@ fn assemble_candidates_from_impls<'cx, 'gcx, 'tcx>(
                 if !is_default {
                     true
                 } else if obligation.param_env.reveal == Reveal::All {
-                    assert!(!poly_trait_ref.needs_infer());
+                    debug_assert!(!poly_trait_ref.needs_infer());
                     if !poly_trait_ref.needs_subst() {
                         true
                     } else {
@@ -1265,7 +1265,7 @@ fn confirm_object_candidate<'cx, 'gcx, 'tcx>(
     debug!("confirm_object_candidate(object_ty={:?})",
            object_ty);
     let data = match object_ty.sty {
-        ty::TyDynamic(ref data, ..) => data,
+        ty::Dynamic(ref data, ..) => data,
         _ => {
             span_bug!(
                 obligation.cause.span,
@@ -1506,7 +1506,7 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
         // This means that the impl is missing a definition for the
         // associated type. This error will be reported by the type
         // checker method `check_impl_items_against_trait`, so here we
-        // just return TyError.
+        // just return Error.
         debug!("confirm_impl_candidate: no associated type {:?} for {:?}",
                assoc_ty.item.ident,
                obligation.predicate);
@@ -1518,7 +1518,7 @@ fn confirm_impl_candidate<'cx, 'gcx, 'tcx>(
     let substs = translate_substs(selcx.infcx(), param_env, impl_def_id, substs, assoc_ty.node);
     let ty = if let ty::AssociatedKind::Existential = assoc_ty.item.kind {
         let item_substs = Substs::identity_for_item(tcx, assoc_ty.item.def_id);
-        tcx.mk_anon(assoc_ty.item.def_id, item_substs)
+        tcx.mk_opaque(assoc_ty.item.def_id, item_substs)
     } else {
         tcx.type_of(assoc_ty.item.def_id)
     };
@@ -1668,15 +1668,15 @@ impl<'tcx> ProjectionCache<'tcx> {
     }
 
     pub fn rollback_to(&mut self, snapshot: ProjectionCacheSnapshot) {
-        self.map.rollback_to(snapshot.snapshot);
+        self.map.rollback_to(&snapshot.snapshot);
     }
 
     pub fn rollback_skolemized(&mut self, snapshot: &ProjectionCacheSnapshot) {
         self.map.partial_rollback(&snapshot.snapshot, &|k| k.ty.has_re_skol());
     }
 
-    pub fn commit(&mut self, snapshot: ProjectionCacheSnapshot) {
-        self.map.commit(snapshot.snapshot);
+    pub fn commit(&mut self, snapshot: &ProjectionCacheSnapshot) {
+        self.map.commit(&snapshot.snapshot);
     }
 
     /// Try to start normalize `key`; returns an error if

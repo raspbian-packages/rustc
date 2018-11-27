@@ -13,8 +13,8 @@
 use rustc_data_structures::sync::{Lrc, Lock};
 use ast::{self, CrateConfig, NodeId};
 use early_buffered_lints::{BufferedEarlyLint, BufferedEarlyLintId};
-use codemap::{CodeMap, FilePathMapping};
-use syntax_pos::{Span, FileMap, FileName, MultiSpan};
+use source_map::{SourceMap, FilePathMapping};
+use syntax_pos::{Span, SourceFile, FileName, MultiSpan};
 use errors::{Handler, ColorConfig, DiagnosticBuilder};
 use feature_gate::UnstableFeatures;
 use parse::parser::Parser;
@@ -24,8 +24,8 @@ use symbol::Symbol;
 use tokenstream::{TokenStream, TokenTree};
 use diagnostics::plugin::ErrorMap;
 
+use rustc_data_structures::fx::FxHashSet;
 use std::borrow::Cow;
-use std::collections::HashSet;
 use std::iter;
 use std::path::{Path, PathBuf};
 use std::str;
@@ -46,7 +46,7 @@ pub struct ParseSess {
     pub span_diagnostic: Handler,
     pub unstable_features: UnstableFeatures,
     pub config: CrateConfig,
-    pub missing_fragment_specifiers: Lock<HashSet<Span>>,
+    pub missing_fragment_specifiers: Lock<FxHashSet<Span>>,
     /// Places where raw identifiers were used. This is used for feature gating
     /// raw identifiers
     pub raw_identifier_spans: Lock<Vec<Span>>,
@@ -57,13 +57,13 @@ pub struct ParseSess {
     pub non_modrs_mods: Lock<Vec<(ast::Ident, Span)>>,
     /// Used to determine and report recursive mod inclusions
     included_mod_stack: Lock<Vec<PathBuf>>,
-    code_map: Lrc<CodeMap>,
+    code_map: Lrc<SourceMap>,
     pub buffered_lints: Lock<Vec<BufferedEarlyLint>>,
 }
 
 impl ParseSess {
     pub fn new(file_path_mapping: FilePathMapping) -> Self {
-        let cm = Lrc::new(CodeMap::new(file_path_mapping));
+        let cm = Lrc::new(SourceMap::new(file_path_mapping));
         let handler = Handler::with_tty_emitter(ColorConfig::Auto,
                                                 true,
                                                 false,
@@ -71,12 +71,12 @@ impl ParseSess {
         ParseSess::with_span_handler(handler, cm)
     }
 
-    pub fn with_span_handler(handler: Handler, code_map: Lrc<CodeMap>) -> ParseSess {
+    pub fn with_span_handler(handler: Handler, code_map: Lrc<SourceMap>) -> ParseSess {
         ParseSess {
             span_diagnostic: handler,
             unstable_features: UnstableFeatures::from_environment(),
-            config: HashSet::new(),
-            missing_fragment_specifiers: Lock::new(HashSet::new()),
+            config: FxHashSet::default(),
+            missing_fragment_specifiers: Lock::new(FxHashSet::default()),
             raw_identifier_spans: Lock::new(Vec::new()),
             registered_diagnostics: Lock::new(ErrorMap::new()),
             included_mod_stack: Lock::new(vec![]),
@@ -86,7 +86,7 @@ impl ParseSess {
         }
     }
 
-    pub fn codemap(&self) -> &CodeMap {
+    pub fn source_map(&self) -> &SourceMap {
         &self.code_map
     }
 
@@ -171,13 +171,13 @@ crate fn parse_stmt_from_source_str(name: FileName, source: String, sess: &Parse
 pub fn parse_stream_from_source_str(name: FileName, source: String, sess: &ParseSess,
                                     override_span: Option<Span>)
                                     -> TokenStream {
-    filemap_to_stream(sess, sess.codemap().new_filemap(name, source), override_span)
+    source_file_to_stream(sess, sess.source_map().new_source_file(name, source), override_span)
 }
 
 // Create a new parser from a source string
 pub fn new_parser_from_source_str(sess: &ParseSess, name: FileName, source: String)
                                       -> Parser {
-    let mut parser = filemap_to_parser(sess, sess.codemap().new_filemap(name, source));
+    let mut parser = source_file_to_parser(sess, sess.source_map().new_source_file(name, source));
     parser.recurse_into_file_modules = false;
     parser
 }
@@ -185,27 +185,27 @@ pub fn new_parser_from_source_str(sess: &ParseSess, name: FileName, source: Stri
 /// Create a new parser, handling errors as appropriate
 /// if the file doesn't exist
 pub fn new_parser_from_file<'a>(sess: &'a ParseSess, path: &Path) -> Parser<'a> {
-    filemap_to_parser(sess, file_to_filemap(sess, path, None))
+    source_file_to_parser(sess, file_to_source_file(sess, path, None))
 }
 
 /// Given a session, a crate config, a path, and a span, add
-/// the file at the given path to the codemap, and return a parser.
+/// the file at the given path to the source_map, and return a parser.
 /// On an error, use the given span as the source of the problem.
 crate fn new_sub_parser_from_file<'a>(sess: &'a ParseSess,
                                     path: &Path,
                                     directory_ownership: DirectoryOwnership,
                                     module_name: Option<String>,
                                     sp: Span) -> Parser<'a> {
-    let mut p = filemap_to_parser(sess, file_to_filemap(sess, path, Some(sp)));
+    let mut p = source_file_to_parser(sess, file_to_source_file(sess, path, Some(sp)));
     p.directory.ownership = directory_ownership;
     p.root_module_name = module_name;
     p
 }
 
-/// Given a filemap and config, return a parser
-fn filemap_to_parser(sess: & ParseSess, filemap: Lrc<FileMap>) -> Parser {
-    let end_pos = filemap.end_pos;
-    let mut parser = stream_to_parser(sess, filemap_to_stream(sess, filemap, None));
+/// Given a source_file and config, return a parser
+fn source_file_to_parser(sess: & ParseSess, source_file: Lrc<SourceFile>) -> Parser {
+    let end_pos = source_file.end_pos;
+    let mut parser = stream_to_parser(sess, source_file_to_stream(sess, source_file, None));
 
     if parser.token == token::Eof && parser.span.is_dummy() {
         parser.span = Span::new(end_pos, end_pos, parser.span.ctxt());
@@ -224,11 +224,11 @@ pub fn new_parser_from_tts(sess: &ParseSess, tts: Vec<TokenTree>) -> Parser {
 // base abstractions
 
 /// Given a session and a path and an optional span (for error reporting),
-/// add the path to the session's codemap and return the new filemap.
-fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
-                   -> Lrc<FileMap> {
-    match sess.codemap().load_file(path) {
-        Ok(filemap) => filemap,
+/// add the path to the session's source_map and return the new source_file.
+fn file_to_source_file(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
+                   -> Lrc<SourceFile> {
+    match sess.source_map().load_file(path) {
+        Ok(source_file) => source_file,
         Err(e) => {
             let msg = format!("couldn't read {:?}: {}", path.display(), e);
             match spanopt {
@@ -239,10 +239,11 @@ fn file_to_filemap(sess: &ParseSess, path: &Path, spanopt: Option<Span>)
     }
 }
 
-/// Given a filemap, produce a sequence of token-trees
-pub fn filemap_to_stream(sess: &ParseSess, filemap: Lrc<FileMap>, override_span: Option<Span>)
-                         -> TokenStream {
-    let mut srdr = lexer::StringReader::new(sess, filemap, override_span);
+/// Given a source_file, produce a sequence of token-trees
+pub fn source_file_to_stream(sess: &ParseSess,
+                             source_file: Lrc<SourceFile>,
+                             override_span: Option<Span>) -> TokenStream {
+    let mut srdr = lexer::StringReader::new(sess, source_file, override_span);
     srdr.real_token();
     panictry!(srdr.parse_all_token_trees())
 }
@@ -532,7 +533,7 @@ fn byte_lit(lit: &str) -> (u8, usize) {
 fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
     let mut res = Vec::with_capacity(lit.len());
 
-    let error = |i| format!("lexer should have rejected {} at {}", lit, i);
+    let error = |i| panic!("lexer should have rejected {} at {}", lit, i);
 
     /// Eat everything up to a non-whitespace
     fn eat<I: Iterator<Item=(usize, u8)>>(it: &mut iter::Peekable<I>) {
@@ -551,12 +552,11 @@ fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
     loop {
         match chars.next() {
             Some((i, b'\\')) => {
-                let em = error(i);
-                match chars.peek().expect(&em).1 {
+                match chars.peek().unwrap_or_else(|| error(i)).1 {
                     b'\n' => eat(&mut chars),
                     b'\r' => {
                         chars.next();
-                        if chars.peek().expect(&em).1 != b'\n' {
+                        if chars.peek().unwrap_or_else(|| error(i)).1 != b'\n' {
                             panic!("lexer accepted bare CR");
                         }
                         eat(&mut chars);
@@ -573,8 +573,7 @@ fn byte_str_lit(lit: &str) -> Lrc<Vec<u8>> {
                 }
             },
             Some((i, b'\r')) => {
-                let em = error(i);
-                if chars.peek().expect(&em).1 != b'\n' {
+                if chars.peek().unwrap_or_else(|| error(i)).1 != b'\n' {
                     panic!("lexer accepted bare CR");
                 }
                 chars.next();
@@ -723,7 +722,7 @@ mod tests {
     use attr::first_attr_value_str_by_name;
     use parse;
     use print::pprust::item_to_string;
-    use tokenstream::{self, TokenTree};
+    use tokenstream::{self, DelimSpan, TokenTree};
     use util::parser_testing::string_to_stream;
     use util::parser_testing::{string_to_expr, string_to_item};
     use with_globals;
@@ -806,7 +805,7 @@ mod tests {
                 TokenTree::Token(sp(0, 2), token::Ident(Ident::from_str("fn"), false)).into(),
                 TokenTree::Token(sp(3, 4), token::Ident(Ident::from_str("a"), false)).into(),
                 TokenTree::Delimited(
-                    sp(5, 14),
+                    DelimSpan::from_pair(sp(5, 6), sp(13, 14)),
                     tokenstream::Delimited {
                         delim: token::DelimToken::Paren,
                         tts: TokenStream::concat(vec![
@@ -818,7 +817,7 @@ mod tests {
                         ]).into(),
                     }).into(),
                 TokenTree::Delimited(
-                    sp(15, 21),
+                    DelimSpan::from_pair(sp(15, 16), sp(20, 21)),
                     tokenstream::Delimited {
                         delim: token::DelimToken::Brace,
                         tts: TokenStream::concat(vec![
@@ -969,7 +968,7 @@ mod tests {
 
             let span = tts.iter().rev().next().unwrap().span();
 
-            match sess.codemap().span_to_snippet(span) {
+            match sess.source_map().span_to_snippet(span) {
                 Ok(s) => assert_eq!(&s[..], "{ body }"),
                 Err(_) => panic!("could not get snippet"),
             }

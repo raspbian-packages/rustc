@@ -74,27 +74,27 @@
 #![needs_allocator]
 #![deny(missing_debug_implementations)]
 
-#![cfg_attr(test, allow(deprecated))] // rand
-#![cfg_attr(not(test), feature(exact_size_is_empty))]
+#![cfg_attr(not(test), feature(fn_traits))]
 #![cfg_attr(not(test), feature(generator_trait))]
-#![cfg_attr(test, feature(rand, test))]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![cfg_attr(test, feature(test))]
+
 #![feature(allocator_api)]
 #![feature(allow_internal_unstable)]
 #![feature(arbitrary_self_types)]
-#![feature(ascii_ctype)]
 #![feature(box_into_raw_non_null)]
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(cfg_target_has_atomic)]
 #![feature(coerce_unsized)]
-#![feature(collections_range)]
-#![feature(const_fn)]
+#![cfg_attr(stage0, feature(const_fn))]
+#![cfg_attr(not(stage0), feature(min_const_fn))]
 #![feature(core_intrinsics)]
 #![feature(custom_attribute)]
 #![feature(dropck_eyepatch)]
 #![feature(exact_size_is_empty)]
 #![feature(fmt_internals)]
-#![feature(from_ref)]
 #![feature(fundamental)]
 #![feature(futures_api)]
 #![feature(lang_items)]
@@ -118,13 +118,8 @@
 #![feature(allocator_internals)]
 #![feature(on_unimplemented)]
 #![feature(exact_chunks)]
-#![feature(pointer_methods)]
-#![feature(inclusive_range_methods)]
 #![feature(rustc_const_unstable)]
 #![feature(const_vec_new)]
-
-#![cfg_attr(not(test), feature(fn_traits, i128))]
-#![cfg_attr(test, feature(test))]
 
 // Allow testing this library
 
@@ -162,13 +157,11 @@ mod boxed {
 #[cfg(test)]
 mod boxed_test;
 pub mod collections;
-#[cfg(any(
-    all(stage0, target_has_atomic = "ptr"),
-    all(not(stage0), target_has_atomic = "ptr", target_has_atomic = "cas")
-))]
+#[cfg(all(target_has_atomic = "ptr", target_has_atomic = "cas"))]
 pub mod sync;
 pub mod rc;
 pub mod raw_vec;
+pub mod pin;
 pub mod prelude;
 pub mod borrow;
 pub mod fmt;

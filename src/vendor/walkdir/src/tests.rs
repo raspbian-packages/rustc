@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::collections::HashMap;
 
 use quickcheck::{Arbitrary, Gen, QuickCheck, StdGen};
-use rand::{self, Rng};
+use rand::{self, Rng, RngCore};
 
 use super::{DirEntry, WalkDir, IntoIter, Error, ErrorInner};
 
@@ -516,6 +516,21 @@ fn walk_dir_sym_root() {
     assert_eq!(got, vec!["foo/alink/", "foo/alink/a", "foo/alink/b"]);
 }
 
+// See: https://github.com/BurntSushi/ripgrep/issues/984
+#[test]
+#[cfg(unix)]
+fn first_path_not_symlink() {
+    let exp = td("foo", vec![]);
+    let (tmp, _got) = dir_setup(&exp);
+
+    let dents = WalkDir::new(tmp.path().join("foo"))
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(1, dents.len());
+    assert!(!dents[0].path_is_symlink());
+}
+
 #[test]
 #[cfg(unix)]
 fn walk_dir_sym_detect_no_follow_no_loop() {
@@ -813,3 +828,40 @@ fn walk_dir_send_sync_traits() {
     assert_send::<FilterEntry<IntoIter, u8>>();
     assert_sync::<FilterEntry<IntoIter, u8>>();
 }
+
+// We cannot mount different volumes for the sake of the test, but
+// on Linux systems we can assume that /sys is a mounted volume.
+#[test]
+#[cfg(target_os = "linux")]
+fn walk_dir_stay_on_file_system() {
+    // If for some reason /sys doesn't exist or isn't a directory, just skip
+    // this test.
+    if !Path::new("/sys").is_dir() {
+        return;
+    }
+
+    let actual = td("same_file", vec![
+        td("a", vec![tld("/sys", "alink")]),
+    ]);
+    let unfollowed = td("same_file", vec![
+        td("a", vec![tld("/sys", "alink")]),
+    ]);
+    let (_tmp, got) = dir_setup_with(&actual, |wd| wd);
+    assert_tree_eq!(unfollowed, got);
+
+    // Create a symlink to sys and enable following symlinks. If the
+    // same_file_system option doesn't work, then this probably will hit a
+    // permission error. Otherwise, it should just skip over the symlink
+    // completely.
+    let actual = td("same_file", vec![
+        td("a", vec![tld("/sys", "alink")]),
+    ]);
+    let followed = td("same_file", vec![
+        td("a", vec![td("alink", vec![])]),
+    ]);
+    let (_tmp, got) = dir_setup_with(&actual, |wd| {
+        wd.follow_links(true).same_file_system(true)
+    });
+    assert_tree_eq!(followed, got);
+}
+

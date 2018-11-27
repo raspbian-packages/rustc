@@ -52,7 +52,7 @@ fn check_impl<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, node_id: ast::NodeId) {
 fn enforce_trait_manually_implementable(tcx: TyCtxt, impl_def_id: DefId, trait_def_id: DefId) {
     let did = Some(trait_def_id);
     let li = tcx.lang_items();
-    let span = tcx.sess.codemap().def_span(tcx.span_of_impl(impl_def_id).unwrap());
+    let span = tcx.sess.source_map().def_span(tcx.span_of_impl(impl_def_id).unwrap());
 
     // Disallow *all* explicit impls of `Sized` and `Unsize` for now.
     if did == li.sized_trait() {
@@ -157,7 +157,7 @@ fn check_impl_overlap<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, node_id: ast::NodeI
     tcx.specialization_graph_of(trait_def_id);
 
     // check for overlap with the automatic `impl Trait for Trait`
-    if let ty::TyDynamic(ref data, ..) = trait_ref.self_ty().sty {
+    if let ty::Dynamic(ref data, ..) = trait_ref.self_ty().sty {
         // This is something like impl Trait1 for Trait2. Illegal
         // if Trait1 is a supertrait of Trait2 or Trait2 is not object safe.
 
@@ -169,7 +169,7 @@ fn check_impl_overlap<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, node_id: ast::NodeI
                 traits::supertrait_def_ids(tcx,
                                            data.principal().unwrap().def_id());
             if supertrait_def_ids.any(|d| d == trait_def_id) {
-                let sp = tcx.sess.codemap().def_span(tcx.span_of_impl(impl_def_id).unwrap());
+                let sp = tcx.sess.source_map().def_span(tcx.span_of_impl(impl_def_id).unwrap());
                 struct_span_err!(tcx.sess,
                                  sp,
                                  E0371,

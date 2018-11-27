@@ -415,23 +415,25 @@ declare_keywords! {
 
     // Edition-specific keywords reserved for future use.
     (51, Async,              "async") // >= 2018 Edition Only
+    (52, Try,                "try") // >= 2018 Edition Only
 
     // Special lifetime names
-    (52, UnderscoreLifetime, "'_")
-    (53, StaticLifetime,     "'static")
+    (53, UnderscoreLifetime, "'_")
+    (54, StaticLifetime,     "'static")
 
     // Weak keywords, have special meaning only in specific contexts.
-    (54, Auto,               "auto")
-    (55, Catch,              "catch")
-    (56, Default,            "default")
-    (57, Dyn,                "dyn")
-    (58, Union,              "union")
-    (59, Existential,        "existential")
+    (55, Auto,               "auto")
+    (56, Catch,              "catch")
+    (57, Default,            "default")
+    (58, Dyn,                "dyn")
+    (59, Union,              "union")
+    (60, Existential,        "existential")
 }
 
 impl Symbol {
     fn is_unused_keyword_2018(self) -> bool {
-        self == keywords::Async.name()
+        self >= keywords::Async.name() &&
+        self <= keywords::Try.name()
     }
 }
 
@@ -586,7 +588,7 @@ impl InternedString {
         });
         // This is safe because the interner keeps string alive until it is dropped.
         // We can access it because we know the interner is still alive since we use a
-        // scoped thread local to access it, and it was alive at the begining of this scope
+        // scoped thread local to access it, and it was alive at the beginning of this scope
         unsafe { f(&*str) }
     }
 

@@ -1,7 +1,6 @@
 [package]
 name = "walkdir"
-# remember to update html_root_url
-version = "2.1.4"  #:version
+version = "2.2.5"  #:version
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 description = "Recursively walk a directory."
 documentation = "https://docs.rs/walkdir/"
@@ -17,15 +16,18 @@ travis-ci = { repository = "BurntSushi/walkdir" }
 appveyor = { repository = "BurntSushi/walkdir" }
 
 [dependencies]
-same-file = "1"
+same-file = "1.0.1"
 
 [target.'cfg(windows)'.dependencies.winapi]
 version = "0.3"
 features = ["std", "winnt"]
 
+[target.'cfg(windows)'.dependencies.winapi-util]
+version = "0.1.1"
+
 [dev-dependencies]
-docopt = "0.8"
-quickcheck = { version = "0.6", default-features = false }
-rand = "0.4"
+docopt = "1.0.1"
+quickcheck = { version = "0.7", default-features = false }
+rand = "0.5"
 serde = "1"
 serde_derive = "1"

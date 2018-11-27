@@ -6,18 +6,16 @@ u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
-u-rust-52876-const-endianess.patch
+u-mips-fixes.diff
 
 # https://github.com/rust-lang/compiler-rt/pull/35/
 u-compiler-rt.patch
-u-armel-atomics-nand.patch
 
 # Extra ignored tests. We now instead raise FAILURES_ALLOWED in d/rules but
 # these patches are kept in case they are useful for derivatives.
 #u-ignoretest-ppc64el_02.patch
 
 # not forwarded, or forwarded but unlikely to be merged
-u-vendor-rand-fix-ppc-syscall.patch
 u-reproducible-dl-stage0.patch
 
 gcc-4.8-aarch64-ice.diff
@@ -28,6 +26,7 @@ d-sparc64-dont-pack-spans.patch
 
 # Debian-specific patches, not suitable for upstream
 d-disable-cargo-vendor.patch
+d-temp-ignore-debuginfo-gdb-enum.patch
 d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch

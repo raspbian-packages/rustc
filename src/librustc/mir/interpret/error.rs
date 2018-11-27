@@ -1,9 +1,20 @@
+// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
+// file at the top-level directory of this distribution and at
+// http://rust-lang.org/COPYRIGHT.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 use std::{fmt, env};
 
 use mir;
-use ty::{FnSig, Ty, layout};
+use ty::{Ty, layout};
 use ty::layout::{Size, Align};
 use rustc_data_structures::sync::Lrc;
+use rustc_target::spec::abi::Abi;
 
 use super::{
     Pointer, Lock, AccessKind
@@ -17,6 +28,7 @@ use errors::DiagnosticBuilder;
 
 use syntax_pos::Span;
 use syntax::ast;
+use syntax::symbol::Symbol;
 
 pub type ConstEvalResult<'tcx> = Result<&'tcx ty::Const<'tcx>, Lrc<ConstEvalErr<'tcx>>>;
 
@@ -171,7 +183,10 @@ pub enum EvalErrorKind<'tcx, O> {
     /// This variant is used by machines to signal their own errors that do not
     /// match an existing variant
     MachineError(String),
-    FunctionPointerTyMismatch(FnSig<'tcx>, FnSig<'tcx>),
+
+    FunctionAbiMismatch(Abi, Abi),
+    FunctionArgMismatch(Ty<'tcx>, Ty<'tcx>),
+    FunctionArgCountMismatch,
     NoMirFor(String),
     UnterminatedCString(Pointer),
     DanglingPointerDeref,
@@ -179,7 +194,7 @@ pub enum EvalErrorKind<'tcx, O> {
     InvalidMemoryAccess,
     InvalidFunctionPointer,
     InvalidBool,
-    InvalidDiscriminant,
+    InvalidDiscriminant(u128),
     PointerOutOfBounds {
         ptr: Pointer,
         access: bool,
@@ -190,7 +205,7 @@ pub enum EvalErrorKind<'tcx, O> {
     ReadBytesAsPointer,
     ReadForeignStatic,
     InvalidPointerMath,
-    ReadUndefBytes,
+    ReadUndefBytes(Size),
     DeadLocal,
     InvalidBoolOp(mir::BinOp),
     Unimplemented(String),
@@ -250,7 +265,12 @@ pub enum EvalErrorKind<'tcx, O> {
     HeapAllocZeroBytes,
     HeapAllocNonPowerOfTwoAlignment(u64),
     Unreachable,
-    Panic,
+    Panic {
+        msg: Symbol,
+        line: u32,
+        col: u32,
+        file: Symbol,
+    },
     ReadFromReturnPointer,
     PathNotFound(Vec<String>),
     UnimplementedTraitSelection,
@@ -274,8 +294,8 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
         use self::EvalErrorKind::*;
         match *self {
             MachineError(ref inner) => inner,
-            FunctionPointerTyMismatch(..) =>
-                "tried to call a function through a function pointer of a different type",
+            FunctionAbiMismatch(..) | FunctionArgMismatch(..) | FunctionArgCountMismatch =>
+                "tried to call a function through a function pointer of incompatible type",
             InvalidMemoryAccess =>
                 "tried to access memory through an invalid pointer",
             DanglingPointerDeref =>
@@ -286,7 +306,7 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
                 "tried to use a function pointer after offsetting it",
             InvalidBool =>
                 "invalid boolean value read",
-            InvalidDiscriminant =>
+            InvalidDiscriminant(..) =>
                 "invalid enum discriminant value read",
             PointerOutOfBounds { .. } =>
                 "pointer offset outside bounds of allocation",
@@ -309,8 +329,9 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
             ReadForeignStatic =>
                 "tried to read from foreign (extern) static",
             InvalidPointerMath =>
-                "attempted to do invalid arithmetic on pointers that would leak base addresses, e.g. comparing pointers into different allocations",
-            ReadUndefBytes =>
+                "attempted to do invalid arithmetic on pointers that would leak base addresses, \
+                e.g. comparing pointers into different allocations",
+            ReadUndefBytes(_) =>
                 "attempted to read undefined bytes",
             DeadLocal =>
                 "tried to access a dead local variable",
@@ -363,14 +384,16 @@ impl<'tcx, O> EvalErrorKind<'tcx, O> {
             Layout(_) =>
                 "rustc layout computation failed",
             UnterminatedCString(_) =>
-                "attempted to get length of a null terminated string, but no null found before end of allocation",
+                "attempted to get length of a null terminated string, but no null found before end \
+                of allocation",
             HeapAllocZeroBytes =>
                 "tried to re-, de- or allocate zero bytes on the heap",
             HeapAllocNonPowerOfTwoAlignment(_) =>
-                "tried to re-, de-, or allocate heap memory with alignment that is not a power of two",
+                "tried to re-, de-, or allocate heap memory with alignment that is not a power of \
+                two",
             Unreachable =>
                 "entered unreachable code",
-            Panic =>
+            Panic { .. } =>
                 "the evaluated program panicked",
             ReadFromReturnPointer =>
                 "tried to read from the return pointer",
@@ -429,8 +452,8 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
                        kind, ptr, len, lock)
             }
             InvalidMemoryLockRelease { ptr, len, frame, ref lock } => {
-                write!(f, "frame {} tried to release memory write lock at {:?}, size {}, but cannot release lock {:?}",
-                       frame, ptr, len, lock)
+                write!(f, "frame {} tried to release memory write lock at {:?}, size {}, but \
+                       cannot release lock {:?}", frame, ptr, len, lock)
             }
             DeallocatedLockedMemory { ptr, ref lock } => {
                 write!(f, "tried to deallocate memory at {:?} in conflict with lock {:?}",
@@ -440,8 +463,15 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
                 write!(f, "type validation failed: {}", err)
             }
             NoMirFor(ref func) => write!(f, "no mir for `{}`", func),
-            FunctionPointerTyMismatch(sig, got) =>
-                write!(f, "tried to call a function with sig {} through a function pointer of type {}", sig, got),
+            FunctionAbiMismatch(caller_abi, callee_abi) =>
+                write!(f, "tried to call a function with ABI {:?} using caller ABI {:?}",
+                    callee_abi, caller_abi),
+            FunctionArgMismatch(caller_ty, callee_ty) =>
+                write!(f, "tried to call a function with argument of type {:?} \
+                           passing data of type {:?}",
+                    callee_ty, caller_ty),
+            FunctionArgCountMismatch =>
+                write!(f, "tried to call a function with incorrect number of arguments"),
             BoundsCheck { ref len, ref index } =>
                 write!(f, "index out of bounds: the len is {:?} but the index is {:?}", len, index),
             ReallocatedWrongMemoryKind(ref old, ref new) =>
@@ -464,7 +494,12 @@ impl<'tcx, O: fmt::Debug> fmt::Debug for EvalErrorKind<'tcx, O> {
             MachineError(ref inner) =>
                 write!(f, "{}", inner),
             IncorrectAllocationInformation(size, size2, align, align2) =>
-                write!(f, "incorrect alloc info: expected size {} and align {}, got size {} and align {}", size.bytes(), align.abi(), size2.bytes(), align2.abi()),
+                write!(f, "incorrect alloc info: expected size {} and align {}, got size {} and \
+                       align {}", size.bytes(), align.abi(), size2.bytes(), align2.abi()),
+            Panic { ref msg, line, col, ref file } =>
+                write!(f, "the evaluated program panicked at '{}', {}:{}:{}", msg, file, line, col),
+            InvalidDiscriminant(val) =>
+                write!(f, "encountered invalid enum discriminant {}", val),
             _ => write!(f, "{}", self.description()),
         }
     }

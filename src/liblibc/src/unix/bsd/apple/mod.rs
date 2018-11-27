@@ -765,16 +765,8 @@ pub const VM_FLAGS_SUPERPAGE_MASK: ::c_int = 0x70000;
 pub const VM_FLAGS_RETURN_DATA_ADDR: ::c_int = 0x100000;
 pub const VM_FLAGS_RETURN_4K_DATA_ADDR: ::c_int = 0x800000;
 pub const VM_FLAGS_ALIAS_MASK: ::c_int = 0xFF000000;
-pub const VM_FLAGS_USER_ALLOCATE: ::c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE |
-                                            VM_FLAGS_PURGABLE |
-                                            VM_FLAGS_RANDOM_ADDR |
-                                            VM_FLAGS_NO_CACHE |
-                                            VM_FLAGS_OVERWRITE |
-                                            VM_FLAGS_SUPERPAGE_MASK |
-                                            VM_FLAGS_ALIAS_MASK;
-pub const VM_FLAGS_USER_MAP: ::c_int = VM_FLAGS_USER_ALLOCATE |
-                                       VM_FLAGS_RETURN_4K_DATA_ADDR |
-                                       VM_FLAGS_RETURN_DATA_ADDR;
+pub const VM_FLAGS_USER_ALLOCATE: ::c_int = 0xff07401b;
+pub const VM_FLAGS_USER_MAP: ::c_int = 0xff97401b;
 pub const VM_FLAGS_USER_REMAP: ::c_int = VM_FLAGS_FIXED | VM_FLAGS_ANYWHERE |
                                         VM_FLAGS_RANDOM_ADDR |
                                         VM_FLAGS_OVERWRITE |
@@ -1084,6 +1076,13 @@ pub const TIOCDSIMICROCODE: ::c_uint = 0x20007455;
 pub const TIOCPTYGRANT: ::c_uint = 0x20007454;
 pub const TIOCPTYGNAME: ::c_uint = 0x40807453;
 pub const TIOCPTYUNLK: ::c_uint = 0x20007452;
+
+pub const FIONCLEX: ::c_uint = 0x20006602;
+pub const FIONREAD: ::c_ulong = 0x4004667f;
+pub const FIOASYNC: ::c_ulong = 0x8004667d;
+pub const FIOSETOWN: ::c_ulong = 0x8004667c;
+pub const FIOGETOWN: ::c_ulong = 0x4004667b;
+pub const FIODTYPE: ::c_ulong = 0x4004667a;
 
 pub const B0: speed_t = 0;
 pub const B50: speed_t = 50;
@@ -2253,10 +2252,14 @@ pub const DLT_LOOP: ::c_uint = 108;
 // sizeof(int32_t)
 pub const BPF_ALIGNMENT: ::c_int = 4;
 
+// sys/spawn.h:
 pub const POSIX_SPAWN_RESETIDS: ::c_int = 0x01;
 pub const POSIX_SPAWN_SETPGROUP: ::c_int = 0x02;
 pub const POSIX_SPAWN_SETSIGDEF: ::c_int = 0x04;
 pub const POSIX_SPAWN_SETSIGMASK: ::c_int = 0x08;
+pub const POSIX_SPAWN_SETEXEC: ::c_int = 0x40;
+pub const POSIX_SPAWN_START_SUSPENDED: ::c_int = 0x80;
+pub const POSIX_SPAWN_CLOEXEC_DEFAULT: ::c_int = 0x4000;
 
 // sys/ipc.h:
 pub const IPC_CREAT: ::c_int = 0x200;

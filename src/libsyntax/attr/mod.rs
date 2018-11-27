@@ -15,7 +15,7 @@ mod builtin;
 pub use self::builtin::{
     cfg_matches, contains_feature_attr, eval_condition, find_crate_name, find_deprecation,
     find_repr_attrs, find_stability, find_unwind_attr, Deprecation, InlineAttr, IntType, ReprAttr,
-    RustcConstUnstable, RustcDeprecation, Stability, StabilityLevel, UnwindAttr,
+    RustcDeprecation, Stability, StabilityLevel, UnwindAttr,
 };
 pub use self::IntType::*;
 pub use self::ReprAttr::*;
@@ -25,7 +25,7 @@ use ast;
 use ast::{AttrId, Attribute, AttrStyle, Name, Ident, Path, PathSegment};
 use ast::{MetaItem, MetaItemKind, NestedMetaItem, NestedMetaItemKind};
 use ast::{Lit, LitKind, Expr, ExprKind, Item, Local, Stmt, StmtKind, GenericParam};
-use codemap::{BytePos, Spanned, respan, dummy_spanned};
+use source_map::{BytePos, Spanned, respan, dummy_spanned};
 use syntax_pos::{FileName, Span};
 use parse::lexer::comments::{doc_comment_style, strip_doc_comment_decoration};
 use parse::parser::Parser;
@@ -33,73 +33,40 @@ use parse::{self, ParseSess, PResult};
 use parse::token::{self, Token};
 use ptr::P;
 use symbol::Symbol;
-use tokenstream::{TokenStream, TokenTree, Delimited};
-use util::ThinVec;
+use ThinVec;
+use tokenstream::{TokenStream, TokenTree, Delimited, DelimSpan};
 use GLOBALS;
 
 use std::iter;
 
 pub fn mark_used(attr: &Attribute) {
     debug!("Marking {:?} as used.", attr);
-    let AttrId(id) = attr.id;
     GLOBALS.with(|globals| {
-        let mut slot = globals.used_attrs.lock();
-        let idx = (id / 64) as usize;
-        let shift = id % 64;
-        if slot.len() <= idx {
-            slot.resize(idx + 1, 0);
-        }
-        slot[idx] |= 1 << shift;
+        globals.used_attrs.lock().insert(attr.id);
     });
 }
 
 pub fn is_used(attr: &Attribute) -> bool {
-    let AttrId(id) = attr.id;
     GLOBALS.with(|globals| {
-        let slot = globals.used_attrs.lock();
-        let idx = (id / 64) as usize;
-        let shift = id % 64;
-        slot.get(idx).map(|bits| bits & (1 << shift) != 0)
-            .unwrap_or(false)
+        globals.used_attrs.lock().contains(attr.id)
     })
 }
 
 pub fn mark_known(attr: &Attribute) {
     debug!("Marking {:?} as known.", attr);
-    let AttrId(id) = attr.id;
     GLOBALS.with(|globals| {
-        let mut slot = globals.known_attrs.lock();
-        let idx = (id / 64) as usize;
-        let shift = id % 64;
-        if slot.len() <= idx {
-            slot.resize(idx + 1, 0);
-        }
-        slot[idx] |= 1 << shift;
+        globals.known_attrs.lock().insert(attr.id);
     });
 }
 
 pub fn is_known(attr: &Attribute) -> bool {
-    let AttrId(id) = attr.id;
     GLOBALS.with(|globals| {
-        let slot = globals.known_attrs.lock();
-        let idx = (id / 64) as usize;
-        let shift = id % 64;
-        slot.get(idx).map(|bits| bits & (1 << shift) != 0)
-            .unwrap_or(false)
+        globals.known_attrs.lock().contains(attr.id)
     })
 }
 
-const RUST_KNOWN_TOOL: &[&str] = &["clippy", "rustfmt"];
-const RUST_KNOWN_LINT_TOOL: &[&str] = &["clippy"];
-
-pub fn is_known_tool(attr: &Attribute) -> bool {
-    let tool_name =
-        attr.path.segments.iter().next().expect("empty path in attribute").ident.name;
-    RUST_KNOWN_TOOL.contains(&tool_name.as_str().as_ref())
-}
-
 pub fn is_known_lint_tool(m_item: Ident) -> bool {
-    RUST_KNOWN_LINT_TOOL.contains(&m_item.as_str().as_ref())
+    ["clippy"].contains(&m_item.as_str().as_ref())
 }
 
 impl NestedMetaItem {
@@ -244,10 +211,6 @@ impl Attribute {
     /// Indicates if the attribute is a Value String.
     pub fn is_value_str(&self) -> bool {
         self.value_str().is_some()
-    }
-
-    pub fn is_scoped(&self) -> bool {
-        self.path.segments.len() > 1
     }
 }
 
@@ -572,7 +535,7 @@ impl MetaItemKind {
                     }
                     tokens.push(item.node.tokens());
                 }
-                TokenTree::Delimited(span, Delimited {
+                TokenTree::Delimited(DelimSpan::from_single(span), Delimited {
                     delim: token::Paren,
                     tts: TokenStream::concat(tokens).into(),
                 }).into()
@@ -644,7 +607,7 @@ impl NestedMetaItemKind {
 }
 
 impl Lit {
-    fn tokens(&self) -> TokenStream {
+    crate fn tokens(&self) -> TokenStream {
         TokenTree::Token(self.span, self.node.token()).into()
     }
 }
@@ -831,7 +794,7 @@ pub fn inject(mut krate: ast::Crate, parse_sess: &ParseSess, attrs: &[String]) -
         );
 
         let start_span = parser.span;
-        let (path, tokens) = panictry!(parser.parse_path_and_tokens());
+        let (path, tokens) = panictry!(parser.parse_meta_item_unrestricted());
         let end_span = parser.span;
         if parser.token != token::Eof {
             parse_sess.span_diagnostic

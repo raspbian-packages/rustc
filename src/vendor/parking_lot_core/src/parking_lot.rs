@@ -5,19 +5,17 @@
 // http://opensource.org/licenses/MIT>, at your option. This file may not be
 // copied, modified, or distributed except according to those terms.
 
+use rand::{Rng, FromEntropy};
+use rand::rngs::SmallRng;
+use smallvec::SmallVec;
+use std::cell::{Cell, UnsafeCell};
+use std::mem;
+use std::ptr;
 use std::sync::atomic::{AtomicUsize, Ordering, ATOMIC_USIZE_INIT};
 use std::time::{Duration, Instant};
-use std::cell::{Cell, UnsafeCell};
-use std::ptr;
-use std::mem;
-use std::thread::LocalKey;
-#[cfg(not(feature = "nightly"))]
-use std::panic;
-use smallvec::SmallVec;
-use rand::{self, Rng, XorShiftRng};
 use thread_parker::ThreadParker;
-use word_lock::WordLock;
 use util::UncheckedOptionExt;
+use word_lock::WordLock;
 
 static NUM_THREADS: AtomicUsize = ATOMIC_USIZE_INIT;
 static HASHTABLE: AtomicUsize = ATOMIC_USIZE_INIT;
@@ -91,14 +89,14 @@ struct FairTimeout {
     timeout: Instant,
 
     // Random number generator for calculating the next timeout
-    rng: XorShiftRng,
+    rng: SmallRng,
 }
 
 impl FairTimeout {
     fn new() -> FairTimeout {
         FairTimeout {
             timeout: Instant::now(),
-            rng: rand::weak_rng(),
+            rng: SmallRng::from_entropy(),
         }
     }
 
@@ -135,7 +133,8 @@ struct ThreadData {
 
     // Extra data for deadlock detection
     // TODO: once supported in stable replace with #[cfg...] & remove dummy struct/impl
-    #[allow(dead_code)] deadlock_data: deadlock::DeadlockData,
+    #[allow(dead_code)]
+    deadlock_data: deadlock::DeadlockData,
 }
 
 impl ThreadData {
@@ -161,21 +160,13 @@ impl ThreadData {
 
 // Returns a ThreadData structure for the current thread
 unsafe fn get_thread_data(local: &mut Option<ThreadData>) -> &ThreadData {
-    // Try to read from thread-local storage, but return None if the TLS has
-    // already been destroyed.
-    #[cfg(feature = "nightly")]
-    fn try_get_tls(key: &'static LocalKey<ThreadData>) -> Option<*const ThreadData> {
-        key.try_with(|x| x as *const ThreadData).ok()
-    }
-    #[cfg(not(feature = "nightly"))]
-    fn try_get_tls(key: &'static LocalKey<ThreadData>) -> Option<*const ThreadData> {
-        panic::catch_unwind(|| key.with(|x| x as *const ThreadData)).ok()
-    }
-
+    // Try to read from thread-local storage, but return a local copy if the TLS
+    // has already been destroyed.
+    //
     // Unlike word_lock::ThreadData, parking_lot::ThreadData is always expensive
     // to construct. Try to use a thread-local version if possible.
     thread_local!(static THREAD_DATA: ThreadData = ThreadData::new());
-    if let Some(tls) = try_get_tls(&THREAD_DATA) {
+    if let Ok(tls) = THREAD_DATA.try_with(|x| x as *const ThreadData) {
         return &*tls;
     }
 
@@ -1068,7 +1059,7 @@ unsafe fn unpark_filter_internal(
     result
 }
 
-/// [Experimental] Deadlock detection
+/// \[Experimental\] Deadlock detection
 ///
 /// Enabled via the `deadlock_detection` feature flag.
 pub mod deadlock {
@@ -1126,14 +1117,14 @@ pub mod deadlock {
 #[cfg(feature = "deadlock_detection")]
 mod deadlock_impl {
     use super::{get_hashtable, get_thread_data, lock_bucket, ThreadData, NUM_THREADS};
-    use std::cell::{Cell, UnsafeCell};
-    use std::sync::mpsc;
-    use std::sync::atomic::Ordering;
-    use std::collections::HashSet;
-    use thread_id;
     use backtrace::Backtrace;
     use petgraph;
     use petgraph::graphmap::DiGraphMap;
+    use std::cell::{Cell, UnsafeCell};
+    use std::collections::HashSet;
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
+    use thread_id;
 
     /// Representation of a deadlocked thread
     pub struct DeadlockedThread {
@@ -1362,14 +1353,15 @@ mod deadlock_impl {
 
     // returns all thread cycles in the wait graph
     fn graph_cycles(g: &DiGraphMap<WaitGraphNode, ()>) -> Vec<Vec<*const ThreadData>> {
-        use petgraph::visit::NodeIndexable;
         use petgraph::visit::depth_first_search;
         use petgraph::visit::DfsEvent;
+        use petgraph::visit::NodeIndexable;
 
         let mut cycles = HashSet::new();
         let mut path = Vec::with_capacity(g.node_bound());
         // start from threads to get the correct threads cycle
-        let threads = g.nodes()
+        let threads = g
+            .nodes()
             .filter(|n| if let &Thread(_) = n { true } else { false });
 
         depth_first_search(g, threads, |e| match e {

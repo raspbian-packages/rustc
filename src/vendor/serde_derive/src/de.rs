@@ -30,8 +30,9 @@ pub fn expand_derive_deserialize(input: &syn::DeriveInput) -> Result<TokenStream
     let ident = &cont.ident;
     let params = Parameters::new(&cont);
     let (de_impl_generics, _, ty_generics, where_clause) = split_with_de_lifetime(&params);
+    let suffix = ident.to_string().trim_left_matches("r#").to_owned();
     let dummy_const = Ident::new(
-        &format!("_IMPL_DESERIALIZE_FOR_{}", ident),
+        &format!("_IMPL_DESERIALIZE_FOR_{}", suffix),
         Span::call_site(),
     );
     let body = Stmts(deserialize_body(&cont, &params));
@@ -204,7 +205,9 @@ fn build_generics(cont: &Container, borrowed: &BorrowedLifetimes) -> syn::Generi
 // All other fields may need a `T: Deserialize` bound where T is the type of the
 // field.
 fn needs_deserialize_bound(field: &attr::Field, variant: Option<&attr::Variant>) -> bool {
-    !field.skip_deserializing() && field.deserialize_with().is_none() && field.de_bound().is_none()
+    !field.skip_deserializing()
+        && field.deserialize_with().is_none()
+        && field.de_bound().is_none()
         && variant.map_or(true, |variant| {
             !variant.skip_deserializing()
                 && variant.deserialize_with().is_none()
@@ -835,7 +838,8 @@ fn deserialize_newtype_struct(
 
 #[cfg(feature = "deserialize_in_place")]
 fn deserialize_newtype_struct_in_place(params: &Parameters, field: &Field) -> TokenStream {
-    // We do not generate deserialize_in_place if every field has a deserialize_with.
+    // We do not generate deserialize_in_place if every field has a
+    // deserialize_with.
     assert!(field.attrs.deserialize_with().is_none());
 
     let delife = params.borrowed.de_lifetime();
@@ -939,8 +943,8 @@ fn deserialize_struct(
         quote!(mut __seq)
     };
 
-    // untagged struct variants do not get a visit_seq method.  The same applies to structs that
-    // only have a map representation.
+    // untagged struct variants do not get a visit_seq method. The same applies to
+    // structs that only have a map representation.
     let visit_seq = match *untagged {
         Untagged::No if !cattrs.has_flatten() => Some(quote! {
             #[inline]
@@ -1350,8 +1354,7 @@ fn deserialize_adjacently_tagged_enum(
             quote! {
                 __Field::#variant_index => #block
             }
-        })
-        .collect();
+        }).collect();
 
     let expecting = format!("adjacently tagged enum {}", params.type_name());
     let type_name = cattrs.name().deserialize_name();
@@ -1939,8 +1942,7 @@ fn deserialize_custom_identifier(
                 variant.attrs.name().deserialize_name(),
                 variant.ident.clone(),
             )
-        })
-        .collect();
+        }).collect();
 
     let names = names_idents.iter().map(|&(ref name, _)| name);
 
@@ -2547,7 +2549,8 @@ fn deserialize_map_in_place(
         .map(|(i, field)| (field, field_i(i)))
         .collect();
 
-    // For deserialize_in_place, declare booleans for each field that will be deserialized.
+    // For deserialize_in_place, declare booleans for each field that will be
+    // deserialized.
     let let_flags = fields_names
         .iter()
         .filter(|&&(field, _)| !field.attrs.skip_deserializing())

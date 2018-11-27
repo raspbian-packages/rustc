@@ -270,7 +270,7 @@
 #![doc(
     html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
     html_favicon_url = "https://www.rust-lang.org/favicon.ico",
-    html_root_url = "https://docs.rs/log/0.4"
+    html_root_url = "https://docs.rs/log/0.4.4"
 )]
 #![warn(missing_docs)]
 #![deny(missing_debug_implementations)]
@@ -1151,13 +1151,18 @@ where
     F: FnOnce() -> &'static Log,
 {
     unsafe {
-        if STATE.compare_and_swap(UNINITIALIZED, INITIALIZING, Ordering::SeqCst) != UNINITIALIZED {
-            return Err(SetLoggerError(()));
+        match STATE.compare_and_swap(UNINITIALIZED, INITIALIZING, Ordering::SeqCst) {
+            UNINITIALIZED => {
+                LOGGER = make_logger();
+                STATE.store(INITIALIZED, Ordering::SeqCst);
+                Ok(())
+            }
+            INITIALIZING => {
+                while STATE.load(Ordering::SeqCst) == INITIALIZING {}
+                Err(SetLoggerError(()))
+            }
+            _ => Err(SetLoggerError(())),
         }
-
-        LOGGER = make_logger();
-        STATE.store(INITIALIZED, Ordering::SeqCst);
-        Ok(())
     }
 }
 

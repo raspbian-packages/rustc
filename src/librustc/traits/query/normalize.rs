@@ -12,15 +12,15 @@
 //! which folds deeply, invoking the underlying
 //! `normalize_projection_ty` query when it encounters projections.
 
-use infer::{InferCtxt, InferOk};
 use infer::at::At;
-use mir::interpret::{GlobalId, ConstValue};
-use rustc_data_structures::small_vec::SmallVec;
-use traits::{Obligation, ObligationCause, PredicateObligation, Reveal};
+use infer::{InferCtxt, InferOk};
+use mir::interpret::{ConstValue, GlobalId};
+use smallvec::SmallVec;
 use traits::project::Normalized;
-use ty::{self, Ty, TyCtxt};
+use traits::{Obligation, ObligationCause, PredicateObligation, Reveal};
 use ty::fold::{TypeFoldable, TypeFolder};
 use ty::subst::{Subst, Substs};
+use ty::{self, Ty, TyCtxt};
 
 use super::NoSolution;
 
@@ -99,7 +99,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
     fn fold_ty(&mut self, ty: Ty<'tcx>) -> Ty<'tcx> {
         let ty = ty.super_fold_with(self);
         match ty.sty {
-            ty::TyAnon(def_id, substs) if !substs.has_escaping_regions() => {
+            ty::Opaque(def_id, substs) if !substs.has_escaping_regions() => {
                 // (*)
                 // Only normalize `impl Trait` after type-checking, usually in codegen.
                 match self.param_env.reveal {
@@ -121,9 +121,14 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
                         let concrete_ty = generic_ty.subst(self.tcx(), substs);
                         self.anon_depth += 1;
                         if concrete_ty == ty {
-                            bug!("infinite recursion generic_ty: {:#?}, substs: {:#?}, \
-                                  concrete_ty: {:#?}, ty: {:#?}", generic_ty, substs, concrete_ty,
-                                  ty);
+                            bug!(
+                                "infinite recursion generic_ty: {:#?}, substs: {:#?}, \
+                                 concrete_ty: {:#?}, ty: {:#?}",
+                                generic_ty,
+                                substs,
+                                concrete_ty,
+                                ty
+                            );
                         }
                         let folded_ty = self.fold_ty(concrete_ty);
                         self.anon_depth -= 1;
@@ -132,7 +137,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
                 }
             }
 
-            ty::TyProjection(ref data) if !data.has_escaping_regions() => {
+            ty::Projection(ref data) if !data.has_escaping_regions() => {
                 // (*)
                 // (*) This is kind of hacky -- we need to be able to
                 // handle normalization within binders because
@@ -149,8 +154,8 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for QueryNormalizer<'cx, 'gcx, 'tcx
                 let gcx = self.infcx.tcx.global_tcx();
 
                 let mut orig_values = SmallVec::new();
-                let c_data =
-                    self.infcx.canonicalize_query(&self.param_env.and(*data), &mut orig_values);
+                let c_data = self.infcx
+                    .canonicalize_query(&self.param_env.and(*data), &mut orig_values);
                 debug!("QueryNormalizer: c_data = {:#?}", c_data);
                 debug!("QueryNormalizer: orig_values = {:#?}", orig_values);
                 match gcx.normalize_projection_ty(c_data) {

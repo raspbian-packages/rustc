@@ -33,14 +33,14 @@
 
 use infer::{InferCtxt, RegionVariableOrigin, TypeVariableOrigin};
 use rustc_data_structures::indexed_vec::IndexVec;
-use rustc_data_structures::small_vec::SmallVec;
+use smallvec::SmallVec;
 use rustc_data_structures::sync::Lrc;
 use serialize::UseSpecializedDecodable;
 use std::ops::Index;
-use syntax::codemap::Span;
+use syntax::source_map::Span;
 use ty::fold::TypeFoldable;
 use ty::subst::Kind;
-use ty::{self, CanonicalVar, Lift, Region, Slice, TyCtxt};
+use ty::{self, CanonicalVar, Lift, Region, List, TyCtxt};
 
 mod canonicalizer;
 
@@ -49,7 +49,7 @@ pub mod query_result;
 mod substitute;
 
 /// A "canonicalized" type `V` is one where all free inference
-/// variables have been rewriten to "canonical vars". These are
+/// variables have been rewritten to "canonical vars". These are
 /// numbered starting from 0 in order of first appearance.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, RustcDecodable, RustcEncodable)]
 pub struct Canonical<'gcx, V> {
@@ -57,7 +57,7 @@ pub struct Canonical<'gcx, V> {
     pub value: V,
 }
 
-pub type CanonicalVarInfos<'gcx> = &'gcx Slice<CanonicalVarInfo>;
+pub type CanonicalVarInfos<'gcx> = &'gcx List<CanonicalVarInfo>;
 
 impl<'gcx> UseSpecializedDecodable for CanonicalVarInfos<'gcx> {}
 
@@ -188,6 +188,36 @@ impl<'tcx, R> Canonical<'tcx, QueryResult<'tcx, R>> {
     }
 }
 
+impl<'gcx, V> Canonical<'gcx, V> {
+    /// Allows you to map the `value` of a canonical while keeping the
+    /// same set of bound variables.
+    ///
+    /// **WARNING:** This function is very easy to mis-use, hence the
+    /// name!  In particular, the new value `W` must use all **the
+    /// same type/region variables** in **precisely the same order**
+    /// as the original! (The ordering is defined by the
+    /// `TypeFoldable` implementation of the type in question.)
+    ///
+    /// An example of a **correct** use of this:
+    ///
+    /// ```rust,ignore (not real code)
+    /// let a: Canonical<'_, T> = ...;
+    /// let b: Canonical<'_, (T,)> = a.unchecked_map(|v| (v, ));
+    /// ```
+    ///
+    /// An example of an **incorrect** use of this:
+    ///
+    /// ```rust,ignore (not real code)
+    /// let a: Canonical<'tcx, T> = ...;
+    /// let ty: Ty<'tcx> = ...;
+    /// let b: Canonical<'tcx, (T, Ty<'tcx>)> = a.unchecked_map(|v| (v, ty));
+    /// ```
+    pub fn unchecked_map<W>(self, map_op: impl FnOnce(V) -> W) -> Canonical<'gcx, W> {
+        let Canonical { variables, value } = self;
+        Canonical { variables, value: map_op(value) }
+    }
+}
+
 pub type QueryRegionConstraint<'tcx> = ty::Binder<ty::OutlivesPredicate<Kind<'tcx>, Region<'tcx>>>;
 
 impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
@@ -221,7 +251,7 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
     fn fresh_inference_vars_for_canonical_vars(
         &self,
         span: Span,
-        variables: &Slice<CanonicalVarInfo>,
+        variables: &List<CanonicalVarInfo>,
     ) -> CanonicalVarValues<'tcx> {
         let var_values: IndexVec<CanonicalVar, Kind<'tcx>> = variables
             .iter()

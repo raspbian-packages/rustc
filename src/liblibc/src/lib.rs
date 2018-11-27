@@ -86,7 +86,7 @@
 ))]
 
 // Attributes needed when building as part of the standard library
-#![cfg_attr(feature = "stdbuild", feature(staged_api, custom_attribute, cfg_target_vendor))]
+#![cfg_attr(feature = "stdbuild", feature(staged_api, cfg_target_vendor))]
 #![cfg_attr(feature = "stdbuild", feature(link_cfg, repr_packed))]
 #![cfg_attr(feature = "stdbuild", allow(warnings))]
 #![cfg_attr(feature = "stdbuild", unstable(feature = "libc",
@@ -104,6 +104,9 @@ mod dox;
 cfg_if! {
     if #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))] {
         // empty ...
+    } else if #[cfg(target_os = "switch")] {
+        // On the Switch, we only define some useful universal types for
+        // convenience. Those can be found in the switch.rs file.
     } else {
 
         // Use repr(u8) as LLVM expects `void*` to be the same as `i8*` to help enable
@@ -296,6 +299,9 @@ cfg_if! {
     } else if #[cfg(target_os = "fuchsia")] {
         mod fuchsia;
         pub use fuchsia::*;
+    } else if #[cfg(target_os = "switch")] {
+        mod switch;
+        pub use switch::*;
     } else if #[cfg(unix)] {
         mod unix;
         pub use unix::*;

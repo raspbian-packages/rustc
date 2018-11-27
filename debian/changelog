@@ -1,4 +1,4 @@
-rustc (1.29.0+dfsg1-1+rpi1) buster-staging; urgency=medium
+rustc (1.30.0+dfsg1-2+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
@@ -8,7 +8,56 @@ rustc (1.29.0+dfsg1-1+rpi1) buster-staging; urgency=medium
   * Add upstream patch to disable color handling in rustbuild, it conflicts
     with newer versions of cargo.
 
- -- Peter Michael Green <plugwash@raspbian.org>  Thu, 22 Nov 2018 06:15:29 +0000
+ -- Peter Michael Green <plugwash@raspbian.org>  Sun, 25 Nov 2018 19:06:55 +0000
+
+rustc (1.30.0+dfsg1-2) unstable; urgency=medium
+
+  * Increase FAILURES_ALLOWED for mips mipsel to 20.
+  * Set debuginfo-only-std = false for 32-bit powerpc architectures.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 02 Nov 2018 01:42:36 -0700
+
+rustc (1.30.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable. (Closes: #881845)
+  * Increase FAILURES_ALLOWED for mips architectures.
+  * Set debuginfo-only-std = false for mips architectures.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 01 Nov 2018 10:05:52 -0700
+
+rustc (1.30.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Disable debuginfo-gdb tests relating to enums. These will be fixed in an
+    upcoming version, see upstream #54614 for details.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 31 Oct 2018 00:02:25 -0700
+
+rustc (1.30.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * Actually don't build docs in an arch-only build.
+  * Add mips patch, hopefully closes #881845 but let's see.
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 30 Oct 2018 22:05:59 -0700
+
+rustc (1.30.0~beta.7+dfsg1-1~exp3) experimental; urgency=medium
+
+  * Do the necessary bookkeeping for the LLVM update.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 26 Sep 2018 23:29:18 -0700
+
+rustc (1.30.0~beta.7+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Tweak test failure rules: armel <= 8, ppc64 <= 12.
+  * Update to LLVM 7.
+
+ -- Ximin Luo <infinity0@debian.org>  Wed, 26 Sep 2018 21:43:30 -0700
+
+rustc (1.30.0~beta.7+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 23 Sep 2018 10:40:30 -0700
 
 rustc (1.29.0+dfsg1-1) unstable; urgency=medium
 

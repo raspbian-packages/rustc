@@ -20,8 +20,13 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+#[macro_use]
+extern crate macro_utils;
+#[cfg(feature = "html")]
 extern crate regex;
 
+pub mod css;
+#[cfg(feature = "html")]
 pub mod html;
 pub mod js;
-pub mod css;
+pub mod json;

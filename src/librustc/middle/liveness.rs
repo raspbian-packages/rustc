@@ -102,11 +102,13 @@
 //!   only dead if the end of the function's block can never be reached.
 //!   It is the responsibility of typeck to ensure that there are no
 //!   `return` expressions in a function declared as diverging.
+
 use self::LoopKind::*;
 use self::LiveNodeKind::*;
 use self::VarKind::*;
 
 use hir::def::*;
+use hir::Node;
 use ty::{self, TyCtxt};
 use lint;
 use errors::Applicability;
@@ -157,7 +159,7 @@ enum LiveNodeKind {
 }
 
 fn live_node_kind_to_string(lnk: LiveNodeKind, tcx: TyCtxt) -> String {
-    let cm = tcx.sess.codemap();
+    let cm = tcx.sess.source_map();
     match lnk {
         FreeVarNode(s) => {
             format!("Free var node [{}]", cm.span_to_string(s))
@@ -362,7 +364,7 @@ fn visit_fn<'a, 'tcx: 'a>(ir: &mut IrMaps<'a, 'tcx>,
     // Don't run unused pass for #[derive()]
     if let FnKind::Method(..) = fk {
         let parent = ir.tcx.hir.get_parent(id);
-        if let Some(hir::map::Node::NodeItem(i)) = ir.tcx.hir.find(parent) {
+        if let Some(Node::Item(i)) = ir.tcx.hir.find(parent) {
             if i.attrs.iter().any(|a| a.check_name("automatically_derived")) {
                 return;
             }
@@ -1028,7 +1030,12 @@ impl<'a, 'tcx> Liveness<'a, 'tcx> {
                 let body_succ =
                     self.propagate_through_expr(&arm.body, succ);
                 let guard_succ =
-                    self.propagate_through_opt_expr(arm.guard.as_ref().map(|e| &**e), body_succ);
+                    self.propagate_through_opt_expr(
+                        arm.guard.as_ref().map(|g|
+                            match g {
+                                hir::Guard::If(e) => &**e,
+                            }),
+                        body_succ);
                 // only consider the first pattern; any later patterns must have
                 // the same bindings, and we also consider the first pattern to be
                 // the "authoritative" set of ids

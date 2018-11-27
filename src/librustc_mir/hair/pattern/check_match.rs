@@ -208,7 +208,9 @@ impl<'a, 'tcx> MatchVisitor<'a, 'tcx> {
                     }
                     (pattern, &**pat)
                 }).collect(),
-                arm.guard.as_ref().map(|e| &**e)
+                arm.guard.as_ref().map(|g| match g {
+                    hir::Guard::If(ref e) => &**e,
+                })
             )).collect();
 
             // Bail out early if inlining failed.
@@ -258,8 +260,8 @@ impl<'a, 'tcx> MatchVisitor<'a, 'tcx> {
     fn conservative_is_uninhabited(&self, scrutinee_ty: Ty<'tcx>) -> bool {
         // "rustc-1.0-style" uncontentious uninhabitableness check
         match scrutinee_ty.sty {
-            ty::TyNever => true,
-            ty::TyAdt(def, _) => def.variants.is_empty(),
+            ty::Never => true,
+            ty::Adt(def, _) => def.variants.is_empty(),
             _ => false
         }
     }
@@ -272,7 +274,7 @@ impl<'a, 'tcx> MatchVisitor<'a, 'tcx> {
                                                 self.tables);
             let pattern = patcx.lower_pattern(pat);
             let pattern_ty = pattern.ty;
-            let pats : Matrix = vec![vec![
+            let pats: Matrix = vec![vec![
                 expand_pattern(cx, pattern)
             ]].into_iter().collect();
 
@@ -315,7 +317,7 @@ fn check_for_bindings_named_the_same_as_variants(cx: &MatchVisitor, pat: &Pat) {
                     return true;
                 }
                 let pat_ty = cx.tables.pat_ty(p);
-                if let ty::TyAdt(edef, _) = pat_ty.sty {
+                if let ty::Adt(edef, _) = pat_ty.sty {
                     if edef.is_enum() && edef.variants.iter().any(|variant| {
                         variant.name == ident.name && variant.ctor_kind == CtorKind::Const
                     }) {
@@ -391,7 +393,7 @@ fn check_arms<'a, 'tcx>(cx: &mut MatchCheckCtxt<'a, 'tcx>,
                                     printed_if_let_err = true;
                                 }
                             }
-                        },
+                        }
 
                         hir::MatchSource::WhileLetDesugar => {
                             // check which arm we're on.
@@ -540,12 +542,16 @@ fn check_legality_of_move_bindings(cx: &MatchVisitor,
                       "cannot bind by-move into a pattern guard")
                 .span_label(p.span, "moves value into pattern guard")
                 .emit();
-        } else if by_ref_span.is_some() {
-            struct_span_err!(cx.tcx.sess, p.span, E0009,
-                            "cannot bind by-move and by-ref in the same pattern")
-                    .span_label(p.span, "by-move pattern here")
-                    .span_label(by_ref_span.unwrap(), "both by-ref and by-move used")
-                    .emit();
+        } else if let Some(by_ref_span) = by_ref_span {
+            struct_span_err!(
+                cx.tcx.sess,
+                p.span,
+                E0009,
+                "cannot bind by-move and by-ref in the same pattern",
+            )
+            .span_label(p.span, "by-move pattern here")
+            .span_label(by_ref_span, "both by-ref and by-move used")
+            .emit();
         }
     };
 
@@ -575,12 +581,19 @@ fn check_legality_of_move_bindings(cx: &MatchVisitor,
 /// assign.
 ///
 /// FIXME: this should be done by borrowck.
-fn check_for_mutation_in_guard(cx: &MatchVisitor, guard: &hir::Expr) {
+fn check_for_mutation_in_guard(cx: &MatchVisitor, guard: &hir::Guard) {
     let mut checker = MutationChecker {
         cx,
     };
-    ExprUseVisitor::new(&mut checker, cx.tcx, cx.param_env, cx.region_scope_tree, cx.tables, None)
-        .walk_expr(guard);
+    match guard {
+        hir::Guard::If(expr) =>
+            ExprUseVisitor::new(&mut checker,
+                                cx.tcx,
+                                cx.param_env,
+                                cx.region_scope_tree,
+                                cx.tables,
+                                None).walk_expr(expr),
+    };
 }
 
 struct MutationChecker<'a, 'tcx: 'a> {

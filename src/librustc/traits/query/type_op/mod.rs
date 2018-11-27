@@ -11,7 +11,7 @@
 use infer::canonical::{Canonical, Canonicalized, CanonicalizedQueryResult, QueryRegionConstraint,
                        QueryResult};
 use infer::{InferCtxt, InferOk};
-use rustc_data_structures::small_vec::SmallVec;
+use smallvec::SmallVec;
 use std::fmt;
 use std::rc::Rc;
 use traits::query::Fallible;
@@ -21,6 +21,7 @@ use ty::{Lift, ParamEnvAnd, TyCtxt};
 
 pub mod custom;
 pub mod eq;
+pub mod implied_outlives_bounds;
 pub mod normalize;
 pub mod outlives;
 pub mod prove_predicate;

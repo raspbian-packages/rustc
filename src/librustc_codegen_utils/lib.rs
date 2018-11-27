@@ -19,6 +19,8 @@
 #![feature(box_patterns)]
 #![feature(box_syntax)]
 #![feature(custom_attribute)]
+#![cfg_attr(not(stage0), feature(nll))]
+#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
 #![allow(unused_attributes)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
@@ -37,6 +39,7 @@ extern crate rustc_incremental;
 extern crate syntax;
 extern crate syntax_pos;
 #[macro_use] extern crate rustc_data_structures;
+extern crate rustc_metadata_utils;
 
 use rustc::ty::TyCtxt;
 

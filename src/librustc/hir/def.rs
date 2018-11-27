@@ -29,6 +29,18 @@ pub enum CtorKind {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
+pub enum NonMacroAttrKind {
+    /// Single-segment attribute defined by the language (`#[inline]`)
+    Builtin,
+    /// Multi-segment custom attribute living in a "tool module" (`#[rustfmt::skip]`).
+    Tool,
+    /// Single-segment custom attribute registered by a derive macro (`#[serde(default)]`).
+    DeriveHelper,
+    /// Single-segment custom attribute not registered in any way (`#[my_attr]`).
+    Custom,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, RustcEncodable, RustcDecodable, Hash, Debug)]
 pub enum Def {
     // Type namespace
     Mod(DefId),
@@ -41,7 +53,7 @@ pub enum Def {
     Existential(DefId),
     /// `type Foo = Bar;`
     TyAlias(DefId),
-    TyForeign(DefId),
+    ForeignTy(DefId),
     TraitAlias(DefId),
     AssociatedTy(DefId),
     /// `existential type Foo: Bar;`
@@ -49,13 +61,15 @@ pub enum Def {
     PrimTy(hir::PrimTy),
     TyParam(DefId),
     SelfTy(Option<DefId> /* trait */, Option<DefId> /* impl */),
+    ToolMod, // e.g. `rustfmt` in `#[rustfmt::skip]`
 
     // Value namespace
     Fn(DefId),
     Const(DefId),
     Static(DefId, bool /* is_mutbl */),
     StructCtor(DefId, CtorKind), // DefId refers to NodeId of the struct's constructor
-    VariantCtor(DefId, CtorKind),
+    VariantCtor(DefId, CtorKind), // DefId refers to the enum variant
+    SelfCtor(DefId /* impl */),  // DefId refers to the impl
     Method(DefId),
     AssociatedConst(DefId),
 
@@ -67,8 +81,7 @@ pub enum Def {
 
     // Macro namespace
     Macro(DefId, MacroKind),
-
-    GlobalAsm(DefId),
+    NonMacroAttr(NonMacroAttrKind), // e.g. `#[inline]` or `#[rustfmt::skip]`
 
     // Both namespaces
     Err,
@@ -240,6 +253,17 @@ impl CtorKind {
     }
 }
 
+impl NonMacroAttrKind {
+    fn descr(self) -> &'static str {
+        match self {
+            NonMacroAttrKind::Builtin => "built-in attribute",
+            NonMacroAttrKind::Tool => "tool attribute",
+            NonMacroAttrKind::DeriveHelper => "derive helper attribute",
+            NonMacroAttrKind::Custom => "custom attribute",
+        }
+    }
+}
+
 impl Def {
     pub fn def_id(&self) -> DefId {
         match *self {
@@ -249,8 +273,8 @@ impl Def {
             Def::AssociatedTy(id) | Def::TyParam(id) | Def::Struct(id) | Def::StructCtor(id, ..) |
             Def::Union(id) | Def::Trait(id) | Def::Method(id) | Def::Const(id) |
             Def::AssociatedConst(id) | Def::Macro(id, ..) |
-            Def::Existential(id) | Def::AssociatedExistential(id) |
-            Def::GlobalAsm(id) | Def::TyForeign(id) => {
+            Def::Existential(id) | Def::AssociatedExistential(id) | Def::ForeignTy(id) |
+            Def::SelfCtor(id) => {
                 id
             }
 
@@ -259,6 +283,8 @@ impl Def {
             Def::Label(..)  |
             Def::PrimTy(..) |
             Def::SelfTy(..) |
+            Def::ToolMod |
+            Def::NonMacroAttr(..) |
             Def::Err => {
                 bug!("attempted .def_id() on invalid def: {:?}", self)
             }
@@ -285,9 +311,10 @@ impl Def {
             Def::StructCtor(.., CtorKind::Fn) => "tuple struct",
             Def::StructCtor(.., CtorKind::Const) => "unit struct",
             Def::StructCtor(.., CtorKind::Fictive) => bug!("impossible struct constructor"),
+            Def::SelfCtor(..) => "self constructor",
             Def::Union(..) => "union",
             Def::Trait(..) => "trait",
-            Def::TyForeign(..) => "foreign type",
+            Def::ForeignTy(..) => "foreign type",
             Def::Method(..) => "method",
             Def::Const(..) => "constant",
             Def::AssociatedConst(..) => "associated constant",
@@ -298,7 +325,8 @@ impl Def {
             Def::Label(..) => "label",
             Def::SelfTy(..) => "self type",
             Def::Macro(.., macro_kind) => macro_kind.descr(),
-            Def::GlobalAsm(..) => "global asm",
+            Def::ToolMod => "tool module",
+            Def::NonMacroAttr(attr_kind) => attr_kind.descr(),
             Def::Err => "unresolved item",
         }
     }

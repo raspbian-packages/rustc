@@ -191,13 +191,14 @@ use std::cell::RefCell;
 use std::iter;
 use std::vec;
 
+use rustc_data_structures::thin_vec::ThinVec;
 use rustc_target::spec::abi::Abi;
 use syntax::ast::{self, BinOpKind, EnumDef, Expr, Generics, Ident, PatKind};
 use syntax::ast::{VariantData, GenericParamKind, GenericArg};
 use syntax::attr;
 use syntax::ext::base::{Annotatable, ExtCtxt};
 use syntax::ext::build::AstBuilder;
-use syntax::codemap::{self, respan};
+use syntax::source_map::{self, respan};
 use syntax::util::move_map::MoveMap;
 use syntax::ptr::P;
 use syntax::symbol::{Symbol, keywords};
@@ -554,7 +555,7 @@ impl<'a> TraitDef<'a> {
             GenericParamKind::Type { .. } => {
                 // I don't think this can be moved out of the loop, since
                 // a GenericBound requires an ast id
-                let mut bounds: Vec<_> =
+                let bounds: Vec<_> =
                     // extra restrictions on the generics parameters to the
                     // type being derived upon
                     self.additional_bounds.iter().map(|p| {
@@ -1618,13 +1619,13 @@ impl<'a> TraitDef<'a> {
                         if ident.is_none() {
                             cx.span_bug(sp, "a braced struct with unnamed fields in `derive`");
                         }
-                        codemap::Spanned {
+                        source_map::Spanned {
                             span: pat.span.with_ctxt(self.span.ctxt()),
                             node: ast::FieldPat {
                                 ident: ident.unwrap(),
                                 pat,
                                 is_shorthand: false,
-                                attrs: ast::ThinVec::new(),
+                                attrs: ThinVec::new(),
                             },
                         }
                     })

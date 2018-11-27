@@ -8,11 +8,11 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-// compile-flags: --edition 2015
+// edition:2015
 
 #![deny(rust_2018_compatibility)]
 
-// Don't make a suggestion for a raw identifer replacement unless raw
+// Don't make a suggestion for a raw identifier replacement unless raw
 // identifiers are enabled.
 
 fn main() {
