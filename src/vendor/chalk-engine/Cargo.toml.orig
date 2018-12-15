@@ -1,0 +1,21 @@
+[package]
+name = "chalk-engine"
+version = "0.8.1"
+description = "Core trait engine from Chalk project"
+license = "Apache-2.0/MIT"
+authors = ["Rust Compiler Team", "Chalk developers"]
+repository = "https://github.com/rust-lang-nursery/chalk"
+readme = "README.md"
+keywords = ["compiler", "traits", "prolog"]
+
+[features]
+default = ["stack_protection"]
+stack_protection = ["stacker"]
+
+[dependencies]
+stacker = { version = "0.1.2", optional = true }
+rustc-hash = { version = "1.0.0" }
+
+[dependencies.chalk-macros]
+version = "0.1.0"
+path = "../chalk-macros"
