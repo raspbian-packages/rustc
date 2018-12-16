@@ -10,6 +10,7 @@
 
 // ignore-tidy-linelength
 // min-lldb-version: 310
+// ignore-gdb
 
 // compile-flags:-g
 
