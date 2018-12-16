@@ -1,0 +1,17 @@
+version=4
+# if you need to download other versions replace the URL below with this one:
+# https://static.rust-lang.org/dist/index.html
+# it's a bit slower to download, that's why we use the other one normally
+
+opts="\
+pgpsigurlmangle=s/$/.asc/,\
+uversionmangle=s/.*/NEWVER~beta.999/,\
+dversionmangle=s/\+dfsg\d*$//,\
+downloadurlmangle=s/rustc-.*-(.*)\.[gx]z/rustc-beta-$1.xz/,\
+filenamemangle=s/.*\/(.*)-[^-]*-(.*)\.[gx]z(\..*)?/$1-NEWVER-beta.999-$2.xz$3/,\
+repack,\
+repacksuffix=+dfsg1,\
+compression=xz,\
+" \
+ https://www.rust-lang.org/en-US/other-installers.html \
+ (?:.*/)rustc?-(.*)-src\.tar\.[gx]z

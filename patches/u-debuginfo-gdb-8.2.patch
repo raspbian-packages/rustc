@@ -1,0 +1,1642 @@
+Bug: https://github.com/rust-lang/rust/pull/54004
+Description: Fix DWARF generation for enums
+ git diff e8aef7cae1..8bbb62f849 
+--- a/src/ci/docker/x86_64-gnu/Dockerfile
++++ b/src/ci/docker/x86_64-gnu/Dockerfile
+@@ -1,4 +1,4 @@
+-FROM ubuntu:16.04
++FROM ubuntu:18.10
+ 
+ RUN apt-get update && apt-get install -y --no-install-recommends \
+   g++ \
+--- a/src/librustc_codegen_llvm/debuginfo/metadata.rs
++++ b/src/librustc_codegen_llvm/debuginfo/metadata.rs
+@@ -31,9 +31,10 @@
+ use rustc::ich::NodeIdHashingMode;
+ use rustc_data_structures::fingerprint::Fingerprint;
+ use rustc::ty::Instance;
+-use common::CodegenCx;
++use common::{CodegenCx, C_u64};
+ use rustc::ty::{self, AdtKind, ParamEnv, Ty, TyCtxt};
+-use rustc::ty::layout::{self, Align, LayoutOf, PrimitiveExt, Size, TyLayout};
++use rustc::ty::layout::{self, Align, HasDataLayout, Integer, IntegerExt, LayoutOf,
++                        PrimitiveExt, Size, TyLayout};
+ use rustc::session::config;
+ use rustc::util::nodemap::FxHashMap;
+ use rustc_fs_util::path2cstr;
+@@ -205,6 +206,7 @@
+         unfinished_type: Ty<'tcx>,
+         unique_type_id: UniqueTypeId,
+         metadata_stub: &'ll DICompositeType,
++        member_holding_stub: &'ll DICompositeType,
+         member_description_factory: MemberDescriptionFactory<'ll, 'tcx>,
+     },
+     FinalMetadata(&'ll DICompositeType)
+@@ -215,6 +217,7 @@
+     unfinished_type: Ty<'tcx>,
+     unique_type_id: UniqueTypeId,
+     metadata_stub: &'ll DICompositeType,
++    member_holding_stub: &'ll DICompositeType,
+     member_description_factory: MemberDescriptionFactory<'ll, 'tcx>,
+ ) -> RecursiveTypeDescription<'ll, 'tcx> {
+ 
+@@ -227,6 +230,7 @@
+         unfinished_type,
+         unique_type_id,
+         metadata_stub,
++        member_holding_stub,
+         member_description_factory,
+     }
+ }
+@@ -242,6 +246,7 @@
+                 unfinished_type,
+                 unique_type_id,
+                 metadata_stub,
++                member_holding_stub,
+                 ref member_description_factory,
+             } => {
+                 // Make sure that we have a forward declaration of the type in
+@@ -266,7 +271,7 @@
+ 
+                 // ... and attach them to the stub to complete it.
+                 set_members_of_composite_type(cx,
+-                                              metadata_stub,
++                                              member_holding_stub,
+                                               member_descriptions);
+                 return MetadataCreationResult::new(metadata_stub, true);
+             }
+@@ -350,6 +355,7 @@
+             size: pointer_size,
+             align: pointer_align,
+             flags: DIFlags::FlagZero,
++            discriminant: None,
+         },
+         MemberDescription {
+             name: "length".to_owned(),
+@@ -358,6 +364,7 @@
+             size: usize_size,
+             align: usize_align,
+             flags: DIFlags::FlagZero,
++            discriminant: None,
+         },
+     ];
+ 
+@@ -458,6 +465,7 @@
+             size: data_ptr_field.size,
+             align: data_ptr_field.align,
+             flags: DIFlags::FlagArtificial,
++            discriminant: None,
+         },
+         MemberDescription {
+             name: "vtable".to_owned(),
+@@ -466,6 +474,7 @@
+             size: vtable_field.size,
+             align: vtable_field.align,
+             flags: DIFlags::FlagArtificial,
++            discriminant: None,
+         },
+     ];
+ 
+@@ -914,6 +923,7 @@
+     size: Size,
+     align: Align,
+     flags: DIFlags,
++    discriminant: Option<u64>,
+ }
+ 
+ // A factory for MemberDescriptions. It produces a list of member descriptions
+@@ -981,6 +991,7 @@
+                 size,
+                 align,
+                 flags: DIFlags::FlagZero,
++                discriminant: None,
+             }
+         }).collect()
+     }
+@@ -1013,6 +1024,7 @@
+         struct_type,
+         unique_type_id,
+         struct_metadata_stub,
++        struct_metadata_stub,
+         StructMDF(StructMemberDescriptionFactory {
+             ty: struct_type,
+             variant,
+@@ -1045,6 +1057,7 @@
+                 size,
+                 align,
+                 flags: DIFlags::FlagZero,
++                discriminant: None,
+             }
+         }).collect()
+     }
+@@ -1059,15 +1072,18 @@
+ ) -> RecursiveTypeDescription<'ll, 'tcx> {
+     let tuple_name = compute_debuginfo_type_name(cx, tuple_type, false);
+ 
++    let struct_stub = create_struct_stub(cx,
++                                         tuple_type,
++                                         &tuple_name[..],
++                                         unique_type_id,
++                                         NO_SCOPE_METADATA);
++
+     create_and_register_recursive_type_forward_declaration(
+         cx,
+         tuple_type,
+         unique_type_id,
+-        create_struct_stub(cx,
+-                           tuple_type,
+-                           &tuple_name[..],
+-                           unique_type_id,
+-                           NO_SCOPE_METADATA),
++        struct_stub,
++        struct_stub,
+         TupleMDF(TupleMemberDescriptionFactory {
+             ty: tuple_type,
+             component_types: component_types.to_vec(),
+@@ -1099,6 +1115,7 @@
+                 size,
+                 align,
+                 flags: DIFlags::FlagZero,
++                discriminant: None,
+             }
+         }).collect()
+     }
+@@ -1130,6 +1147,7 @@
+         union_type,
+         unique_type_id,
+         union_metadata_stub,
++        union_metadata_stub,
+         UnionMDF(UnionMemberDescriptionFactory {
+             layout: cx.layout_of(union_type),
+             variant,
+@@ -1142,6 +1160,20 @@
+ // Enums
+ //=-----------------------------------------------------------------------------
+ 
++// DWARF variant support is only available starting in LLVM 7.
++// Although the earlier enum debug info output did not work properly
++// in all situations, it is better for the time being to continue to
++// sometimes emit the old style rather than emit something completely
++// useless when rust is compiled against LLVM 6 or older.  This
++// function decides which representation will be emitted.
++fn use_enum_fallback(cx: &CodegenCx) -> bool {
++    // On MSVC we have to use the fallback mode, because LLVM doesn't
++    // lower variant parts to PDB.
++    return cx.sess().target.target.options.is_like_msvc || unsafe {
++        llvm::LLVMRustVersionMajor() < 7
++    };
++}
++
+ // Describes the members of an enum value: An enum is described as a union of
+ // structs in DWARF. This MemberDescriptionFactory provides the description for
+ // the members of this union; so for every variant of the given enum, this
+@@ -1159,6 +1191,15 @@
+     fn create_member_descriptions(&self, cx: &CodegenCx<'ll, 'tcx>)
+                                   -> Vec<MemberDescription<'ll>> {
+         let adt = &self.enum_type.ty_adt_def().unwrap();
++
++        // This will always find the metadata in the type map.
++        let fallback = use_enum_fallback(cx);
++        let self_metadata = if fallback {
++            self.containing_scope
++        } else {
++            type_metadata(cx, self.enum_type, self.span)
++        };
++
+         match self.layout.variants {
+             layout::Variants::Single { .. } if adt.variants.is_empty() => vec![],
+             layout::Variants::Single { index } => {
+@@ -1167,7 +1208,7 @@
+                                           self.layout,
+                                           &adt.variants[index],
+                                           NoDiscriminant,
+-                                          self.containing_scope,
++                                          self_metadata,
+                                           self.span);
+ 
+                 let member_descriptions =
+@@ -1178,18 +1219,28 @@
+                                               member_descriptions);
+                 vec![
+                     MemberDescription {
+-                        name: String::new(),
++                        name: if fallback {
++                            String::new()
++                        } else {
++                            adt.variants[index].name.as_str().to_string()
++                        },
+                         type_metadata: variant_type_metadata,
+                         offset: Size::ZERO,
+                         size: self.layout.size,
+                         align: self.layout.align,
+-                        flags: DIFlags::FlagZero
++                        flags: DIFlags::FlagZero,
++                        discriminant: None,
+                     }
+                 ]
+             }
+             layout::Variants::Tagged { ref variants, .. } => {
+-                let discriminant_info = RegularDiscriminant(self.discriminant_type_metadata
+-                    .expect(""));
++                let discriminant_info = if fallback {
++                    RegularDiscriminant(self.discriminant_type_metadata
++                                        .expect(""))
++                } else {
++                    // This doesn't matter in this case.
++                    NoDiscriminant
++                };
+                 (0..variants.len()).map(|i| {
+                     let variant = self.layout.for_variant(cx, i);
+                     let (variant_type_metadata, member_desc_factory) =
+@@ -1197,7 +1248,7 @@
+                                               variant,
+                                               &adt.variants[i],
+                                               discriminant_info,
+-                                              self.containing_scope,
++                                              self_metadata,
+                                               self.span);
+ 
+                     let member_descriptions = member_desc_factory
+@@ -1207,75 +1258,127 @@
+                                                   variant_type_metadata,
+                                                   member_descriptions);
+                     MemberDescription {
+-                        name: String::new(),
++                        name: if fallback {
++                            String::new()
++                        } else {
++                            adt.variants[i].name.as_str().to_string()
++                        },
+                         type_metadata: variant_type_metadata,
+                         offset: Size::ZERO,
+-                        size: variant.size,
+-                        align: variant.align,
+-                        flags: DIFlags::FlagZero
++                        size: self.layout.size,
++                        align: self.layout.align,
++                        flags: DIFlags::FlagZero,
++                        discriminant: Some(self.layout.ty.ty_adt_def().unwrap()
++                                           .discriminant_for_variant(cx.tcx, i)
++                                           .val as u64),
+                     }
+                 }).collect()
+             }
+-            layout::Variants::NicheFilling { dataful_variant, ref niche_variants, .. } => {
+-                let variant = self.layout.for_variant(cx, dataful_variant);
+-                // Create a description of the non-null variant
+-                let (variant_type_metadata, member_description_factory) =
+-                    describe_enum_variant(cx,
+-                                          variant,
+-                                          &adt.variants[dataful_variant],
+-                                          OptimizedDiscriminant,
+-                                          self.containing_scope,
+-                                          self.span);
++            layout::Variants::NicheFilling {
++                ref niche_variants,
++                niche_start,
++                ref variants,
++                dataful_variant,
++                ..
++            } => {
++                if fallback {
++                    let variant = self.layout.for_variant(cx, dataful_variant);
++                    // Create a description of the non-null variant
++                    let (variant_type_metadata, member_description_factory) =
++                        describe_enum_variant(cx,
++                                              variant,
++                                              &adt.variants[dataful_variant],
++                                              OptimizedDiscriminant,
++                                              self.containing_scope,
++                                              self.span);
+ 
+-                let variant_member_descriptions =
+-                    member_description_factory.create_member_descriptions(cx);
++                    let variant_member_descriptions =
++                        member_description_factory.create_member_descriptions(cx);
+ 
+-                set_members_of_composite_type(cx,
+-                                              variant_type_metadata,
+-                                              variant_member_descriptions);
++                    set_members_of_composite_type(cx,
++                                                  variant_type_metadata,
++                                                  variant_member_descriptions);
+ 
+-                // Encode the information about the null variant in the union
+-                // member's name.
+-                let mut name = String::from("RUST$ENCODED$ENUM$");
+-                // HACK(eddyb) the debuggers should just handle offset+size
+-                // of discriminant instead of us having to recover its path.
+-                // Right now it's not even going to work for `niche_start > 0`,
+-                // and for multiple niche variants it only supports the first.
+-                fn compute_field_path<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
+-                                                name: &mut String,
+-                                                layout: TyLayout<'tcx>,
+-                                                offset: Size,
+-                                                size: Size) {
+-                    for i in 0..layout.fields.count() {
+-                        let field_offset = layout.fields.offset(i);
+-                        if field_offset > offset {
+-                            continue;
+-                        }
+-                        let inner_offset = offset - field_offset;
+-                        let field = layout.field(cx, i);
+-                        if inner_offset + size <= field.size {
+-                            write!(name, "{}$", i).unwrap();
+-                            compute_field_path(cx, name, field, inner_offset, size);
++                    // Encode the information about the null variant in the union
++                    // member's name.
++                    let mut name = String::from("RUST$ENCODED$ENUM$");
++                    // Right now it's not even going to work for `niche_start > 0`,
++                    // and for multiple niche variants it only supports the first.
++                    fn compute_field_path<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
++                                                    name: &mut String,
++                                                    layout: TyLayout<'tcx>,
++                                                    offset: Size,
++                                                    size: Size) {
++                        for i in 0..layout.fields.count() {
++                            let field_offset = layout.fields.offset(i);
++                            if field_offset > offset {
++                                continue;
++                            }
++                            let inner_offset = offset - field_offset;
++                            let field = layout.field(cx, i);
++                            if inner_offset + size <= field.size {
++                                write!(name, "{}$", i).unwrap();
++                                compute_field_path(cx, name, field, inner_offset, size);
++                            }
+                         }
+                     }
++                    compute_field_path(cx, &mut name,
++                                       self.layout,
++                                       self.layout.fields.offset(0),
++                                       self.layout.field(cx, 0).size);
++                    name.push_str(&adt.variants[*niche_variants.start()].name.as_str());
++
++                    // Create the (singleton) list of descriptions of union members.
++                    vec![
++                        MemberDescription {
++                            name,
++                            type_metadata: variant_type_metadata,
++                            offset: Size::ZERO,
++                            size: variant.size,
++                            align: variant.align,
++                            flags: DIFlags::FlagZero,
++                            discriminant: None,
++                        }
++                    ]
++                } else {
++                    (0..variants.len()).map(|i| {
++                        let variant = self.layout.for_variant(cx, i);
++                        let (variant_type_metadata, member_desc_factory) =
++                            describe_enum_variant(cx,
++                                                  variant,
++                                                  &adt.variants[i],
++                                                  OptimizedDiscriminant,
++                                                  self_metadata,
++                                                  self.span);
++
++                        let member_descriptions = member_desc_factory
++                            .create_member_descriptions(cx);
++
++                        set_members_of_composite_type(cx,
++                                                      variant_type_metadata,
++                                                      member_descriptions);
++
++                        let niche_value = if i == dataful_variant {
++                            None
++                        } else {
++                            let niche = (i as u128)
++                                .wrapping_sub(*niche_variants.start() as u128)
++                                .wrapping_add(niche_start);
++                            assert_eq!(niche as u64 as u128, niche);
++                            Some(niche as u64)
++                        };
++
++                        MemberDescription {
++                            name: adt.variants[i].name.as_str().to_string(),
++                            type_metadata: variant_type_metadata,
++                            offset: Size::ZERO,
++                            size: self.layout.size,
++                            align: self.layout.align,
++                            flags: DIFlags::FlagZero,
++                            discriminant: niche_value,
++                        }
++                    }).collect()
+                 }
+-                compute_field_path(cx, &mut name,
+-                                   self.layout,
+-                                   self.layout.fields.offset(0),
+-                                   self.layout.field(cx, 0).size);
+-                name.push_str(&adt.variants[*niche_variants.start()].name.as_str());
+-
+-                // Create the (singleton) list of descriptions of union members.
+-                vec![
+-                    MemberDescription {
+-                        name,
+-                        type_metadata: variant_type_metadata,
+-                        offset: Size::ZERO,
+-                        size: variant.size,
+-                        align: variant.align,
+-                        flags: DIFlags::FlagZero
+-                    }
+-                ]
+             }
+         }
+     }
+@@ -1297,14 +1400,19 @@
+             let (size, align) = cx.size_and_align_of(ty);
+             MemberDescription {
+                 name: name.to_string(),
+-                type_metadata: match self.discriminant_type_metadata {
+-                    Some(metadata) if i == 0 => metadata,
+-                    _ => type_metadata(cx, ty, self.span)
++                type_metadata: if use_enum_fallback(cx) {
++                    match self.discriminant_type_metadata {
++                        Some(metadata) if i == 0 => metadata,
++                        _ => type_metadata(cx, ty, self.span)
++                    }
++                } else {
++                    type_metadata(cx, ty, self.span)
+                 },
+                 offset: self.offsets[i],
+                 size,
+                 align,
+-                flags: DIFlags::FlagZero
++                flags: DIFlags::FlagZero,
++                discriminant: None,
+             }
+         }).collect()
+     }
+@@ -1317,10 +1425,10 @@
+     NoDiscriminant
+ }
+ 
+-// Returns a tuple of (1) type_metadata_stub of the variant, (2) the llvm_type
+-// of the variant, and (3) a MemberDescriptionFactory for producing the
+-// descriptions of the fields of the variant. This is a rudimentary version of a
+-// full RecursiveTypeDescription.
++// Returns a tuple of (1) type_metadata_stub of the variant, (2) a
++// MemberDescriptionFactory for producing the descriptions of the
++// fields of the variant. This is a rudimentary version of a full
++// RecursiveTypeDescription.
+ fn describe_enum_variant(
+     cx: &CodegenCx<'ll, 'tcx>,
+     layout: layout::TyLayout<'tcx>,
+@@ -1343,29 +1451,46 @@
+                                            unique_type_id,
+                                            Some(containing_scope));
+ 
+-    // If this is not a univariant enum, there is also the discriminant field.
+-    let (discr_offset, discr_arg) = match discriminant_info {
+-        RegularDiscriminant(_) => {
+-            // We have the layout of an enum variant, we need the layout of the outer enum
+-            let enum_layout = cx.layout_of(layout.ty);
+-            (Some(enum_layout.fields.offset(0)),
+-             Some(("RUST$ENUM$DISR".to_owned(), enum_layout.field(cx, 0).ty)))
+-        }
+-        _ => (None, None),
+-    };
+-    let offsets = discr_offset.into_iter().chain((0..layout.fields.count()).map(|i| {
+-        layout.fields.offset(i)
+-    })).collect();
+-
+     // Build an array of (field name, field type) pairs to be captured in the factory closure.
+-    let args = discr_arg.into_iter().chain((0..layout.fields.count()).map(|i| {
+-        let name = if variant.ctor_kind == CtorKind::Fn {
+-            format!("__{}", i)
+-        } else {
+-            variant.fields[i].ident.to_string()
++    let (offsets, args) = if use_enum_fallback(cx) {
++        // If this is not a univariant enum, there is also the discriminant field.
++        let (discr_offset, discr_arg) = match discriminant_info {
++            RegularDiscriminant(_) => {
++                // We have the layout of an enum variant, we need the layout of the outer enum
++                let enum_layout = cx.layout_of(layout.ty);
++                (Some(enum_layout.fields.offset(0)),
++                 Some(("RUST$ENUM$DISR".to_owned(), enum_layout.field(cx, 0).ty)))
++            }
++            _ => (None, None),
+         };
+-        (name, layout.field(cx, i).ty)
+-    })).collect();
++        (
++            discr_offset.into_iter().chain((0..layout.fields.count()).map(|i| {
++                layout.fields.offset(i)
++            })).collect(),
++            discr_arg.into_iter().chain((0..layout.fields.count()).map(|i| {
++                let name = if variant.ctor_kind == CtorKind::Fn {
++                    format!("__{}", i)
++                } else {
++                    variant.fields[i].ident.to_string()
++                };
++                (name, layout.field(cx, i).ty)
++            })).collect()
++        )
++    } else {
++        (
++            (0..layout.fields.count()).map(|i| {
++                layout.fields.offset(i)
++            }).collect(),
++            (0..layout.fields.count()).map(|i| {
++                let name = if variant.ctor_kind == CtorKind::Fn {
++                    format!("__{}", i)
++                } else {
++                    variant.fields[i].ident.to_string()
++                };
++                (name, layout.field(cx, i).ty)
++            }).collect()
++        )
++    };
+ 
+     let member_description_factory =
+         VariantMDF(VariantMemberDescriptionFactory {
+@@ -1401,22 +1526,22 @@
+     // <unknown>
+     let file_metadata = unknown_file_metadata(cx);
+ 
+-    let def = enum_type.ty_adt_def().unwrap();
+-    let enumerators_metadata: Vec<_> = def.discriminants(cx.tcx)
+-        .zip(&def.variants)
+-        .map(|(discr, v)| {
+-            let name = SmallCStr::new(&v.name.as_str());
+-            unsafe {
+-                Some(llvm::LLVMRustDIBuilderCreateEnumerator(
+-                    DIB(cx),
+-                    name.as_ptr(),
+-                    // FIXME: what if enumeration has i128 discriminant?
+-                    discr.val as u64))
+-            }
+-        })
+-        .collect();
+-
+     let discriminant_type_metadata = |discr: layout::Primitive| {
++        let def = enum_type.ty_adt_def().unwrap();
++        let enumerators_metadata: Vec<_> = def.discriminants(cx.tcx)
++            .zip(&def.variants)
++            .map(|(discr, v)| {
++                let name = SmallCStr::new(&v.name.as_str());
++                unsafe {
++                    Some(llvm::LLVMRustDIBuilderCreateEnumerator(
++                        DIB(cx),
++                        name.as_ptr(),
++                        // FIXME: what if enumeration has i128 discriminant?
++                        discr.val as u64))
++                }
++            })
++            .collect();
++
+         let disr_type_key = (enum_def_id, discr);
+         let cached_discriminant_type_metadata = debug_context(cx).created_enum_disr_types
+                                                                  .borrow()
+@@ -1441,7 +1566,7 @@
+                         discriminant_size.bits(),
+                         discriminant_align.abi_bits() as u32,
+                         create_DIArray(DIB(cx), &enumerators_metadata),
+-                        discriminant_base_type_metadata)
++                        discriminant_base_type_metadata, true)
+                 };
+ 
+                 debug_context(cx).created_enum_disr_types
+@@ -1455,16 +1580,10 @@
+ 
+     let layout = cx.layout_of(enum_type);
+ 
+-    let discriminant_type_metadata = match layout.variants {
+-        layout::Variants::Single { .. } |
+-        layout::Variants::NicheFilling { .. } => None,
+-        layout::Variants::Tagged { ref tag, .. } => {
+-            Some(discriminant_type_metadata(tag.value))
+-        }
+-    };
+-
+-    if let (&layout::Abi::Scalar(_), Some(discr)) = (&layout.abi, discriminant_type_metadata) {
+-        return FinalMetadata(discr);
++    match (&layout.abi, &layout.variants) {
++        (&layout::Abi::Scalar(_), &layout::Variants::Tagged {ref tag, .. }) =>
++            return FinalMetadata(discriminant_type_metadata(tag.value)),
++        _ => {}
+     }
+ 
+     let (enum_type_size, enum_type_align) = layout.size_and_align();
+@@ -1473,30 +1592,145 @@
+     let unique_type_id_str = SmallCStr::new(
+         debug_context(cx).type_map.borrow().get_unique_type_id_as_string(unique_type_id)
+     );
+-    let enum_metadata = unsafe {
+-        llvm::LLVMRustDIBuilderCreateUnionType(
+-        DIB(cx),
+-        containing_scope,
+-        enum_name.as_ptr(),
+-        file_metadata,
+-        UNKNOWN_LINE_NUMBER,
+-        enum_type_size.bits(),
+-        enum_type_align.abi_bits() as u32,
+-        DIFlags::FlagZero,
+-        None,
+-        0, // RuntimeLang
+-        unique_type_id_str.as_ptr())
++
++    if use_enum_fallback(cx) {
++        let discriminant_type_metadata = match layout.variants {
++            layout::Variants::Single { .. } |
++            layout::Variants::NicheFilling { .. } => None,
++            layout::Variants::Tagged { ref tag, .. } => {
++                Some(discriminant_type_metadata(tag.value))
++            }
++        };
++
++        let enum_metadata = unsafe {
++            llvm::LLVMRustDIBuilderCreateUnionType(
++                DIB(cx),
++                containing_scope,
++                enum_name.as_ptr(),
++                file_metadata,
++                UNKNOWN_LINE_NUMBER,
++                enum_type_size.bits(),
++                enum_type_align.abi_bits() as u32,
++                DIFlags::FlagZero,
++                None,
++                0, // RuntimeLang
++                unique_type_id_str.as_ptr())
++        };
++
++        return create_and_register_recursive_type_forward_declaration(
++            cx,
++            enum_type,
++            unique_type_id,
++            enum_metadata,
++            enum_metadata,
++            EnumMDF(EnumMemberDescriptionFactory {
++                enum_type,
++                layout,
++                discriminant_type_metadata,
++                containing_scope,
++                span,
++            }),
++        );
++    }
++
++    let discriminator_metadata = match &layout.variants {
++        // A single-variant enum has no discriminant.
++        &layout::Variants::Single { .. } => None,
++
++        &layout::Variants::NicheFilling { ref niche, .. } => {
++            // Find the integer type of the correct size.
++            let size = niche.value.size(cx);
++            let align = niche.value.align(cx);
++
++            let discr_type = match niche.value {
++                layout::Int(t, _) => t,
++                layout::Float(layout::FloatTy::F32) => Integer::I32,
++                layout::Float(layout::FloatTy::F64) => Integer::I64,
++                layout::Pointer => cx.data_layout().ptr_sized_integer(),
++            }.to_ty(cx.tcx, false);
++
++            let discr_metadata = basic_type_metadata(cx, discr_type);
++            unsafe {
++                Some(llvm::LLVMRustDIBuilderCreateMemberType(
++                    DIB(cx),
++                    containing_scope,
++                    ptr::null_mut(),
++                    file_metadata,
++                    UNKNOWN_LINE_NUMBER,
++                    size.bits(),
++                    align.abi_bits() as u32,
++                    layout.fields.offset(0).bits(),
++                    DIFlags::FlagArtificial,
++                    discr_metadata))
++            }
++        },
++
++        &layout::Variants::Tagged { ref tag, .. } => {
++            let discr_type = tag.value.to_ty(cx.tcx);
++            let (size, align) = cx.size_and_align_of(discr_type);
++
++            let discr_metadata = basic_type_metadata(cx, discr_type);
++            unsafe {
++                Some(llvm::LLVMRustDIBuilderCreateMemberType(
++                    DIB(cx),
++                    containing_scope,
++                    ptr::null_mut(),
++                    file_metadata,
++                    UNKNOWN_LINE_NUMBER,
++                    size.bits(),
++                    align.abi_bits() as u32,
++                    layout.fields.offset(0).bits(),
++                    DIFlags::FlagArtificial,
++                    discr_metadata))
++            }
++        },
++    };
++
++    let empty_array = create_DIArray(DIB(cx), &[]);
++    let variant_part = unsafe {
++        llvm::LLVMRustDIBuilderCreateVariantPart(
++            DIB(cx),
++            containing_scope,
++            ptr::null_mut(),
++            file_metadata,
++            UNKNOWN_LINE_NUMBER,
++            enum_type_size.bits(),
++            enum_type_align.abi_bits() as u32,
++            DIFlags::FlagZero,
++            discriminator_metadata,
++            empty_array,
++            unique_type_id_str.as_ptr())
++    };
++
++    // The variant part must be wrapped in a struct according to DWARF.
++    let type_array = create_DIArray(DIB(cx), &[Some(variant_part)]);
++    let struct_wrapper = unsafe {
++        llvm::LLVMRustDIBuilderCreateStructType(
++            DIB(cx),
++            Some(containing_scope),
++            enum_name.as_ptr(),
++            file_metadata,
++            UNKNOWN_LINE_NUMBER,
++            enum_type_size.bits(),
++            enum_type_align.abi_bits() as u32,
++            DIFlags::FlagZero,
++            None,
++            type_array,
++            0,
++            None,
++            unique_type_id_str.as_ptr())
+     };
+ 
+     return create_and_register_recursive_type_forward_declaration(
+         cx,
+         enum_type,
+         unique_type_id,
+-        enum_metadata,
++        struct_wrapper,
++        variant_part,
+         EnumMDF(EnumMemberDescriptionFactory {
+             enum_type,
+             layout,
+-            discriminant_type_metadata,
++            discriminant_type_metadata: None,
+             containing_scope,
+             span,
+         }),
+@@ -1565,7 +1799,7 @@
+         .map(|member_description| {
+             let member_name = CString::new(member_description.name).unwrap();
+             unsafe {
+-                Some(llvm::LLVMRustDIBuilderCreateMemberType(
++                Some(llvm::LLVMRustDIBuilderCreateVariantMemberType(
+                     DIB(cx),
+                     composite_type_metadata,
+                     member_name.as_ptr(),
+@@ -1574,6 +1808,10 @@
+                     member_description.size.bits(),
+                     member_description.align.abi_bits() as u32,
+                     member_description.offset.bits(),
++                    match member_description.discriminant {
++                        None => None,
++                        Some(value) => Some(C_u64(cx, value)),
++                    },
+                     member_description.flags,
+                     member_description.type_metadata))
+             }
+--- a/src/librustc_codegen_llvm/llvm/ffi.rs
++++ b/src/librustc_codegen_llvm/llvm/ffi.rs
+@@ -1307,6 +1307,19 @@
+                                              Ty: &'a DIType)
+                                              -> &'a DIDerivedType;
+ 
++    pub fn LLVMRustDIBuilderCreateVariantMemberType(Builder: &DIBuilder<'a>,
++                                                    Scope: &'a DIScope,
++                                                    Name: *const c_char,
++                                                    File: &'a DIFile,
++                                                    LineNumber: c_uint,
++                                                    SizeInBits: u64,
++                                                    AlignInBits: u32,
++                                                    OffsetInBits: u64,
++                                                    Discriminant: Option<&'a Value>,
++                                                    Flags: DIFlags,
++                                                    Ty: &'a DIType)
++                                                    -> &'a DIType;
++
+     pub fn LLVMRustDIBuilderCreateLexicalBlock(Builder: &DIBuilder<'a>,
+                                                Scope: &'a DIScope,
+                                                File: &'a DIFile,
+@@ -1384,7 +1397,8 @@
+                                                   SizeInBits: u64,
+                                                   AlignInBits: u32,
+                                                   Elements: &'a DIArray,
+-                                                  ClassType: &'a DIType)
++                                                  ClassType: &'a DIType,
++                                                  IsFixed: bool)
+                                                   -> &'a DIType;
+ 
+     pub fn LLVMRustDIBuilderCreateUnionType(Builder: &DIBuilder<'a>,
+@@ -1400,6 +1414,19 @@
+                                             UniqueId: *const c_char)
+                                             -> &'a DIType;
+ 
++    pub fn LLVMRustDIBuilderCreateVariantPart(Builder: &DIBuilder<'a>,
++                                              Scope: &'a DIScope,
++                                              Name: *const c_char,
++                                              File: &'a DIFile,
++                                              LineNo: c_uint,
++                                              SizeInBits: u64,
++                                              AlignInBits: u32,
++                                              Flags: DIFlags,
++                                              Discriminator: Option<&'a DIDerivedType>,
++                                              Elements: &'a DIArray,
++                                              UniqueId: *const c_char)
++                                              -> &'a DIDerivedType;
++
+     pub fn LLVMSetUnnamedAddr(GlobalVar: &Value, UnnamedAddr: Bool);
+ 
+     pub fn LLVMRustDIBuilderCreateTemplateTypeParameter(Builder: &DIBuilder<'a>,
+--- a/src/rustllvm/RustWrapper.cpp
++++ b/src/rustllvm/RustWrapper.cpp
+@@ -713,6 +713,21 @@
+       unwrapDI<DIType>(VTableHolder), UniqueId));
+ }
+ 
++extern "C" LLVMMetadataRef LLVMRustDIBuilderCreateVariantPart(
++    LLVMRustDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
++    LLVMMetadataRef File, unsigned LineNumber, uint64_t SizeInBits,
++    uint32_t AlignInBits, LLVMRustDIFlags Flags, LLVMMetadataRef Discriminator,
++    LLVMMetadataRef Elements, const char *UniqueId) {
++#if LLVM_VERSION_GE(7, 0)
++  return wrap(Builder->createVariantPart(
++      unwrapDI<DIDescriptor>(Scope), Name, unwrapDI<DIFile>(File), LineNumber,
++      SizeInBits, AlignInBits, fromRust(Flags), unwrapDI<DIDerivedType>(Discriminator),
++      DINodeArray(unwrapDI<MDTuple>(Elements)), UniqueId));
++#else
++  abort();
++#endif
++}
++
+ extern "C" LLVMMetadataRef LLVMRustDIBuilderCreateMemberType(
+     LLVMRustDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+     LLVMMetadataRef File, unsigned LineNo, uint64_t SizeInBits,
+@@ -724,6 +739,28 @@
+                                         fromRust(Flags), unwrapDI<DIType>(Ty)));
+ }
+ 
++extern "C" LLVMMetadataRef LLVMRustDIBuilderCreateVariantMemberType(
++    LLVMRustDIBuilderRef Builder, LLVMMetadataRef Scope,
++    const char *Name, LLVMMetadataRef File, unsigned LineNo, uint64_t SizeInBits,
++    uint32_t AlignInBits, uint64_t OffsetInBits, LLVMValueRef Discriminant,
++    LLVMRustDIFlags Flags, LLVMMetadataRef Ty) {
++#if LLVM_VERSION_GE(7, 0)
++  llvm::ConstantInt* D = nullptr;
++  if (Discriminant) {
++    D = unwrap<llvm::ConstantInt>(Discriminant);
++  }
++  return wrap(Builder->createVariantMemberType(unwrapDI<DIDescriptor>(Scope), Name,
++                                               unwrapDI<DIFile>(File), LineNo,
++                                               SizeInBits, AlignInBits, OffsetInBits, D,
++                                               fromRust(Flags), unwrapDI<DIType>(Ty)));
++#else
++  return wrap(Builder->createMemberType(unwrapDI<DIDescriptor>(Scope), Name,
++                                        unwrapDI<DIFile>(File), LineNo,
++                                        SizeInBits, AlignInBits, OffsetInBits,
++                                        fromRust(Flags), unwrapDI<DIType>(Ty)));
++#endif
++}
++
+ extern "C" LLVMMetadataRef LLVMRustDIBuilderCreateLexicalBlock(
+     LLVMRustDIBuilderRef Builder, LLVMMetadataRef Scope,
+     LLVMMetadataRef File, unsigned Line, unsigned Col) {
+@@ -826,11 +863,19 @@
+     LLVMRustDIBuilderRef Builder, LLVMMetadataRef Scope, const char *Name,
+     LLVMMetadataRef File, unsigned LineNumber, uint64_t SizeInBits,
+     uint32_t AlignInBits, LLVMMetadataRef Elements,
+-    LLVMMetadataRef ClassTy) {
++    LLVMMetadataRef ClassTy, bool IsFixed) {
++#if LLVM_VERSION_GE(7, 0)
++  return wrap(Builder->createEnumerationType(
++      unwrapDI<DIDescriptor>(Scope), Name, unwrapDI<DIFile>(File), LineNumber,
++      SizeInBits, AlignInBits, DINodeArray(unwrapDI<MDTuple>(Elements)),
++      unwrapDI<DIType>(ClassTy), "", IsFixed));
++#else
++  // Ignore IsFixed on older LLVM.
+   return wrap(Builder->createEnumerationType(
+       unwrapDI<DIDescriptor>(Scope), Name, unwrapDI<DIFile>(File), LineNumber,
+       SizeInBits, AlignInBits, DINodeArray(unwrapDI<MDTuple>(Elements)),
+-      unwrapDI<DIType>(ClassTy)));
++      unwrapDI<DIType>(ClassTy), ""));
++#endif
+ }
+ 
+ extern "C" LLVMMetadataRef LLVMRustDIBuilderCreateUnionType(
+--- /dev/null
++++ b/src/test/codegen/enum-debug-clike.rs
+@@ -0,0 +1,35 @@
++// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
++// file at the top-level directory of this distribution and at
++// http://rust-lang.org/COPYRIGHT.
++//
++// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
++// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
++// option. This file may not be copied, modified, or distributed
++// except according to those terms.
++
++// This test depends on a patch that was committed to upstream LLVM
++// before 7.0, then backported to the Rust LLVM fork.  It tests that
++// debug info for "c-like" enums is properly emitted.
++
++// ignore-tidy-linelength
++// ignore-windows
++// min-system-llvm-version 7.0
++
++// compile-flags: -g -C no-prepopulate-passes
++
++// CHECK-LABEL: @main
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_enumeration_type,{{.*}}name: "E",{{.*}}flags: DIFlagFixedEnum,{{.*}}
++// CHECK: {{.*}}DIEnumerator{{.*}}name: "A",{{.*}}value: {{[0-9].*}}
++// CHECK: {{.*}}DIEnumerator{{.*}}name: "B",{{.*}}value: {{[0-9].*}}
++// CHECK: {{.*}}DIEnumerator{{.*}}name: "C",{{.*}}value: {{[0-9].*}}
++
++#![allow(dead_code)]
++#![allow(unused_variables)]
++#![allow(unused_assignments)]
++
++enum E { A, B, C }
++
++pub fn main() {
++    let e = E::C;
++}
+--- /dev/null
++++ b/src/test/codegen/enum-debug-niche.rs
+@@ -0,0 +1,42 @@
++// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
++// file at the top-level directory of this distribution and at
++// http://rust-lang.org/COPYRIGHT.
++//
++// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
++// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
++// option. This file may not be copied, modified, or distributed
++// except according to those terms.
++
++// This test depends on a patch that was committed to upstream LLVM
++// before 7.0, then backported to the Rust LLVM fork.  It tests that
++// optimized enum debug info accurately reflects the enum layout.
++
++// ignore-tidy-linelength
++// ignore-windows
++// min-system-llvm-version 7.0
++
++// compile-flags: -g -C no-prepopulate-passes
++
++// CHECK-LABEL: @main
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_variant_part,{{.*}}discriminator:{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "A",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "A",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "B",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "B",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "C",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "C",{{.*}}
++// CHECK-NOT: {{.*}}DIDerivedType{{.*}}name: "D",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "D",{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "D",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}flags: DIFlagArtificial{{.*}}
++
++#![allow(dead_code)]
++#![allow(unused_variables)]
++#![allow(unused_assignments)]
++
++enum E { A, B, C, D(bool) }
++
++pub fn main() {
++    let e = E::D(true);
++}
+--- /dev/null
++++ b/src/test/codegen/enum-debug-tagged.rs
+@@ -0,0 +1,40 @@
++// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
++// file at the top-level directory of this distribution and at
++// http://rust-lang.org/COPYRIGHT.
++//
++// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
++// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
++// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
++// option. This file may not be copied, modified, or distributed
++// except according to those terms.
++
++// This test depends on a patch that was committed to upstream LLVM
++// before 7.0, then backported to the Rust LLVM fork.  It tests that
++// debug info for tagged (ordinary) enums is properly emitted.
++
++// ignore-tidy-linelength
++// ignore-windows
++// min-system-llvm-version 7.0
++
++// compile-flags: -g -C no-prepopulate-passes
++
++// CHECK-LABEL: @main
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "E",{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_variant_part,{{.*}}discriminator:{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "A",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "A",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "__0",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "B",{{.*}}extraData:{{.*}}
++// CHECK: {{.*}}DICompositeType{{.*}}tag: DW_TAG_structure_type,{{.*}}name: "B",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}name: "__0",{{.*}}
++// CHECK: {{.*}}DIDerivedType{{.*}}tag: DW_TAG_member,{{.*}}flags: DIFlagArtificial{{.*}}
++
++#![allow(dead_code)]
++#![allow(unused_variables)]
++#![allow(unused_assignments)]
++
++enum E { A(u32), B(u32) }
++
++pub fn main() {
++    let e = E::A(23);
++}
+--- a/src/test/debuginfo/basic-types.rs
++++ b/src/test/debuginfo/basic-types.rs
+@@ -16,6 +16,10 @@
+ 
+ // min-lldb-version: 310
+ 
++// This fails on lldb 6.0.1 on x86-64 Fedora 28; so mark it macOS-only
++// for now.
++// only-macos
++
+ // compile-flags:-g
+ 
+ // === GDB TESTS ===================================================================================
+--- a/src/test/debuginfo/borrowed-enum.rs
++++ b/src/test/debuginfo/borrowed-enum.rs
+@@ -9,8 +9,11 @@
+ // except according to those terms.
+ 
+ // ignore-tidy-linelength
+-// min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb or lldb that can read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++// rust-lldb
+ 
+ // compile-flags:-g
+ 
+@@ -19,15 +22,12 @@
+ // gdb-command:run
+ 
+ // gdb-command:print *the_a_ref
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = TheA, x = 0, y = 8970181431921507452}, {RUST$ENUM$DISR = TheA, [...]}}
+ // gdbr-check:$1 = borrowed_enum::ABC::TheA{x: 0, y: 8970181431921507452}
+ 
+ // gdb-command:print *the_b_ref
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = TheB, [...]}, {RUST$ENUM$DISR = TheB, __0 = 0, __1 = 286331153, __2 = 286331153}}
+ // gdbr-check:$2 = borrowed_enum::ABC::TheB(0, 286331153, 286331153)
+ 
+ // gdb-command:print *univariant_ref
+-// gdbg-check:$3 = {{__0 = 4820353753753434}}
+ // gdbr-check:$3 = borrowed_enum::Univariant::TheOnlyCase(4820353753753434)
+ 
+ 
+@@ -36,14 +36,11 @@
+ // lldb-command:run
+ 
+ // lldb-command:print *the_a_ref
+-// lldbg-check:[...]$0 = TheA { x: 0, y: 8970181431921507452 }
+-// lldbr-check:(borrowed_enum::ABC::TheA) *the_a_ref = TheA { borrowed_enum::ABC::TheA: 0, borrowed_enum::ABC::TheB: 8970181431921507452 }
++// lldbr-check:(borrowed_enum::ABC::TheA) *the_a_ref = TheA { TheA: 0, TheB: 8970181431921507452 }
+ // lldb-command:print *the_b_ref
+-// lldbg-check:[...]$1 = TheB(0, 286331153, 286331153)
+ // lldbr-check:(borrowed_enum::ABC::TheB) *the_b_ref = { = 0 = 286331153 = 286331153 }
+ // lldb-command:print *univariant_ref
+-// lldbg-check:[...]$2 = TheOnlyCase(4820353753753434)
+-// lldbr-check:(borrowed_enum::Univariant) *univariant_ref = { borrowed_enum::TheOnlyCase = { = 4820353753753434 } }
++// lldbr-check:(borrowed_enum::Univariant) *univariant_ref = { TheOnlyCase = { = 4820353753753434 } }
+ 
+ #![allow(unused_variables)]
+ #![feature(omit_gdb_pretty_printer_section)]
+--- a/src/test/debuginfo/cross-crate-spans.rs
++++ b/src/test/debuginfo/cross-crate-spans.rs
+@@ -13,6 +13,10 @@
+ 
+ // min-lldb-version: 310
+ 
++// This fails on lldb 6.0.1 on x86-64 Fedora 28; so mark it macOS-only
++// for now.
++// only-macos
++
+ // aux-build:cross_crate_spans.rs
+ extern crate cross_crate_spans;
+ 
+--- a/src/test/debuginfo/destructured-for-loop-variable.rs
++++ b/src/test/debuginfo/destructured-for-loop-variable.rs
+@@ -12,6 +12,10 @@
+ 
+ // min-lldb-version: 310
+ 
++// This fails on lldb 6.0.1 on x86-64 Fedora 28; so mark it macOS-only
++// for now.
++// only-macos
++
+ // compile-flags:-g
+ 
+ // === GDB TESTS ===================================================================================
+--- a/src/test/debuginfo/generic-enum-with-different-disr-sizes.rs
++++ b/src/test/debuginfo/generic-enum-with-different-disr-sizes.rs
+@@ -12,43 +12,39 @@
+ // ignore-lldb: FIXME(#27089)
+ // min-lldb-version: 310
+ 
++// Require LLVM with DW_TAG_variant_part and a gdb that can read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++
+ // compile-flags:-g
+ 
+ // === GDB TESTS ===================================================================================
+ // gdb-command:run
+ 
+ // gdb-command:print eight_bytes1
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = Variant1, __0 = 100}, {RUST$ENUM$DISR = Variant1, __0 = 100}}
+-// gdbr-check:$1 = generic_enum_with_different_disr_sizes::Enum::Variant1(100)
++// gdbr-check:$1 = generic_enum_with_different_disr_sizes::Enum<f64>::Variant1(100)
+ 
+ // gdb-command:print four_bytes1
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = Variant1, __0 = 101}, {RUST$ENUM$DISR = Variant1, __0 = 101}}
+-// gdbr-check:$2 = generic_enum_with_different_disr_sizes::Enum::Variant1(101)
++// gdbr-check:$2 = generic_enum_with_different_disr_sizes::Enum<i32>::Variant1(101)
+ 
+ // gdb-command:print two_bytes1
+-// gdbg-check:$3 = {{RUST$ENUM$DISR = Variant1, __0 = 102}, {RUST$ENUM$DISR = Variant1, __0 = 102}}
+-// gdbr-check:$3 = generic_enum_with_different_disr_sizes::Enum::Variant1(102)
++// gdbr-check:$3 = generic_enum_with_different_disr_sizes::Enum<i16>::Variant1(102)
+ 
+ // gdb-command:print one_byte1
+-// gdbg-check:$4 = {{RUST$ENUM$DISR = Variant1, __0 = 65 'A'}, {RUST$ENUM$DISR = Variant1, __0 = 65 'A'}}
+-// gdbr-check:$4 = generic_enum_with_different_disr_sizes::Enum::Variant1(65)
++// gdbr-check:$4 = generic_enum_with_different_disr_sizes::Enum<u8>::Variant1(65)
+ 
+ 
+ // gdb-command:print eight_bytes2
+-// gdbg-check:$5 = {{RUST$ENUM$DISR = Variant2, __0 = 100}, {RUST$ENUM$DISR = Variant2, __0 = 100}}
+-// gdbr-check:$5 = generic_enum_with_different_disr_sizes::Enum::Variant2(100)
++// gdbr-check:$5 = generic_enum_with_different_disr_sizes::Enum<f64>::Variant2(100)
+ 
+ // gdb-command:print four_bytes2
+-// gdbg-check:$6 = {{RUST$ENUM$DISR = Variant2, __0 = 101}, {RUST$ENUM$DISR = Variant2, __0 = 101}}
+-// gdbr-check:$6 = generic_enum_with_different_disr_sizes::Enum::Variant2(101)
++// gdbr-check:$6 = generic_enum_with_different_disr_sizes::Enum<i32>::Variant2(101)
+ 
+ // gdb-command:print two_bytes2
+-// gdbg-check:$7 = {{RUST$ENUM$DISR = Variant2, __0 = 102}, {RUST$ENUM$DISR = Variant2, __0 = 102}}
+-// gdbr-check:$7 = generic_enum_with_different_disr_sizes::Enum::Variant2(102)
++// gdbr-check:$7 = generic_enum_with_different_disr_sizes::Enum<i16>::Variant2(102)
+ 
+ // gdb-command:print one_byte2
+-// gdbg-check:$8 = {{RUST$ENUM$DISR = Variant2, __0 = 65 'A'}, {RUST$ENUM$DISR = Variant2, __0 = 65 'A'}}
+-// gdbr-check:$8 = generic_enum_with_different_disr_sizes::Enum::Variant2(65)
++// gdbr-check:$8 = generic_enum_with_different_disr_sizes::Enum<u8>::Variant2(65)
+ 
+ // gdb-command:continue
+ 
+--- a/src/test/debuginfo/generic-struct-style-enum.rs
++++ b/src/test/debuginfo/generic-struct-style-enum.rs
+@@ -10,7 +10,10 @@
+ 
+ // ignore-tidy-linelength
+ // min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb that can read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
+ 
+ // compile-flags:-g
+ 
+@@ -18,19 +21,15 @@
+ // gdb-command:run
+ 
+ // gdb-command:print case1
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = Case1, a = 0, b = 31868, c = 31868, d = 31868, e = 31868}, {RUST$ENUM$DISR = Case1, [...]}, {RUST$ENUM$DISR = Case1, [...]}}
+-// gdbr-check:$1 = generic_struct_style_enum::Regular::Case1{a: 0, b: 31868, c: 31868, d: 31868, e: 31868}
++// gdbr-check:$1 = generic_struct_style_enum::Regular<u16, u32, i64>::Case1{a: 0, b: 31868, c: 31868, d: 31868, e: 31868}
+ 
+ // gdb-command:print case2
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = Case2, [...]}, {RUST$ENUM$DISR = Case2, a = 0, b = 286331153, c = 286331153}, {RUST$ENUM$DISR = Case2, [...]}}
+-// gdbr-check:$2 = generic_struct_style_enum::Regular::Case2{a: 0, b: 286331153, c: 286331153}
++// gdbr-check:$2 = generic_struct_style_enum::Regular<i16, u32, i64>::Case2{a: 0, b: 286331153, c: 286331153}
+ 
+ // gdb-command:print case3
+-// gdbg-check:$3 = {{RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, a = 0, b = 6438275382588823897}}
+-// gdbr-check:$3 = generic_struct_style_enum::Regular::Case3{a: 0, b: 6438275382588823897}
++// gdbr-check:$3 = generic_struct_style_enum::Regular<u16, i32, u64>::Case3{a: 0, b: 6438275382588823897}
+ 
+ // gdb-command:print univariant
+-// gdbg-check:$4 = {{a = -1}}
+ // gdbr-check:$4 = generic_struct_style_enum::Univariant<i32>::TheOnlyCase{a: -1}
+ 
+ 
+--- a/src/test/debuginfo/generic-tuple-style-enum.rs
++++ b/src/test/debuginfo/generic-tuple-style-enum.rs
+@@ -9,8 +9,12 @@
+ // except according to those terms.
+ 
+ // ignore-tidy-linelength
+-// min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb and lldb that can
++// read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++// rust-lldb
+ 
+ // compile-flags:-g
+ 
+@@ -20,19 +24,15 @@
+ // gdb-command:run
+ 
+ // gdb-command:print case1
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = Case1, __0 = 0, __1 = 31868, __2 = 31868, __3 = 31868, __4 = 31868}, {RUST$ENUM$DISR = Case1, [...]}, {RUST$ENUM$DISR = Case1, [...]}}
+-// gdbr-check:$1 = generic_tuple_style_enum::Regular::Case1(0, 31868, 31868, 31868, 31868)
++// gdbr-check:$1 = generic_tuple_style_enum::Regular<u16, u32, u64>::Case1(0, 31868, 31868, 31868, 31868)
+ 
+ // gdb-command:print case2
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = Case2, [...]}, {RUST$ENUM$DISR = Case2, __0 = 0, __1 = 286331153, __2 = 286331153}, {RUST$ENUM$DISR = Case2, [...]}}
+-// gdbr-check:$2 = generic_tuple_style_enum::Regular::Case2(0, 286331153, 286331153)
++// gdbr-check:$2 = generic_tuple_style_enum::Regular<i16, i32, i64>::Case2(0, 286331153, 286331153)
+ 
+ // gdb-command:print case3
+-// gdbg-check:$3 = {{RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, __0 = 0, __1 = 6438275382588823897}}
+-// gdbr-check:$3 = generic_tuple_style_enum::Regular::Case3(0, 6438275382588823897)
++// gdbr-check:$3 = generic_tuple_style_enum::Regular<i16, i32, i64>::Case3(0, 6438275382588823897)
+ 
+ // gdb-command:print univariant
+-// gdbg-check:$4 = {{__0 = -1}}
+ // gdbr-check:$4 = generic_tuple_style_enum::Univariant<i64>::TheOnlyCase(-1)
+ 
+ 
+@@ -41,20 +41,16 @@
+ // lldb-command:run
+ 
+ // lldb-command:print case1
+-// lldbg-check:[...]$0 = Case1(0, 31868, 31868, 31868, 31868)
+ // lldbr-check:(generic_tuple_style_enum::Regular<u16, u32, u64>::Case1) case1 = { = 0 = 31868 = 31868 = 31868 = 31868 }
+ 
+ // lldb-command:print case2
+-// lldbg-check:[...]$1 = Case2(0, 286331153, 286331153)
+-// lldbr-check:(generic_tuple_style_enum::Regular<i16, i32, i64>::Case2) case2 = Regular<i16, i32, i64>::Case2 { generic_tuple_style_enum::Regular<i16, i32, i64>::Case1: 0, generic_tuple_style_enum::Regular<i16, i32, i64>::Case2: 286331153, generic_tuple_style_enum::Regular<i16, i32, i64>::Case3: 286331153 }
++// lldbr-check:(generic_tuple_style_enum::Regular<i16, i32, i64>::Case2) case2 = Regular<i16, i32, i64>::Case2 { Case1: 0, Case2: 286331153, Case3: 286331153 }
+ 
+ // lldb-command:print case3
+-// lldbg-check:[...]$2 = Case3(0, 6438275382588823897)
+-// lldbr-check:(generic_tuple_style_enum::Regular<i16, i32, i64>::Case3) case3 = Regular<i16, i32, i64>::Case3 { generic_tuple_style_enum::Regular<i16, i32, i64>::Case1: 0, generic_tuple_style_enum::Regular<i16, i32, i64>::Case2: 6438275382588823897 }
++// lldbr-check:(generic_tuple_style_enum::Regular<i16, i32, i64>::Case3) case3 = Regular<i16, i32, i64>::Case3 { Case1: 0, Case2: 6438275382588823897 }
+ 
+ // lldb-command:print univariant
+-// lldbg-check:[...]$3 = TheOnlyCase(-1)
+-// lldbr-check:(generic_tuple_style_enum::Univariant<i64>) univariant = { generic_tuple_style_enum::TheOnlyCase = { = -1 } }
++// lldbr-check:(generic_tuple_style_enum::Univariant<i64>) univariant = { TheOnlyCase = { = -1 } }
+ 
+ #![feature(omit_gdb_pretty_printer_section)]
+ #![omit_gdb_pretty_printer_section]
+--- a/src/test/debuginfo/method-on-tuple-struct.rs
++++ b/src/test/debuginfo/method-on-tuple-struct.rs
+@@ -74,7 +74,7 @@
+ // STACK BY REF
+ // lldb-command:print *self
+ // lldbg-check:[...]$0 = TupleStruct(100, -100.5)
+-// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = { = 100 = -100.5 }
++// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = TupleStruct(100, -100.5)
+ // lldb-command:print arg1
+ // lldbg-check:[...]$1 = -1
+ // lldbr-check:(isize) arg1 = -1
+@@ -86,7 +86,7 @@
+ // STACK BY VAL
+ // lldb-command:print self
+ // lldbg-check:[...]$3 = TupleStruct(100, -100.5)
+-// lldbr-check:(method_on_tuple_struct::TupleStruct) self = { = 100 = -100.5 }
++// lldbr-check:(method_on_tuple_struct::TupleStruct) self = TupleStruct(100, -100.5)
+ // lldb-command:print arg1
+ // lldbg-check:[...]$4 = -3
+ // lldbr-check:(isize) arg1 = -3
+@@ -98,7 +98,7 @@
+ // OWNED BY REF
+ // lldb-command:print *self
+ // lldbg-check:[...]$6 = TupleStruct(200, -200.5)
+-// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = { = 200 = -200.5 }
++// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = TupleStruct(200, -200.5)
+ // lldb-command:print arg1
+ // lldbg-check:[...]$7 = -5
+ // lldbr-check:(isize) arg1 = -5
+@@ -110,7 +110,7 @@
+ // OWNED BY VAL
+ // lldb-command:print self
+ // lldbg-check:[...]$9 = TupleStruct(200, -200.5)
+-// lldbr-check:(method_on_tuple_struct::TupleStruct) self = { = 200 = -200.5 }
++// lldbr-check:(method_on_tuple_struct::TupleStruct) self = TupleStruct(200, -200.5)
+ // lldb-command:print arg1
+ // lldbg-check:[...]$10 = -7
+ // lldbr-check:(isize) arg1 = -7
+@@ -122,7 +122,7 @@
+ // OWNED MOVED
+ // lldb-command:print *self
+ // lldbg-check:[...]$12 = TupleStruct(200, -200.5)
+-// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = { = 200 = -200.5 }
++// lldbr-check:(method_on_tuple_struct::TupleStruct) *self = TupleStruct(200, -200.5)
+ // lldb-command:print arg1
+ // lldbg-check:[...]$13 = -9
+ // lldbr-check:(isize) arg1 = -9
+--- a/src/test/debuginfo/nil-enum.rs
++++ b/src/test/debuginfo/nil-enum.rs
+@@ -14,16 +14,21 @@
+ // ignore-lldb
+ 
+ 
++// Require LLVM with DW_TAG_variant_part and a gdb that can read it.
++// gdb 8.2.0 crashes on this test case, see
++// https://sourceware.org/bugzilla/show_bug.cgi?id=23626
++// This will be fixed in the next release, which will be >= 8.2.1.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2.1
++
+ // compile-flags:-g
+ // gdb-command:run
+ 
+ // gdb-command:print first
+-// gdbg-check:$1 = {<No data fields>}
+-// gdbr-check:$1 = <error reading variable>
++// gdbr-check:$1 = nil_enum::ANilEnum {<No data fields>}
+ 
+ // gdb-command:print second
+-// gdbg-check:$2 = {<No data fields>}
+-// gdbr-check:$2 = <error reading variable>
++// gdbr-check:$2 = nil_enum::AnotherNilEnum {<No data fields>}
+ 
+ #![allow(unused_variables)]
+ #![feature(omit_gdb_pretty_printer_section)]
+--- a/src/test/debuginfo/recursive-struct.rs
++++ b/src/test/debuginfo/recursive-struct.rs
+@@ -10,7 +10,10 @@
+ 
+ // ignore-tidy-linelength
+ // ignore-lldb
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb that can read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
+ 
+ // compile-flags:-g
+ 
+@@ -18,66 +21,52 @@
+ 
+ // gdb-command:print stack_unique.value
+ // gdb-check:$1 = 0
+-// gdbg-command:print stack_unique.next.RUST$ENCODED$ENUM$0$Empty.val->value
+ // gdbr-command:print stack_unique.next.val.value
+ // gdb-check:$2 = 1
+ 
+-// gdbg-command:print unique_unique->value
+ // gdbr-command:print unique_unique.value
+ // gdb-check:$3 = 2
+-// gdbg-command:print unique_unique->next.RUST$ENCODED$ENUM$0$Empty.val->value
+ // gdbr-command:print unique_unique.next.val.value
+ // gdb-check:$4 = 3
+ 
+ // gdb-command:print vec_unique[0].value
+ // gdb-check:$5 = 6.5
+-// gdbg-command:print vec_unique[0].next.RUST$ENCODED$ENUM$0$Empty.val->value
+ // gdbr-command:print vec_unique[0].next.val.value
+ // gdb-check:$6 = 7.5
+ 
+-// gdbg-command:print borrowed_unique->value
+ // gdbr-command:print borrowed_unique.value
+ // gdb-check:$7 = 8.5
+-// gdbg-command:print borrowed_unique->next.RUST$ENCODED$ENUM$0$Empty.val->value
+ // gdbr-command:print borrowed_unique.next.val.value
+ // gdb-check:$8 = 9.5
+ 
+ // LONG CYCLE
+ // gdb-command:print long_cycle1.value
+ // gdb-check:$9 = 20
+-// gdbg-command:print long_cycle1.next->value
+ // gdbr-command:print long_cycle1.next.value
+ // gdb-check:$10 = 21
+-// gdbg-command:print long_cycle1.next->next->value
+ // gdbr-command:print long_cycle1.next.next.value
+ // gdb-check:$11 = 22
+-// gdbg-command:print long_cycle1.next->next->next->value
+ // gdbr-command:print long_cycle1.next.next.next.value
+ // gdb-check:$12 = 23
+ 
+ // gdb-command:print long_cycle2.value
+ // gdb-check:$13 = 24
+-// gdbg-command:print long_cycle2.next->value
+ // gdbr-command:print long_cycle2.next.value
+ // gdb-check:$14 = 25
+-// gdbg-command:print long_cycle2.next->next->value
+ // gdbr-command:print long_cycle2.next.next.value
+ // gdb-check:$15 = 26
+ 
+ // gdb-command:print long_cycle3.value
+ // gdb-check:$16 = 27
+-// gdbg-command:print long_cycle3.next->value
+ // gdbr-command:print long_cycle3.next.value
+ // gdb-check:$17 = 28
+ 
+ // gdb-command:print long_cycle4.value
+ // gdb-check:$18 = 29.5
+ 
+-// gdbg-command:print (*****long_cycle_w_anonymous_types).value
+ // gdbr-command:print long_cycle_w_anonymous_types.value
+ // gdb-check:$19 = 30
+ 
+-// gdbg-command:print (*****((*****long_cycle_w_anonymous_types).next.RUST$ENCODED$ENUM$0$Empty.val)).value
+ // gdbr-command:print long_cycle_w_anonymous_types.next.val.value
+ // gdb-check:$20 = 31
+ 
+--- a/src/test/debuginfo/struct-style-enum.rs
++++ b/src/test/debuginfo/struct-style-enum.rs
+@@ -9,8 +9,12 @@
+ // except according to those terms.
+ 
+ // ignore-tidy-linelength
+-// min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb and lldb that can
++// read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++// rust-lldb
+ 
+ // compile-flags:-g
+ 
+@@ -20,19 +24,15 @@
+ // gdb-command:run
+ 
+ // gdb-command:print case1
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = Case1, a = 0, b = 31868, c = 31868, d = 31868, e = 31868}, {RUST$ENUM$DISR = Case1, [...]}, {RUST$ENUM$DISR = Case1, [...]}}
+ // gdbr-check:$1 = struct_style_enum::Regular::Case1{a: 0, b: 31868, c: 31868, d: 31868, e: 31868}
+ 
+ // gdb-command:print case2
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = Case2, [...]}, {RUST$ENUM$DISR = Case2, a = 0, b = 286331153, c = 286331153}, {RUST$ENUM$DISR = Case2, [...]}}
+ // gdbr-check:$2 = struct_style_enum::Regular::Case2{a: 0, b: 286331153, c: 286331153}
+ 
+ // gdb-command:print case3
+-// gdbg-check:$3 = {{RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, a = 0, b = 6438275382588823897}}
+ // gdbr-check:$3 = struct_style_enum::Regular::Case3{a: 0, b: 6438275382588823897}
+ 
+ // gdb-command:print univariant
+-// gdbg-check:$4 = {{a = -1}}
+ // gdbr-check:$4 = struct_style_enum::Univariant::TheOnlyCase{a: -1}
+ 
+ 
+@@ -41,20 +41,16 @@
+ // lldb-command:run
+ 
+ // lldb-command:print case1
+-// lldbg-check:[...]$0 = Case1 { a: 0, b: 31868, c: 31868, d: 31868, e: 31868 }
+ // lldbr-check:(struct_style_enum::Regular::Case1) case1 = { a = 0 b = 31868 c = 31868 d = 31868 e = 31868 }
+ 
+ // lldb-command:print case2
+-// lldbg-check:[...]$1 = Case2 { a: 0, b: 286331153, c: 286331153 }
+-// lldbr-check:(struct_style_enum::Regular::Case2) case2 = Case2 { struct_style_enum::Regular::Case1: 0, struct_style_enum::Regular::Case2: 286331153, struct_style_enum::Regular::Case3: 286331153 }
++// lldbr-check:(struct_style_enum::Regular::Case2) case2 = Case2 { Case1: 0, Case2: 286331153, Case3: 286331153 }
+ 
+ // lldb-command:print case3
+-// lldbg-check:[...]$2 = Case3 { a: 0, b: 6438275382588823897 }
+-// lldbr-check:(struct_style_enum::Regular::Case3) case3 = Case3 { struct_style_enum::Regular::Case1: 0, struct_style_enum::Regular::Case2: 6438275382588823897 }
++// lldbr-check:(struct_style_enum::Regular::Case3) case3 = Case3 { Case1: 0, Case2: 6438275382588823897 }
+ 
+ // lldb-command:print univariant
+-// lldbg-check:[...]$3 = TheOnlyCase { a: -1 }
+-// lldbr-check:(struct_style_enum::Univariant) univariant = Univariant { struct_style_enum::TheOnlyCase: TheOnlyCase { a: -1 } }
++// lldbr-check:(struct_style_enum::Univariant) univariant = Univariant { TheOnlyCase: TheOnlyCase { a: -1 } }
+ 
+ #![allow(unused_variables)]
+ #![feature(omit_gdb_pretty_printer_section)]
+--- a/src/test/debuginfo/tuple-style-enum.rs
++++ b/src/test/debuginfo/tuple-style-enum.rs
+@@ -9,8 +9,12 @@
+ // except according to those terms.
+ 
+ // ignore-tidy-linelength
+-// min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb and lldb that can
++// read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++// rust-lldb
+ 
+ // compile-flags:-g
+ 
+@@ -20,19 +24,15 @@
+ // gdb-command:run
+ 
+ // gdb-command:print case1
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = Case1, __0 = 0, __1 = 31868, __2 = 31868, __3 = 31868, __4 = 31868}, {RUST$ENUM$DISR = Case1, [...]}, {RUST$ENUM$DISR = Case1, [...]}}
+ // gdbr-check:$1 = tuple_style_enum::Regular::Case1(0, 31868, 31868, 31868, 31868)
+ 
+ // gdb-command:print case2
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = Case2, [...]}, {RUST$ENUM$DISR = Case2, __0 = 0, __1 = 286331153, __2 = 286331153}, {RUST$ENUM$DISR = Case2, [...]}}
+ // gdbr-check:$2 = tuple_style_enum::Regular::Case2(0, 286331153, 286331153)
+ 
+ // gdb-command:print case3
+-// gdbg-check:$3 = {{RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, [...]}, {RUST$ENUM$DISR = Case3, __0 = 0, __1 = 6438275382588823897}}
+ // gdbr-check:$3 = tuple_style_enum::Regular::Case3(0, 6438275382588823897)
+ 
+ // gdb-command:print univariant
+-// gdbg-check:$4 = {{__0 = -1}}
+ // gdbr-check:$4 = tuple_style_enum::Univariant::TheOnlyCase(-1)
+ 
+ 
+@@ -41,20 +41,16 @@
+ // lldb-command:run
+ 
+ // lldb-command:print case1
+-// lldbg-check:[...]$0 = Case1(0, 31868, 31868, 31868, 31868)
+ // lldbr-check:(tuple_style_enum::Regular::Case1) case1 = { = 0 = 31868 = 31868 = 31868 = 31868 }
+ 
+ // lldb-command:print case2
+-// lldbg-check:[...]$1 = Case2(0, 286331153, 286331153)
+-// lldbr-check:(tuple_style_enum::Regular::Case2) case2 = Case2 { tuple_style_enum::Regular::Case1: 0, tuple_style_enum::Regular::Case2: 286331153, tuple_style_enum::Regular::Case3: 286331153 }
++// lldbr-check:(tuple_style_enum::Regular::Case2) case2 = Case2 { Case1: 0, Case2: 286331153, Case3: 286331153 }
+ 
+ // lldb-command:print case3
+-// lldbg-check:[...]$2 = Case3(0, 6438275382588823897)
+-// lldbr-check:(tuple_style_enum::Regular::Case3) case3 = Case3 { tuple_style_enum::Regular::Case1: 0, tuple_style_enum::Regular::Case2: 6438275382588823897 }
++// lldbr-check:(tuple_style_enum::Regular::Case3) case3 = Case3 { Case1: 0, Case2: 6438275382588823897 }
+ 
+ // lldb-command:print univariant
+-// lldbg-check:[...]$3 = TheOnlyCase(-1)
+-// lldbr-check:(tuple_style_enum::Univariant) univariant = { tuple_style_enum::TheOnlyCase = { = -1 } }
++// lldbr-check:(tuple_style_enum::Univariant) univariant = { TheOnlyCase = { = -1 } }
+ 
+ #![allow(unused_variables)]
+ #![feature(omit_gdb_pretty_printer_section)]
+--- a/src/test/debuginfo/unique-enum.rs
++++ b/src/test/debuginfo/unique-enum.rs
+@@ -9,8 +9,12 @@
+ // except according to those terms.
+ 
+ // ignore-tidy-linelength
+-// min-lldb-version: 310
+-// ignore-gdb-version: 7.11.90 - 7.12.9
++
++// Require LLVM with DW_TAG_variant_part and a gdb and lldb that can
++// read it.
++// min-system-llvm-version: 7.0
++// min-gdb-version: 8.2
++// rust-lldb
+ 
+ // compile-flags:-g
+ 
+@@ -19,15 +23,12 @@
+ // gdb-command:run
+ 
+ // gdb-command:print *the_a
+-// gdbg-check:$1 = {{RUST$ENUM$DISR = TheA, x = 0, y = 8970181431921507452}, {RUST$ENUM$DISR = TheA, [...]}}
+ // gdbr-check:$1 = unique_enum::ABC::TheA{x: 0, y: 8970181431921507452}
+ 
+ // gdb-command:print *the_b
+-// gdbg-check:$2 = {{RUST$ENUM$DISR = TheB, [...]}, {RUST$ENUM$DISR = TheB, __0 = 0, __1 = 286331153, __2 = 286331153}}
+ // gdbr-check:$2 = unique_enum::ABC::TheB(0, 286331153, 286331153)
+ 
+ // gdb-command:print *univariant
+-// gdbg-check:$3 = {{__0 = 123234}}
+ // gdbr-check:$3 = unique_enum::Univariant::TheOnlyCase(123234)
+ 
+ 
+@@ -36,16 +37,13 @@
+ // lldb-command:run
+ 
+ // lldb-command:print *the_a
+-// lldbg-check:[...]$0 = TheA { x: 0, y: 8970181431921507452 }
+-// lldbr-check:(unique_enum::ABC::TheA) *the_a = TheA { unique_enum::ABC::TheA: 0, unique_enum::ABC::TheB: 8970181431921507452 }
++// lldbr-check:(unique_enum::ABC::TheA) *the_a = TheA { TheA: 0, TheB: 8970181431921507452 }
+ 
+ // lldb-command:print *the_b
+-// lldbg-check:[...]$1 = TheB(0, 286331153, 286331153)
+ // lldbr-check:(unique_enum::ABC::TheB) *the_b = { = 0 = 286331153 = 286331153 }
+ 
+ // lldb-command:print *univariant
+-// lldbg-check:[...]$2 = TheOnlyCase(123234)
+-// lldbr-check:(unique_enum::Univariant) *univariant = { unique_enum::TheOnlyCase = { = 123234 } }
++// lldbr-check:(unique_enum::Univariant) *univariant = { TheOnlyCase = { = 123234 } }
+ 
+ #![allow(unused_variables)]
+ #![feature(box_syntax)]
+--- a/src/test/debuginfo/vec-slices.rs
++++ b/src/test/debuginfo/vec-slices.rs
+@@ -99,7 +99,7 @@
+ 
+ // lldb-command:print padded_tuple
+ // lldbg-check:[...]$4 = &[(6, 7), (8, 9)]
+-// lldbr-check:(&[(i32, i16)]) padded_tuple = { data_ptr = *0x555555554ff0 length = 2 }
++// lldbr-check:(&[(i32, i16)]) padded_tuple = { data_ptr = *0x555555555030 length = 2 }
+ 
+ // lldb-command:print padded_struct
+ // lldbg-check:[...]$5 = &[AStruct { x: 10, y: 11, z: 12 }, AStruct { x: 13, y: 14, z: 15 }]

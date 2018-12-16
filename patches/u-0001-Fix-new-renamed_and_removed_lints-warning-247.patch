@@ -1,0 +1,70 @@
+From ab80da4ea9ea88cdd802f80955e7382bd9368247 Mon Sep 17 00:00:00 2001
+From: Benjamin Gill <github@bgill.eu>
+Date: Sat, 16 Jun 2018 12:59:44 +0100
+Subject: [PATCH] Fix new renamed_and_removed_lints warning (#247)
+
+I've verified that this now produces no warnings with Rust 1.26.1 and
+1.28.0-nightly (c3b09c968 2018-05-27)
+---
+ src/error_chain.rs           | 4 ++--
+ src/impl_error_chain_kind.rs | 4 ++--
+ src/lib.rs                   | 1 -
+ 3 files changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/src/error_chain.rs b/src/error_chain.rs
+index cbd42cd67eaf..0926c8889278 100644
+--- a/src/vendor/error-chain-0.11.0/src/error_chain.rs
++++ b/src/vendor/error-chain-0.11.0/src/error_chain.rs
+@@ -173,7 +173,7 @@ macro_rules! impl_error_chain_processed {
+                 self.0.description()
+             }
+ 
+-            #[allow(unknown_lints, unused_doc_comment)]
++            #[allow(unknown_lints, renamed_and_removed_lints, unused_doc_comment, unused_doc_comments)]
+             fn cause(&self) -> Option<&::std::error::Error> {
+                 match self.1.next_error {
+                     Some(ref c) => Some(&**c),
+@@ -424,7 +424,7 @@ macro_rules! impl_extract_backtrace {
+     ($error_name: ident
+      $error_kind_name: ident
+      $([$link_error_path: path, $(#[$meta_links: meta])*])*) => {
+-        #[allow(unknown_lints, unused_doc_comment)]
++        #[allow(unknown_lints, renamed_and_removed_lints, unused_doc_comment, unused_doc_comments)]
+         fn extract_backtrace(e: &(::std::error::Error + Send + 'static))
+             -> Option<::std::sync::Arc<$crate::Backtrace>> {
+             if let Some(e) = e.downcast_ref::<$error_name>() {
+diff --git a/src/impl_error_chain_kind.rs b/src/impl_error_chain_kind.rs
+index d6c05c8a882b..d5e266389cd6 100644
+--- a/src/vendor/error-chain-0.11.0/src/impl_error_chain_kind.rs
++++ b/src/vendor/error-chain-0.11.0/src/impl_error_chain_kind.rs
+@@ -264,7 +264,7 @@ macro_rules! impl_error_chain_kind {
+             $item:ident: $imode:tt [$(#[$imeta:meta])*] [$( $var:ident: $typ:ty ),*] {$( $funcs:tt )*}
+         )*}
+     ) => {
+-        #[allow(unknown_lints, unused, unused_doc_comment)]
++        #[allow(unknown_lints, unused, renamed_and_removed_lints, unused_doc_comment, unused_doc_comments)]
+         impl ::std::fmt::Display for $name {
+             fn fmt(&self, fmt: &mut ::std::fmt::Formatter)
+                 -> ::std::fmt::Result
+@@ -316,7 +316,7 @@ macro_rules! impl_error_chain_kind {
+                 }
+             }
+         }*/
+-        #[allow(unknown_lints, unused, unused_doc_comment)]
++        #[allow(unknown_lints, unused, renamed_and_removed_lints, unused_doc_comment, unused_doc_comments)]
+         impl $name {
+             /// A string describing the error kind.
+             pub fn description(&self) -> &str {
+diff --git a/src/lib.rs b/src/lib.rs
+index d0881fcef1c1..6421194f8ca8 100644
+--- a/src/vendor/error-chain-0.11.0/src/lib.rs
++++ b/src/vendor/error-chain-0.11.0/src/lib.rs
+@@ -1,5 +1,4 @@
+ #![deny(missing_docs)]
+-#![allow(unknown_lints)] // to be removed when unused_doc_comments lints is merged
+ #![doc(html_root_url = "https://docs.rs/error-chain/0.11.0")]
+ 
+ //! A library for consistent and reliable error handling
+-- 
+2.17.1
+
