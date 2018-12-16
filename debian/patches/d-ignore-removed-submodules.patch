@@ -1,0 +1,102 @@
+Description: Ignore submodules that we're not building
+Author: Ximin Luo <infinity0@debian.org>
+Forwarded: not-needed
+--- a/src/Cargo.toml
++++ b/src/Cargo.toml
+@@ -6,7 +6,6 @@
+   "libtest",
+   "librustc_codegen_llvm",
+   "tools/cargotest",
+-  "tools/clippy",
+   "tools/compiletest",
+   "tools/error_index_generator",
+   "tools/linkchecker",
+@@ -14,14 +13,8 @@
+   "tools/unstable-book-gen",
+   "tools/tidy",
+   "tools/build-manifest",
+-  "tools/remote-test-client",
+-  "tools/remote-test-server",
+   "tools/rust-installer",
+-  "tools/cargo",
+   "tools/rustdoc",
+-  "tools/rls",
+-  "tools/rustfmt",
+-  "tools/miri",
+   "tools/rustdoc-themes",
+ ]
+ exclude = [
+@@ -44,24 +37,7 @@
+ debug = false
+ debug-assertions = false
+ 
+-# We want the RLS to use the version of Cargo that we've got vendored in this
+-# repository to ensure that the same exact version of Cargo is used by both the
+-# RLS and the Cargo binary itself. The RLS depends on Cargo as a git repository
+-# so we use a `[patch]` here to override the github repository with our local
+-# vendored copy.
+-[patch."https://github.com/rust-lang/cargo"]
+-cargo = { path = "tools/cargo" }
+-
+ [patch.crates-io]
+-# Similar to Cargo above we want the RLS to use a vendored version of `rustfmt`
+-# that we're shipping as well (to ensure that the rustfmt in RLS and the
+-# `rustfmt` executable are the same exact version).
+-rustfmt-nightly = { path = "tools/rustfmt" }
+-
+ # See comments in `tools/rustc-workspace-hack/README.md` for what's going on
+ # here
+ rustc-workspace-hack = { path = 'tools/rustc-workspace-hack' }
+-
+-[patch."https://github.com/rust-lang/rust-clippy"]
+-clippy_lints = { path = "tools/clippy/clippy_lints" }
+-rustc_tools_util = { path = "tools/clippy/rustc_tools_util" }
+--- a/src/bootstrap/bootstrap.py
++++ b/src/bootstrap/bootstrap.py
+@@ -639,10 +639,6 @@
+                 os.path.join(self.rust_root, "src/bootstrap/Cargo.toml")]
+         for _ in range(1, self.verbose):
+             args.append("--verbose")
+-        if self.use_locked_deps:
+-            args.append("--locked")
+-        if self.use_vendored_sources:
+-            args.append("--frozen")
+         run(args, env=env, verbose=self.verbose)
+ 
+     def build_triple(self):
+--- a/src/bootstrap/builder.rs
++++ b/src/bootstrap/builder.rs
+@@ -1058,10 +1058,7 @@
+             }
+         }
+ 
+-        if self.config.locked_deps {
+-            cargo.arg("--locked");
+-        }
+-        if self.config.vendor || self.is_sudo {
++        if self.is_sudo {
+             cargo.arg("--frozen");
+         }
+ 
+--- a/src/bootstrap/doc.rs
++++ b/src/bootstrap/doc.rs
+@@ -144,7 +144,7 @@
+ 
+ impl Step for CargoBook {
+     type Output = ();
+-    const DEFAULT: bool = true;
++    const DEFAULT: bool = false;
+ 
+     fn should_run(run: ShouldRun) -> ShouldRun {
+         let builder = run.builder;
+--- a/src/doc/index.md
++++ b/src/doc/index.md
+@@ -49,7 +49,7 @@
+ 
+ ## The Cargo Book
+ 
+-[The Cargo Book](cargo/index.html) is a guide to Cargo, Rust's build tool and dependency manager.
++[The Cargo Book](../../cargo-doc/doc/index.html) is a guide to Cargo, Rust's build tool and dependency manager.
+ 
+ ## The Rustdoc Book
+ 
