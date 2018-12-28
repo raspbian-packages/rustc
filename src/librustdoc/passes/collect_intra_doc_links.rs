@@ -24,7 +24,8 @@ use std::ops::Range;
 
 use core::DocContext;
 use fold::DocFolder;
-use html::markdown::markdown_links;
+use html::markdown::{find_testable_code, markdown_links, ErrorCodes, LangString};
+
 use passes::Pass;
 
 pub const COLLECT_INTRA_DOC_LINKS: Pass =
@@ -56,6 +57,7 @@ enum PathKind {
 struct LinkCollector<'a, 'tcx: 'a, 'rcx: 'a, 'cstore: 'rcx> {
     cx: &'a DocContext<'a, 'tcx, 'rcx, 'cstore>,
     mod_ids: Vec<NodeId>,
+    is_nightly_build: bool,
 }
 
 impl<'a, 'tcx, 'rcx, 'cstore> LinkCollector<'a, 'tcx, 'rcx, 'cstore> {
@@ -63,22 +65,28 @@ impl<'a, 'tcx, 'rcx, 'cstore> LinkCollector<'a, 'tcx, 'rcx, 'cstore> {
         LinkCollector {
             cx,
             mod_ids: Vec::new(),
+            is_nightly_build: UnstableFeatures::from_environment().is_nightly_build(),
         }
     }
 
     /// Resolve a given string as a path, along with whether or not it is
     /// in the value namespace. Also returns an optional URL fragment in the case
     /// of variants and methods
-    fn resolve(&self, path_str: &str, is_val: bool, current_item: &Option<String>)
+    fn resolve(&self,
+               path_str: &str,
+               is_val: bool,
+               current_item: &Option<String>,
+               parent_id: Option<NodeId>)
         -> Result<(Def, Option<String>), ()>
     {
         let cx = self.cx;
 
         // In case we're in a module, try to resolve the relative
         // path
-        if let Some(id) = self.mod_ids.last() {
+        if let Some(id) = parent_id.or(self.mod_ids.last().cloned()) {
+            // FIXME: `with_scope` requires the NodeId of a module
             let result = cx.resolver.borrow_mut()
-                                    .with_scope(*id,
+                                    .with_scope(id,
                 |resolver| {
                     resolver.resolve_str_path_error(DUMMY_SP,
                                                     &path_str, is_val)
@@ -129,8 +137,9 @@ impl<'a, 'tcx, 'rcx, 'cstore> LinkCollector<'a, 'tcx, 'rcx, 'cstore> {
                 }
             }
 
+            // FIXME: `with_scope` requires the NodeId of a module
             let ty = cx.resolver.borrow_mut()
-                                .with_scope(*id,
+                                .with_scope(id,
                 |resolver| {
                     resolver.resolve_str_path_error(DUMMY_SP, &path, false)
             })?;
@@ -205,6 +214,43 @@ impl<'a, 'tcx, 'rcx, 'cstore> LinkCollector<'a, 'tcx, 'rcx, 'cstore> {
     }
 }
 
+fn look_for_tests<'a, 'tcx: 'a, 'rcx: 'a, 'cstore: 'rcx>(
+    cx: &'a DocContext<'a, 'tcx, 'rcx, 'cstore>,
+    dox: &str,
+    item: &Item,
+) {
+    if (item.is_mod() && cx.tcx.hir.as_local_node_id(item.def_id).is_none()) ||
+       cx.as_local_node_id(item.def_id).is_none() {
+        // If non-local, no need to check anything.
+        return;
+    }
+
+    struct Tests {
+        found_tests: usize,
+    }
+
+    impl ::test::Tester for Tests {
+        fn add_test(&mut self, _: String, _: LangString, _: usize) {
+            self.found_tests += 1;
+        }
+    }
+
+    let mut tests = Tests {
+        found_tests: 0,
+    };
+
+    if find_testable_code(&dox, &mut tests, ErrorCodes::No).is_ok() {
+        if tests.found_tests == 0 {
+            let mut diag = cx.tcx.struct_span_lint_node(
+                lint::builtin::MISSING_DOC_CODE_EXAMPLES,
+                NodeId::new(0),
+                span_of_attrs(&item.attrs),
+                "Missing code example in this documentation");
+            diag.emit();
+        }
+    }
+}
+
 impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstore> {
     fn fold_item(&mut self, mut item: Item) -> Option<Item> {
         let item_node_id = if item.is_mod() {
@@ -218,6 +264,20 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
             None
         };
 
+        // FIXME: get the resolver to work with non-local resolve scopes
+        let parent_node = self.cx.as_local_node_id(item.def_id).and_then(|node_id| {
+            // FIXME: this fails hard for impls in non-module scope, but is necessary for the
+            // current resolve() implementation
+            match self.cx.tcx.hir.get_module_parent_node(node_id) {
+                id if id != node_id => Some(id),
+                _ => None,
+            }
+        });
+
+        if parent_node.is_some() {
+            debug!("got parent node for {} {:?}, id {:?}", item.type_(), item.name, item.def_id);
+        }
+
         let current_item = match item.inner {
             ModuleItem(..) => {
                 if item.attrs.inner_docs {
@@ -227,10 +287,10 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
                         None
                     }
                 } else {
-                    match self.mod_ids.last() {
-                        Some(parent) if *parent != NodeId::new(0) => {
+                    match parent_node.or(self.mod_ids.last().cloned()) {
+                        Some(parent) if parent != NodeId::new(0) => {
                             //FIXME: can we pull the parent module's name from elsewhere?
-                            Some(self.cx.tcx.hir.name(*parent).to_string())
+                            Some(self.cx.tcx.hir.name(parent).to_string())
                         }
                         _ => None,
                     }
@@ -252,6 +312,12 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
 
         let cx = self.cx;
         let dox = item.attrs.collapsed_doc_value().unwrap_or_else(String::new);
+
+        look_for_tests(&cx, &dox, &item);
+
+        if !self.is_nightly_build {
+            return None;
+        }
 
         for (ori_link, link_range) in markdown_links(&dox) {
             // bail early for real links
@@ -294,7 +360,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
 
                 match kind {
                     PathKind::Value => {
-                        if let Ok(def) = self.resolve(path_str, true, &current_item) {
+                        if let Ok(def) = self.resolve(path_str, true, &current_item, parent_node) {
                             def
                         } else {
                             resolution_failure(cx, &item.attrs, path_str, &dox, link_range);
@@ -305,7 +371,7 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
                         }
                     }
                     PathKind::Type => {
-                        if let Ok(def) = self.resolve(path_str, false, &current_item) {
+                        if let Ok(def) = self.resolve(path_str, false, &current_item, parent_node) {
                             def
                         } else {
                             resolution_failure(cx, &item.attrs, path_str, &dox, link_range);
@@ -316,16 +382,18 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
                     PathKind::Unknown => {
                         // try everything!
                         if let Some(macro_def) = macro_resolve(cx, path_str) {
-                            if let Ok(type_def) = self.resolve(path_str, false, &current_item) {
+                            if let Ok(type_def) =
+                                self.resolve(path_str, false, &current_item, parent_node)
+                            {
                                 let (type_kind, article, type_disambig)
                                     = type_ns_kind(type_def.0, path_str);
                                 ambiguity_error(cx, &item.attrs, path_str,
                                                 article, type_kind, &type_disambig,
                                                 "a", "macro", &format!("macro@{}", path_str));
                                 continue;
-                            } else if let Ok(value_def) = self.resolve(path_str,
-                                                                       true,
-                                                                       &current_item) {
+                            } else if let Ok(value_def) =
+                                self.resolve(path_str, true, &current_item, parent_node)
+                            {
                                 let (value_kind, value_disambig)
                                     = value_ns_kind(value_def.0, path_str)
                                         .expect("struct and mod cases should have been \
@@ -335,12 +403,16 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
                                                 "a", "macro", &format!("macro@{}", path_str));
                             }
                             (macro_def, None)
-                        } else if let Ok(type_def) = self.resolve(path_str, false, &current_item) {
+                        } else if let Ok(type_def) =
+                            self.resolve(path_str, false, &current_item, parent_node)
+                        {
                             // It is imperative we search for not-a-value first
                             // Otherwise we will find struct ctors for when we are looking
                             // for structs, and the link won't work.
                             // if there is something in both namespaces
-                            if let Ok(value_def) = self.resolve(path_str, true, &current_item) {
+                            if let Ok(value_def) =
+                                self.resolve(path_str, true, &current_item, parent_node)
+                            {
                                 let kind = value_ns_kind(value_def.0, path_str);
                                 if let Some((value_kind, value_disambig)) = kind {
                                     let (type_kind, article, type_disambig)
@@ -352,7 +424,9 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocFolder for LinkCollector<'a, 'tcx, 'rcx, 'cstor
                                 }
                             }
                             type_def
-                        } else if let Ok(value_def) = self.resolve(path_str, true, &current_item) {
+                        } else if let Ok(value_def) =
+                            self.resolve(path_str, true, &current_item, parent_node)
+                        {
                             value_def
                         } else {
                             resolution_failure(cx, &item.attrs, path_str, &dox, link_range);
@@ -403,7 +477,7 @@ fn macro_resolve(cx: &DocContext, path_str: &str) -> Option<Def> {
     let mut resolver = cx.resolver.borrow_mut();
     let parent_scope = resolver.dummy_parent_scope();
     if let Ok(def) = resolver.resolve_macro_to_def_inner(&path, MacroKind::Bang,
-                                                         &parent_scope, false) {
+                                                         &parent_scope, false, false) {
         if let SyntaxExtension::DeclMacro { .. } = *resolver.get_macro(def) {
             return Some(def);
         }

@@ -25,7 +25,7 @@
 >
 > _StructField_ :\
 > &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup>\
-> &nbsp;&nbsp; [_Visibility_]
+> &nbsp;&nbsp; [_Visibility_]<sup>?</sup>\
 > &nbsp;&nbsp; [IDENTIFIER] `:` [_Type_]
 >
 > _TupleFields_ :\
@@ -33,7 +33,7 @@
 >
 > _TupleField_ :\
 > &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup>\
-> &nbsp;&nbsp; [_Visibility_]
+> &nbsp;&nbsp; [_Visibility_]<sup>?</sup>\
 > &nbsp;&nbsp; [_Type_]
 
 A _struct_ is a nominal [struct type] defined with the keyword `struct`.
@@ -49,8 +49,8 @@ let px: i32 = p.x;
 A _tuple struct_ is a nominal [tuple type], also defined with the keyword
 `struct`. For example:
 
-[struct type]: types.html#struct-types
-[tuple type]: types.html#tuple-types
+[struct type]: types/struct.html
+[tuple type]: types/tuple.html
 
 ```rust
 struct Point(i32, i32);
@@ -78,11 +78,11 @@ let c = [Cookie, Cookie {}, Cookie, Cookie {}];
 The precise memory layout of a struct is not specified. One can specify a
 particular layout using the [`repr` attribute].
 
-[`repr` attribute]: attributes.html#ffi-attributes
+[`repr` attribute]: type-layout.html#representations
 
 [_OuterAttribute_]: attributes.html
 [IDENTIFIER]: identifiers.html
 [_Generics_]: items/generics.html
 [_WhereClause_]: items/generics.html#where-clauses
 [_Visibility_]: visibility-and-privacy.html
-[_Type_]: types.html
+[_Type_]: types.html#type-expressions

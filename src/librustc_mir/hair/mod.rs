@@ -14,11 +14,11 @@
 //! unit-tested and separated from the Rust source and compiler data
 //! structures.
 
-use rustc::mir::{BinOp, BorrowKind, Field, UnOp};
+use rustc::mir::{BinOp, BorrowKind, UserTypeAnnotation, Field, UnOp};
 use rustc::hir::def_id::DefId;
 use rustc::middle::region;
 use rustc::ty::subst::Substs;
-use rustc::ty::{AdtDef, CanonicalTy, UpvarSubsts, Region, Ty, Const};
+use rustc::ty::{AdtDef, UpvarSubsts, Region, Ty, Const};
 use rustc::hir;
 use syntax::ast;
 use syntax_pos::Span;
@@ -28,6 +28,9 @@ pub mod cx;
 
 pub mod pattern;
 pub use self::pattern::{BindingMode, Pattern, PatternKind, FieldPattern};
+pub(crate) use self::pattern::{PatternTypeProjection, PatternTypeProjections};
+
+mod util;
 
 #[derive(Copy, Clone, Debug)]
 pub enum LintLevel {
@@ -150,6 +153,9 @@ pub enum ExprKind<'tcx> {
         ty: Ty<'tcx>,
         fun: ExprRef<'tcx>,
         args: Vec<ExprRef<'tcx>>,
+        // Whether this is from a call in HIR, rather than from an overloaded
+        // operator. True for overloaded function call.
+        from_hir_call: bool,
     },
     Deref {
         arg: ExprRef<'tcx>,
@@ -263,10 +269,20 @@ pub enum ExprKind<'tcx> {
 
         /// Optional user-given substs: for something like `let x =
         /// Bar::<T> { ... }`.
-        user_ty: Option<CanonicalTy<'tcx>>,
+        user_ty: Option<UserTypeAnnotation<'tcx>>,
 
         fields: Vec<FieldExprRef<'tcx>>,
         base: Option<FruInfo<'tcx>>
+    },
+    PlaceTypeAscription {
+        source: ExprRef<'tcx>,
+        /// Type that the user gave to this expression
+        user_ty: Option<UserTypeAnnotation<'tcx>>,
+    },
+    ValueTypeAscription {
+        source: ExprRef<'tcx>,
+        /// Type that the user gave to this expression
+        user_ty: Option<UserTypeAnnotation<'tcx>>,
     },
     Closure {
         closure_id: DefId,
@@ -276,13 +292,7 @@ pub enum ExprKind<'tcx> {
     },
     Literal {
         literal: &'tcx Const<'tcx>,
-
-        /// Optional user-given type: for something like
-        /// `collect::<Vec<_>>`, this would be present and would
-        /// indicate that `Vec<_>` was explicitly specified.
-        ///
-        /// Needed for NLL to impose user-given type constraints.
-        user_ty: Option<CanonicalTy<'tcx>>,
+        user_ty: Option<UserTypeAnnotation<'tcx>>,
     },
     InlineAsm {
         asm: &'tcx hir::InlineAsm,

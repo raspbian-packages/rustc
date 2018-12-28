@@ -32,11 +32,11 @@ pub trait IntegerExt {
     fn to_ty<'a, 'tcx>(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>, signed: bool) -> Ty<'tcx>;
     fn from_attr<C: HasDataLayout>(cx: C, ity: attr::IntType) -> Integer;
     fn repr_discr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                  ty: Ty<'tcx>,
-                  repr: &ReprOptions,
-                  min: i128,
-                  max: i128)
-                  -> (Integer, bool);
+                            ty: Ty<'tcx>,
+                            repr: &ReprOptions,
+                            min: i128,
+                            max: i128)
+                            -> (Integer, bool);
 }
 
 impl IntegerExt for Integer {
@@ -76,11 +76,11 @@ impl IntegerExt for Integer {
     /// N.B.: u128 values above i128::MAX will be treated as signed, but
     /// that shouldn't affect anything, other than maybe debuginfo.
     fn repr_discr<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                  ty: Ty<'tcx>,
-                  repr: &ReprOptions,
-                  min: i128,
-                  max: i128)
-                  -> (Integer, bool) {
+                            ty: Ty<'tcx>,
+                            repr: &ReprOptions,
+                            min: i128,
+                            max: i128)
+                            -> (Integer, bool) {
         // Theoretically, negative values could be larger in unsigned representation
         // than the unsigned representation of the signed minimum. However, if there
         // are any negative values, the only valid unsigned representation is u128
@@ -96,7 +96,7 @@ impl IntegerExt for Integer {
             let fit = if ity.is_signed() { signed_fit } else { unsigned_fit };
             if discr < fit {
                 bug!("Integer::repr_discr: `#[repr]` hint too small for \
-                  discriminant range of enum `{}", ty)
+                      discriminant range of enum `{}", ty)
             }
             return (discr, ity.is_signed());
         }
@@ -106,7 +106,7 @@ impl IntegerExt for Integer {
                 // WARNING: the ARM EABI has two variants; the one corresponding
                 // to `at_least == I32` appears to be used on Linux and NetBSD,
                 // but some systems may use the variant corresponding to no
-                // lower bound.  However, we don't run on those yet...?
+                // lower bound. However, we don't run on those yet...?
                 "arm" => min_from_extern = Some(I32),
                 _ => min_from_extern = Some(I32),
             }
@@ -157,7 +157,7 @@ pub enum LayoutError<'tcx> {
 }
 
 impl<'tcx> fmt::Display for LayoutError<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match *self {
             LayoutError::Unknown(ty) => {
                 write!(f, "the type `{:?}` has an unknown layout", ty)
@@ -195,7 +195,7 @@ fn layout_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     })
 }
 
-pub fn provide(providers: &mut ty::query::Providers) {
+pub fn provide(providers: &mut ty::query::Providers<'_>) {
     *providers = ty::query::Providers {
         layout_raw,
         ..*providers
@@ -250,7 +250,8 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
             /// A univariant, but with a prefix of an arbitrary size & alignment (e.g. enum tag).
             Prefixed(Size, Align),
         }
-        let univariant_uninterned = |fields: &[TyLayout], repr: &ReprOptions, kind| {
+
+        let univariant_uninterned = |fields: &[TyLayout<'_>], repr: &ReprOptions, kind| {
             let packed = repr.packed();
             if packed && repr.align > 0 {
                 bug!("struct cannot be packed and aligned");
@@ -283,7 +284,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                     fields.len()
                 };
                 let optimizing = &mut inverse_memory_index[..end];
-                let field_align = |f: &TyLayout| {
+                let field_align = |f: &TyLayout<'_>| {
                     if packed { f.align.min(pack).abi() } else { f.align.abi() }
                 };
                 match kind {
@@ -324,7 +325,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 let field = fields[i as usize];
                 if !sized {
                     bug!("univariant: field #{} of `{}` comes after unsized field",
-                        offsets.len(), ty);
+                         offsets.len(), ty);
                 }
 
                 if field.is_unsized() {
@@ -449,7 +450,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 }
             }
 
-            if sized && fields.iter().any(|f| f.abi == Abi::Uninhabited) {
+            if sized && fields.iter().any(|f| f.abi.is_uninhabited()) {
                 abi = Abi::Uninhabited;
             }
 
@@ -464,7 +465,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 size
             })
         };
-        let univariant = |fields: &[TyLayout], repr: &ReprOptions, kind| {
+        let univariant = |fields: &[TyLayout<'_>], repr: &ReprOptions, kind| {
             Ok(tcx.intern_layout(univariant_uninterned(fields, repr, kind)?))
         };
         debug_assert!(!ty.has_infer_types());
@@ -628,7 +629,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 };
 
                 univariant(&tys.iter().map(|ty| self.layout_of(ty)).collect::<Result<Vec<_>, _>>()?,
-                    &ReprOptions::default(), kind)?
+                           &ReprOptions::default(), kind)?
             }
 
             // SIMD vector types.
@@ -640,7 +641,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                     Abi::Scalar(ref scalar) => scalar.clone(),
                     _ => {
                         tcx.sess.fatal(&format!("monomorphising SIMD type `{}` with \
-                                                a non-machine element type `{}`",
+                                                 a non-machine element type `{}`",
                                                 ty, element.ty));
                     }
                 };
@@ -723,8 +724,8 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 // but *not* an encoding of the discriminant (e.g. a tag value).
                 // See issue #49298 for more details on the need to leave space
                 // for non-ZST uninhabited data (mostly partial initialization).
-                let absent = |fields: &[TyLayout]| {
-                    let uninhabited = fields.iter().any(|f| f.abi == Abi::Uninhabited);
+                let absent = |fields: &[TyLayout<'_>]| {
+                    let uninhabited = fields.iter().any(|f| f.abi.is_uninhabited());
                     let is_zst = fields.iter().all(|f| f.is_zst());
                     uninhabited && is_zst
                 };
@@ -743,7 +744,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                     // Only one variant is present.
                     (present_second.is_none() &&
                     // Representation optimizations are allowed.
-                     !def.repr.inhibit_enum_layout_opt());
+                    !def.repr.inhibit_enum_layout_opt());
                 if is_struct {
                     // Struct, or univariant enum equivalent to a struct.
                     // (Typechecking will reject discriminant-sizing attrs.)
@@ -755,7 +756,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                         let param_env = tcx.param_env(def.did);
                         let last_field = def.variants[v].fields.last().unwrap();
                         let always_sized = tcx.type_of(last_field.did)
-                          .is_sized(tcx.at(DUMMY_SP), param_env);
+                                              .is_sized(tcx.at(DUMMY_SP), param_env);
                         if !always_sized { StructKind::MaybeUnsized }
                         else { StructKind::AlwaysSized }
                     };
@@ -872,7 +873,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                                 _ => Abi::Aggregate { sized: true },
                             };
 
-                            if st.iter().all(|v| v.abi == Abi::Uninhabited) {
+                            if st.iter().all(|v| v.abi.is_uninhabited()) {
                                 abi = Abi::Uninhabited;
                             }
 
@@ -900,7 +901,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 let discr_type = def.repr.discr_type();
                 let bits = Integer::from_attr(tcx, discr_type).size().bits();
                 for (i, discr) in def.discriminants(tcx).enumerate() {
-                    if variants[i].iter().any(|f| f.abi == Abi::Uninhabited) {
+                    if variants[i].iter().any(|f| f.abi.is_uninhabited()) {
                         continue;
                     }
                     let mut x = discr.val as i128;
@@ -1096,7 +1097,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                     }
                 }
 
-                if layout_variants.iter().all(|v| v.abi == Abi::Uninhabited) {
+                if layout_variants.iter().all(|v| v.abi.is_uninhabited()) {
                     abi = Abi::Uninhabited;
                 }
 
@@ -1123,7 +1124,7 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                 }
                 tcx.layout_raw(param_env.and(normalized))?
             }
-            ty::GeneratorWitness(..) | ty::Infer(_) => {
+            ty::UnnormalizedProjection(..) | ty::GeneratorWitness(..) | ty::Infer(_) => {
                 bug!("LayoutDetails::compute: unexpected type `{}`", ty)
             }
             ty::Param(_) | ty::Error => {
@@ -1258,8 +1259,8 @@ impl<'a, 'tcx> LayoutCx<'tcx, TyCtxt<'a, 'tcx, 'tcx>> {
                         let fields: Vec<_> =
                             variant_def.fields.iter().map(|f| f.ident.name).collect();
                         build_variant_info(Some(variant_def.name),
-                                            &fields,
-                                            layout.for_variant(self, i))
+                                           &fields,
+                                           layout.for_variant(self, i))
                     })
                     .collect();
                 record(adt_kind.into(), adt_packed, match layout.variants {
@@ -1403,7 +1404,7 @@ impl<'a, 'tcx> SizeSkeleton<'tcx> {
         }
     }
 
-    pub fn same_size(self, other: SizeSkeleton) -> bool {
+    pub fn same_size(self, other: SizeSkeleton<'_>) -> bool {
         match (self, other) {
             (SizeSkeleton::Known(a), SizeSkeleton::Known(b)) => a == b,
             (SizeSkeleton::Pointer { tail: a, .. },
@@ -1702,8 +1703,8 @@ impl<'a, 'tcx, C> TyLayoutMethods<'tcx, C> for Ty<'tcx>
                 }
             }
 
-            ty::Projection(_) | ty::Opaque(..) | ty::Param(_) |
-            ty::Infer(_) | ty::Error => {
+            ty::Projection(_) | ty::UnnormalizedProjection(..) |
+            ty::Opaque(..) | ty::Param(_) | ty::Infer(_) | ty::Error => {
                 bug!("TyLayout::field_type: unexpected type `{}`", this.ty)
             }
         })

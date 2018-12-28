@@ -185,7 +185,7 @@
 //! [slice]: primitive.slice.html
 //! [`atomic`]: sync/atomic/index.html
 //! [`collections`]: collections/index.html
-//! [`for`]: ../book/first-edition/loops.html#for
+//! [`for`]: ../book/ch03-05-control-flow.html#looping-through-a-collection-with-for
 //! [`format!`]: macro.format.html
 //! [`fs`]: fs/index.html
 //! [`io`]: io/index.html
@@ -200,14 +200,14 @@
 //! [`sync`]: sync/index.html
 //! [`thread`]: thread/index.html
 //! [`use std::env`]: env/index.html
-//! [`use`]: ../book/first-edition/crates-and-modules.html#importing-modules-with-use
-//! [crate root]: ../book/first-edition/crates-and-modules.html#basic-terminology-crates-and-modules
+//! [`use`]: ../book/ch07-02-modules-and-use-to-control-scope-and-privacy.html#the-use-keyword-to-bring-paths-into-a-scope
+//! [crate root]: ../book/ch07-01-packages-and-crates-for-making-libraries-and-executables.html
 //! [crates.io]: https://crates.io
-//! [deref-coercions]: ../book/second-edition/ch15-02-deref.html#implicit-deref-coercions-with-functions-and-methods
+//! [deref-coercions]: ../book/ch15-02-deref.html#implicit-deref-coercions-with-functions-and-methods
 //! [files]: fs/struct.File.html
 //! [multithreading]: thread/index.html
 //! [other]: #what-is-in-the-standard-library-documentation
-//! [primitive types]: ../book/first-edition/primitive-types.html
+//! [primitive types]: ../book/ch03-02-data-types.html
 
 #![stable(feature = "rust1", since = "1.0.0")]
 #![doc(html_logo_url = "https://www.rust-lang.org/logos/rust-logo-128x128-blk-v2.png",
@@ -250,12 +250,14 @@
 #![feature(cfg_target_vendor)]
 #![feature(char_error_internals)]
 #![feature(compiler_builtins_lib)]
-#![cfg_attr(stage0, feature(const_fn))]
-#![cfg_attr(not(stage0), feature(min_const_fn))]
+#![cfg_attr(stage0, feature(min_const_fn))]
 #![feature(const_int_ops)]
 #![feature(const_ip)]
+#![feature(const_raw_ptr_deref)]
+#![feature(const_cstr_unchecked)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
+#![feature(duration_as_u128)]
 #![feature(exact_size_is_empty)]
 #![feature(external_doc)]
 #![feature(fixed_size_array)]
@@ -270,11 +272,9 @@
 #![feature(libc)]
 #![feature(link_args)]
 #![feature(linkage)]
-#![cfg_attr(stage0, feature(macro_vis_matcher))]
 #![feature(needs_panic_runtime)]
 #![feature(never_type)]
-#![cfg_attr(not(stage0), feature(nll))]
-#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(nll)]
 #![feature(exhaustive_patterns)]
 #![feature(on_unimplemented)]
 #![feature(optin_builtin_traits)]
@@ -287,7 +287,7 @@
 #![feature(rustc_attrs)]
 #![feature(rustc_const_unstable)]
 #![feature(std_internals)]
-#![feature(stdsimd)]
+#![cfg_attr(not(stage0), feature(stdsimd))]
 #![feature(shrink_to)]
 #![feature(slice_concat_ext)]
 #![feature(slice_internals)]
@@ -303,15 +303,12 @@
 #![feature(unboxed_closures)]
 #![feature(untagged_unions)]
 #![feature(unwind_attributes)]
-#![cfg_attr(stage0, feature(use_extern_macros))]
 #![feature(doc_cfg)]
 #![feature(doc_masked)]
 #![feature(doc_spotlight)]
-#![cfg_attr(all(windows, stage0), feature(used))]
 #![feature(doc_alias)]
 #![feature(doc_keyword)]
 #![feature(panic_info_message)]
-#![cfg_attr(stage0, feature(panic_implementation))]
 #![feature(non_exhaustive)]
 
 #![default_lib_allocator]
@@ -436,7 +433,7 @@ pub use alloc_crate::fmt;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use alloc_crate::format;
 #[unstable(feature = "pin", issue = "49150")]
-pub use alloc_crate::pin;
+pub use core::pin;
 #[stable(feature = "rust1", since = "1.0.0")]
 pub use alloc_crate::slice;
 #[stable(feature = "rust1", since = "1.0.0")]

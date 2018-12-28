@@ -17,6 +17,9 @@ use check::FnCtxt;
 use hir::def_id::DefId;
 use hir::def::Def;
 use namespace::Namespace;
+use rustc::hir;
+use rustc::lint;
+use rustc::session::config::nightly_options;
 use rustc::ty::subst::{Subst, Substs};
 use rustc::traits::{self, ObligationCause};
 use rustc::ty::{self, Ty, ToPolyTraitRef, ToPredicate, TraitRef, TypeFoldable};
@@ -28,8 +31,6 @@ use rustc::middle::stability;
 use syntax::ast;
 use syntax::util::lev_distance::{lev_distance, find_best_match_for_name};
 use syntax_pos::{Span, symbol::Symbol};
-use rustc::hir;
-use rustc::lint;
 use std::mem;
 use std::ops::Deref;
 use std::rc::Rc;
@@ -395,7 +396,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             return_type,
             inherent_candidates: Vec::new(),
             extension_candidates: Vec::new(),
-            impl_dups: FxHashSet(),
+            impl_dups: FxHashSet::default(),
             steps: steps,
             static_candidates: Vec::new(),
             allow_similar_names: false,
@@ -451,10 +452,9 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
         match self_ty.sty {
             ty::Dynamic(ref data, ..) => {
-                if let Some(p) = data.principal() {
-                    self.assemble_inherent_candidates_from_object(self_ty, p);
-                    self.assemble_inherent_impl_candidates_for_type(p.def_id());
-                }
+                let p = data.principal();
+                self.assemble_inherent_candidates_from_object(self_ty, p);
+                self.assemble_inherent_impl_candidates_for_type(p.def_id());
             }
             ty::Adt(def, _) => {
                 self.assemble_inherent_impl_candidates_for_type(def.did);
@@ -718,7 +718,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
         if expr_id == ast::DUMMY_NODE_ID {
             return Ok(())
         }
-        let mut duplicates = FxHashSet();
+        let mut duplicates = FxHashSet::default();
         let expr_hir_id = self.tcx.hir.node_to_hir_id(expr_id);
         let opt_applicable_traits = self.tcx.in_scope_traits(expr_hir_id);
         if let Some(applicable_traits) = opt_applicable_traits {
@@ -735,7 +735,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
     }
 
     fn assemble_extension_candidates_for_all_traits(&mut self) -> Result<(), MethodError<'tcx>> {
-        let mut duplicates = FxHashSet();
+        let mut duplicates = FxHashSet::default();
         for trait_info in suggest::all_traits(self.tcx) {
             if duplicates.insert(trait_info.def_id) {
                 self.assemble_extension_candidates_for_trait(None, trait_info.def_id)?;
@@ -800,7 +800,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
     }
 
     fn candidate_method_names(&self) -> Vec<ast::Ident> {
-        let mut set = FxHashSet();
+        let mut set = FxHashSet::default();
         let mut names: Vec<_> = self.inherent_candidates
             .iter()
             .chain(&self.extension_candidates)
@@ -1064,7 +1064,8 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             "a method with this name may be added to the standard library in the future",
         );
 
-        // FIXME: This should be a `span_suggestion` instead of `help`. However `self.span` only
+        // FIXME: This should be a `span_suggestion_with_applicability` instead of `help`
+        // However `self.span` only
         // highlights the method name, so we can't use it. Also consider reusing the code from
         // `report_method_error()`.
         diag.help(&format!(
@@ -1072,9 +1073,9 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
             self.tcx.item_path_str(stable_pick.item.def_id),
         ));
 
-        if ::rustc::session::config::nightly_options::is_nightly_build() {
+        if nightly_options::is_nightly_build() {
             for (candidate, feature) in unstable_candidates {
-                diag.note(&format!(
+                diag.help(&format!(
                     "add #![feature({})] to the crate attributes to enable `{}`",
                     feature,
                     self.tcx.item_path_str(candidate.item.def_id),
@@ -1156,7 +1157,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
 
                     // Convert the bounds into obligations.
                     let impl_obligations = traits::predicates_for_generics(
-                        cause.clone(), self.param_env, &impl_bounds);
+                        cause, self.param_env, &impl_bounds);
 
                     debug!("impl_obligations={:?}", impl_obligations);
                     impl_obligations.into_iter()
@@ -1174,7 +1175,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                 TraitCandidate(trait_ref) => {
                     let predicate = trait_ref.to_predicate();
                     let obligation =
-                        traits::Obligation::new(cause.clone(), self.param_env, predicate);
+                        traits::Obligation::new(cause, self.param_env, predicate);
                     if !self.predicate_may_hold(&obligation) {
                         if self.probe(|_| self.select_trait_candidate(trait_ref).is_err()) {
                             // This candidate's primary obligation doesn't even
@@ -1254,9 +1255,8 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
     {
         // Do all probes correspond to the same trait?
         let container = probes[0].0.item.container;
-        match container {
-            ty::TraitContainer(_) => {}
-            ty::ImplContainer(_) => return None,
+        if let ty::ImplContainer(_) = container {
+            return None
         }
         if probes[1..].iter().any(|&(p, _)| p.item.container != container) {
             return None;
@@ -1460,7 +1460,7 @@ impl<'a, 'gcx, 'tcx> ProbeContext<'a, 'gcx, 'tcx> {
                     .filter(|x| {
                         let dist = lev_distance(&*name.as_str(), &x.ident.as_str());
                         Namespace::from(x.kind) == Namespace::Value && dist > 0
-                        && dist <= max_dist
+                            && dist <= max_dist
                     })
                     .collect()
             } else {

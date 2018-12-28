@@ -165,7 +165,7 @@ debian/rust-src.%: debian/rust-src.%.in
 
 debian/dh_auto_configure.stamp: debian/config.toml
 	# fail the build if we have any instances of OLD_LLVM_VERSION in debian, except for debian/changelog
-	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog -R debian
+	! grep --color=always -i 'll...\?$(subst .,\.,$(OLD_LLVM_VERSION))' --exclude=changelog --exclude='*.patch' -R debian
 	# fail the build if our version contains ~exp and we are not releasing to experimental
 	v="$(DEB_VERSION)"; test "$$v" = "$${v%~exp*}" -o "$(DEB_DISTRIBUTION)" = "experimental" -o "$(DEB_DISTRIBUTION)" = "UNRELEASED"
 	$(PRECONFIGURE_CHECK)
@@ -215,7 +215,7 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips64el))
   FAILURES_ALLOWED = 12
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), mips mipsel s390x))
-  FAILURES_ALLOWED = 20
+  FAILURES_ALLOWED = 24
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
   FAILURES_ALLOWED = 180

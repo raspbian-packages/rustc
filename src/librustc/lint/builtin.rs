@@ -234,6 +234,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub UNCONDITIONAL_RECURSION,
+    Warn,
+    "functions that cannot return without calling themselves"
+}
+
+declare_lint! {
     pub SINGLE_USE_LIFETIMES,
     Allow,
     "detects lifetime parameters that are only used once"
@@ -313,6 +319,12 @@ declare_lint! {
 }
 
 declare_lint! {
+    pub MISSING_DOC_CODE_EXAMPLES,
+    Allow,
+    "warn about missing code example in an item's documentation"
+}
+
+declare_lint! {
     pub WHERE_CLAUSES_OBJECT_SAFETY,
     Warn,
     "checks the object safety of where clauses"
@@ -336,6 +348,12 @@ declare_lint! {
     Deny,
     "macro-expanded `macro_export` macros from the current crate \
      cannot be referred to by absolute paths"
+}
+
+declare_lint! {
+    pub EXPLICIT_OUTLIVES_REQUIREMENTS,
+    Allow,
+    "outlives requirements can be inferred"
 }
 
 /// Some lints that are buffered from `libsyntax`. See `syntax::early_buffered_lints`.
@@ -390,6 +408,7 @@ impl LintPass for HardwiredLints {
             DEPRECATED,
             UNUSED_UNSAFE,
             UNUSED_MUT,
+            UNCONDITIONAL_RECURSION,
             SINGLE_USE_LIFETIMES,
             UNUSED_LIFETIMES,
             UNUSED_LABELS,
@@ -402,6 +421,7 @@ impl LintPass for HardwiredLints {
             DUPLICATE_ASSOCIATED_TYPE_BINDINGS,
             DUPLICATE_MACRO_EXPORTS,
             INTRA_DOC_LINK_RESOLUTION_FAILURE,
+            MISSING_DOC_CODE_EXAMPLES,
             WHERE_CLAUSES_OBJECT_SAFETY,
             PROC_MACRO_DERIVE_RESOLUTION_FALLBACK,
             MACRO_USE_EXTERN_CRATE,
@@ -426,7 +446,7 @@ pub enum BuiltinLintDiagnostics {
 }
 
 impl BuiltinLintDiagnostics {
-    pub fn run(self, sess: &Session, db: &mut DiagnosticBuilder) {
+    pub fn run(self, sess: &Session, db: &mut DiagnosticBuilder<'_>) {
         match self {
             BuiltinLintDiagnostics::Normal => (),
             BuiltinLintDiagnostics::BareTraitObject(span, is_global) => {

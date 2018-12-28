@@ -41,7 +41,7 @@ fn main() {
 // fn main() -> () {
 //     let mut _0: ();
 //     ...
-//     let mut _4: &'33_0rs i32;
+//     let mut _4: &'37_0rs i32;
 //     ...
 //     let _2: i32;
 //     ...
@@ -55,8 +55,10 @@ fn main() {
 //     bb0: {
 //        StorageLive(_1);
 //        _1 = const false;
+//        FakeRead(ForLet, _1);
 //        StorageLive(_2);
 //        _2 = const 3i32;
+//        FakeRead(ForLet, _2);
 //        falseUnwind -> [real: bb2, cleanup: bb1];
 //    }
 //    bb1: {
@@ -77,14 +79,14 @@ fn main() {
 //    bb5: {
 //        _0 = ();
 //        StorageDead(_7);
-//        EndRegion('33_0rs);
+//        EndRegion('37_0rs);
 //        StorageDead(_4);
 //        StorageDead(_2);
 //        StorageDead(_1);
 //        return;
 //    }
 //    bb6: {
-//        _4 = &'33_0rs _2;
+//        _4 = &'37_0rs _2;
 //        _6 = ();
 //        StorageDead(_7);
 //        _1 = const true;

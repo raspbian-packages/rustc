@@ -26,8 +26,7 @@
 #![feature(alloc)]
 #![feature(core_intrinsics)]
 #![feature(dropck_eyepatch)]
-#![cfg_attr(not(stage0), feature(nll))]
-#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(nll)]
 #![feature(raw_vec_internals)]
 #![cfg_attr(test, feature(test))]
 
@@ -115,10 +114,9 @@ impl<T> TypedArenaChunk<T> {
 
 const PAGE: usize = 4096;
 
-impl<T> TypedArena<T> {
+impl<T> Default for TypedArena<T> {
     /// Creates a new `TypedArena`.
-    #[inline]
-    pub fn new() -> TypedArena<T> {
+    fn default() -> TypedArena<T> {
         TypedArena {
             // We set both `ptr` and `end` to 0 so that the first call to
             // alloc() will trigger a grow().
@@ -128,7 +126,9 @@ impl<T> TypedArena<T> {
             _own: PhantomData,
         }
     }
+}
 
+impl<T> TypedArena<T> {
     /// Allocates an object in the `TypedArena`, returning a reference to it.
     #[inline]
     pub fn alloc(&self, object: T) -> &mut T {
@@ -297,15 +297,17 @@ pub struct DroplessArena {
 
 unsafe impl Send for DroplessArena {}
 
-impl DroplessArena {
-    pub fn new() -> DroplessArena {
+impl Default for DroplessArena {
+    fn default() -> DroplessArena {
         DroplessArena {
             ptr: Cell::new(0 as *mut u8),
             end: Cell::new(0 as *mut u8),
-            chunks: RefCell::new(vec![]),
+            chunks: Default::default(),
         }
     }
+}
 
+impl DroplessArena {
     pub fn in_arena<T: ?Sized>(&self, ptr: *const T) -> bool {
         let ptr = ptr as *const u8 as *mut u8;
         for chunk in &*self.chunks.borrow() {
@@ -420,18 +422,13 @@ impl DroplessArena {
     }
 }
 
+#[derive(Default)]
+// FIXME(@Zoxc): this type is entirely unused in rustc
 pub struct SyncTypedArena<T> {
     lock: MTLock<TypedArena<T>>,
 }
 
 impl<T> SyncTypedArena<T> {
-    #[inline(always)]
-    pub fn new() -> SyncTypedArena<T> {
-        SyncTypedArena {
-            lock: MTLock::new(TypedArena::new())
-        }
-    }
-
     #[inline(always)]
     pub fn alloc(&self, object: T) -> &mut T {
         // Extend the lifetime of the result since it's limited to the lock guard
@@ -453,18 +450,12 @@ impl<T> SyncTypedArena<T> {
     }
 }
 
+#[derive(Default)]
 pub struct SyncDroplessArena {
     lock: MTLock<DroplessArena>,
 }
 
 impl SyncDroplessArena {
-    #[inline(always)]
-    pub fn new() -> SyncDroplessArena {
-        SyncDroplessArena {
-            lock: MTLock::new(DroplessArena::new())
-        }
-    }
-
     #[inline(always)]
     pub fn in_arena<T: ?Sized>(&self, ptr: *const T) -> bool {
         self.lock.lock().in_arena(ptr)
@@ -509,7 +500,7 @@ mod tests {
 
     #[test]
     pub fn test_unused() {
-        let arena: TypedArena<Point> = TypedArena::new();
+        let arena: TypedArena<Point> = TypedArena::default();
         assert!(arena.chunks.borrow().is_empty());
     }
 
@@ -547,7 +538,7 @@ mod tests {
             }
         }
 
-        let arena = Wrap(TypedArena::new());
+        let arena = Wrap(TypedArena::default());
 
         let result = arena.alloc_outer(|| Outer {
             inner: arena.alloc_inner(|| Inner { value: 10 }),
@@ -558,7 +549,7 @@ mod tests {
 
     #[test]
     pub fn test_copy() {
-        let arena = TypedArena::new();
+        let arena = TypedArena::default();
         for _ in 0..100000 {
             arena.alloc(Point { x: 1, y: 2, z: 3 });
         }
@@ -566,7 +557,7 @@ mod tests {
 
     #[bench]
     pub fn bench_copy(b: &mut Bencher) {
-        let arena = TypedArena::new();
+        let arena = TypedArena::default();
         b.iter(|| arena.alloc(Point { x: 1, y: 2, z: 3 }))
     }
 
@@ -585,7 +576,7 @@ mod tests {
 
     #[test]
     pub fn test_noncopy() {
-        let arena = TypedArena::new();
+        let arena = TypedArena::default();
         for _ in 0..100000 {
             arena.alloc(Noncopy {
                 string: "hello world".to_string(),
@@ -596,7 +587,7 @@ mod tests {
 
     #[test]
     pub fn test_typed_arena_zero_sized() {
-        let arena = TypedArena::new();
+        let arena = TypedArena::default();
         for _ in 0..100000 {
             arena.alloc(());
         }
@@ -604,7 +595,7 @@ mod tests {
 
     #[test]
     pub fn test_typed_arena_clear() {
-        let mut arena = TypedArena::new();
+        let mut arena = TypedArena::default();
         for _ in 0..10 {
             arena.clear();
             for _ in 0..10000 {
@@ -629,7 +620,7 @@ mod tests {
     fn test_typed_arena_drop_count() {
         let counter = Cell::new(0);
         {
-            let arena: TypedArena<DropCounter> = TypedArena::new();
+            let arena: TypedArena<DropCounter> = TypedArena::default();
             for _ in 0..100 {
                 // Allocate something with drop glue to make sure it doesn't leak.
                 arena.alloc(DropCounter { count: &counter });
@@ -641,7 +632,7 @@ mod tests {
     #[test]
     fn test_typed_arena_drop_on_clear() {
         let counter = Cell::new(0);
-        let mut arena: TypedArena<DropCounter> = TypedArena::new();
+        let mut arena: TypedArena<DropCounter> = TypedArena::default();
         for i in 0..10 {
             for _ in 0..100 {
                 // Allocate something with drop glue to make sure it doesn't leak.
@@ -668,7 +659,7 @@ mod tests {
     fn test_typed_arena_drop_small_count() {
         DROP_COUNTER.with(|c| c.set(0));
         {
-            let arena: TypedArena<SmallDroppable> = TypedArena::new();
+            let arena: TypedArena<SmallDroppable> = TypedArena::default();
             for _ in 0..100 {
                 // Allocate something with drop glue to make sure it doesn't leak.
                 arena.alloc(SmallDroppable);
@@ -680,7 +671,7 @@ mod tests {
 
     #[bench]
     pub fn bench_noncopy(b: &mut Bencher) {
-        let arena = TypedArena::new();
+        let arena = TypedArena::default();
         b.iter(|| {
             arena.alloc(Noncopy {
                 string: "hello world".to_string(),

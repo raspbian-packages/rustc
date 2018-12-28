@@ -94,9 +94,8 @@ pub fn set_probestack(cx: &CodegenCx<'ll, '_>, llfn: &'ll Value) {
     // Currently stack probes seem somewhat incompatible with the address
     // sanitizer. With asan we're already protected from stack overflow anyway
     // so we don't really need stack probes regardless.
-    match cx.sess().opts.debugging_opts.sanitizer {
-        Some(Sanitizer::Address) => return,
-        _ => {}
+    if let Some(Sanitizer::Address) = cx.sess().opts.debugging_opts.sanitizer {
+        return
     }
 
     // probestack doesn't play nice either with pgo-gen.
@@ -138,6 +137,15 @@ pub fn apply_target_cpu_attr(cx: &CodegenCx<'ll, '_>, llfn: &'ll Value) {
             target_cpu.as_c_str());
 }
 
+/// Sets the `NonLazyBind` LLVM attribute on a given function,
+/// assuming the codegen options allow skipping the PLT.
+pub fn non_lazy_bind(sess: &Session, llfn: &'ll Value) {
+    // Don't generate calls through PLT if it's not necessary
+    if !sess.needs_plt() {
+        Attribute::NonLazyBind.apply_llfn(Function, llfn);
+    }
+}
+
 /// Composite function which sets LLVM attributes for function depending on its AST (#[attribute])
 /// attributes.
 pub fn from_fn_attrs(
@@ -146,7 +154,7 @@ pub fn from_fn_attrs(
     id: Option<DefId>,
 ) {
     let codegen_fn_attrs = id.map(|id| cx.tcx.codegen_fn_attrs(id))
-        .unwrap_or(CodegenFnAttrs::new());
+        .unwrap_or_else(|| CodegenFnAttrs::new());
 
     inline(cx, llfn, codegen_fn_attrs.inline);
 
@@ -280,14 +288,16 @@ pub fn provide_extern(providers: &mut Providers) {
         // `NativeLibrary` internally contains information about
         // `#[link(wasm_import_module = "...")]` for example.
         let native_libs = tcx.native_libraries(cnum);
-        let mut def_id_to_native_lib = FxHashMap();
-        for lib in native_libs.iter() {
-            if let Some(id) = lib.foreign_module {
-                def_id_to_native_lib.insert(id, lib);
-            }
-        }
 
-        let mut ret = FxHashMap();
+        let def_id_to_native_lib = native_libs.iter().filter_map(|lib|
+            if let Some(id) = lib.foreign_module {
+                Some((id, lib))
+            } else {
+                None
+            }
+        ).collect::<FxHashMap<_, _>>();
+
+        let mut ret = FxHashMap::default();
         for lib in tcx.foreign_modules(cnum).iter() {
             let module = def_id_to_native_lib
                 .get(&lib.def_id)
@@ -296,10 +306,10 @@ pub fn provide_extern(providers: &mut Providers) {
                 Some(s) => s,
                 None => continue,
             };
-            for id in lib.foreign_items.iter() {
+            ret.extend(lib.foreign_items.iter().map(|id| {
                 assert_eq!(id.krate, cnum);
-                ret.insert(*id, module.to_string());
-            }
+                (*id, module.to_string())
+            }));
         }
 
         Lrc::new(ret)

@@ -164,8 +164,10 @@ impl<'a, 'tcx: 'a> Annotator<'a, 'tcx> {
                 if let (&Some(attr::RustcDeprecation {since: dep_since, ..}),
                         &attr::Stable {since: stab_since}) = (&stab.rustc_depr, &stab.level) {
                     // Explicit version of iter::order::lt to handle parse errors properly
-                    for (dep_v, stab_v) in
-                            dep_since.as_str().split('.').zip(stab_since.as_str().split('.')) {
+                    for (dep_v, stab_v) in dep_since.as_str()
+                                                    .split('.')
+                                                    .zip(stab_since.as_str().split('.'))
+                    {
                         if let (Ok(dep_v), Ok(stab_v)) = (dep_v.parse::<u64>(), stab_v.parse()) {
                             match dep_v.cmp(&stab_v) {
                                 Ordering::Less => {
@@ -399,13 +401,13 @@ impl<'a, 'tcx> Index<'tcx> {
         let is_staged_api =
             tcx.sess.opts.debugging_opts.force_unstable_if_unmarked ||
             tcx.features().staged_api;
-        let mut staged_api = FxHashMap();
+        let mut staged_api = FxHashMap::default();
         staged_api.insert(LOCAL_CRATE, is_staged_api);
         let mut index = Index {
             staged_api,
-            stab_map: FxHashMap(),
-            depr_map: FxHashMap(),
-            active_features: FxHashSet(),
+            stab_map: Default::default(),
+            depr_map: Default::default(),
+            active_features: Default::default(),
         };
 
         let ref active_lib_features = tcx.features().declared_lib_features;
@@ -441,6 +443,7 @@ impl<'a, 'tcx> Index<'tcx> {
                     feature: Symbol::intern("rustc_private"),
                     rustc_depr: None,
                     const_stability: None,
+                    promotable: false,
                 });
                 annotator.parent_stab = Some(stability);
             }
@@ -522,15 +525,12 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             Some(Def::Method(_)) |
             Some(Def::AssociatedTy(_)) |
             Some(Def::AssociatedConst(_)) => {
-                match self.associated_item(def_id).container {
-                    ty::TraitContainer(trait_def_id) => {
-                        // Trait methods do not declare visibility (even
-                        // for visibility info in cstore). Use containing
-                        // trait instead, so methods of pub traits are
-                        // themselves considered pub.
-                        def_id = trait_def_id;
-                    }
-                    _ => {}
+                if let ty::TraitContainer(trait_def_id) = self.associated_item(def_id).container {
+                    // Trait methods do not declare visibility (even
+                    // for visibility info in cstore). Use containing
+                    // trait instead, so methods of pub traits are
+                    // themselves considered pub.
+                    def_id = trait_def_id;
                 }
             }
             _ => {}
@@ -560,8 +560,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// `id`.
     pub fn eval_stability(self, def_id: DefId, id: Option<NodeId>, span: Span) -> EvalResult {
         if span.allows_unstable() {
-            debug!("stability: \
-                    skipping span={:?} since it is internal", span);
+            debug!("stability: skipping span={:?} since it is internal", span);
             return EvalResult::Allow;
         }
 
@@ -769,8 +768,8 @@ impl<'a, 'tcx> Visitor<'tcx> for Checker<'a, 'tcx> {
                     let param_env = self.tcx.param_env(def_id);
                     if !param_env.can_type_implement_copy(self.tcx, ty).is_ok() {
                         emit_feature_err(&self.tcx.sess.parse_sess,
-                                        "untagged_unions", item.span, GateIssue::Language,
-                                        "unions with non-`Copy` fields are unstable");
+                                         "untagged_unions", item.span, GateIssue::Language,
+                                         "unions with non-`Copy` fields are unstable");
                     }
                 }
             }
@@ -782,10 +781,8 @@ impl<'a, 'tcx> Visitor<'tcx> for Checker<'a, 'tcx> {
 
     fn visit_path(&mut self, path: &'tcx hir::Path, id: hir::HirId) {
         let id = self.tcx.hir.hir_to_node_id(id);
-        match path.def {
-            Def::Local(..) | Def::Upvar(..) | Def::SelfCtor(..) |
-            Def::PrimTy(..) | Def::SelfTy(..) | Def::Err => {}
-            _ => self.tcx.check_stability(path.def.def_id(), Some(id), path.span)
+        if let Some(def_id) = path.def.opt_def_id() {
+            self.tcx.check_stability(def_id, Some(id), path.span)
         }
         intravisit::walk_path(self, path)
     }
@@ -815,7 +812,7 @@ pub fn check_unused_or_stable_features<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     }
 
     let declared_lang_features = &tcx.features().declared_lang_features;
-    let mut lang_features = FxHashSet();
+    let mut lang_features = FxHashSet::default();
     for &(feature, span, since) in declared_lang_features {
         if let Some(since) = since {
             // Warn if the user has enabled an already-stable lang feature.
@@ -829,7 +826,7 @@ pub fn check_unused_or_stable_features<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
     }
 
     let declared_lib_features = &tcx.features().declared_lib_features;
-    let mut remaining_lib_features = FxHashMap();
+    let mut remaining_lib_features = FxHashMap::default();
     for (feature, span) in declared_lib_features {
         if remaining_lib_features.contains_key(&feature) {
             // Warn if the user enables a lib feature multiple times.

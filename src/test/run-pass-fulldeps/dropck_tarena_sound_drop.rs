@@ -8,6 +8,7 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
+#![allow(unknown_lints)]
 // Check that an arena (TypedArena) can carry elements whose drop
 // methods might access borrowed data, as long as the borrowed data
 // has lifetime that strictly outlives the arena itself.
@@ -45,6 +46,6 @@ impl<'a> HasId for &'a usize { fn count(&self) -> usize { 1 } }
 fn f<'a, 'b>(_arena: &'a TypedArena<C<'b>>) {}
 
 fn main() {
-    let arena: TypedArena<C> = TypedArena::new();
+    let arena: TypedArena<C> = TypedArena::default();
     f(&arena);
 }

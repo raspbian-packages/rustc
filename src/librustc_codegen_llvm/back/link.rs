@@ -47,7 +47,8 @@ use std::str;
 use syntax::attr;
 
 pub use rustc_codegen_utils::link::{find_crate_name, filename_for_input, default_output_for_target,
-                                  invalid_output_for_target, out_filename, check_file_is_writeable};
+                                  invalid_output_for_target, out_filename, check_file_is_writeable,
+                                  filename_for_metadata};
 
 // The third parameter is for env vars, used on windows to set up the
 // path for MSVC to find its DLLs, and gcc to find its bundled
@@ -216,15 +217,6 @@ fn preserve_objects_for_their_debuginfo(sess: &Session) -> bool {
     }
 
     false
-}
-
-fn filename_for_metadata(sess: &Session, crate_name: &str, outputs: &OutputFilenames) -> PathBuf {
-    let out_filename = outputs.single_output_file.clone()
-        .unwrap_or(outputs
-            .out_directory
-            .join(&format!("lib{}{}.rmeta", crate_name, sess.opts.cg.extra_filename)));
-    check_file_is_writeable(&out_filename, sess);
-    out_filename
 }
 
 pub(crate) fn each_linked_rlib(sess: &Session,
@@ -1146,12 +1138,16 @@ fn link_args(cmd: &mut dyn Linker,
     // Pass debuginfo flags down to the linker.
     cmd.debuginfo();
 
-    // We want to prevent the compiler from accidentally leaking in any system
-    // libraries, so we explicitly ask gcc to not link to any libraries by
-    // default. Note that this does not happen for windows because windows pulls
-    // in some large number of libraries and I couldn't quite figure out which
-    // subset we wanted.
-    if t.options.no_default_libraries {
+    // We want to, by default, prevent the compiler from accidentally leaking in
+    // any system libraries, so we may explicitly ask linkers to not link to any
+    // libraries by default. Note that this does not happen for windows because
+    // windows pulls in some large number of libraries and I couldn't quite
+    // figure out which subset we wanted.
+    //
+    // This is all naturally configurable via the standard methods as well.
+    if !sess.opts.cg.default_linker_libraries.unwrap_or(false) &&
+        t.options.no_default_libraries
+    {
         cmd.no_default_libraries();
     }
 
@@ -1324,7 +1320,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
     // for the current implementation of the standard library.
     let mut group_end = None;
     let mut group_start = None;
-    let mut end_with = FxHashSet();
+    let mut end_with = FxHashSet::default();
     let info = &codegen_results.crate_info;
     for &(cnum, _) in deps.iter().rev() {
         if let Some(missing) = info.missing_lang_items.get(&cnum) {

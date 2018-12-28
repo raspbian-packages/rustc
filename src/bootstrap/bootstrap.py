@@ -595,7 +595,7 @@ class RustBuild(object):
         return ''
 
     def bootstrap_binary(self):
-        """Return the path of the boostrap binary
+        """Return the path of the bootstrap binary
 
         >>> rb = RustBuild()
         >>> rb.build_dir = "build"
@@ -635,6 +635,9 @@ class RustBuild(object):
             target_features += ["-crt-static"]
         if target_features:
             env["RUSTFLAGS"] += "-C target-feature=" + (",".join(target_features)) + " "
+        target_linker = self.get_toml("linker", build_section)
+        if target_linker is not None:
+            env["RUSTFLAGS"] += "-C linker=" + target_linker + " "
 
         env["PATH"] = os.path.join(self.bin_root(), "bin") + \
             os.pathsep + env["PATH"]
@@ -843,6 +846,11 @@ def bootstrap(help_triggered):
 def main():
     """Entry point for the bootstrap process"""
     start_time = time()
+
+    # x.py help <cmd> ...
+    if len(sys.argv) > 1 and sys.argv[1] == 'help':
+        sys.argv = sys.argv[:1] + [sys.argv[2], '-h'] + sys.argv[3:]
+
     help_triggered = (
         '-h' in sys.argv) or ('--help' in sys.argv) or (len(sys.argv) == 1)
     try:

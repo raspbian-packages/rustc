@@ -37,7 +37,7 @@ pub struct Lex<'a, I>
 pub struct Reserved<'a, I> where
     I: Stream<Item=char> + 'a,
     I::Error: ParseError<I::Item>,
-//    <<I as Stream>::Error as ParseError<char>>::Output: 'a // comment this to compile
+    <<I as Stream>::Error as ParseError<char>>::Output: 'a
 
 {
     x: Lex<'a, I>

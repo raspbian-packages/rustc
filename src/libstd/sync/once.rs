@@ -290,8 +290,8 @@ impl Once {
     }
 
     /// Returns true if some `call_once` call has completed
-    /// successfuly. Specifically, `is_completed` will return false in
-    /// the following situtations:
+    /// successfully. Specifically, `is_completed` will return false in
+    /// the following situations:
     ///   * `call_once` was not called at all,
     ///   * `call_once` was called, but has not yet completed,
     ///   * the `Once` instance is poisoned
@@ -329,7 +329,8 @@ impl Once {
     /// assert!(handle.join().is_err());
     /// assert_eq!(INIT.is_completed(), false);
     /// ```
-    #[unstable(feature = "once_is_completed", issue = "42")]
+    #[unstable(feature = "once_is_completed", issue = "54890")]
+    #[inline]
     pub fn is_completed(&self) -> bool {
         // An `Acquire` load is enough because that makes all the initialization
         // operations visible to us, and, this being a fast path, weaker

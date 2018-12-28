@@ -70,9 +70,11 @@ use rustc_data_structures::stable_hasher::{StableHasher, HashStable};
 use std::fmt;
 use std::hash::Hash;
 use syntax_pos::symbol::InternedString;
+use traits;
 use traits::query::{
-    CanonicalProjectionGoal, CanonicalTyGoal, CanonicalTypeOpEqGoal, CanonicalTypeOpSubtypeGoal,
-    CanonicalPredicateGoal, CanonicalTypeOpProvePredicateGoal, CanonicalTypeOpNormalizeGoal,
+    CanonicalProjectionGoal, CanonicalTyGoal, CanonicalTypeOpAscribeUserTypeGoal,
+    CanonicalTypeOpEqGoal, CanonicalTypeOpSubtypeGoal, CanonicalPredicateGoal,
+    CanonicalTypeOpProvePredicateGoal, CanonicalTypeOpNormalizeGoal,
 };
 use ty::{TyCtxt, FnSig, Instance, InstanceDef,
          ParamEnv, ParamEnvAnd, Predicate, PolyFnSig, PolyTraitRef, Ty};
@@ -331,7 +333,7 @@ macro_rules! define_dep_nodes {
             /// refers to something from the previous compilation session that
             /// has been removed.
             #[inline]
-            pub fn extract_def_id(&self, tcx: TyCtxt) -> Option<DefId> {
+            pub fn extract_def_id(&self, tcx: TyCtxt<'_, '_, '_>) -> Option<DefId> {
                 if self.kind.can_reconstruct_query_key() {
                     let def_path_hash = DefPathHash(self.hash);
                     tcx.def_path_hash_to_def_id.as_ref()?
@@ -386,7 +388,7 @@ macro_rules! define_dep_nodes {
 }
 
 impl fmt::Debug for DepNode {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.kind)?;
 
         if !self.kind.has_params() && !self.kind.is_anon() {
@@ -424,7 +426,7 @@ impl DefPathHash {
 
 impl DefId {
     #[inline]
-    pub fn to_dep_node(self, tcx: TyCtxt, kind: DepKind) -> DepNode {
+    pub fn to_dep_node(self, tcx: TyCtxt<'_, '_, '_>, kind: DepKind) -> DepNode {
         DepNode::from_def_path_hash(kind, tcx.def_path_hash(self))
     }
 }
@@ -515,6 +517,7 @@ define_dep_nodes!( <'tcx>
     [] ItemVarianceConstraints(DefId),
     [] ItemVariances(DefId),
     [] IsConstFn(DefId),
+    [] IsPromotableConstFn(DefId),
     [] IsForeignItem(DefId),
     [] TypeParamPredicates { item_id: DefId, param_id: DefId },
     [] SizedConstraint(DefId),
@@ -549,6 +552,7 @@ define_dep_nodes!( <'tcx>
     [anon] TraitSelect,
 
     [] ParamEnv(DefId),
+    [] Environment(DefId),
     [] DescribeDef(DefId),
 
     // FIXME(mw): DefSpans are not really inputs since they are derived from
@@ -651,6 +655,7 @@ define_dep_nodes!( <'tcx>
     [] ImpliedOutlivesBounds(CanonicalTyGoal<'tcx>),
     [] DropckOutlives(CanonicalTyGoal<'tcx>),
     [] EvaluateObligation(CanonicalPredicateGoal<'tcx>),
+    [] TypeOpAscribeUserType(CanonicalTypeOpAscribeUserTypeGoal<'tcx>),
     [] TypeOpEq(CanonicalTypeOpEqGoal<'tcx>),
     [] TypeOpSubtype(CanonicalTypeOpSubtypeGoal<'tcx>),
     [] TypeOpProvePredicate(CanonicalTypeOpProvePredicateGoal<'tcx>),
@@ -668,7 +673,7 @@ define_dep_nodes!( <'tcx>
     [input] Features,
 
     [] ProgramClausesFor(DefId),
-    [] ProgramClausesForEnv(ParamEnv<'tcx>),
+    [] ProgramClausesForEnv(traits::Environment<'tcx>),
     [] WasmImportModuleMap(CrateNum),
     [] ForeignModules(CrateNum),
 
@@ -714,7 +719,7 @@ impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a, T> DepNodeParams<'a, 'gcx, 'tcx> for T
 impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for DefId {
     const CAN_RECONSTRUCT_QUERY_KEY: bool = true;
 
-    fn to_fingerprint(&self, tcx: TyCtxt) -> Fingerprint {
+    fn to_fingerprint(&self, tcx: TyCtxt<'_, '_, '_>) -> Fingerprint {
         tcx.def_path_hash(*self).0
     }
 
@@ -726,7 +731,7 @@ impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for DefId {
 impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for DefIndex {
     const CAN_RECONSTRUCT_QUERY_KEY: bool = true;
 
-    fn to_fingerprint(&self, tcx: TyCtxt) -> Fingerprint {
+    fn to_fingerprint(&self, tcx: TyCtxt<'_, '_, '_>) -> Fingerprint {
         tcx.hir.definitions().def_path_hash(*self).0
     }
 
@@ -738,7 +743,7 @@ impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for DefIndex {
 impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for CrateNum {
     const CAN_RECONSTRUCT_QUERY_KEY: bool = true;
 
-    fn to_fingerprint(&self, tcx: TyCtxt) -> Fingerprint {
+    fn to_fingerprint(&self, tcx: TyCtxt<'_, '_, '_>) -> Fingerprint {
         let def_id = DefId {
             krate: *self,
             index: CRATE_DEF_INDEX,
@@ -757,7 +762,7 @@ impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for (DefId, De
     // We actually would not need to specialize the implementation of this
     // method but it's faster to combine the hashes than to instantiate a full
     // hashing context and stable-hashing state.
-    fn to_fingerprint(&self, tcx: TyCtxt) -> Fingerprint {
+    fn to_fingerprint(&self, tcx: TyCtxt<'_, '_, '_>) -> Fingerprint {
         let (def_id_0, def_id_1) = *self;
 
         let def_path_hash_0 = tcx.def_path_hash(def_id_0);
@@ -781,7 +786,7 @@ impl<'a, 'gcx: 'tcx + 'a, 'tcx: 'a> DepNodeParams<'a, 'gcx, 'tcx> for HirId {
     // We actually would not need to specialize the implementation of this
     // method but it's faster to combine the hashes than to instantiate a full
     // hashing context and stable-hashing state.
-    fn to_fingerprint(&self, tcx: TyCtxt) -> Fingerprint {
+    fn to_fingerprint(&self, tcx: TyCtxt<'_, '_, '_>) -> Fingerprint {
         let HirId {
             owner,
             local_id: ItemLocalId(local_id),

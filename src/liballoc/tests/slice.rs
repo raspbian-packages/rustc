@@ -975,27 +975,75 @@ fn test_chunksator_0() {
 }
 
 #[test]
-fn test_exact_chunksator() {
+fn test_chunks_exactator() {
     let v = &[1, 2, 3, 4, 5];
 
-    assert_eq!(v.exact_chunks(2).len(), 2);
+    assert_eq!(v.chunks_exact(2).len(), 2);
 
     let chunks: &[&[_]] = &[&[1, 2], &[3, 4]];
-    assert_eq!(v.exact_chunks(2).collect::<Vec<_>>(), chunks);
+    assert_eq!(v.chunks_exact(2).collect::<Vec<_>>(), chunks);
     let chunks: &[&[_]] = &[&[1, 2, 3]];
-    assert_eq!(v.exact_chunks(3).collect::<Vec<_>>(), chunks);
+    assert_eq!(v.chunks_exact(3).collect::<Vec<_>>(), chunks);
     let chunks: &[&[_]] = &[];
-    assert_eq!(v.exact_chunks(6).collect::<Vec<_>>(), chunks);
+    assert_eq!(v.chunks_exact(6).collect::<Vec<_>>(), chunks);
 
     let chunks: &[&[_]] = &[&[3, 4], &[1, 2]];
-    assert_eq!(v.exact_chunks(2).rev().collect::<Vec<_>>(), chunks);
+    assert_eq!(v.chunks_exact(2).rev().collect::<Vec<_>>(), chunks);
 }
 
 #[test]
 #[should_panic]
-fn test_exact_chunksator_0() {
+fn test_chunks_exactator_0() {
     let v = &[1, 2, 3, 4];
-    let _it = v.exact_chunks(0);
+    let _it = v.chunks_exact(0);
+}
+
+#[test]
+fn test_rchunksator() {
+    let v = &[1, 2, 3, 4, 5];
+
+    assert_eq!(v.rchunks(2).len(), 3);
+
+    let chunks: &[&[_]] = &[&[4, 5], &[2, 3], &[1]];
+    assert_eq!(v.rchunks(2).collect::<Vec<_>>(), chunks);
+    let chunks: &[&[_]] = &[&[3, 4, 5], &[1, 2]];
+    assert_eq!(v.rchunks(3).collect::<Vec<_>>(), chunks);
+    let chunks: &[&[_]] = &[&[1, 2, 3, 4, 5]];
+    assert_eq!(v.rchunks(6).collect::<Vec<_>>(), chunks);
+
+    let chunks: &[&[_]] = &[&[1], &[2, 3], &[4, 5]];
+    assert_eq!(v.rchunks(2).rev().collect::<Vec<_>>(), chunks);
+}
+
+#[test]
+#[should_panic]
+fn test_rchunksator_0() {
+    let v = &[1, 2, 3, 4];
+    let _it = v.rchunks(0);
+}
+
+#[test]
+fn test_rchunks_exactator() {
+    let v = &[1, 2, 3, 4, 5];
+
+    assert_eq!(v.rchunks_exact(2).len(), 2);
+
+    let chunks: &[&[_]] = &[&[4, 5], &[2, 3]];
+    assert_eq!(v.rchunks_exact(2).collect::<Vec<_>>(), chunks);
+    let chunks: &[&[_]] = &[&[3, 4, 5]];
+    assert_eq!(v.rchunks_exact(3).collect::<Vec<_>>(), chunks);
+    let chunks: &[&[_]] = &[];
+    assert_eq!(v.rchunks_exact(6).collect::<Vec<_>>(), chunks);
+
+    let chunks: &[&[_]] = &[&[2, 3], &[4, 5]];
+    assert_eq!(v.rchunks_exact(2).rev().collect::<Vec<_>>(), chunks);
+}
+
+#[test]
+#[should_panic]
+fn test_rchunks_exactator_0() {
+    let v = &[1, 2, 3, 4];
+    let _it = v.rchunks_exact(0);
 }
 
 #[test]
@@ -1205,7 +1253,7 @@ fn test_get_mut() {
 #[test]
 fn test_mut_chunks() {
     let mut v = [0, 1, 2, 3, 4, 5, 6];
-    assert_eq!(v.chunks_mut(2).len(), 4);
+    assert_eq!(v.chunks_mut(3).len(), 3);
     for (i, chunk) in v.chunks_mut(3).enumerate() {
         for x in chunk {
             *x = i as u8;
@@ -1235,10 +1283,10 @@ fn test_mut_chunks_0() {
 }
 
 #[test]
-fn test_mut_exact_chunks() {
+fn test_mut_chunks_exact() {
     let mut v = [0, 1, 2, 3, 4, 5, 6];
-    assert_eq!(v.exact_chunks_mut(2).len(), 3);
-    for (i, chunk) in v.exact_chunks_mut(3).enumerate() {
+    assert_eq!(v.chunks_exact_mut(3).len(), 2);
+    for (i, chunk) in v.chunks_exact_mut(3).enumerate() {
         for x in chunk {
             *x = i as u8;
         }
@@ -1248,9 +1296,9 @@ fn test_mut_exact_chunks() {
 }
 
 #[test]
-fn test_mut_exact_chunks_rev() {
+fn test_mut_chunks_exact_rev() {
     let mut v = [0, 1, 2, 3, 4, 5, 6];
-    for (i, chunk) in v.exact_chunks_mut(3).rev().enumerate() {
+    for (i, chunk) in v.chunks_exact_mut(3).rev().enumerate() {
         for x in chunk {
             *x = i as u8;
         }
@@ -1261,9 +1309,73 @@ fn test_mut_exact_chunks_rev() {
 
 #[test]
 #[should_panic]
-fn test_mut_exact_chunks_0() {
+fn test_mut_chunks_exact_0() {
     let mut v = [1, 2, 3, 4];
-    let _it = v.exact_chunks_mut(0);
+    let _it = v.chunks_exact_mut(0);
+}
+
+#[test]
+fn test_mut_rchunks() {
+    let mut v = [0, 1, 2, 3, 4, 5, 6];
+    assert_eq!(v.rchunks_mut(3).len(), 3);
+    for (i, chunk) in v.rchunks_mut(3).enumerate() {
+        for x in chunk {
+            *x = i as u8;
+        }
+    }
+    let result = [2, 1, 1, 1, 0, 0, 0];
+    assert_eq!(v, result);
+}
+
+#[test]
+fn test_mut_rchunks_rev() {
+    let mut v = [0, 1, 2, 3, 4, 5, 6];
+    for (i, chunk) in v.rchunks_mut(3).rev().enumerate() {
+        for x in chunk {
+            *x = i as u8;
+        }
+    }
+    let result = [0, 1, 1, 1, 2, 2, 2];
+    assert_eq!(v, result);
+}
+
+#[test]
+#[should_panic]
+fn test_mut_rchunks_0() {
+    let mut v = [1, 2, 3, 4];
+    let _it = v.rchunks_mut(0);
+}
+
+#[test]
+fn test_mut_rchunks_exact() {
+    let mut v = [0, 1, 2, 3, 4, 5, 6];
+    assert_eq!(v.rchunks_exact_mut(3).len(), 2);
+    for (i, chunk) in v.rchunks_exact_mut(3).enumerate() {
+        for x in chunk {
+            *x = i as u8;
+        }
+    }
+    let result = [0, 1, 1, 1, 0, 0, 0];
+    assert_eq!(v, result);
+}
+
+#[test]
+fn test_mut_rchunks_exact_rev() {
+    let mut v = [0, 1, 2, 3, 4, 5, 6];
+    for (i, chunk) in v.rchunks_exact_mut(3).rev().enumerate() {
+        for x in chunk {
+            *x = i as u8;
+        }
+    }
+    let result = [0, 0, 0, 0, 1, 1, 1];
+    assert_eq!(v, result);
+}
+
+#[test]
+#[should_panic]
+fn test_mut_rchunks_exact_0() {
+    let mut v = [1, 2, 3, 4];
+    let _it = v.rchunks_exact_mut(0);
 }
 
 #[test]

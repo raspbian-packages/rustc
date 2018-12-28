@@ -221,6 +221,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     fn cannot_uniquely_borrow_by_one_closure(
         self,
         new_loan_span: Span,
+        container_name: &str,
         desc_new: &str,
         opt_via: &str,
         old_loan_span: Span,
@@ -241,7 +242,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         );
         err.span_label(
             new_loan_span,
-            format!("closure construction occurs here{}", opt_via),
+            format!("{} construction occurs here{}", container_name, opt_via),
         );
         err.span_label(old_loan_span, format!("borrow occurs here{}", old_opt_via));
         if let Some(previous_end_span) = previous_end_span {
@@ -253,6 +254,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     fn cannot_reborrow_already_uniquely_borrowed(
         self,
         new_loan_span: Span,
+        container_name: &str,
         desc_new: &str,
         opt_via: &str,
         kind_new: &str,
@@ -275,7 +277,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         err.span_label(new_loan_span, format!("borrow occurs here{}", opt_via));
         err.span_label(
             old_loan_span,
-            format!("closure construction occurs here{}", old_opt_via),
+            format!("{} construction occurs here{}", container_name, old_opt_via),
         );
         if let Some(previous_end_span) = previous_end_span {
             err.span_label(previous_end_span, "borrow from closure ends here");
@@ -474,7 +476,7 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
     ) -> DiagnosticBuilder<'cx> {
         let moved_path = moved_path
             .map(|mp| format!(": `{}`", mp))
-            .unwrap_or(String::new());
+            .unwrap_or_default();
 
         let err = struct_span_err!(
             self,
@@ -555,6 +557,29 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         self.cannot_borrow_path_as_mutable_because(span, path, "", o)
     }
 
+    fn cannot_mutate_in_match_guard(
+        self,
+        mutate_span: Span,
+        match_span: Span,
+        match_place: &str,
+        action: &str,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let mut err = struct_span_err!(
+            self,
+            mutate_span,
+            E0510,
+            "cannot {} `{}` in match guard{OGN}",
+            action,
+            match_place,
+            OGN = o
+        );
+        err.span_label(mutate_span, format!("cannot {}", action));
+        err.span_label(match_span, format!("value is immutable in match guard"));
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
     fn cannot_borrow_across_generator_yield(
         self,
         span: Span,
@@ -573,6 +598,22 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         self.cancel_if_wrong_origin(err, o)
     }
 
+    fn cannot_borrow_across_destructor(
+        self,
+        borrow_span: Span,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let err = struct_span_err!(
+            self,
+            borrow_span,
+            E0713,
+            "borrow may still be in use when destructor runs{OGN}",
+            OGN = o
+        );
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
     fn path_does_not_live_long_enough(
         self,
         span: Span,
@@ -586,6 +627,31 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             "{} does not live long enough{OGN}",
             path,
             OGN = o
+        );
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
+    fn cannot_return_reference_to_local(
+        self,
+        span: Span,
+        reference_desc: &str,
+        path_desc: &str,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let mut err = struct_span_err!(
+            self,
+            span,
+            E0515,
+            "cannot return {REFERENCE} {LOCAL}{OGN}",
+            REFERENCE=reference_desc,
+            LOCAL=path_desc,
+            OGN = o
+        );
+
+        err.span_label(
+            span,
+            format!("returns a {} data owned by the current function", reference_desc),
         );
 
         self.cancel_if_wrong_origin(err, o)
@@ -676,6 +742,24 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
         self.cancel_if_wrong_origin(err, o)
     }
 
+    fn borrowed_data_escapes_closure(
+        self,
+        escape_span: Span,
+        escapes_from: &str,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let err = struct_span_err!(
+            self,
+            escape_span,
+            E0521,
+            "borrowed data escapes outside of {}{OGN}",
+            escapes_from,
+            OGN = o
+        );
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
     fn thread_local_value_does_not_live_long_enough(
         self,
         span: Span,
@@ -686,6 +770,22 @@ pub trait BorrowckErrors<'cx>: Sized + Copy {
             span,
             E0712,
             "thread-local variable borrowed past end of function{OGN}",
+            OGN = o
+        );
+
+        self.cancel_if_wrong_origin(err, o)
+    }
+
+    fn temporary_value_borrowed_for_too_long(
+        self,
+        span: Span,
+        o: Origin,
+    ) -> DiagnosticBuilder<'cx> {
+        let err = struct_span_err!(
+            self,
+            span,
+            E0716,
+            "temporary value dropped while borrowed{OGN}",
             OGN = o
         );
 

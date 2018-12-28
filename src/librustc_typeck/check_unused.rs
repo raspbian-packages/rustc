@@ -75,7 +75,7 @@ impl<'a, 'tcx> CheckVisitor<'a, 'tcx> {
         let msg = if let Ok(snippet) = self.tcx.sess.source_map().span_to_snippet(span) {
             format!("unused import: `{}`", snippet)
         } else {
-            "unused import".to_string()
+            "unused import".to_owned()
         };
         self.tcx.lint_node(lint::builtin::UNUSED_IMPORTS, id, span, &msg);
     }
@@ -138,9 +138,15 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
         if extern_crate.warn_if_unused {
             if let Some(&span) = unused_extern_crates.get(&extern_crate.def_id) {
                 let msg = "unused extern crate";
+
+                // Removal suggestion span needs to include attributes (Issue #54400)
+                let span_with_attrs = tcx.get_attrs(extern_crate.def_id).iter()
+                    .map(|attr| attr.span)
+                    .fold(span, |acc, attr_span| acc.to(attr_span));
+
                 tcx.struct_span_lint_node(lint, id, span, msg)
                     .span_suggestion_short_with_applicability(
-                        span,
+                        span_with_attrs,
                         "remove it",
                         String::new(),
                         Applicability::MachineApplicable)
@@ -158,7 +164,7 @@ fn unused_crates_lint<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) {
         // If the extern crate isn't in the extern prelude,
         // there is no way it can be written as an `use`.
         let orig_name = extern_crate.orig_name.unwrap_or(item.name);
-        if !tcx.extern_prelude.contains(&orig_name) {
+        if !tcx.extern_prelude.get(&orig_name).map_or(false, |from_item| !from_item) {
             continue;
         }
 

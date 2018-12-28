@@ -37,7 +37,7 @@ A `loop` expression repeats execution of its body continuously:
 `loop { println!("I live."); }`.
 
 A `loop` expression without an associated `break` expression is diverging and
-has type [`!`](types.html#never-type). A `loop` expression containing
+has type [`!`](types/never.html). A `loop` expression containing
 associated [`break` expression(s)](#break-expressions) may terminate, and must
 have type compatible with the value of the `break` expression(s).
 
@@ -67,7 +67,7 @@ while i < 10 {
 
 > **<sup>Syntax</sup>**\
 > [_PredicatePatternLoopExpression_] :\
-> &nbsp;&nbsp; `while` `let` _Pattern_ `=` [_Expression_]<sub>except struct expression</sub>
+> &nbsp;&nbsp; `while` `let` [_Pattern_] `=` [_Expression_]<sub>except struct expression</sub>
 >              [_BlockExpression_]
 
 A `while let` loop is semantically similar to a `while` loop but in place of a
@@ -85,11 +85,31 @@ while let Some(y) = x.pop() {
 }
 ```
 
+A `while let` loop is equivalent to a `loop` expression containing a `match`
+expression as follows.
+
+```rust,ignore
+'label: while let PAT = EXPR {
+    /* loop body */
+}
+```
+
+is equivalent to
+
+```rust,ignore
+'label: loop {
+    match EXPR {
+        PAT => { /* loop body */ },
+        _ => break,
+    }
+}
+```
+
 ## Iterator loops
 
 > **<sup>Syntax</sup>**\
 > _IteratorLoopExpression_ :\
-> &nbsp;&nbsp; `for` _Pattern_ `in` [_Expression_]<sub>except struct expression</sub>
+> &nbsp;&nbsp; `for` [_Pattern_] `in` [_Expression_]<sub>except struct expression</sub>
 >              [_BlockExpression_]
 
 A `for` expression is a syntactic construct for looping over elements provided
@@ -117,6 +137,43 @@ for n in 1..11 {
 }
 assert_eq!(sum, 55);
 ```
+
+A for loop is equivalent to the following block expression.
+
+```rust,ignore
+'label: for PATTERN in iter_expr {
+    /* loop body */
+}
+```
+
+is equivalent to
+
+```rust,ignore
+{
+    let result = match IntoIterator::into_iter(iter_expr) {
+        mut iter => 'label: loop {
+            let mut next;
+            match Iterator::next(&mut iter) {
+                Option::Some(val) => next = val,
+                Option::None => break,
+            };
+            let PAT = next;
+            let () = { /* loop body */ };
+        },
+    };
+    result
+}
+```
+
+`IntoIterator`, `Iterator` and `Option` are always the standard library items
+here, not whatever those names resolve to in the current scope. The variable
+names `next`, `iter` and `val` are for exposition only, they do not actually
+have names the user can type.
+
+> **Note**: that the outer `match` is used to ensure that any
+> [temporary values] in `iter_expr` don't get dropped before the loop is
+> finished. `next` is declared before being assigned because it results in
+> types being inferred correctly more often.
 
 ## Loop labels
 
@@ -210,8 +267,10 @@ and the `loop` must have a type compatible with each `break` expression.
 expression `()`.
 
 [IDENTIFIER]: identifiers.html
+[temporary values]: expressions.html#temporary-lifetimes
 
 [_Expression_]:      expressions.html
 [_BlockExpression_]: expressions/block-expr.html
+[_Pattern_]: patterns.html
 
 [LIFETIME_OR_LABEL]: tokens.html#lifetimes-and-loop-labels

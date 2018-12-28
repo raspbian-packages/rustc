@@ -68,7 +68,7 @@
 //!
 //! A string of JSON data can be parsed into a `serde_json::Value` by the
 //! [`serde_json::from_str`][from_str] function. There is also
-//! [`from_slice`][from_slice] for parsing from a byte slice &[u8] and
+//! [`from_slice`][from_slice] for parsing from a byte slice `&[u8]` and
 //! [`from_reader`][from_reader] for parsing from any `io::Read` like a File or
 //! a TCP stream.
 //!
@@ -118,6 +118,9 @@ use serde::ser::Serialize;
 use error::Error;
 pub use map::Map;
 pub use number::Number;
+
+#[cfg(feature = "raw_value")]
+pub use raw::RawValue;
 
 pub use self::index::Index;
 

@@ -52,6 +52,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         wbcx.visit_cast_types();
         wbcx.visit_free_region_map();
         wbcx.visit_user_provided_tys();
+        wbcx.visit_user_provided_sigs();
 
         let used_trait_imports = mem::replace(
             &mut self.tables.borrow_mut().used_trait_imports,
@@ -75,7 +76,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-// The Writerback context. This visitor walks the AST, checking the
+// The Writeback context. This visitor walks the AST, checking the
 // fn-specific tables to find references to types or regions. It
 // resolves those regions to remove inference variables and writes the
 // final result back into the master tables in the tcx. Here and
@@ -178,39 +179,34 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         if let hir::ExprKind::Index(ref base, ref index) = e.node {
             let mut tables = self.fcx.tables.borrow_mut();
 
-            match tables.expr_ty_adjusted(&base).sty {
-                // All valid indexing looks like this
-                ty::Ref(_, base_ty, _) => {
-                    let index_ty = tables.expr_ty_adjusted(&index);
-                    let index_ty = self.fcx.resolve_type_vars_if_possible(&index_ty);
+            // All valid indexing looks like this; might encounter non-valid indexes at this point
+            if let ty::Ref(_, base_ty, _) = tables.expr_ty_adjusted(&base).sty {
+                let index_ty = tables.expr_ty_adjusted(&index);
+                let index_ty = self.fcx.resolve_type_vars_if_possible(&index_ty);
 
-                    if base_ty.builtin_index().is_some() && index_ty == self.fcx.tcx.types.usize {
-                        // Remove the method call record
-                        tables.type_dependent_defs_mut().remove(e.hir_id);
-                        tables.node_substs_mut().remove(e.hir_id);
+                if base_ty.builtin_index().is_some() && index_ty == self.fcx.tcx.types.usize {
+                    // Remove the method call record
+                    tables.type_dependent_defs_mut().remove(e.hir_id);
+                    tables.node_substs_mut().remove(e.hir_id);
 
-                        tables.adjustments_mut().get_mut(base.hir_id).map(|a| {
-                            // Discard the need for a mutable borrow
-                            match a.pop() {
-                                // Extra adjustment made when indexing causes a drop
-                                // of size information - we need to get rid of it
-                                // Since this is "after" the other adjustment to be
-                                // discarded, we do an extra `pop()`
-                                Some(Adjustment {
-                                    kind: Adjust::Unsize,
-                                    ..
-                                }) => {
-                                    // So the borrow discard actually happens here
-                                    a.pop();
-                                }
-                                _ => {}
+                    tables.adjustments_mut().get_mut(base.hir_id).map(|a| {
+                        // Discard the need for a mutable borrow
+                        match a.pop() {
+                            // Extra adjustment made when indexing causes a drop
+                            // of size information - we need to get rid of it
+                            // Since this is "after" the other adjustment to be
+                            // discarded, we do an extra `pop()`
+                            Some(Adjustment {
+                                kind: Adjust::Unsize,
+                                ..
+                            }) => {
+                                // So the borrow discard actually happens here
+                                a.pop();
                             }
-                        });
-                    }
+                            _ => {}
+                        }
+                    });
                 }
-                // Might encounter non-valid indexes at this point, so there
-                // has to be a fall-through
-                _ => {}
             }
         }
     }
@@ -290,7 +286,7 @@ impl<'cx, 'gcx, 'tcx> Visitor<'gcx> for WritebackCx<'cx, 'gcx, 'tcx> {
 
     fn visit_local(&mut self, l: &'gcx hir::Local) {
         intravisit::walk_local(self, l);
-        let var_ty = self.fcx.local_ty(l.span, l.id);
+        let var_ty = self.fcx.local_ty(l.span, l.id).decl_ty;
         let var_ty = self.resolve(&var_ty, &l.span);
         self.write_ty_to_tables(l.hir_id, var_ty);
     }
@@ -393,6 +389,27 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
         }
     }
 
+    fn visit_user_provided_sigs(&mut self) {
+        let fcx_tables = self.fcx.tables.borrow();
+        debug_assert_eq!(fcx_tables.local_id_root, self.tables.local_id_root);
+
+        for (&def_id, c_sig) in fcx_tables.user_provided_sigs.iter() {
+            let c_sig = if let Some(c_sig) = self.tcx().lift_to_global(c_sig) {
+                c_sig
+            } else {
+                span_bug!(
+                    self.fcx.tcx.hir.span_if_local(def_id).unwrap(),
+                    "writeback: `{:?}` missing from the global type context",
+                    c_sig
+                );
+            };
+
+            self.tables
+                .user_provided_sigs
+                .insert(def_id, c_sig.clone());
+        }
+    }
+
     fn visit_opaque_types(&mut self, span: Span) {
         for (&def_id, opaque_defn) in self.fcx.opaque_types.borrow().iter() {
             let node_id = self.tcx().hir.as_local_node_id(def_id).unwrap();
@@ -445,7 +462,7 @@ impl<'cx, 'gcx, 'tcx> WritebackCx<'cx, 'gcx, 'tcx> {
                                     span,
                                     &format!(
                                         "type parameter `{}` is part of concrete type but not used \
-                                        in parameter list for existential type",
+                                         in parameter list for existential type",
                                         ty,
                                     ),
                                 )
@@ -767,10 +784,7 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for Resolver<'cx, 'gcx, 'tcx> {
     // FIXME This should be carefully checked
     // We could use `self.report_error` but it doesn't accept a ty::Region, right now.
     fn fold_region(&mut self, r: ty::Region<'tcx>) -> ty::Region<'tcx> {
-        match self.infcx.fully_resolve(&r) {
-            Ok(r) => r,
-            Err(_) => self.tcx.types.re_static,
-        }
+        self.infcx.fully_resolve(&r).unwrap_or(self.tcx.types.re_static)
     }
 }
 

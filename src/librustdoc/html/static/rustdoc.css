@@ -97,7 +97,6 @@ h1, h2, h3:not(.impl):not(.method):not(.type):not(.tymethod):not(.important), h4
 h1.fqn {
 	border-bottom: 1px dashed;
 	margin-top: 0;
-	overflow: auto;
 }
 h2, h3:not(.impl):not(.method):not(.type):not(.tymethod), h4:not(.method):not(.type):not(.tymethod):not(.associatedconstant) {
 	border-bottom: 1px solid;
@@ -139,7 +138,7 @@ code, pre {
 }
 .docblock code, .docblock-short code {
 	border-radius: 3px;
-	padding: 0 0.2em;
+	padding: 0 0.1em;
 }
 .docblock pre code, .docblock-short pre code, .docblock code.spotlight {
 	padding: 0;
@@ -909,10 +908,9 @@ span.since {
 		padding-top: 0px;
 	}
 
-	.sidebar {
+	body > .sidebar {
 		height: 45px;
 		min-height: 40px;
-		width: calc(100% + 30px);
 		margin: 0;
 		margin-left: -15px;
 		padding: 0 15px;
@@ -1014,6 +1012,10 @@ span.since {
 	.anchor {
 		display: none !important;
 	}
+
+	h1.fqn {
+		overflow: initial;
+	}
 }
 
 @media print {
@@ -1084,17 +1086,14 @@ pre.rust {
 	float: left;
 	width: 33.3%;
 	text-align: center;
-	border-bottom: 1px solid;
 	font-size: 18px;
 	cursor: pointer;
+	border-top: 2px solid;
 }
 
-#titles > div.selected {
-	border-bottom: 3px solid;
-}
-
-#titles > div:hover {
-	border-bottom: 3px solid;
+#titles > div:not(:last-child):not(.selected) {
+	margin-right: 1px;
+	width: calc(33.3% - 1px);
 }
 
 #titles > div > div.count {
@@ -1111,6 +1110,18 @@ h4 > .important-traits {
 	position: absolute;
 	left: -44px;
 	top: 2px;
+}
+
+#all-types {
+	text-align: center;
+	border: 1px solid;
+	margin: 0 10px;
+	margin-bottom: 10px;
+	display: block;
+	border-radius: 7px;
+}
+#all-types > p {
+	margin: 5px 0;
 }
 
 @media (max-width: 700px) {
@@ -1135,6 +1146,9 @@ h4 > .important-traits {
 		margin-left: 0;
 		background-color: rgba(0,0,0,0);
 		height: 100%;
+	}
+	.sidebar {
+		width: calc(100% + 30px);
 	}
 
 	.show-it {
@@ -1180,6 +1194,10 @@ h4 > .important-traits {
 
 	.impl > .collapse-toggle {
 		left: -10px;
+	}
+
+	#all-types {
+		margin: 10px;
 	}
 }
 
@@ -1383,17 +1401,6 @@ kbd {
 }
 #main > ul > li {
 	list-style: none;
-}
-#all-types {
-	text-align: center;
-	border: 1px solid;
-	margin: 0 10px;
-	margin-bottom: 10px;
-	display: block;
-	border-radius: 7px;
-}
-#all-types > p {
-	margin: 5px 0;
 }
 
 .non-exhaustive {

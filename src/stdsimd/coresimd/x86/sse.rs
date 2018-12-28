@@ -976,12 +976,13 @@ pub unsafe fn _mm_setzero_ps() -> __m128 {
     __m128(0.0, 0.0, 0.0, 0.0)
 }
 
-/// A utility function for creating masks to use with Intel shuffle and permute intrinsics.
+/// A utility function for creating masks to use with Intel shuffle and
+/// permute intrinsics.
 #[inline]
 #[allow(non_snake_case)]
 #[unstable(feature = "stdsimd", issue = "27731")]
 pub const fn _MM_SHUFFLE(z: u32, y: u32, x: u32, w: u32) -> u32 {
-        (z << 6) | (y << 4) | (x << 2) | w
+    (z << 6) | (y << 4) | (x << 2) | w
 }
 
 /// Shuffle packed single-precision (32-bit) floating-point elements in `a` and
@@ -1347,7 +1348,8 @@ pub unsafe fn _mm_loadr_ps(p: *const f32) -> __m128 {
 // On i586 (no SSE2) it just generates plain MOV instructions.
 #[cfg_attr(
     all(test, any(target_arch = "x86_64", target_feature = "sse2")),
-    assert_instr(movhpd)
+    // assert_instr(movhpd)
+    assert_instr(movhps) // LLVM7 prefers single-precision instructions
 )]
 pub unsafe fn _mm_storeh_pi(p: *mut __m64, a: __m128) {
     #[cfg(target_arch = "x86")]

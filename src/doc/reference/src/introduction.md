@@ -77,7 +77,13 @@ information. These conventions are documented here.
   term is used outside of that chapter, it is usually a link to the section that
   has this definition.
 
-  An *example term* is an example of a term beind defined.
+  An *example term* is an example of a term being defined.
+
+* Differences in the language by which edition the crate is compiled under are
+  in a blockquote that start with the words "Edition Differences:" in **bold**.
+
+  > **Edition Differences**: In the 2015 edition, this syntax is valid that is
+  > disallowed as of the 2018 edition.
 
 * Notes that contain useful information about the state of the book or point out
   useful, but mostly out of scope, information are in blockquotes that start

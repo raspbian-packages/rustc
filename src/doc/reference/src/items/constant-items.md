@@ -1,7 +1,7 @@
 # Constant items
 
-> **<sup>Syntax</sup>**
-> _ConstantItem_ :
+> **<sup>Syntax</sup>**\
+> _ConstantItem_ :\
 > &nbsp;&nbsp; `const` [IDENTIFIER] `:` [_Type_] `=` [_Expression_] `;`
 
 A *constant item* is a named _[constant value]_ which is not associated with a
@@ -60,9 +60,9 @@ fn create_and_drop_zero_with_destructor() {
 }
 ```
 
-[constant value]: expressions.html#constant-expressions
+[constant value]: const_eval.html#constant-expressions
 [static lifetime elision]: lifetime-elision.html#static-lifetime-elision
 [`Drop`]: special-types-and-traits.html#drop
 [IDENTIFIER]: identifiers.html
-[_Type_]: types.html
+[_Type_]: types.html#type-expressions
 [_Expression_]: expressions.html

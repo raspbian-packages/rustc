@@ -208,7 +208,7 @@ fn run_test(test: &str, cratename: &str, filename: &FileName, line: usize,
     // needs to be the result of SourceMap::span_to_unmapped_path
     let input = config::Input::Str {
         name: filename.to_owned(),
-        input: test.to_owned(),
+        input: test,
     };
     let outputs = OutputTypes::new(&[(OutputType::Exe, None)]);
 
@@ -350,7 +350,7 @@ fn run_test(test: &str, cratename: &str, filename: &FileName, line: usize,
     let newpath = {
         let path = env::var_os(var).unwrap_or(OsString::new());
         let mut path = env::split_paths(&path).collect::<Vec<_>>();
-        path.insert(0, libdir.clone());
+        path.insert(0, libdir);
         env::join_paths(path).unwrap()
     };
     cmd.env(var, &newpath);
@@ -465,6 +465,14 @@ fn partition_source(s: &str) -> (String, String) {
     (before, after)
 }
 
+pub trait Tester {
+    fn add_test(&mut self, test: String, config: LangString, line: usize);
+    fn get_line(&self) -> usize {
+        0
+    }
+    fn register_header(&mut self, _name: &str, _level: u32) {}
+}
+
 pub struct Collector {
     pub tests: Vec<testing::TestDescAndFn>,
 
@@ -533,7 +541,31 @@ impl Collector {
         format!("{} - {} (line {})", filename, self.names.join("::"), line)
     }
 
-    pub fn add_test(&mut self, test: String, config: LangString, line: usize) {
+    pub fn set_position(&mut self, position: Span) {
+        self.position = position;
+    }
+
+    fn get_filename(&self) -> FileName {
+        if let Some(ref source_map) = self.source_map {
+            let filename = source_map.span_to_filename(self.position);
+            if let FileName::Real(ref filename) = filename {
+                if let Ok(cur_dir) = env::current_dir() {
+                    if let Ok(path) = filename.strip_prefix(&cur_dir) {
+                        return path.to_owned().into();
+                    }
+                }
+            }
+            filename
+        } else if let Some(ref filename) = self.filename {
+            filename.clone().into()
+        } else {
+            FileName::Custom("input".to_owned())
+        }
+    }
+}
+
+impl Tester for Collector {
+    fn add_test(&mut self, test: String, config: LangString, line: usize) {
         let filename = self.get_filename();
         let name = self.generate_name(line, &filename);
         let cfgs = self.cfgs.clone();
@@ -544,7 +576,7 @@ impl Collector {
         let opts = self.opts.clone();
         let maybe_sysroot = self.maybe_sysroot.clone();
         let linker = self.linker.clone();
-        let edition = self.edition;
+        let edition = config.edition.unwrap_or(self.edition);
         debug!("Creating test {}: {}", name, test);
         self.tests.push(testing::TestDescAndFn {
             desc: testing::TestDesc {
@@ -587,7 +619,7 @@ impl Collector {
         });
     }
 
-    pub fn get_line(&self) -> usize {
+    fn get_line(&self) -> usize {
         if let Some(ref source_map) = self.source_map {
             let line = self.position.lo().to_usize();
             let line = source_map.lookup_char_pos(BytePos(line as u32)).line;
@@ -597,29 +629,7 @@ impl Collector {
         }
     }
 
-    pub fn set_position(&mut self, position: Span) {
-        self.position = position;
-    }
-
-    fn get_filename(&self) -> FileName {
-        if let Some(ref source_map) = self.source_map {
-            let filename = source_map.span_to_filename(self.position);
-            if let FileName::Real(ref filename) = filename {
-                if let Ok(cur_dir) = env::current_dir() {
-                    if let Ok(path) = filename.strip_prefix(&cur_dir) {
-                        return path.to_owned().into();
-                    }
-                }
-            }
-            filename
-        } else if let Some(ref filename) = self.filename {
-            filename.clone().into()
-        } else {
-            FileName::Custom("input".to_owned())
-        }
-    }
-
-    pub fn register_header(&mut self, name: &str, level: u32) {
+    fn register_header(&mut self, name: &str, level: u32) {
         if self.use_headers {
             // we use these headings as test names, so it's good if
             // they're valid identifiers.
@@ -774,7 +784,7 @@ fn main() {
 assert_eq!(2+2, 4);
 }".to_string();
         let output = make_test(input, None, false, &opts);
-        assert_eq!(output, (expected.clone(), 2));
+        assert_eq!(output, (expected, 2));
     }
 
     #[test]
@@ -972,7 +982,7 @@ fn main() {
 assert_eq!(2+2, 4);
 }".to_string();
         let output = make_test(input, None, false, &opts);
-        assert_eq!(output, (expected.clone(), 2));
+        assert_eq!(output, (expected, 2));
     }
 
     #[test]
@@ -987,7 +997,7 @@ assert_eq!(2+2, 4);";
 //Ceci n'est pas une `fn main`
 assert_eq!(2+2, 4);".to_string();
         let output = make_test(input, None, true, &opts);
-        assert_eq!(output, (expected.clone(), 1));
+        assert_eq!(output, (expected, 1));
     }
 
     #[test]
@@ -1002,6 +1012,6 @@ assert_eq!(2+2, 4);".to_string();
 assert_eq!(2+2, 4);
 }".to_string();
         let output = make_test(input, None, false, &opts);
-        assert_eq!(output, (expected.clone(), 1));
+        assert_eq!(output, (expected, 1));
     }
 }

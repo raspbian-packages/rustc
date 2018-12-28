@@ -4,7 +4,6 @@
 //! output once globally and then provides the `assert` function which makes
 //! assertions about the disassembly of a function.
 
-#![feature(use_extern_macros)]
 #![cfg_attr(
     feature = "cargo-clippy",
     allow(missing_docs_in_private_items, print_stdout)
@@ -17,14 +16,24 @@ extern crate cc;
 extern crate lazy_static;
 extern crate rustc_demangle;
 extern crate simd_test_macro;
-
-use std::collections::HashMap;
-use std::env;
-use std::process::Command;
-use std::str;
+#[macro_use]
+extern crate cfg_if;
 
 pub use assert_instr_macro::*;
 pub use simd_test_macro::*;
+use std::{collections::HashMap, env, str};
+
+cfg_if! {
+    if #[cfg(target_arch = "wasm32")] {
+        extern crate wasm_bindgen;
+        extern crate console_error_panic_hook;
+        pub mod wasm;
+        use wasm::disassemble_myself;
+    } else {
+        mod disassembly;
+        use disassembly::disassemble_myself;
+    }
+}
 
 lazy_static! {
     static ref DISASSEMBLY: HashMap<String, Vec<Function>> =
@@ -32,220 +41,12 @@ lazy_static! {
 }
 
 struct Function {
+    addr: Option<usize>,
     instrs: Vec<Instruction>,
 }
 
 struct Instruction {
     parts: Vec<String>,
-}
-
-fn disassemble_myself() -> HashMap<String, Vec<Function>> {
-    let me = env::current_exe().expect("failed to get current exe");
-
-    if cfg!(target_arch = "x86_64")
-        && cfg!(target_os = "windows")
-        && cfg!(target_env = "msvc")
-    {
-        let mut cmd = cc::windows_registry::find(
-            "x86_64-pc-windows-msvc",
-            "dumpbin.exe",
-        ).expect("failed to find `dumpbin` tool");
-        let output = cmd
-            .arg("/DISASM")
-            .arg(&me)
-            .output()
-            .expect("failed to execute dumpbin");
-        println!(
-            "{}\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.status.success());
-        parse_dumpbin(&String::from_utf8_lossy(&output.stdout))
-    } else if cfg!(target_os = "windows") {
-        panic!("disassembly unimplemented")
-    } else if cfg!(target_os = "macos") {
-        let output = Command::new("otool")
-            .arg("-vt")
-            .arg(&me)
-            .output()
-            .expect("failed to execute otool");
-        println!(
-            "{}\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.status.success());
-
-        parse_otool(str::from_utf8(&output.stdout).expect("stdout not utf8"))
-    } else {
-        let objdump =
-            env::var("OBJDUMP").unwrap_or_else(|_| "objdump".to_string());
-        let output = Command::new(objdump.clone())
-            .arg("--disassemble")
-            .arg(&me)
-            .output()
-            .expect(&format!(
-                "failed to execute objdump. OBJDUMP={}",
-                objdump
-            ));
-        println!(
-            "{}\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(output.status.success());
-
-        parse_objdump(str::from_utf8(&output.stdout).expect("stdout not utf8"))
-    }
-}
-
-fn parse_objdump(output: &str) -> HashMap<String, Vec<Function>> {
-    let mut lines = output.lines();
-    let expected_len =
-        if cfg!(target_arch = "arm") || cfg!(target_arch = "aarch64") {
-            8
-        } else {
-            2
-        };
-
-    for line in output.lines().take(100) {
-        println!("{}", line);
-    }
-
-    let mut ret = HashMap::new();
-    while let Some(header) = lines.next() {
-        // symbols should start with `$hex_addr <$name>:`
-        if !header.ends_with(">:") {
-            continue;
-        }
-        let start = header.find('<')
-            .expect(&format!("\"<\" not found in symbol pattern of the form \"$hex_addr <$name>\": {}", header));
-        let symbol = &header[start + 1..header.len() - 2];
-
-        let mut instructions = Vec::new();
-        while let Some(instruction) = lines.next() {
-            if instruction.is_empty() {
-                break;
-            }
-            // Each line of instructions should look like:
-            //
-            //      $rel_offset: ab cd ef 00    $instruction...
-            let parts = instruction
-                .split_whitespace()
-                .skip(1)
-                .skip_while(|s| {
-                    s.len() == expected_len
-                        && usize::from_str_radix(s, 16).is_ok()
-                })
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>();
-            instructions.push(Instruction { parts });
-        }
-
-        ret.entry(normalize(symbol))
-            .or_insert_with(Vec::new)
-            .push(Function {
-                instrs: instructions,
-            });
-    }
-
-    ret
-}
-
-fn parse_otool(output: &str) -> HashMap<String, Vec<Function>> {
-    let mut lines = output.lines();
-
-    for line in output.lines().take(100) {
-        println!("{}", line);
-    }
-
-    let mut ret = HashMap::new();
-    let mut cached_header = None;
-    while let Some(header) = cached_header.take().or_else(|| lines.next()) {
-        // symbols should start with `$symbol:`
-        if !header.ends_with(':') {
-            continue;
-        }
-        // strip the leading underscore and the trailing colon
-        let symbol = &header[1..header.len() - 1];
-
-        let mut instructions = Vec::new();
-        while let Some(instruction) = lines.next() {
-            if instruction.ends_with(':') {
-                cached_header = Some(instruction);
-                break;
-            }
-            // Each line of instructions should look like:
-            //
-            //      $addr    $instruction...
-            let parts = instruction
-                .split_whitespace()
-                .skip(1)
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>();
-            instructions.push(Instruction { parts });
-        }
-
-        ret.entry(normalize(symbol))
-            .or_insert_with(Vec::new)
-            .push(Function {
-                instrs: instructions,
-            });
-    }
-
-    ret
-}
-
-fn parse_dumpbin(output: &str) -> HashMap<String, Vec<Function>> {
-    let mut lines = output.lines();
-
-    for line in output.lines().take(100) {
-        println!("{}", line);
-    }
-
-    let mut ret = HashMap::new();
-    let mut cached_header = None;
-    while let Some(header) = cached_header.take().or_else(|| lines.next()) {
-        // symbols should start with `$symbol:`
-        if !header.ends_with(':') {
-            continue;
-        }
-        // strip the trailing colon
-        let symbol = &header[..header.len() - 1];
-
-        let mut instructions = Vec::new();
-        while let Some(instruction) = lines.next() {
-            if !instruction.starts_with("  ") {
-                cached_header = Some(instruction);
-                break;
-            }
-            // Each line looks like:
-            //
-            // >  $addr: ab cd ef     $instr..
-            // >         00 12          # this line os optional
-            if instruction.starts_with("       ") {
-                continue;
-            }
-            let parts = instruction
-                .split_whitespace()
-                .skip(1)
-                .skip_while(|s| {
-                    s.len() == 2 && usize::from_str_radix(s, 16).is_ok()
-                })
-                .map(|s| s.to_string())
-                .collect::<Vec<String>>();
-            instructions.push(Instruction { parts });
-        }
-
-        ret.entry(normalize(symbol))
-            .or_insert_with(Vec::new)
-            .push(Function {
-                instrs: instructions,
-            });
-    }
-
-    ret
 }
 
 fn normalize(symbol: &str) -> String {
@@ -261,27 +62,8 @@ fn normalize(symbol: &str) -> String {
 /// This asserts that the function at `fnptr` contains the instruction
 /// `expected` provided.
 pub fn assert(fnptr: usize, fnname: &str, expected: &str) {
-    // Translate this function pointer to a symbolic name that we'd have found
-    // in the disassembly.
-    let mut sym = None;
-    backtrace::resolve(fnptr as *mut _, |name| {
-        sym = name.name().and_then(|s| s.as_str()).map(normalize);
-    });
-
-    let functions =
-        if let Some(s) = sym.as_ref().and_then(|s| DISASSEMBLY.get(s)) {
-            s
-        } else {
-            if let Some(sym) = sym {
-                println!("assumed symbol name: `{}`", sym);
-            }
-            println!("maybe related functions");
-            for f in DISASSEMBLY.keys().filter(|k| k.contains(fnname)) {
-                println!("\t- {}", f);
-            }
-            panic!("failed to find disassembly of {:#x} ({})", fnptr, fnname);
-        };
-
+    let mut fnname = fnname.to_string();
+    let functions = get_functions(fnptr, &mut fnname);
     assert_eq!(functions.len(), 1);
     let function = &functions[0];
 
@@ -336,26 +118,29 @@ pub fn assert(fnptr: usize, fnname: &str, expected: &str) {
         break;
     }
 
-    let instruction_limit = match expected {
-        // cpuid returns a pretty big aggregate structure so excempt it from
-        // the slightly more restrictive 22 instructions below
-        "cpuid" => 30,
+    let instruction_limit = std::env::var("STDSIMD_ASSERT_INSTR_LIMIT")
+        .map(|v| v.parse().unwrap())
+        .unwrap_or_else(|_| match expected {
+            // cpuid returns a pretty big aggregate structure so exempt it from
+            // the slightly more restrictive 22 instructions below
+            "cpuid" => 30,
 
-        // Apparently on Windows LLVM generates a bunch of saves/restores of
-        // xmm registers around these intstructions which blows the 20
-        // limit below. As it seems dictates by Windows's abi (I
-        // guess?) we probably can't do much about it...
-        "vzeroall" | "vzeroupper" if cfg!(windows) => 30,
+            // Apparently on Windows LLVM generates a bunch of saves/restores
+            // of xmm registers around these intstructions which
+            // blows the 20 limit below. As it seems dictates by
+            // Windows's abi (I guess?) we probably can't do much
+            // about it...
+            "vzeroall" | "vzeroupper" if cfg!(windows) => 30,
 
-        // Intrinsics using `cvtpi2ps` are typically "composites" and in some
-        // cases exceed the limit.
-        "cvtpi2ps" => 25,
+            // Intrinsics using `cvtpi2ps` are typically "composites" and in
+            // some cases exceed the limit.
+            "cvtpi2ps" => 25,
 
-        // Original limit was 20 instructions, but ARM DSP Intrinsics are
-        // exactly 20 instructions long. So bump the limit to 22 instead of
-        // adding here a long list of expections.
-        _ => 22,
-    };
+            // Original limit was 20 instructions, but ARM DSP Intrinsics are
+            // exactly 20 instructions long. So bump the limit to 22 instead of
+            // adding here a long list of exceptions.
+            _ => 22,
+        });
     let probably_only_one_instruction = instrs.len() < instruction_limit;
 
     if found && probably_only_one_instruction && !inlining_failed {
@@ -364,16 +149,14 @@ pub fn assert(fnptr: usize, fnname: &str, expected: &str) {
 
     // Help debug by printing out the found disassembly, and then panic as we
     // didn't find the instruction.
-    println!(
-        "disassembly for {}: ",
-        sym.as_ref().expect("symbol not found")
-    );
+    println!("disassembly for {}: ", fnname,);
     for (i, instr) in instrs.iter().enumerate() {
-        print!("\t{:2}: ", i);
+        let mut s = format!("\t{:2}: ", i);
         for part in &instr.parts {
-            print!("{} ", part);
+            s.push_str(part);
+            s.push_str(" ");
         }
-        println!();
+        println!("{}", s);
     }
 
     if !found {
@@ -394,6 +177,39 @@ pub fn assert(fnptr: usize, fnname: &str, expected: &str) {
              instructions, which hint that inlining failed"
         );
     }
+}
+
+fn get_functions(fnptr: usize, fnname: &mut String) -> &'static [Function] {
+    // Translate this function pointer to a symbolic name that we'd have found
+    // in the disassembly.
+    let mut sym = None;
+    backtrace::resolve(fnptr as *mut _, |name| {
+        sym = name.name().and_then(|s| s.as_str()).map(normalize);
+    });
+
+    if let Some(sym) = &sym {
+        if let Some(s) = DISASSEMBLY.get(sym) {
+            *fnname = sym.to_string();
+            return s;
+        }
+    }
+
+    let exact_match = DISASSEMBLY
+        .iter()
+        .find(|(_, list)| list.iter().any(|f| f.addr == Some(fnptr)));
+    if let Some((name, list)) = exact_match {
+        *fnname = name.to_string();
+        return list;
+    }
+
+    if let Some(sym) = sym {
+        println!("assumed symbol name: `{}`", sym);
+    }
+    println!("maybe related functions");
+    for f in DISASSEMBLY.keys().filter(|k| k.contains(&**fnname)) {
+        println!("\t- {}", f);
+    }
+    panic!("failed to find disassembly of {:#x} ({})", fnptr, fnname);
 }
 
 pub fn assert_skip_test_ok(name: &str) {

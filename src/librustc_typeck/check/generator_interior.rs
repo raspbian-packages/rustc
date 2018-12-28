@@ -48,7 +48,7 @@ impl<'a, 'gcx, 'tcx> InteriorVisitor<'a, 'gcx, 'tcx> {
                 // See the mega-comment at `yield_in_scope` for a proof.
 
                 debug!("comparing counts yield: {} self: {}, source_span = {:?}",
-                    expr_count, self.expr_count, source_span);
+                       expr_count, self.expr_count, source_span);
 
                 if expr_count >= self.expr_count {
                     Some(yield_span)
@@ -89,7 +89,7 @@ pub fn resolve_interior<'a, 'gcx, 'tcx>(fcx: &'a FnCtxt<'a, 'gcx, 'tcx>,
     let body = fcx.tcx.hir.body(body_id);
     let mut visitor = InteriorVisitor {
         fcx,
-        types: FxHashMap(),
+        types: FxHashMap::default(),
         region_scope_tree: fcx.tcx.region_scope_tree(def_id),
         expr_count: 0,
     };

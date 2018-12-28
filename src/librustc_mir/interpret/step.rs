@@ -45,52 +45,16 @@ fn binop_right_homogeneous(op: mir::BinOp) -> bool {
     }
 }
 
-impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
-    pub fn inc_step_counter_and_detect_loops(&mut self) -> EvalResult<'tcx, ()> {
-        /// The number of steps between loop detector snapshots.
-        /// Should be a power of two for performance reasons.
-        const DETECTOR_SNAPSHOT_PERIOD: isize = 256;
-
-        {
-            let steps = &mut self.steps_since_detector_enabled;
-
-            *steps += 1;
-            if *steps < 0 {
-                return Ok(());
-            }
-
-            *steps %= DETECTOR_SNAPSHOT_PERIOD;
-            if *steps != 0 {
-                return Ok(());
-            }
-        }
-
-        if !M::DETECT_LOOPS {
-            return Ok(());
-        }
-
-        if self.loop_detector.is_empty() {
-            // First run of the loop detector
-
-            // FIXME(#49980): make this warning a lint
-            self.tcx.sess.span_warn(self.frame().span,
-                "Constant evaluating a complex constant, this might take some time");
-        }
-
-        self.loop_detector.observe_and_analyze(
-            &self.tcx,
-            &self.memory,
-            &self.stack[..],
-        )
-    }
-
+impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
     pub fn run(&mut self) -> EvalResult<'tcx> {
         while self.step()? {}
         Ok(())
     }
 
     /// Returns true as long as there are more things to do.
-    fn step(&mut self) -> EvalResult<'tcx, bool> {
+    ///
+    /// This is used by [priroda](https://github.com/oli-obk/priroda)
+    pub fn step(&mut self) -> EvalResult<'tcx, bool> {
         if self.stack.is_empty() {
             return Ok(false);
         }
@@ -108,7 +72,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
             return Ok(true);
         }
 
-        self.inc_step_counter_and_detect_loops()?;
+        M::before_terminator(self)?;
 
         let terminator = basic_block.terminator();
         assert_eq!(old_frames, self.cur_frame());
@@ -150,9 +114,9 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 self.deallocate_local(old_val)?;
             }
 
-            // No dynamic semantics attached to `ReadForMatch`; MIR
+            // No dynamic semantics attached to `FakeRead`; MIR
             // interpreter is solely intended for borrowck'ed code.
-            ReadForMatch(..) => {}
+            FakeRead(..) => {}
 
             // Validity checks.
             Validate(op, ref places) => {
@@ -284,9 +248,10 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 )?;
             }
 
-            Ref(_, _, ref place) => {
+            Ref(_, borrow_kind, ref place) => {
                 let src = self.eval_place(place)?;
-                let val = self.force_allocation(src)?.to_ref();
+                let val = self.force_allocation(src)?;
+                let val = self.create_ref(val, Some(borrow_kind))?;
                 self.write_value(val, dest)?;
             }
 

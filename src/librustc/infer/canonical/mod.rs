@@ -40,11 +40,11 @@ use std::ops::Index;
 use syntax::source_map::Span;
 use ty::fold::TypeFoldable;
 use ty::subst::Kind;
-use ty::{self, CanonicalVar, Lift, Region, List, TyCtxt};
+use ty::{self, BoundTyIndex, Lift, Region, List, TyCtxt};
 
 mod canonicalizer;
 
-pub mod query_result;
+pub mod query_response;
 
 mod substitute;
 
@@ -72,12 +72,19 @@ impl<'gcx> UseSpecializedDecodable for CanonicalVarInfos<'gcx> {}
 /// canonicalized query response.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, RustcDecodable, RustcEncodable)]
 pub struct CanonicalVarValues<'tcx> {
-    pub var_values: IndexVec<CanonicalVar, Kind<'tcx>>,
+    pub var_values: IndexVec<BoundTyIndex, Kind<'tcx>>,
 }
 
-/// Like CanonicalVarValues, but for use in places where a SmallVec is
-/// appropriate.
-pub type SmallCanonicalVarValues<'tcx> = SmallVec<[Kind<'tcx>; 8]>;
+/// When we canonicalize a value to form a query, we wind up replacing
+/// various parts of it with canonical variables. This struct stores
+/// those replaced bits to remember for when we process the query
+/// result.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, RustcDecodable, RustcEncodable)]
+pub struct OriginalQueryValues<'tcx> {
+    /// This is equivalent to `CanonicalVarValues`, but using a
+    /// `SmallVec` yields a significant performance win.
+    pub var_values: SmallVec<[Kind<'tcx>; 8]>,
+}
 
 /// Information about a canonical variable that is included with the
 /// canonical value. This is sufficient information for code to create
@@ -118,10 +125,10 @@ pub enum CanonicalTyVarKind {
 }
 
 /// After we execute a query with a canonicalized key, we get back a
-/// `Canonical<QueryResult<..>>`. You can use
+/// `Canonical<QueryResponse<..>>`. You can use
 /// `instantiate_query_result` to access the data in this result.
 #[derive(Clone, Debug)]
-pub struct QueryResult<'tcx, R> {
+pub struct QueryResponse<'tcx, R> {
     pub var_values: CanonicalVarValues<'tcx>,
     pub region_constraints: Vec<QueryRegionConstraint<'tcx>>,
     pub certainty: Certainty,
@@ -130,8 +137,8 @@ pub struct QueryResult<'tcx, R> {
 
 pub type Canonicalized<'gcx, V> = Canonical<'gcx, <V as Lift<'gcx>>::Lifted>;
 
-pub type CanonicalizedQueryResult<'gcx, T> =
-    Lrc<Canonical<'gcx, QueryResult<'gcx, <T as Lift<'gcx>>::Lifted>>>;
+pub type CanonicalizedQueryResponse<'gcx, T> =
+    Lrc<Canonical<'gcx, QueryResponse<'gcx, <T as Lift<'gcx>>::Lifted>>>;
 
 /// Indicates whether or not we were able to prove the query to be
 /// true.
@@ -168,7 +175,7 @@ impl Certainty {
     }
 }
 
-impl<'tcx, R> QueryResult<'tcx, R> {
+impl<'tcx, R> QueryResponse<'tcx, R> {
     pub fn is_proven(&self) -> bool {
         self.certainty.is_proven()
     }
@@ -178,7 +185,7 @@ impl<'tcx, R> QueryResult<'tcx, R> {
     }
 }
 
-impl<'tcx, R> Canonical<'tcx, QueryResult<'tcx, R>> {
+impl<'tcx, R> Canonical<'tcx, QueryResponse<'tcx, R>> {
     pub fn is_proven(&self) -> bool {
         self.value.is_proven()
     }
@@ -225,11 +232,15 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
     /// inference variables and applies it to the canonical value.
     /// Returns both the instantiated result *and* the substitution S.
     ///
-    /// This is useful at the start of a query: it basically brings
-    /// the canonical value "into scope" within your new infcx. At the
-    /// end of processing, the substitution S (once canonicalized)
-    /// then represents the values that you computed for each of the
-    /// canonical inputs to your query.
+    /// This is only meant to be invoked as part of constructing an
+    /// inference context at the start of a query (see
+    /// `InferCtxtBuilder::enter_with_canonical`).  It basically
+    /// brings the canonical value "into scope" within your new infcx.
+    ///
+    /// At the end of processing, the substitution S (once
+    /// canonicalized) then represents the values that you computed
+    /// for each of the canonical inputs to your query.
+
     pub fn instantiate_canonical_with_fresh_inference_vars<T>(
         &self,
         span: Span,
@@ -253,7 +264,7 @@ impl<'cx, 'gcx, 'tcx> InferCtxt<'cx, 'gcx, 'tcx> {
         span: Span,
         variables: &List<CanonicalVarInfo>,
     ) -> CanonicalVarValues<'tcx> {
-        let var_values: IndexVec<CanonicalVar, Kind<'tcx>> = variables
+        let var_values: IndexVec<BoundTyIndex, Kind<'tcx>> = variables
             .iter()
             .map(|info| self.fresh_inference_var_for_canonical_var(span, *info))
             .collect();
@@ -344,22 +355,22 @@ BraceStructTypeFoldableImpl! {
 }
 
 BraceStructTypeFoldableImpl! {
-    impl<'tcx, R> TypeFoldable<'tcx> for QueryResult<'tcx, R> {
+    impl<'tcx, R> TypeFoldable<'tcx> for QueryResponse<'tcx, R> {
         var_values, region_constraints, certainty, value
     } where R: TypeFoldable<'tcx>,
 }
 
 BraceStructLiftImpl! {
-    impl<'a, 'tcx, R> Lift<'tcx> for QueryResult<'a, R> {
-        type Lifted = QueryResult<'tcx, R::Lifted>;
+    impl<'a, 'tcx, R> Lift<'tcx> for QueryResponse<'a, R> {
+        type Lifted = QueryResponse<'tcx, R::Lifted>;
         var_values, region_constraints, certainty, value
     } where R: Lift<'tcx>
 }
 
-impl<'tcx> Index<CanonicalVar> for CanonicalVarValues<'tcx> {
+impl<'tcx> Index<BoundTyIndex> for CanonicalVarValues<'tcx> {
     type Output = Kind<'tcx>;
 
-    fn index(&self, value: CanonicalVar) -> &Kind<'tcx> {
+    fn index(&self, value: BoundTyIndex) -> &Kind<'tcx> {
         &self.var_values[value]
     }
 }

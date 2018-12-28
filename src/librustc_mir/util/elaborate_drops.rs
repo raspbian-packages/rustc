@@ -545,8 +545,9 @@ impl<'l, 'b, 'tcx, D> DropCtxt<'l, 'b, 'tcx, D>
                     args: vec![Operand::Move(Place::Local(ref_place))],
                     destination: Some((unit_temp, succ)),
                     cleanup: unwind.into_option(),
+                    from_hir_call: true,
                 },
-                source_info: self.source_info
+                source_info: self.source_info,
             }),
             is_cleanup: unwind.is_cleanup(),
         };
@@ -752,11 +753,11 @@ impl<'l, 'b, 'tcx, D> DropCtxt<'l, 'b, 'tcx, D>
                 self.place.clone()
             )));
             drop_block_stmts.push(self.assign(&cur, Rvalue::Cast(
-                CastKind::Misc, Operand::Move(tmp.clone()), iter_ty
+                CastKind::Misc, Operand::Move(tmp), iter_ty
             )));
             drop_block_stmts.push(self.assign(&length_or_end,
                 Rvalue::BinaryOp(BinOp::Offset,
-                     Operand::Copy(cur.clone()), Operand::Move(length.clone())
+                     Operand::Copy(cur), Operand::Move(length)
             )));
         } else {
             // index = 0 (length already pushed)
@@ -903,7 +904,8 @@ impl<'l, 'b, 'tcx, D> DropCtxt<'l, 'b, 'tcx, D>
             func: Operand::function_handle(tcx, free_func, substs, self.source_info.span),
             args: args,
             destination: Some((unit_temp, target)),
-            cleanup: None
+            cleanup: None,
+            from_hir_call: false,
         }; // FIXME(#43234)
         let free_block = self.new_block(unwind, call);
 
@@ -977,7 +979,7 @@ impl<'l, 'b, 'tcx, D> DropCtxt<'l, 'b, 'tcx, D>
     fn assign(&self, lhs: &Place<'tcx>, rhs: Rvalue<'tcx>) -> Statement<'tcx> {
         Statement {
             source_info: self.source_info,
-            kind: StatementKind::Assign(lhs.clone(), rhs)
+            kind: StatementKind::Assign(lhs.clone(), box rhs)
         }
     }
 }

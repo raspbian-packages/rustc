@@ -150,9 +150,10 @@ impl PlaceRef<'ll, 'tcx> {
             });
             OperandValue::Immediate(base::to_immediate(bx, llval, self.layout))
         } else if let layout::Abi::ScalarPair(ref a, ref b) = self.layout.abi {
-            let load = |i, scalar: &layout::Scalar| {
+            let b_offset = a.value.size(bx.cx).abi_align(b.value.align(bx.cx));
+            let load = |i, scalar: &layout::Scalar, align| {
                 let llptr = bx.struct_gep(self.llval, i as u64);
-                let load = bx.load(llptr, self.align);
+                let load = bx.load(llptr, align);
                 scalar_load_metadata(load, scalar);
                 if scalar.is_bool() {
                     bx.trunc(load, Type::i1(bx.cx))
@@ -160,7 +161,10 @@ impl PlaceRef<'ll, 'tcx> {
                     load
                 }
             };
-            OperandValue::Pair(load(0, a), load(1, b))
+            OperandValue::Pair(
+                load(0, a, self.align),
+                load(1, b, self.align.restrict_for_offset(b_offset)),
+            )
         } else {
             OperandValue::Ref(self.llval, None, self.align)
         };
@@ -173,10 +177,7 @@ impl PlaceRef<'ll, 'tcx> {
         let cx = bx.cx;
         let field = self.layout.field(cx, ix);
         let offset = self.layout.fields.offset(ix);
-        let effective_field_align = self.align
-            .min(self.layout.align)
-            .min(field.align)
-            .restrict_for_offset(offset);
+        let effective_field_align = self.align.restrict_for_offset(offset);
 
         let simple = || {
             // Unions and newtypes only use an offset of 0.
@@ -278,7 +279,7 @@ impl PlaceRef<'ll, 'tcx> {
     /// Obtain the actual discriminant of a value.
     pub fn codegen_get_discr(self, bx: &Builder<'a, 'll, 'tcx>, cast_to: Ty<'tcx>) -> &'ll Value {
         let cast_to = bx.cx.layout_of(cast_to).immediate_llvm_type(bx.cx);
-        if self.layout.abi == layout::Abi::Uninhabited {
+        if self.layout.abi.is_uninhabited() {
             return C_undef(cast_to);
         }
         match self.layout.variants {
@@ -341,7 +342,7 @@ impl PlaceRef<'ll, 'tcx> {
     /// Set the discriminant for a new value of the given case of the given
     /// representation.
     pub fn codegen_set_discr(&self, bx: &Builder<'a, 'll, 'tcx>, variant_index: usize) {
-        if self.layout.for_variant(bx.cx, variant_index).abi == layout::Abi::Uninhabited {
+        if self.layout.for_variant(bx.cx, variant_index).abi.is_uninhabited() {
             return;
         }
         match self.layout.variants {
@@ -520,7 +521,8 @@ impl FunctionCx<'a, 'll, 'tcx> {
                         let mut subslice = cg_base.project_index(bx,
                             C_usize(bx.cx, from as u64));
                         let projected_ty = PlaceTy::Ty { ty: cg_base.layout.ty }
-                            .projection_ty(tcx, &projection.elem).to_ty(bx.tcx());
+                            .projection_ty(tcx, &projection.elem)
+                            .to_ty(bx.tcx());
                         subslice.layout = bx.cx.layout_of(self.monomorphize(&projected_ty));
 
                         if subslice.layout.is_unsized() {

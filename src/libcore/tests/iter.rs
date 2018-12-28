@@ -229,7 +229,7 @@ fn test_iterator_step_by_nth_overflow() {
 
     #[derive(Clone)]
     struct Test(Bigger);
-    impl<'a> Iterator for &'a mut Test {
+    impl Iterator for &mut Test {
         type Item = i32;
         fn next(&mut self) -> Option<Self::Item> { Some(21) }
         fn nth(&mut self, n: usize) -> Option<Self::Item> {
@@ -1616,6 +1616,13 @@ fn test_range_step() {
     assert_eq!((i8::MIN..i8::MAX).step_by(-(i8::MIN as i32) as usize).size_hint(), (2, Some(2)));
     assert_eq!((i16::MIN..i16::MAX).step_by(i16::MAX as usize).size_hint(), (3, Some(3)));
     assert_eq!((isize::MIN..isize::MAX).step_by(1).size_hint(), (usize::MAX, Some(usize::MAX)));
+}
+
+#[test]
+fn test_step_by_skip() {
+    assert_eq!((0..640).step_by(128).skip(1).collect::<Vec<_>>(), [128, 256, 384, 512]);
+    assert_eq!((0..=50).step_by(10).nth(3), Some(30));
+    assert_eq!((200..=255u8).step_by(10).nth(3), Some(230));
 }
 
 #[test]

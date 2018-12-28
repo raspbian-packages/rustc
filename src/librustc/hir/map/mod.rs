@@ -204,7 +204,7 @@ impl<'hir> Map<'hir> {
         if let Some(entry) = self.map[id.as_usize()] {
             self.dep_graph.read_index(entry.dep_node);
         } else {
-            bug!("called `HirMap::read()` with invalid `NodeId`")
+            bug!("called `HirMap::read()` with invalid `NodeId`: {:?}", id)
         }
     }
 
@@ -344,6 +344,7 @@ impl<'hir> Map<'hir> {
             Node::AnonConst(_) |
             Node::Expr(_) |
             Node::Stmt(_) |
+            Node::PathSegment(_) |
             Node::Ty(_) |
             Node::TraitRef(_) |
             Node::Pat(_) |
@@ -668,7 +669,7 @@ impl<'hir> Map<'hir> {
     /// }
     /// ```
     pub fn get_return_block(&self, id: NodeId) -> Option<NodeId> {
-        let match_fn = |node: &Node| {
+        let match_fn = |node: &Node<'_>| {
             match *node {
                 Node::Item(_) |
                 Node::ForeignItem(_) |
@@ -677,7 +678,7 @@ impl<'hir> Map<'hir> {
                 _ => false,
             }
         };
-        let match_non_returning_block = |node: &Node| {
+        let match_non_returning_block = |node: &Node<'_>| {
             match *node {
                 Node::Expr(ref expr) => {
                     match expr.node {
@@ -709,17 +710,22 @@ impl<'hir> Map<'hir> {
         }
     }
 
-    /// Returns the NodeId of `id`'s nearest module parent, or `id` itself if no
+    /// Returns the DefId of `id`'s nearest module parent, or `id` itself if no
     /// module parent is in this map.
     pub fn get_module_parent(&self, id: NodeId) -> DefId {
-        let id = match self.walk_parent_nodes(id, |node| match *node {
+        self.local_def_id(self.get_module_parent_node(id))
+    }
+
+    /// Returns the NodeId of `id`'s nearest module parent, or `id` itself if no
+    /// module parent is in this map.
+    pub fn get_module_parent_node(&self, id: NodeId) -> NodeId {
+        match self.walk_parent_nodes(id, |node| match *node {
             Node::Item(&Item { node: ItemKind::Mod(_), .. }) => true,
             _ => false,
         }, |_| false) {
             Ok(id) => id,
             Err(id) => id,
-        };
-        self.local_def_id(id)
+        }
     }
 
     /// Returns the nearest enclosing scope. A scope is an item or block.
@@ -879,6 +885,7 @@ impl<'hir> Map<'hir> {
             Some(Node::AnonConst(constant)) => self.body(constant.body).value.span,
             Some(Node::Expr(expr)) => expr.span,
             Some(Node::Stmt(stmt)) => stmt.span,
+            Some(Node::PathSegment(seg)) => seg.ident.span,
             Some(Node::Ty(ty)) => ty.span,
             Some(Node::TraitRef(tr)) => tr.path.span,
             Some(Node::Binding(pat)) => pat.span,
@@ -949,7 +956,7 @@ impl<'a, 'hir> NodesMatchingSuffix<'a, 'hir> {
         // If `id` itself is a mod named `m` with parent `p`, then
         // returns `Some(id, m, p)`.  If `id` has no mod in its parent
         // chain, then returns `None`.
-        fn find_first_mod_parent<'a>(map: &'a Map, mut id: NodeId) -> Option<(NodeId, Name)> {
+        fn find_first_mod_parent<'a>(map: &'a Map<'_>, mut id: NodeId) -> Option<(NodeId, Name)> {
             loop {
                 if let Node::Item(item) = map.find(id)? {
                     if item_is_mod(&item) {
@@ -1027,14 +1034,14 @@ pub fn map_crate<'hir>(sess: &::session::Session,
         let mut collector = NodeCollector::root(&forest.krate,
                                                 &forest.dep_graph,
                                                 &definitions,
-                                                hcx);
+                                                hcx,
+                                                sess.source_map());
         intravisit::walk_crate(&mut collector, &forest.krate);
 
         let crate_disambiguator = sess.local_crate_disambiguator();
         let cmdline_args = sess.opts.dep_tracking_hash();
         collector.finalize_and_compute_crate_hash(crate_disambiguator,
                                                   cstore,
-                                                  sess.source_map(),
                                                   cmdline_args)
     };
 
@@ -1071,7 +1078,7 @@ pub fn map_crate<'hir>(sess: &::session::Session,
 /// Identical to the `PpAnn` implementation for `hir::Crate`,
 /// except it avoids creating a dependency on the whole crate.
 impl<'hir> print::PpAnn for Map<'hir> {
-    fn nested(&self, state: &mut print::State, nested: print::Nested) -> io::Result<()> {
+    fn nested(&self, state: &mut print::State<'_>, nested: print::Nested) -> io::Result<()> {
         match nested {
             Nested::Item(id) => state.print_item(self.expect_item(id.id)),
             Nested::TraitItem(id) => state.print_trait_item(self.trait_item(id)),
@@ -1083,7 +1090,7 @@ impl<'hir> print::PpAnn for Map<'hir> {
 }
 
 impl<'a> print::State<'a> {
-    pub fn print_node(&mut self, node: Node) -> io::Result<()> {
+    pub fn print_node(&mut self, node: Node<'_>) -> io::Result<()> {
         match node {
             Node::Item(a)         => self.print_item(&a),
             Node::ForeignItem(a)  => self.print_foreign_item(&a),
@@ -1093,6 +1100,7 @@ impl<'a> print::State<'a> {
             Node::AnonConst(a)    => self.print_anon_const(&a),
             Node::Expr(a)         => self.print_expr(&a),
             Node::Stmt(a)         => self.print_stmt(&a),
+            Node::PathSegment(a)  => self.print_path_segment(&a),
             Node::Ty(a)           => self.print_type(&a),
             Node::TraitRef(a)     => self.print_trait_ref(&a),
             Node::Binding(a)      |
@@ -1121,7 +1129,7 @@ impl<'a> print::State<'a> {
     }
 }
 
-fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
+fn node_id_to_string(map: &Map<'_>, id: NodeId, include_id: bool) -> String {
     let id_str = format!(" (id={})", id);
     let id_str = if include_id { &id_str[..] } else { "" };
 
@@ -1210,6 +1218,9 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
         Some(Node::Stmt(_)) => {
             format!("stmt {}{}", map.node_to_pretty_string(id), id_str)
         }
+        Some(Node::PathSegment(_)) => {
+            format!("path segment {}{}", map.node_to_pretty_string(id), id_str)
+        }
         Some(Node::Ty(_)) => {
             format!("type {}{}", map.node_to_pretty_string(id), id_str)
         }
@@ -1248,7 +1259,7 @@ fn node_id_to_string(map: &Map, id: NodeId, include_id: bool) -> String {
     }
 }
 
-pub fn describe_def(tcx: TyCtxt, def_id: DefId) -> Option<Def> {
+pub fn describe_def(tcx: TyCtxt<'_, '_, '_>, def_id: DefId) -> Option<Def> {
     if let Some(node_id) = tcx.hir.as_local_node_id(def_id) {
         tcx.hir.describe_def(node_id)
     } else {

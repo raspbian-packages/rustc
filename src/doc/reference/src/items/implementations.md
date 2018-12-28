@@ -1,5 +1,36 @@
 # Implementations
 
+> **<sup>Syntax</sup>**\
+> _Implementation_ :\
+> &nbsp;&nbsp; _InherentImpl_ | _TraitImpl_
+>
+> _InherentImpl_ :\
+> &nbsp;&nbsp; `impl` [_Generics_]&nbsp;[_Type_]&nbsp;[_WhereClause_]<sup>?</sup> `{`\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; _InherentImplItem_<sup>\*</sup>\
+> &nbsp;&nbsp; `}`
+>
+> _InherentImplItem_ :\
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> (\
+> &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; [_MacroInvocationSemi_]\
+> &nbsp;&nbsp; &nbsp;&nbsp; | ( [_Visibility_]<sup>?</sup> ( [_ConstantItem_] | [_Function_] | [_Method_] ) )\
+> &nbsp;&nbsp; )
+>
+> _TraitImpl_ :\
+> &nbsp;&nbsp; `unsafe`<sup>?</sup> `impl` [_Generics_] `!`<sup>?</sup>
+>              [_TypePath_] `for` [_Type_]\
+> &nbsp;&nbsp; [_WhereClause_]<sup>?</sup>\
+> &nbsp;&nbsp; `{`\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_InnerAttribute_]<sup>\*</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; _TraitImplItem_<sup>\*</sup>\
+> &nbsp;&nbsp; `}`
+>
+> _TraitImplItem_ :\
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>\*</sup> (\
+> &nbsp;&nbsp; &nbsp;&nbsp; &nbsp;&nbsp; [_MacroInvocationSemi_]\
+> &nbsp;&nbsp; &nbsp;&nbsp; | ( [_Visibility_]<sup>?</sup> ( [_TypeAlias_] | [_ConstantItem_] | [_Function_] | [_Method_] ) )\
+> &nbsp;&nbsp; )
+
 An _implementation_ is an item that associates items with an _implementing type_.
 Implementations are defined with the keyword `impl` and contain functions
 that belong to an instance of the type that is being implemented or to the
@@ -58,6 +89,9 @@ implemented trait, and cannot define any other items.
 The path to the associated items is `<` followed by a path to the implementing
 type followed by `as` followed by a path to the trait followed by `>` as a path
 component followed by the associated item's path component.
+
+[Unsafe traits] require the trait implementation to begin with the `unsafe`
+keyword.
 
 ```rust
 # #[derive(Copy, Clone)]
@@ -143,9 +177,23 @@ attributes must come before any associated items. That attributes that have
 meaning here are [`cfg`], [`deprecated`], [`doc`], and [the lint check
 attributes].
 
+[IDENTIFIER]: identifiers.html
+[_ConstantItem_]: items/constant-items.html
+[_Function_]: items/functions.html
+[_Generics_]: items/generics.html
+[_InnerAttribute_]: attributes.html
+[_MacroInvocationSemi_]: macros.html#macro-invocation
+[_Method_]: items/associated-items.html#methods
+[_OuterAttribute_]: attributes.html
+[_TypeAlias_]: items/type-aliases.html
+[_TypePath_]: paths.html#paths-in-types
+[_Type_]: types.html#type-expressions
+[_Visibility_]: visibility-and-privacy.html
+[_WhereClause_]: items/generics.html#where-clauses
 [trait]: items/traits.html
 [attributes]: attributes.html
 [`cfg`]: conditional-compilation.html
 [`deprecated`]: attributes.html#deprecation
 [`doc`]: attributes.html#documentation
 [the lint check attributes]: attributes.html#lint-check-attributes
+[Unsafe traits]: items/traits.html#unsafe-traits

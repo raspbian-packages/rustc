@@ -70,8 +70,8 @@ following are true:
 
 [constant]: items/constant-items.html
 [`drop`]: destructors.html
-[constant expression]: expressions.html#constant-expressions
+[constant expression]: const_eval.html#constant-expressions
 [interior mutable]: interior-mutability.html
 [IDENTIFIER]: identifiers.html
-[_Type_]: types.html
+[_Type_]: types.html#type-expressions
 [_Expression_]: expressions.html

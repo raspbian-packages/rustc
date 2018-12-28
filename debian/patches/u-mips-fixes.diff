@@ -5,24 +5,25 @@ Last-Update: 2018-10-24
 
 --- a/src/librustc_codegen_llvm/llvm_util.rs
 +++ b/src/librustc_codegen_llvm/llvm_util.rs
-@@ -68,6 +68,8 @@
+@@ -71,6 +71,9 @@
              add("-disable-preinline");
          }
  
-+	if sess.target.target.arch == "mips" || sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
++    if sess.target.target.arch == "mips" ||
++        sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
 +
          for arg in &sess.opts.cg.llvm_args {
              add(&(*arg));
          }
 --- a/src/test/run-pass/invalid_const_promotion.rs
 +++ b/src/test/run-pass/invalid_const_promotion.rs
-@@ -35,7 +35,8 @@
+@@ -39,7 +39,8 @@
      use std::os::unix::process::ExitStatusExt;
  
      assert!(status.signal() == Some(libc::SIGILL)
 -            || status.signal() == Some(libc::SIGABRT));
 +            || status.signal() == Some(libc::SIGABRT)
-+	    || status.signal() == Some(libc::SIGTRAP));
++            || status.signal() == Some(libc::SIGTRAP));
  }
  
  #[cfg(not(unix))]
@@ -37,3 +38,21 @@ Last-Update: 2018-10-24
  // ignore-powerpc
  // ignore-powerpc64
  // ignore-powerpc64le
+--- a/src/test/ui/asm/asm-out-assign-imm.nll.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.nll.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     let x: isize;
+    |         - help: make this binding mutable: `mut x`
+--- a/src/test/ui/asm/asm-out-assign-imm.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     x = 1;
+    |     ----- first assignment to `x`

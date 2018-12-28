@@ -19,7 +19,7 @@ use super::MAX;
 /// Converts a `u32` to a `char`.
 ///
 /// Note that all [`char`]s are valid [`u32`]s, and can be cast to one with
-/// [`as`]:
+/// `as`:
 ///
 /// ```
 /// let c = '💯';
@@ -34,7 +34,6 @@ use super::MAX;
 ///
 /// [`char`]: ../../std/primitive.char.html
 /// [`u32`]: ../../std/primitive.u32.html
-/// [`as`]: ../../book/first-edition/casting-between-types.html#as
 ///
 /// For an unsafe version of this function which ignores these checks, see
 /// [`from_u32_unchecked`].
@@ -71,7 +70,7 @@ pub fn from_u32(i: u32) -> Option<char> {
 /// Converts a `u32` to a `char`, ignoring validity.
 ///
 /// Note that all [`char`]s are valid [`u32`]s, and can be cast to one with
-/// [`as`]:
+/// `as`:
 ///
 /// ```
 /// let c = '💯';
@@ -86,7 +85,6 @@ pub fn from_u32(i: u32) -> Option<char> {
 ///
 /// [`char`]: ../../std/primitive.char.html
 /// [`u32`]: ../../std/primitive.u32.html
-/// [`as`]: ../../book/first-edition/casting-between-types.html#as
 ///
 /// # Safety
 ///
@@ -115,6 +113,19 @@ pub unsafe fn from_u32_unchecked(i: u32) -> char {
 
 #[stable(feature = "char_convert", since = "1.13.0")]
 impl From<char> for u32 {
+    /// Converts a [`char`] into a [`u32`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::mem;
+    ///
+    /// fn main() {
+    ///     let c = 'c';
+    ///     let u = u32::from(c);
+    ///     assert!(4 == mem::size_of_val(&u))
+    /// }
+    /// ```
     #[inline]
     fn from(c: char) -> Self {
         c as u32
@@ -141,6 +152,19 @@ impl From<char> for u32 {
 /// C0 and C1 control codes.
 #[stable(feature = "char_convert", since = "1.13.0")]
 impl From<u8> for char {
+    /// Converts a [`u8`] into a [`char`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::mem;
+    ///
+    /// fn main() {
+    ///     let u = 32 as u8;
+    ///     let c = char::from(u);
+    ///     assert!(4 == mem::size_of_val(&c))
+    /// }
+    /// ```
     #[inline]
     fn from(i: u8) -> Self {
         i as char

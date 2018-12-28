@@ -228,7 +228,8 @@ impl Step for Cargo {
                                                  self.host,
                                                  "test",
                                                  "src/tools/cargo",
-                                                 SourceType::Submodule);
+                                                 SourceType::Submodule,
+                                                 &[]);
 
         if !builder.fail_fast {
             cargo.arg("--no-fail-fast");
@@ -290,7 +291,8 @@ impl Step for Rls {
                                                  host,
                                                  "test",
                                                  "src/tools/rls",
-                                                 SourceType::Submodule);
+                                                 SourceType::Submodule,
+                                                 &[]);
 
         // Copy `src/tools/rls/test_data` to a writable drive.
         let test_workspace_path = builder.out.join("rls-test-data");
@@ -352,7 +354,8 @@ impl Step for Rustfmt {
                                                  host,
                                                  "test",
                                                  "src/tools/rustfmt",
-                                                 SourceType::Submodule);
+                                                 SourceType::Submodule,
+                                                 &[]);
 
         let dir = testdir(builder, compiler.host);
         t!(fs::create_dir_all(&dir));
@@ -407,7 +410,8 @@ impl Step for Miri {
                                                  host,
                                                  "test",
                                                  "src/tools/miri",
-                                                 SourceType::Submodule);
+                                                 SourceType::Submodule,
+                                                 &[]);
 
             // miri tests need to know about the stage sysroot
             cargo.env("MIRI_SYSROOT", builder.sysroot(compiler));
@@ -466,7 +470,8 @@ impl Step for Clippy {
                                                  host,
                                                  "test",
                                                  "src/tools/clippy",
-                                                 SourceType::Submodule);
+                                                 SourceType::Submodule,
+                                                 &[]);
 
             // clippy tests need to know about the stage sysroot
             cargo.env("SYSROOT", builder.sysroot(compiler));
@@ -755,22 +760,17 @@ default_test_with_compare_mode!(Ui {
     compare_mode: "nll"
 });
 
-default_test!(RunPass {
+default_test_with_compare_mode!(RunPass {
     path: "src/test/run-pass",
     mode: "run-pass",
-    suite: "run-pass"
+    suite: "run-pass",
+    compare_mode: "nll"
 });
 
 default_test!(CompileFail {
     path: "src/test/compile-fail",
     mode: "compile-fail",
     suite: "compile-fail"
-});
-
-default_test!(ParseFail {
-    path: "src/test/parse-fail",
-    mode: "parse-fail",
-    suite: "parse-fail"
 });
 
 default_test!(RunFail {
@@ -811,8 +811,7 @@ default_test!(Incremental {
 
 default_test!(Debuginfo {
     path: "src/test/debuginfo",
-    // What this runs varies depending on the native platform being apple
-    mode: "debuginfo-XXX",
+    mode: "debuginfo",
     suite: "debuginfo"
 });
 
@@ -949,18 +948,11 @@ impl Step for Compiletest {
                 return;
             }
 
-            if mode == "debuginfo-XXX" {
-                return if builder.config.build.contains("apple") {
-                    builder.ensure(Compiletest {
-                        mode: "debuginfo-lldb",
-                        ..self
-                    });
-                } else {
-                    builder.ensure(Compiletest {
-                        mode: "debuginfo-gdb",
-                        ..self
-                    });
-                };
+            if mode == "debuginfo" {
+                return builder.ensure(Compiletest {
+                    mode: "debuginfo-both",
+                    ..self
+                });
             }
 
             builder.ensure(dist::DebuggerScripts {
@@ -1060,7 +1052,7 @@ impl Step for Compiletest {
         let hostflags = flags.clone();
         cmd.arg("--host-rustcflags").arg(hostflags.join(" "));
 
-        let mut targetflags = flags.clone();
+        let mut targetflags = flags;
         targetflags.push(format!(
             "-Lnative={}",
             builder.test_helpers_out(target).display()
@@ -1081,11 +1073,34 @@ impl Step for Compiletest {
         if let Some(ref gdb) = builder.config.gdb {
             cmd.arg("--gdb").arg(gdb);
         }
-        if let Some(ref vers) = builder.lldb_version {
+
+        let run = |cmd: &mut Command| {
+            cmd.output().map(|output| {
+                String::from_utf8_lossy(&output.stdout)
+                    .lines().next().unwrap_or_else(|| {
+                        panic!("{:?} failed {:?}", cmd, output)
+                    }).to_string()
+            })
+        };
+        let lldb_exe = if builder.config.lldb_enabled && !target.contains("emscripten") {
+            // Test against the lldb that was just built.
+            builder.llvm_out(target)
+                .join("bin")
+                .join("lldb")
+        } else {
+            PathBuf::from("lldb")
+        };
+        let lldb_version = Command::new(&lldb_exe)
+            .arg("--version")
+            .output()
+            .map(|output| { String::from_utf8_lossy(&output.stdout).to_string() })
+            .ok();
+        if let Some(ref vers) = lldb_version {
             cmd.arg("--lldb-version").arg(vers);
-        }
-        if let Some(ref dir) = builder.lldb_python_dir {
-            cmd.arg("--lldb-python-dir").arg(dir);
+            let lldb_python_dir = run(Command::new(&lldb_exe).arg("-P")).ok();
+            if let Some(ref dir) = lldb_python_dir {
+                cmd.arg("--lldb-python-dir").arg(dir);
+            }
         }
 
         // Get paths from cmd args
@@ -1761,7 +1776,8 @@ impl Step for CrateRustdoc {
                                                  target,
                                                  test_kind.subcommand(),
                                                  "src/tools/rustdoc",
-                                                 SourceType::InTree);
+                                                 SourceType::InTree,
+                                                 &[]);
         if test_kind.subcommand() == "test" && !builder.fail_fast {
             cargo.arg("--no-fail-fast");
         }

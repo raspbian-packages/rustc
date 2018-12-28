@@ -22,7 +22,6 @@ use session::Session;
 use syntax::ast;
 use syntax::attr;
 use syntax::source_map::MultiSpan;
-use syntax::feature_gate;
 use syntax::symbol::Symbol;
 use util::nodemap::FxHashMap;
 
@@ -54,13 +53,13 @@ impl LintLevelSets {
         return me
     }
 
-    pub fn builder(sess: &Session) -> LintLevelsBuilder {
+    pub fn builder(sess: &Session) -> LintLevelsBuilder<'_> {
         LintLevelsBuilder::new(sess, LintLevelSets::new(sess))
     }
 
     fn process_command_line(&mut self, sess: &Session) {
         let store = sess.lint_store.borrow();
-        let mut specs = FxHashMap();
+        let mut specs = FxHashMap::default();
         self.lint_cap = sess.opts.lint_cap.unwrap_or(Level::Forbid);
 
         for &(ref lint_name, level) in &sess.opts.lint_opts {
@@ -98,7 +97,7 @@ impl LintLevelSets {
 
         // If `level` is none then we actually assume the default level for this
         // lint.
-        let mut level = level.unwrap_or(lint.default_level(sess));
+        let mut level = level.unwrap_or_else(|| lint.default_level(sess));
 
         // If we're about to issue a warning, check at the last minute for any
         // directives against the warnings "lint". If, for example, there's an
@@ -176,7 +175,7 @@ impl<'a> LintLevelsBuilder<'a> {
             sess,
             sets,
             cur: 0,
-            id_to_set: FxHashMap(),
+            id_to_set: Default::default(),
             warn_about_weird_lints: sess.buffered_lints.borrow().is_some(),
         }
     }
@@ -196,7 +195,7 @@ impl<'a> LintLevelsBuilder<'a> {
     ///
     /// Don't forget to call `pop`!
     pub fn push(&mut self, attrs: &[ast::Attribute]) -> BuilderPush {
-        let mut specs = FxHashMap();
+        let mut specs = FxHashMap::default();
         let store = self.sess.lint_store.borrow();
         let sess = self.sess;
         let bad_attr = |span| {
@@ -228,18 +227,7 @@ impl<'a> LintLevelsBuilder<'a> {
                     }
                 };
                 let tool_name = if let Some(lint_tool) = word.is_scoped() {
-                    let gate_feature = !self.sess.features_untracked().tool_lints;
-                    let known_tool = attr::is_known_lint_tool(lint_tool);
-                    if gate_feature {
-                        feature_gate::emit_feature_err(
-                            &sess.parse_sess,
-                            "tool_lints",
-                            word.span,
-                            feature_gate::GateIssue::Language,
-                            &format!("scoped lint `{}` is experimental", word.ident),
-                        );
-                    }
-                    if !known_tool {
+                    if !attr::is_known_lint_tool(lint_tool) {
                         span_err!(
                             sess,
                             lint_tool.span,
@@ -247,9 +235,6 @@ impl<'a> LintLevelsBuilder<'a> {
                             "an unknown tool name found in scoped lint: `{}`",
                             word.ident
                         );
-                    }
-
-                    if gate_feature || !known_tool {
                         continue;
                     }
 
@@ -299,7 +284,7 @@ impl<'a> LintLevelsBuilder<'a> {
                                     "change it to",
                                     new_lint_name.to_string(),
                                     Applicability::MachineApplicable,
-                                ).cancel();
+                                ).emit();
 
                                 let src = LintSource::Node(Symbol::intern(&new_lint_name), li.span);
                                 for id in ids {

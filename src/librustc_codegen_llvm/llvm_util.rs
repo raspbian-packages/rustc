@@ -52,8 +52,11 @@ fn require_inited() {
 }
 
 unsafe fn configure_llvm(sess: &Session) {
-    let mut llvm_c_strs = Vec::new();
-    let mut llvm_args = Vec::new();
+    let n_args = sess.opts.cg.llvm_args.len();
+    let mut llvm_c_strs = Vec::with_capacity(n_args + 1);
+    let mut llvm_args = Vec::with_capacity(n_args + 1);
+
+    llvm::LLVMRustInstallFatalErrorHandler();
 
     {
         let mut add = |arg: &str| {
@@ -68,7 +71,8 @@ unsafe fn configure_llvm(sess: &Session) {
             add("-disable-preinline");
         }
 
-	if sess.target.target.arch == "mips" || sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
+    if sess.target.target.arch == "mips" ||
+        sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
 
         for arg in &sess.opts.cg.llvm_args {
             add(&(*arg));

@@ -1,0 +1,36 @@
+Description: Ignore error details with $SRC_DIR
+ We build with --remap-path-prefix so it doesn't work, see bug below
+Bug: https://github.com/rust-lang/rust/issues/53081
+--- a/src/test/ui/impl-trait/impl-generic-mismatch.stderr
++++ b/src/test/ui/impl-trait/impl-generic-mismatch.stderr
+@@ -29,11 +29,6 @@
+    |
+ LL |     fn hash(&self, hasher: &mut impl Hasher) {}
+    |                                 ^^^^^^^^^^^ expected generic parameter, found `impl Trait`
+-   | 
+-  ::: $SRC_DIR/libcore/hash/mod.rs:LL:COL
+-   |
+-LL |     fn hash<H: Hasher>(&self, state: &mut H);
+-   |             - declaration in trait here
+ 
+ error: aborting due to 3 previous errors
+ 
+--- a/src/test/ui/consts/const-size_of-cycle.stderr
++++ b/src/test/ui/consts/const-size_of-cycle.stderr
+@@ -2,16 +2,8 @@
+    |
+ note: ...which requires normalizing `ParamEnvAnd { param_env: ParamEnv { caller_bounds: [], reveal: All }, value: [u8; _] }`...
+ note: ...which requires const-evaluating `Foo::bytes::{{constant}}`...
+-  --> $SRC_DIR/libcore/mem.rs:LL:COL
+-   |
+-LL |     intrinsics::size_of::<T>()
+-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    = note: ...which again requires computing layout of `Foo`, completing the cycle
+ note: cycle used when const-evaluating `Foo::bytes::{{constant}}`
+-  --> $SRC_DIR/libcore/mem.rs:LL:COL
+-   |
+-LL |     intrinsics::size_of::<T>()
+-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+ 
+ error: aborting due to previous error
+ 

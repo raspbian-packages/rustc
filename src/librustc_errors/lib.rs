@@ -16,14 +16,15 @@
 #![allow(unused_attributes)]
 #![feature(range_contains)]
 #![cfg_attr(unix, feature(libc))]
-#![cfg_attr(not(stage0), feature(nll))]
-#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(nll)]
 #![feature(optin_builtin_traits)]
 
 extern crate atty;
 extern crate termcolor;
 #[cfg(unix)]
 extern crate libc;
+#[macro_use]
+extern crate log;
 extern crate rustc_data_structures;
 extern crate serialize as rustc_serialize;
 extern crate syntax_pos;
@@ -304,9 +305,20 @@ thread_local!(pub static TRACK_DIAGNOSTICS: Cell<fn(&Diagnostic)> =
 
 #[derive(Default)]
 pub struct HandlerFlags {
+    /// If false, warning-level lints are suppressed.
+    /// (rustc: see `--allow warnings` and `--cap-lints`)
     pub can_emit_warnings: bool,
+    /// If true, error-level diagnostics are upgraded to bug-level.
+    /// (rustc: see `-Z treat-err-as-bug`)
     pub treat_err_as_bug: bool,
+    /// If true, immediately emit diagnostics that would otherwise be buffered.
+    /// (rustc: see `-Z dont-buffer-diagnostics` and `-Z treat-err-as-bug`)
+    pub dont_buffer_diagnostics: bool,
+    /// If true, immediately print bugs registered with `delay_span_bug`.
+    /// (rustc: see `-Z report-delayed-bugs`)
     pub report_delayed_bugs: bool,
+    /// show macro backtraces even for non-local macros.
+    /// (rustc: see `-Z external-macro-backtrace`)
     pub external_macro_backtrace: bool,
 }
 
@@ -370,9 +382,9 @@ impl Handler {
             emitter: Lock::new(e),
             continue_after_error: LockCell::new(true),
             delayed_span_bugs: Lock::new(Vec::new()),
-            taught_diagnostics: Lock::new(FxHashSet()),
-            emitted_diagnostic_codes: Lock::new(FxHashSet()),
-            emitted_diagnostics: Lock::new(FxHashSet()),
+            taught_diagnostics: Default::default(),
+            emitted_diagnostic_codes: Default::default(),
+            emitted_diagnostics: Default::default(),
         }
     }
 
@@ -386,7 +398,8 @@ impl Handler {
     /// tools that want to reuse a `Parser` cleaning the previously emitted diagnostics as well as
     /// the overall count of emitted error diagnostics.
     pub fn reset_err_count(&self) {
-        *self.emitted_diagnostics.borrow_mut() = FxHashSet();
+        // actually frees the underlying memory (which `clear` would not do)
+        *self.emitted_diagnostics.borrow_mut() = Default::default();
         self.err_count.store(0, SeqCst);
     }
 

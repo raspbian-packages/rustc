@@ -11,6 +11,7 @@
 pub use self::code_stats::{DataTypeKind, SizeKind, FieldInfo, VariantInfo};
 use self::code_stats::CodeStats;
 
+use dep_graph::cgu_reuse_tracker::CguReuseTracker;
 use hir::def_id::CrateNum;
 use rustc_data_structures::fingerprint::Fingerprint;
 
@@ -27,21 +28,18 @@ use util::common::ProfileQueriesMsg;
 use rustc_data_structures::base_n;
 use rustc_data_structures::sync::{self, Lrc, Lock, LockCell, OneThread, Once, RwLock};
 
-use syntax::ast::NodeId;
-use errors::{self, DiagnosticBuilder, DiagnosticId};
+use errors::{self, DiagnosticBuilder, DiagnosticId, Applicability};
 use errors::emitter::{Emitter, EmitterWriter};
+use syntax::ast::{self, NodeId};
 use syntax::edition::Edition;
+use syntax::feature_gate::{self, AttributeType};
 use syntax::json::JsonEmitter;
-use syntax::feature_gate;
-use syntax::parse;
-use syntax::parse::ParseSess;
-use syntax::{ast, source_map};
-use syntax::feature_gate::AttributeType;
+use syntax::source_map;
+use syntax::parse::{self, ParseSess};
 use syntax_pos::{MultiSpan, Span};
 use util::profiling::SelfProfiler;
 
-use rustc_target::spec::PanicStrategy;
-use rustc_target::spec::{Target, TargetTriple};
+use rustc_target::spec::{PanicStrategy, RelroLevel, Target, TargetTriple};
 use rustc_data_structures::flock;
 use jobserver::Client;
 
@@ -124,6 +122,9 @@ pub struct Session {
     pub imported_macro_spans: OneThread<RefCell<FxHashMap<Span, (String, Span)>>>,
 
     incr_comp_session: OneThread<RefCell<IncrCompSession>>,
+    /// Used for incremental compilation tests. Will only be populated if
+    /// `-Zquery-dep-graph` is specified.
+    pub cgu_reuse_tracker: CguReuseTracker,
 
     /// Used by -Z profile-queries in util::common
     pub profile_channel: Lock<Option<mpsc::Sender<ProfileQueriesMsg>>>,
@@ -431,8 +432,13 @@ impl Session {
                     diag_builder.span_note(span, message);
                 }
                 DiagnosticBuilderMethod::SpanSuggestion(suggestion) => {
-                    let span = span_maybe.expect("span_suggestion needs a span");
-                    diag_builder.span_suggestion(span, message, suggestion);
+                    let span = span_maybe.expect("span_suggestion_* needs a span");
+                    diag_builder.span_suggestion_with_applicability(
+                        span,
+                        message,
+                        suggestion,
+                        Applicability::Unspecified,
+                    );
                 }
             }
         }
@@ -519,6 +525,7 @@ impl Session {
     }
     pub fn verify_llvm_ir(&self) -> bool {
         self.opts.debugging_opts.verify_llvm_ir
+            || cfg!(always_verify_llvm_ir)
     }
     pub fn borrowck_stats(&self) -> bool {
         self.opts.debugging_opts.borrowck_stats
@@ -692,11 +699,11 @@ impl Session {
         match self.opts.maybe_sysroot {
             Some(ref sysroot) => sysroot,
             None => self.default_sysroot
-                .as_ref()
-                .expect("missing sysroot and default_sysroot in Session"),
+                        .as_ref()
+                        .expect("missing sysroot and default_sysroot in Session"),
         }
     }
-    pub fn target_filesearch(&self, kind: PathKind) -> filesearch::FileSearch {
+    pub fn target_filesearch(&self, kind: PathKind) -> filesearch::FileSearch<'_> {
         filesearch::FileSearch::new(
             self.sysroot(),
             self.opts.target_triple.triple(),
@@ -704,7 +711,7 @@ impl Session {
             kind,
         )
     }
-    pub fn host_filesearch(&self, kind: PathKind) -> filesearch::FileSearch {
+    pub fn host_filesearch(&self, kind: PathKind) -> filesearch::FileSearch<'_> {
         filesearch::FileSearch::new(
             self.sysroot(),
             config::host_triple(),
@@ -716,14 +723,8 @@ impl Session {
     pub fn set_incr_session_load_dep_graph(&self, load: bool) {
         let mut incr_comp_session = self.incr_comp_session.borrow_mut();
 
-        match *incr_comp_session {
-            IncrCompSession::Active {
-                ref mut load_dep_graph,
-                ..
-            } => {
-                *load_dep_graph = load;
-            }
-            _ => {}
+        if let IncrCompSession::Active { ref mut load_dep_graph, .. } = *incr_comp_session {
+            *load_dep_graph = load;
         }
     }
 
@@ -794,7 +795,7 @@ impl Session {
         *incr_comp_session = IncrCompSession::InvalidBecauseOfErrors { session_directory };
     }
 
-    pub fn incr_comp_session_dir(&self) -> cell::Ref<PathBuf> {
+    pub fn incr_comp_session_dir(&self) -> cell::Ref<'_, PathBuf> {
         let incr_comp_session = self.incr_comp_session.borrow();
         cell::Ref::map(
             incr_comp_session,
@@ -817,7 +818,7 @@ impl Session {
         )
     }
 
-    pub fn incr_comp_session_dir_opt(&self) -> Option<cell::Ref<PathBuf>> {
+    pub fn incr_comp_session_dir_opt(&self) -> Option<cell::Ref<'_, PathBuf>> {
         if self.opts.incremental.is_some() {
             Some(self.incr_comp_session_dir())
         } else {
@@ -861,9 +862,9 @@ impl Session {
     /// This expends fuel if applicable, and records fuel if applicable.
     pub fn consider_optimizing<T: Fn() -> String>(&self, crate_name: &str, msg: T) -> bool {
         let mut ret = true;
-        match self.optimization_fuel_crate {
-            Some(ref c) if c == crate_name => {
-                assert!(self.query_threads() == 1);
+        if let Some(ref c) = self.optimization_fuel_crate {
+            if c == crate_name {
+                assert_eq!(self.query_threads(), 1);
                 let fuel = self.optimization_fuel_limit.get();
                 ret = fuel != 0;
                 if fuel == 0 && !self.out_of_fuel.get() {
@@ -873,14 +874,12 @@ impl Session {
                     self.optimization_fuel_limit.set(fuel - 1);
                 }
             }
-            _ => {}
         }
-        match self.print_fuel_crate {
-            Some(ref c) if c == crate_name => {
-                assert!(self.query_threads() == 1);
+        if let Some(ref c) = self.print_fuel_crate {
+            if c == crate_name {
+                assert_eq!(self.query_threads(), 1);
                 self.print_fuel.set(self.print_fuel.get() + 1);
             }
-            _ => {}
         }
         ret
     }
@@ -964,6 +963,10 @@ impl Session {
         self.opts.debugging_opts.teach && self.diagnostic().must_teach(code)
     }
 
+    pub fn rust_2015(&self) -> bool {
+        self.opts.edition == Edition::Edition2015
+    }
+
     /// Are we allowed to use features from the Rust 2018 edition?
     pub fn rust_2018(&self) -> bool {
         self.opts.edition >= Edition::Edition2018
@@ -971,6 +974,27 @@ impl Session {
 
     pub fn edition(&self) -> Edition {
         self.opts.edition
+    }
+
+    /// True if we cannot skip the PLT for shared library calls.
+    pub fn needs_plt(&self) -> bool {
+        // Check if the current target usually needs PLT to be enabled.
+        // The user can use the command line flag to override it.
+        let needs_plt = self.target.target.options.needs_plt;
+
+        let dbg_opts = &self.opts.debugging_opts;
+
+        let relro_level = dbg_opts.relro_level
+            .unwrap_or(self.target.target.options.relro_level);
+
+        // Only enable this optimization by default if full relro is also enabled.
+        // In this case, lazy binding was already unavailable, so nothing is lost.
+        // This also ensures `-Wl,-z,now` is supported by the linker.
+        let full_relro = RelroLevel::Full == relro_level;
+
+        // If user didn't explicitly forced us to use / skip the PLT,
+        // then try to skip it where possible.
+        dbg_opts.plt.unwrap_or(needs_plt || !full_relro)
     }
 }
 
@@ -1012,6 +1036,7 @@ pub fn build_session_with_source_map(
     let can_emit_warnings = !(warnings_allow || cap_lints_allow);
 
     let treat_err_as_bug = sopts.debugging_opts.treat_err_as_bug;
+    let dont_buffer_diagnostics = sopts.debugging_opts.dont_buffer_diagnostics;
     let report_delayed_bugs = sopts.debugging_opts.report_delayed_bugs;
 
     let external_macro_backtrace = sopts.debugging_opts.external_macro_backtrace;
@@ -1059,6 +1084,7 @@ pub fn build_session_with_source_map(
             can_emit_warnings,
             treat_err_as_bug,
             report_delayed_bugs,
+            dont_buffer_diagnostics,
             external_macro_backtrace,
             ..Default::default()
         },
@@ -1074,14 +1100,11 @@ pub fn build_session_(
     source_map: Lrc<source_map::SourceMap>,
 ) -> Session {
     let host_triple = TargetTriple::from_triple(config::host_triple());
-    let host = match Target::search(&host_triple) {
-        Ok(t) => t,
-        Err(e) => {
-            span_diagnostic
-                .fatal(&format!("Error loading host specification: {}", e))
-                .raise();
-        }
-    };
+    let host = Target::search(&host_triple).unwrap_or_else(|e|
+        span_diagnostic
+            .fatal(&format!("Error loading host specification: {}", e))
+            .raise()
+    );
     let target_cfg = config::build_target_config(&sopts, &span_diagnostic);
 
     let p_s = parse::ParseSess::with_span_handler(span_diagnostic, source_map);
@@ -1101,13 +1124,18 @@ pub fn build_session_(
     let print_fuel_crate = sopts.debugging_opts.print_fuel.clone();
     let print_fuel = LockCell::new(0);
 
-    let working_dir = match env::current_dir() {
-        Ok(dir) => dir,
-        Err(e) => p_s.span_diagnostic
+    let working_dir = env::current_dir().unwrap_or_else(|e|
+        p_s.span_diagnostic
             .fatal(&format!("Current directory is invalid: {}", e))
-            .raise(),
-    };
+            .raise()
+    );
     let working_dir = file_path_mapping.map_prefix(working_dir);
+
+    let cgu_reuse_tracker = if sopts.debugging_opts.query_dep_graph {
+        CguReuseTracker::new()
+    } else {
+        CguReuseTracker::new_disabled()
+    };
 
     let sess = Session {
         target: target_cfg,
@@ -1123,7 +1151,7 @@ pub fn build_session_(
         working_dir,
         lint_store: RwLock::new(lint::LintStore::new()),
         buffered_lints: Lock::new(Some(lint::LintBuffer::new())),
-        one_time_diagnostics: Lock::new(FxHashSet()),
+        one_time_diagnostics: Default::default(),
         plugin_llvm_passes: OneThread::new(RefCell::new(Vec::new())),
         plugin_attributes: OneThread::new(RefCell::new(Vec::new())),
         crate_types: Once::new(),
@@ -1139,6 +1167,7 @@ pub fn build_session_(
         injected_panic_runtime: Once::new(),
         imported_macro_spans: OneThread::new(RefCell::new(FxHashMap::default())),
         incr_comp_session: OneThread::new(RefCell::new(IncrCompSession::NotInitialized)),
+        cgu_reuse_tracker,
         self_profiling: Lock::new(SelfProfiler::new()),
         profile_channel: Lock::new(None),
         perf_stats: PerfStats {
@@ -1148,7 +1177,7 @@ pub fn build_session_(
             normalize_ty_after_erasing_regions: AtomicUsize::new(0),
             normalize_projection_ty: AtomicUsize::new(0),
         },
-        code_stats: Lock::new(CodeStats::new()),
+        code_stats: Default::default(),
         optimization_fuel_crate,
         optimization_fuel_limit,
         print_fuel_crate,
@@ -1182,7 +1211,7 @@ pub fn build_session_(
         },
         has_global_allocator: Once::new(),
         has_panic_handler: Once::new(),
-        driver_lint_caps: FxHashMap(),
+        driver_lint_caps: Default::default(),
     };
 
     validate_commandline_args_with_session_available(&sess);
@@ -1235,7 +1264,7 @@ impl CrateDisambiguator {
 }
 
 impl fmt::Display for CrateDisambiguator {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
         let (a, b) = self.0.as_value();
         let as_u128 = a as u128 | ((b as u128) << 64);
         f.write_str(&base_n::encode(as_u128, base_n::CASE_INSENSITIVE))

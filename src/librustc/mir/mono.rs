@@ -121,7 +121,7 @@ impl<'tcx> CodegenUnit<'tcx> {
     pub fn new(name: InternedString) -> CodegenUnit<'tcx> {
         CodegenUnit {
             name: name,
-            items: FxHashMap(),
+            items: Default::default(),
             size_estimate: None,
         }
     }
@@ -251,7 +251,7 @@ impl<'a, 'gcx: 'tcx, 'tcx: 'a> CodegenUnitNameBuilder<'a, 'gcx, 'tcx> {
     pub fn new(tcx: TyCtxt<'a, 'gcx, 'tcx>) -> Self {
         CodegenUnitNameBuilder {
             tcx,
-            cache: FxHashMap(),
+            cache: Default::default(),
         }
     }
 
@@ -325,7 +325,7 @@ impl<'a, 'gcx: 'tcx, 'tcx: 'a> CodegenUnitNameBuilder<'a, 'gcx, 'tcx> {
                 String::new()
             };
 
-            let crate_disambiguator = format!("{}", tcx.crate_disambiguator(cnum));
+            let crate_disambiguator = tcx.crate_disambiguator(cnum).to_string();
             // Using a shortened disambiguator of about 40 bits
             format!("{}.{}{}",
                 tcx.crate_name(cnum),

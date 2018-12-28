@@ -12,9 +12,9 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::fmt::{self, Debug, Display};
 
 #[cfg(feature = "arbitrary_precision")]
-use ryu;
-#[cfg(feature = "arbitrary_precision")]
 use itoa;
+#[cfg(feature = "arbitrary_precision")]
+use ryu;
 #[cfg(feature = "arbitrary_precision")]
 use serde::de::{IntoDeserializer, MapAccess};
 
@@ -26,12 +26,7 @@ use error::ErrorCode;
 #[cfg(feature = "arbitrary_precision")]
 /// Not public API. Should be pub(crate).
 #[doc(hidden)]
-pub const SERDE_STRUCT_FIELD_NAME: &'static str = "$__serde_private_number";
-
-#[cfg(feature = "arbitrary_precision")]
-/// Not public API. Should be pub(crate).
-#[doc(hidden)]
-pub const SERDE_STRUCT_NAME: &'static str = "$__serde_private_Number";
+pub const TOKEN: &'static str = "$serde_json::private::Number";
 
 /// Represents a JSON number, whether integer or floating point.
 #[derive(Clone, PartialEq)]
@@ -346,8 +341,8 @@ impl Serialize for Number {
     {
         use serde::ser::SerializeStruct;
 
-        let mut s = serializer.serialize_struct(SERDE_STRUCT_NAME, 1)?;
-        s.serialize_field(SERDE_STRUCT_FIELD_NAME, &self.n)?;
+        let mut s = serializer.serialize_struct(TOKEN, 1)?;
+        s.serialize_field(TOKEN, &self.n)?;
         s.end()
     }
 }
@@ -426,7 +421,7 @@ impl<'de> de::Deserialize<'de> for NumberKey {
             where
                 E: de::Error,
             {
-                if s == SERDE_STRUCT_FIELD_NAME {
+                if s == TOKEN {
                     Ok(())
                 } else {
                     Err(de::Error::custom("expected field with custom name"))
@@ -638,7 +633,7 @@ impl<'de> Deserializer<'de> for NumberFieldDeserializer {
     where
         V: de::Visitor<'de>,
     {
-        visitor.visit_borrowed_str(SERDE_STRUCT_FIELD_NAME)
+        visitor.visit_borrowed_str(TOKEN)
     }
 
     forward_to_deserialize_any! {
@@ -701,9 +696,7 @@ macro_rules! impl_from_unsigned {
                         { N::PosInt(u as u64) }
                         #[cfg(feature = "arbitrary_precision")]
                         {
-                            let mut buf = Vec::new();
-                            itoa::write(&mut buf, u).unwrap();
-                            String::from_utf8(buf).unwrap()
+                            itoa::Buffer::new().format(u).to_owned()
                         }
                     };
                     Number { n: n }
@@ -732,9 +725,7 @@ macro_rules! impl_from_signed {
                         }
                         #[cfg(feature = "arbitrary_precision")]
                         {
-                            let mut buf = Vec::new();
-                            itoa::write(&mut buf, i).unwrap();
-                            String::from_utf8(buf).unwrap()
+                            itoa::Buffer::new().format(i).to_owned()
                         }
                     };
                     Number { n: n }

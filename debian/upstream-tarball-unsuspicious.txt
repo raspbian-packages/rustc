@@ -57,8 +57,13 @@ src/etc/installer/gfx/
 src/doc/nomicon/src/img/safeandunsafe.svg
 src/doc/book/second-edition/src/img/*.png
 src/doc/book/second-edition/src/img/*.svg
+src/doc/book/src/img/ferris/*.svg
+src/doc/book/src/img/*.png
+src/doc/book/src/img/*.svg
+src/doc/book/2018-edition/src/img/ferris/*.svg
 src/doc/book/2018-edition/src/img/*.svg
 src/doc/book/2018-edition/src/img/*.png
+src/doc/book/tools/docx-to-md.xsl
 src/librustdoc/html/static/*.svg
 src/vendor/difference/assets/*.png
 src/vendor/mdbook/src/theme/favicon.png
@@ -76,6 +81,7 @@ src/stdsimd/crates/stdsimd-verify/x86-intel.xml
 src/stdsimd/stdsimd/arch/detect/test_data
 src/test/compile-fail/not-utf8.bin
 src/test/*/*.rs
+src/test/*/issues/*.rs
 src/test/*/*/issues/*.rs
 src/test/*/*.stderr
 src/test/*/*/*.stderr

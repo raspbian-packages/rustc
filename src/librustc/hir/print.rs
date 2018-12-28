@@ -48,13 +48,13 @@ pub enum Nested {
 }
 
 pub trait PpAnn {
-    fn nested(&self, _state: &mut State, _nested: Nested) -> io::Result<()> {
+    fn nested(&self, _state: &mut State<'_>, _nested: Nested) -> io::Result<()> {
         Ok(())
     }
-    fn pre(&self, _state: &mut State, _node: AnnNode) -> io::Result<()> {
+    fn pre(&self, _state: &mut State<'_>, _node: AnnNode<'_>) -> io::Result<()> {
         Ok(())
     }
-    fn post(&self, _state: &mut State, _node: AnnNode) -> io::Result<()> {
+    fn post(&self, _state: &mut State<'_>, _node: AnnNode<'_>) -> io::Result<()> {
         Ok(())
     }
     fn try_fetch_item(&self, _: ast::NodeId) -> Option<&hir::Item> {
@@ -70,7 +70,7 @@ impl PpAnn for hir::Crate {
     fn try_fetch_item(&self, item: ast::NodeId) -> Option<&hir::Item> {
         Some(self.item(item))
     }
-    fn nested(&self, state: &mut State, nested: Nested) -> io::Result<()> {
+    fn nested(&self, state: &mut State<'_>, nested: Nested) -> io::Result<()> {
         match nested {
             Nested::Item(id) => state.print_item(self.item(id.id)),
             Nested::TraitItem(id) => state.print_trait_item(self.trait_item(id)),
@@ -180,7 +180,7 @@ impl<'a> State<'a> {
         State {
             s: pp::mk_printer(out, default_columns),
             cm: Some(cm),
-            comments: comments.clone(),
+            comments,
             literals: literals.unwrap_or_default().into_iter().peekable(),
             cur_cmnt: 0,
             boxes: Vec::new(),
@@ -190,7 +190,7 @@ impl<'a> State<'a> {
 }
 
 pub fn to_string<F>(ann: &dyn PpAnn, f: F) -> String
-    where F: FnOnce(&mut State) -> io::Result<()>
+    where F: FnOnce(&mut State<'_>) -> io::Result<()>
 {
     let mut wr = Vec::new();
     {
@@ -314,7 +314,7 @@ impl<'a> State<'a> {
                                   mut op: F,
                                   mut get_span: G)
                                   -> io::Result<()>
-        where F: FnMut(&mut State, &T) -> io::Result<()>,
+        where F: FnMut(&mut State<'_>, &T) -> io::Result<()>,
               G: FnMut(&T) -> syntax_pos::Span
     {
         self.rbox(0, b)?;
@@ -401,6 +401,7 @@ impl<'a> State<'a> {
                 self.print_ty_fn(f.abi, f.unsafety, &f.decl, None, &f.generic_params,
                                  &f.arg_names[..])?;
             }
+            hir::TyKind::Def(..) => {},
             hir::TyKind::Path(ref qpath) => {
                 self.print_qpath(qpath, false)?
             }
@@ -1629,6 +1630,17 @@ impl<'a> State<'a> {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn print_path_segment(&mut self, segment: &hir::PathSegment) -> io::Result<()> {
+        if segment.ident.name != keywords::CrateRoot.name() &&
+           segment.ident.name != keywords::DollarCrate.name() {
+           self.print_ident(segment.ident)?;
+           segment.with_generic_args(|generic_args| {
+               self.print_generic_args(generic_args, segment.infer_types, false)
+           })?;
+        }
         Ok(())
     }
 

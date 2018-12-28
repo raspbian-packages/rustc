@@ -9,9 +9,9 @@
 >
 > _TraitBound_ :\
 > &nbsp;&nbsp; &nbsp;&nbsp; `?`<sup>?</sup>
-> [_ForLifetimes_](#higher-ranked-trait-bounds)<sup>?</sup> [_TraitPath_]\
+> [_ForLifetimes_](#higher-ranked-trait-bounds)<sup>?</sup> [_TypePath_]\
 > &nbsp;&nbsp; | `(` `?`<sup>?</sup>
-> [_ForLifetimes_](#higher-ranked-trait-bounds)<sup>?</sup> [_TraitPath_] `)`
+> [_ForLifetimes_](#higher-ranked-trait-bounds)<sup>?</sup> [_TypePath_] `)`
 >
 > _LifetimeBounds_ :\
 > &nbsp;&nbsp; ( _Lifetime_ `+` )<sup>\*</sup> _Lifetime_<sup>?</sup>
@@ -123,8 +123,8 @@ fn call_on_ref_zero<F>(f: F) where for<'a> F: Fn(&'a i32) {
 ```
 
 Higher-ranked lifetimes may also be specified just before the trait, the only
-end of the following trait instead of the whole bound. This function is
 difference is the scope of the lifetime parameter, which extends only to the
+end of the following trait instead of the whole bound. This function is
 equivalent to the last one.
 
 ```rust
@@ -135,12 +135,12 @@ fn call_on_ref_zero<F>(f: F) where F: for<'a> Fn(&'a i32) {
 ```
 
 [LIFETIME_OR_LABEL]: tokens.html#lifetimes-and-loop-labels
-[_TraitPath_]: paths.html
+[_TypePath_]: paths.html#paths-in-types
 [`Sized`]: special-types-and-traits.html#sized
 
 [associated types]: items/associated-items.html#associated-types
 [supertraits]: items/traits.html#supertraits
 [generic]: items/generics.html
 [Trait]: items/traits.html#trait-bounds
-[trait objects]: types.html#trait-objects
+[trait objects]: types/trait-object.html
 [where clause]: items/generics.html#where-clauses

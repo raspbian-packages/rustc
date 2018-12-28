@@ -26,7 +26,7 @@ Forwarded: not-needed
    "tools/rustdoc-themes",
  ]
  exclude = [
-@@ -44,23 +37,7 @@
+@@ -44,24 +37,7 @@
  debug = false
  debug-assertions = false
  
@@ -48,8 +48,9 @@ Forwarded: not-needed
  # here
  rustc-workspace-hack = { path = 'tools/rustc-workspace-hack' }
 -
--[patch."https://github.com/rust-lang-nursery/rust-clippy"]
+-[patch."https://github.com/rust-lang/rust-clippy"]
 -clippy_lints = { path = "tools/clippy/clippy_lints" }
+-rustc_tools_util = { path = "tools/clippy/rustc_tools_util" }
 --- a/src/bootstrap/bootstrap.py
 +++ b/src/bootstrap/bootstrap.py
 @@ -639,10 +639,6 @@

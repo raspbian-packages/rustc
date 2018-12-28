@@ -63,8 +63,28 @@
         - [Match expressions](expressions/match-expr.md)
         - [Return expressions](expressions/return-expr.md)
 
+- [Patterns](patterns.md)
+
 - [Type system](type-system.md)
     - [Types](types.md)
+        - [Boolean type](types/boolean.md)
+        - [Numeric types](types/numeric.md)
+        - [Textual types](types/textual.md)
+        - [Never type](types/never.md)
+        - [Tuple types](types/tuple.md)
+        - [Array types](types/array.md)
+        - [Slice types](types/slice.md)
+        - [Struct types](types/struct.md)
+        - [Enumerated types](types/enum.md)
+        - [Union types](types/union.md)
+        - [Function item types](types/function-item.md)
+        - [Closure types](types/closure.md)
+        - [Pointer types](types/pointer.md)
+        - [Function pointer types](types/function-pointer.md)
+        - [Trait object types](types/trait-object.md)
+        - [Impl trait type](types/impl-trait.md)
+        - [Type parameters](types/parameters.md)
+        - [Inferred type](types/inferred.md)
     - [Dynamically Sized Types](dynamically-sized-types.md)
     - [Type layout](type-layout.md)
     - [Interior mutability](interior-mutability.md)
@@ -88,6 +108,8 @@
     - [Unsafe blocks](unsafe-blocks.md)
     - [Behavior considered undefined](behavior-considered-undefined.md)
     - [Behavior not considered unsafe](behavior-not-considered-unsafe.md)
+
+- [Constant Evaluation](const_eval.md)
 
 [Appendix: Influences](influences.md)
 

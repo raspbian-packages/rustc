@@ -83,6 +83,11 @@ RUN ./build-git.sh
 COPY dist-x86_64-linux/build-headers.sh /tmp/
 RUN ./build-headers.sh
 
+# OpenSSL requires a more recent version of perl
+# with so we install newer ones here
+COPY dist-x86_64-linux/build-perl.sh /tmp/
+RUN ./build-perl.sh
+
 COPY scripts/sccache.sh /scripts/
 RUN sh /scripts/sccache.sh
 
@@ -110,3 +115,5 @@ ENV CFLAGS -mstackrealign
 # When we build cargo in this container, we don't want it to use the system
 # libcurl, instead it should compile its own.
 ENV LIBCURL_NO_PKG_CONFIG 1
+
+ENV DIST_REQUIRE_ALL_TOOLS 1

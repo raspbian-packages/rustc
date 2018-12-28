@@ -20,10 +20,12 @@ pub use ty::IntVarValue;
 use arena::SyncDroplessArena;
 use errors::DiagnosticBuilder;
 use hir::def_id::DefId;
+use infer::canonical::{Canonical, CanonicalVarValues};
 use middle::free_region::RegionRelations;
 use middle::lang_items;
 use middle::region;
 use rustc_data_structures::unify as ut;
+use session::config::BorrowckMode;
 use std::cell::{Cell, Ref, RefCell, RefMut};
 use std::collections::BTreeMap;
 use std::fmt;
@@ -48,7 +50,6 @@ use self::region_constraints::{RegionConstraintCollector, RegionSnapshot};
 use self::type_variable::TypeVariableOrigin;
 use self::unify_key::ToType;
 
-pub mod opaque_types;
 pub mod at;
 pub mod canonical;
 mod combine;
@@ -61,6 +62,8 @@ mod higher_ranked;
 pub mod lattice;
 mod lexical_region_resolve;
 mod lub;
+pub mod nll_relate;
+pub mod opaque_types;
 pub mod outlives;
 pub mod region_constraints;
 pub mod resolve;
@@ -79,6 +82,34 @@ pub type InferResult<'tcx, T> = Result<InferOk<'tcx, T>, TypeError<'tcx>>;
 pub type Bound<T> = Option<T>;
 pub type UnitResult<'tcx> = RelateResult<'tcx, ()>; // "unify result"
 pub type FixupResult<T> = Result<T, FixupError>; // "fixup result"
+
+/// A flag that is used to suppress region errors. This is normally
+/// false, but sometimes -- when we are doing region checks that the
+/// NLL borrow checker will also do -- it might be set to true.
+#[derive(Copy, Clone, Default, Debug)]
+pub struct SuppressRegionErrors {
+    suppressed: bool,
+}
+
+impl SuppressRegionErrors {
+    pub fn suppressed(self) -> bool {
+        self.suppressed
+    }
+
+    /// Indicates that the MIR borrowck will repeat these region
+    /// checks, so we should ignore errors if NLL is (unconditionally)
+    /// enabled.
+    pub fn when_nll_is_enabled(tcx: TyCtxt<'_, '_, '_>) -> Self {
+        match tcx.borrowck_mode() {
+            // If we're on AST or Migrate mode, report AST region errors
+            BorrowckMode::Ast | BorrowckMode::Migrate => SuppressRegionErrors { suppressed: false },
+
+            // If we're on MIR or Compare mode, don't report AST region errors as they should
+            // be reported by NLL
+            BorrowckMode::Compare | BorrowckMode::Mir => SuppressRegionErrors { suppressed: true },
+        }
+    }
+}
 
 pub struct InferCtxt<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     pub tcx: TyCtxt<'a, 'gcx, 'tcx>,
@@ -196,9 +227,10 @@ pub struct InferCtxt<'a, 'gcx: 'a + 'tcx, 'tcx: 'a> {
     universe: Cell<ty::UniverseIndex>,
 }
 
-/// A map returned by `skolemize_late_bound_regions()` indicating the skolemized
-/// region that each late-bound region was replaced with.
-pub type SkolemizationMap<'tcx> = BTreeMap<ty::BoundRegion, ty::Region<'tcx>>;
+/// A map returned by `replace_late_bound_regions_with_placeholders()`
+/// indicating the placeholder region that each late-bound region was
+/// replaced with.
+pub type PlaceholderMap<'tcx> = BTreeMap<ty::BoundRegion, ty::Region<'tcx>>;
 
 /// See `error_reporting` module for more details
 #[derive(Clone, Debug)]
@@ -372,12 +404,14 @@ pub enum RegionVariableOrigin {
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub enum NLLRegionVariableOrigin {
-    // During NLL region processing, we create variables for free
-    // regions that we encounter in the function signature and
-    // elsewhere. This origin indices we've got one of those.
+    /// During NLL region processing, we create variables for free
+    /// regions that we encounter in the function signature and
+    /// elsewhere. This origin indices we've got one of those.
     FreeRegion,
 
-    BoundRegion(ty::UniverseIndex),
+    /// "Universal" instantiation of a higher-ranked region (e.g.,
+    /// from a `for<'a> T` binder). Meant to represent "any region".
+    Placeholder(ty::Placeholder),
 
     Existential,
 }
@@ -386,7 +420,7 @@ impl NLLRegionVariableOrigin {
     pub fn is_universal(self) -> bool {
         match self {
             NLLRegionVariableOrigin::FreeRegion => true,
-            NLLRegionVariableOrigin::BoundRegion(..) => true,
+            NLLRegionVariableOrigin::Placeholder(..) => true,
             NLLRegionVariableOrigin::Existential => false,
         }
     }
@@ -408,11 +442,11 @@ pub enum FixupError {
 pub struct RegionObligation<'tcx> {
     pub sub_region: ty::Region<'tcx>,
     pub sup_type: Ty<'tcx>,
-    pub cause: ObligationCause<'tcx>,
+    pub origin: SubregionOrigin<'tcx>,
 }
 
 impl fmt::Display for FixupError {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use self::FixupError::*;
 
         match *self {
@@ -444,7 +478,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'gcx> {
     pub fn infer_ctxt(self) -> InferCtxtBuilder<'a, 'gcx, 'tcx> {
         InferCtxtBuilder {
             global_tcx: self,
-            arena: SyncDroplessArena::new(),
+            arena: SyncDroplessArena::default(),
             fresh_tables: None,
         }
     }
@@ -458,10 +492,30 @@ impl<'a, 'gcx, 'tcx> InferCtxtBuilder<'a, 'gcx, 'tcx> {
         self
     }
 
-    pub fn enter<F, R>(&'tcx mut self, f: F) -> R
+    /// Given a canonical value `C` as a starting point, create an
+    /// inference context that contains each of the bound values
+    /// within instantiated as a fresh variable. The `f` closure is
+    /// invoked with the new infcx, along with the instantiated value
+    /// `V` and a substitution `S`.  This substitution `S` maps from
+    /// the bound values in `C` to their instantiated values in `V`
+    /// (in other words, `S(C) = V`).
+    pub fn enter_with_canonical<T, R>(
+        &'tcx mut self,
+        span: Span,
+        canonical: &Canonical<'tcx, T>,
+        f: impl for<'b> FnOnce(InferCtxt<'b, 'gcx, 'tcx>, T, CanonicalVarValues<'tcx>) -> R,
+    ) -> R
     where
-        F: for<'b> FnOnce(InferCtxt<'b, 'gcx, 'tcx>) -> R,
+        T: TypeFoldable<'tcx>,
     {
+        self.enter(|infcx| {
+            let (value, subst) =
+                infcx.instantiate_canonical_with_fresh_inference_vars(span, canonical);
+            f(infcx, value, subst)
+        })
+    }
+
+    pub fn enter<R>(&'tcx mut self, f: impl for<'b> FnOnce(InferCtxt<'b, 'gcx, 'tcx>) -> R) -> R {
         let InferCtxtBuilder {
             global_tcx,
             ref arena,
@@ -472,15 +526,15 @@ impl<'a, 'gcx, 'tcx> InferCtxtBuilder<'a, 'gcx, 'tcx> {
             f(InferCtxt {
                 tcx,
                 in_progress_tables,
-                projection_cache: RefCell::new(traits::ProjectionCache::new()),
+                projection_cache: Default::default(),
                 type_variables: RefCell::new(type_variable::TypeVariableTable::new()),
                 int_unification_table: RefCell::new(ut::UnificationTable::new()),
                 float_unification_table: RefCell::new(ut::UnificationTable::new()),
                 region_constraints: RefCell::new(Some(RegionConstraintCollector::new())),
                 lexical_region_resolutions: RefCell::new(None),
-                selection_cache: traits::SelectionCache::new(),
-                evaluation_cache: traits::EvaluationCache::new(),
-                reported_trait_errors: RefCell::new(FxHashMap()),
+                selection_cache: Default::default(),
+                evaluation_cache: Default::default(),
+                reported_trait_errors: Default::default(),
                 tainted_by_errors_flag: Cell::new(false),
                 err_count_on_creation: tcx.sess.err_count(),
                 in_snapshot: Cell::new(false),
@@ -557,7 +611,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         t.fold_with(&mut self.freshener())
     }
 
-    pub fn type_var_diverges(&'a self, ty: Ty) -> bool {
+    pub fn type_var_diverges(&'a self, ty: Ty<'_>) -> bool {
         match ty.sty {
             ty::Infer(ty::TyVar(vid)) => self.type_variables.borrow().var_diverges(vid),
             _ => false,
@@ -568,7 +622,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         freshen::TypeFreshener::new(self)
     }
 
-    pub fn type_is_unconstrained_numeric(&'a self, ty: Ty) -> UnconstrainedNumeric {
+    pub fn type_is_unconstrained_numeric(&'a self, ty: Ty<'_>) -> UnconstrainedNumeric {
         use ty::error::UnconstrainedNumeric::Neither;
         use ty::error::UnconstrainedNumeric::{UnconstrainedFloat, UnconstrainedInt};
         match ty.sty {
@@ -880,13 +934,13 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     a,
                     b,
                 },
-                skol_map,
-            ) = self.skolemize_late_bound_regions(predicate);
+                placeholder_map,
+            ) = self.replace_late_bound_regions_with_placeholders(predicate);
 
             let cause_span = cause.span;
             let ok = self.at(cause, param_env).sub_exp(a_is_expected, a, b)?;
-            self.leak_check(false, cause_span, &skol_map, snapshot)?;
-            self.pop_skolemized(skol_map, snapshot);
+            self.leak_check(false, cause_span, &placeholder_map, snapshot)?;
+            self.pop_placeholders(placeholder_map, snapshot);
             Ok(ok.unit())
         }))
     }
@@ -897,14 +951,14 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         predicate: &ty::PolyRegionOutlivesPredicate<'tcx>,
     ) -> UnitResult<'tcx> {
         self.commit_if_ok(|snapshot| {
-            let (ty::OutlivesPredicate(r_a, r_b), skol_map) =
-                self.skolemize_late_bound_regions(predicate);
+            let (ty::OutlivesPredicate(r_a, r_b), placeholder_map) =
+                self.replace_late_bound_regions_with_placeholders(predicate);
             let origin = SubregionOrigin::from_obligation_cause(cause, || {
                 RelateRegionParamBound(cause.span)
             });
             self.sub_regions(origin, r_b, r_a); // `b : a` ==> `a <= b`
-            self.leak_check(false, cause.span, &skol_map, snapshot)?;
-            Ok(self.pop_skolemized(skol_map, snapshot))
+            self.leak_check(false, cause.span, &placeholder_map, snapshot)?;
+            Ok(self.pop_placeholders(placeholder_map, snapshot))
         })
     }
 
@@ -1039,34 +1093,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         region_context: DefId,
         region_map: &region::ScopeTree,
         outlives_env: &OutlivesEnvironment<'tcx>,
-    ) {
-        self.resolve_regions_and_report_errors_inner(
-            region_context,
-            region_map,
-            outlives_env,
-            false,
-        )
-    }
-
-    /// Like `resolve_regions_and_report_errors`, but skips error
-    /// reporting if NLL is enabled.  This is used for fn bodies where
-    /// the same error may later be reported by the NLL-based
-    /// inference.
-    pub fn resolve_regions_and_report_errors_unless_nll(
-        &self,
-        region_context: DefId,
-        region_map: &region::ScopeTree,
-        outlives_env: &OutlivesEnvironment<'tcx>,
-    ) {
-        self.resolve_regions_and_report_errors_inner(region_context, region_map, outlives_env, true)
-    }
-
-    fn resolve_regions_and_report_errors_inner(
-        &self,
-        region_context: DefId,
-        region_map: &region::ScopeTree,
-        outlives_env: &OutlivesEnvironment<'tcx>,
-        will_later_be_reported_by_nll: bool,
+        suppress: SuppressRegionErrors,
     ) {
         assert!(
             self.is_tainted_by_errors() || self.region_obligations.borrow().is_empty(),
@@ -1098,7 +1125,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // this infcx was in use.  This is totally hokey but
             // otherwise we have a hard time separating legit region
             // errors from silly ones.
-            self.report_region_errors(region_map, &errors, will_later_be_reported_by_nll);
+            self.report_region_errors(region_map, &errors, suppress);
         }
     }
 
@@ -1450,7 +1477,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         })
     }
 
-    /// Clears the selection, evaluation, and projection cachesThis is useful when
+    /// Clears the selection, evaluation, and projection caches. This is useful when
     /// repeatedly attemping to select an Obligation while changing only
     /// its ParamEnv, since FulfillmentContext doesn't use 'probe'
     pub fn clear_caches(&self) {
@@ -1463,13 +1490,10 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         self.universe.get()
     }
 
-    /// Create and return a new subunivese of the current universe;
-    /// update `self.universe` to that new subuniverse. At present,
-    /// used only in the NLL subtyping code, which uses the new
-    /// universe-based scheme instead of the more limited leak-check
-    /// scheme.
-    pub fn create_subuniverse(&self) -> ty::UniverseIndex {
-        let u = self.universe.get().subuniverse();
+    /// Create and return a fresh universe that extends all previous
+    /// universes. Updates `self.universe` to that new universe.
+    pub fn create_next_universe(&self) -> ty::UniverseIndex {
+        let u = self.universe.get().next_universe();
         self.universe.set(u);
         u
     }
@@ -1504,7 +1528,7 @@ impl<'a, 'gcx, 'tcx> TypeTrace<'tcx> {
 }
 
 impl<'tcx> fmt::Debug for TypeTrace<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "TypeTrace({:?})", self.cause)
     }
 }
@@ -1592,7 +1616,7 @@ EnumTypeFoldableImpl! {
 }
 
 impl<'tcx> fmt::Debug for RegionObligation<'tcx> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
             "RegionObligation(sub_region={:?}, sup_type={:?})",

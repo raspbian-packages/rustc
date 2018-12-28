@@ -1,11 +1,62 @@
-rustc (1.30.0+dfsg1-2+rpi1) buster-staging; urgency=medium
+rustc (1.31.0+dfsg1-2+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Peter Michael Green <plugwash@raspbian.org>  Sun, 25 Nov 2018 19:06:55 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Fri, 28 Dec 2018 07:41:25 +0000
+
+rustc (1.31.0+dfsg1-2) unstable; urgency=medium
+
+  * Bump mips mipsel s390x allowed-failures to 24.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 14:34:44 -0800
+
+rustc (1.31.0+dfsg1-1) unstable; urgency=medium
+
+  * Revert debuginfo patches, they're not ready yet.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 09:58:06 -0800
+
+rustc (1.31.0+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Drop redundant patches.
+  * Fix line numbers in some test-case patches.
+  * Backport an updated patch for gdb 8.2.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 15 Dec 2018 13:52:26 -0800
+
+rustc (1.31.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 14 Dec 2018 21:30:56 -0800
+
+rustc (1.31.0~beta.19+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Filter LLVM build flags to not be stupid.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 01 Dec 2018 12:17:52 -0800
+
+rustc (1.31.0~beta.19+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Thu, 29 Nov 2018 22:29:16 -0800
+
+rustc (1.31.0~beta.4+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Merge changes from Debian unstable.
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 06 Nov 2018 19:45:26 -0800
+
+rustc (1.31.0~beta.4+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop old maintainers from Uploaders.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 04 Nov 2018 19:00:16 -0800
 
 rustc (1.30.0+dfsg1-2) unstable; urgency=medium
 

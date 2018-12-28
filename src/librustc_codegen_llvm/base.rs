@@ -32,6 +32,7 @@ use abi;
 use back::write::{self, OngoingCodegen};
 use llvm::{self, TypeKind, get_param};
 use metadata;
+use rustc::dep_graph::cgu_reuse_tracker::CguReuse;
 use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::middle::lang_items::StartFnLangItem;
 use rustc::middle::weak_lang_items;
@@ -69,7 +70,7 @@ use time_graph;
 use mono_item::{MonoItem, BaseMonoItemExt, MonoItemExt};
 use type_::Type;
 use type_of::LayoutLlvmExt;
-use rustc::util::nodemap::{FxHashMap, FxHashSet, DefIdSet};
+use rustc::util::nodemap::{FxHashMap, DefIdSet};
 use CrateInfo;
 use rustc_data_structures::small_c_str::SmallCStr;
 use rustc_data_structures::sync::Lrc;
@@ -212,8 +213,8 @@ pub fn unsized_info(
                             vtable_ptr.llvm_type(cx))
         }
         _ => bug!("unsized_info: invalid unsizing {:?} -> {:?}",
-                                     source,
-                                     target),
+                  source,
+                  target),
     }
 }
 
@@ -339,11 +340,11 @@ pub fn cast_shift_expr_rhs(
 }
 
 fn cast_shift_rhs<'ll, F, G>(op: hir::BinOpKind,
-                        lhs: &'ll Value,
-                        rhs: &'ll Value,
-                        trunc: F,
-                        zext: G)
-                        -> &'ll Value
+                             lhs: &'ll Value,
+                             rhs: &'ll Value,
+                             trunc: F,
+                             zext: G)
+                             -> &'ll Value
     where F: FnOnce(&'ll Value, &'ll Type) -> &'ll Value,
           G: FnOnce(&'ll Value, &'ll Type) -> &'ll Value
 {
@@ -362,8 +363,8 @@ fn cast_shift_rhs<'ll, F, G>(op: hir::BinOpKind,
         if lhs_sz < rhs_sz {
             trunc(rhs, lhs_llty)
         } else if lhs_sz > rhs_sz {
-            // FIXME (#1877: If shifting by negative
-            // values becomes not undefined then this is wrong.
+            // FIXME (#1877: If in the future shifting by negative
+            // values is no longer undefined then this is wrong.
             zext(rhs, lhs_llty)
         } else {
             rhs
@@ -494,10 +495,8 @@ pub fn codegen_instance<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>, instance: Instance<'
     let sig = common::ty_fn_sig(cx, fn_ty);
     let sig = cx.tcx.normalize_erasing_late_bound_regions(ty::ParamEnv::reveal_all(), &sig);
 
-    let lldecl = match cx.instances.borrow().get(&instance) {
-        Some(&val) => val,
-        None => bug!("Instance `{:?}` not already declared", instance)
-    };
+    let lldecl = cx.instances.borrow().get(&instance).cloned().unwrap_or_else(||
+        bug!("Instance `{:?}` not already declared", instance));
 
     cx.stats.borrow_mut().n_closures += 1;
 
@@ -565,8 +564,8 @@ fn maybe_create_entry_wrapper(cx: &CodegenCx) {
         if declare::get_defined_value(cx, "main").is_some() {
             // FIXME: We should be smart and show a better diagnostic here.
             cx.sess().struct_span_err(sp, "entry symbol `main` defined multiple times")
-                      .help("did you use #[no_mangle] on `fn main`? Use #[start] instead")
-                      .emit();
+                     .help("did you use #[no_mangle] on `fn main`? Use #[start] instead")
+                     .emit();
             cx.sess().abort_if_errors();
             bug!();
         }
@@ -697,25 +696,18 @@ pub fn iter_globals(llmod: &'ll llvm::Module) -> ValueIter<'ll> {
     }
 }
 
-#[derive(Debug)]
-enum CguReUsable {
-    PreLto,
-    PostLto,
-    No
-}
-
 fn determine_cgu_reuse<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                  cgu: &CodegenUnit<'tcx>)
-                                 -> CguReUsable {
+                                 -> CguReuse {
     if !tcx.dep_graph.is_fully_enabled() {
-        return CguReUsable::No
+        return CguReuse::No
     }
 
     let work_product_id = &cgu.work_product_id();
     if tcx.dep_graph.previous_work_product(work_product_id).is_none() {
         // We don't have anything cached for this CGU. This can happen
         // if the CGU did not exist in the previous session.
-        return CguReUsable::No
+        return CguReuse::No
     }
 
     // Try to mark the CGU as green. If it we can do so, it means that nothing
@@ -732,19 +724,19 @@ fn determine_cgu_reuse<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     if tcx.dep_graph.try_mark_green(tcx, &dep_node).is_some() {
         // We can re-use either the pre- or the post-thinlto state
         if tcx.sess.lto() != Lto::No {
-            CguReUsable::PreLto
+            CguReuse::PreLto
         } else {
-            CguReUsable::PostLto
+            CguReuse::PostLto
         }
     } else {
-        CguReUsable::No
+        CguReuse::No
     }
 }
 
 pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                             rx: mpsc::Receiver<Box<dyn Any + Send>>)
-                             -> OngoingCodegen {
-
+                               rx: mpsc::Receiver<Box<dyn Any + Send>>)
+                               -> OngoingCodegen
+{
     check_for_rustc_errors_attr(tcx);
 
     if let Some(true) = tcx.sess.opts.debugging_opts.thinlto {
@@ -792,7 +784,7 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
        !tcx.sess.opts.output_types.should_codegen() {
         let ongoing_codegen = write::start_async_codegen(
             tcx,
-            time_graph.clone(),
+            time_graph,
             metadata,
             rx,
             1);
@@ -809,8 +801,7 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
     // Run the monomorphization collector and partition the collected items into
     // codegen units.
-    let codegen_units =
-        tcx.collect_and_partition_mono_items(LOCAL_CRATE).1;
+    let codegen_units = tcx.collect_and_partition_mono_items(LOCAL_CRATE).1;
     let codegen_units = (*codegen_units).clone();
 
     // Force all codegen_unit queries so they are already either red or green
@@ -843,12 +834,7 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         .iter()
         .any(|(_, list)| {
             use rustc::middle::dependency_format::Linkage;
-            list.iter().any(|linkage| {
-                match linkage {
-                    Linkage::Dynamic => true,
-                    _ => false,
-                }
-            })
+            list.iter().any(|&linkage| linkage == Linkage::Dynamic)
         });
     let allocator_module = if any_dynamic_crate {
         None
@@ -894,8 +880,11 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         ongoing_codegen.wait_for_signal_to_codegen_item();
         ongoing_codegen.check_for_errors(tcx.sess);
 
-        let loaded_from_cache = match determine_cgu_reuse(tcx, &cgu) {
-            CguReUsable::No => {
+        let cgu_reuse = determine_cgu_reuse(tcx, &cgu);
+        tcx.sess.cgu_reuse_tracker.set_actual_reuse(&cgu.name().as_str(), cgu_reuse);
+
+        match cgu_reuse {
+            CguReuse::No => {
                 let _timing_guard = time_graph.as_ref().map(|time_graph| {
                     time_graph.start(write::CODEGEN_WORKER_TIMELINE,
                                      write::CODEGEN_WORK_PACKAGE_KIND,
@@ -907,14 +896,14 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 total_codegen_time += start_time.elapsed();
                 false
             }
-            CguReUsable::PreLto => {
+            CguReuse::PreLto => {
                 write::submit_pre_lto_module_to_llvm(tcx, CachedModuleCodegen {
                     name: cgu.name().to_string(),
                     source: cgu.work_product(tcx),
                 });
                 true
             }
-            CguReUsable::PostLto => {
+            CguReuse::PostLto => {
                 write::submit_post_lto_module_to_llvm(tcx, CachedModuleCodegen {
                     name: cgu.name().to_string(),
                     source: cgu.work_product(tcx),
@@ -922,12 +911,6 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 true
             }
         };
-
-        if tcx.dep_graph.is_fully_enabled() {
-            let dep_node = cgu.codegen_dep_node(tcx);
-            let dep_node_index = tcx.dep_graph.dep_node_index_of(&dep_node);
-            tcx.dep_graph.mark_loaded_from_cache(dep_node_index, loaded_from_cache);
-        }
     }
 
     ongoing_codegen.codegen_finished(tcx);
@@ -938,9 +921,7 @@ pub fn codegen_crate<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                             "codegen to LLVM IR",
                             total_codegen_time);
 
-    if tcx.sess.opts.incremental.is_some() {
-        ::rustc_incremental::assert_module_sources::assert_module_sources(tcx);
-    }
+    rustc_incremental::assert_module_sources::assert_module_sources(tcx);
 
     symbol_names_test::report_symbol_names(tcx);
 
@@ -999,7 +980,7 @@ fn collect_and_partition_mono_items<'a, 'tcx>(
                 if mode_string != "lazy" {
                     let message = format!("Unknown codegen-item collection mode '{}'. \
                                            Falling back to 'lazy' mode.",
-                                           mode_string);
+                                          mode_string);
                     tcx.sess.warn(&message);
                 }
 
@@ -1049,7 +1030,7 @@ fn collect_and_partition_mono_items<'a, 'tcx>(
     }).collect();
 
     if tcx.sess.opts.debugging_opts.print_mono_items.is_some() {
-        let mut item_to_cgus: FxHashMap<_, Vec<_>> = FxHashMap();
+        let mut item_to_cgus: FxHashMap<_, Vec<_>> = Default::default();
 
         for cgu in &codegen_units {
             for (&mono_item, &linkage) in cgu.items() {
@@ -1111,17 +1092,17 @@ impl CrateInfo {
             compiler_builtins: None,
             profiler_runtime: None,
             sanitizer_runtime: None,
-            is_no_builtins: FxHashSet(),
-            native_libraries: FxHashMap(),
+            is_no_builtins: Default::default(),
+            native_libraries: Default::default(),
             used_libraries: tcx.native_libraries(LOCAL_CRATE),
             link_args: tcx.link_args(LOCAL_CRATE),
-            crate_name: FxHashMap(),
+            crate_name: Default::default(),
             used_crates_dynamic: cstore::used_crates(tcx, LinkagePreference::RequireDynamic),
             used_crates_static: cstore::used_crates(tcx, LinkagePreference::RequireStatic),
-            used_crate_source: FxHashMap(),
-            wasm_imports: FxHashMap(),
-            lang_item_to_crate: FxHashMap(),
-            missing_lang_items: FxHashMap(),
+            used_crate_source: Default::default(),
+            wasm_imports: Default::default(),
+            lang_item_to_crate: Default::default(),
+            missing_lang_items: Default::default(),
         };
         let lang_items = tcx.lang_items();
 
@@ -1134,7 +1115,15 @@ impl CrateInfo {
             info.load_wasm_imports(tcx, LOCAL_CRATE);
         }
 
-        for &cnum in tcx.crates().iter() {
+        let crates = tcx.crates();
+
+        let n_crates = crates.len();
+        info.native_libraries.reserve(n_crates);
+        info.crate_name.reserve(n_crates);
+        info.used_crate_source.reserve(n_crates);
+        info.missing_lang_items.reserve(n_crates);
+
+        for &cnum in crates.iter() {
             info.native_libraries.insert(cnum, tcx.native_libraries(cnum));
             info.crate_name.insert(cnum, tcx.crate_name(cnum).to_string());
             info.used_crate_source.insert(cnum, tcx.used_crate_source(cnum));
@@ -1176,11 +1165,12 @@ impl CrateInfo {
     }
 
     fn load_wasm_imports(&mut self, tcx: TyCtxt, cnum: CrateNum) {
-        for (&id, module) in tcx.wasm_import_module_map(cnum).iter() {
+        self.wasm_imports.extend(tcx.wasm_import_module_map(cnum).iter().map(|(&id, module)| {
             let instance = Instance::mono(tcx, id);
             let import_name = tcx.symbol_name(instance);
-            self.wasm_imports.insert(import_name.to_string(), module.clone());
-        }
+
+            (import_name.to_string(), module.clone())
+        }));
     }
 }
 

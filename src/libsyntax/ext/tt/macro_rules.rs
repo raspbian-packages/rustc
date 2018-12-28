@@ -32,6 +32,11 @@ use std::borrow::Cow;
 use std::collections::hash_map::Entry;
 
 use rustc_data_structures::sync::Lrc;
+use errors::Applicability;
+
+const VALID_FRAGMENT_NAMES_MSG: &str = "valid fragment specifiers are \
+    `ident`, `block`, `stmt`, `expr`, `pat`, `ty`, `lifetime`, `literal`, \
+    `path`, `meta`, `tt`, `item` and `vis`";
 
 pub struct ParserAnyMacro<'a> {
     parser: Parser<'a>,
@@ -128,8 +133,7 @@ fn generic_extension<'cx>(cx: &'cx mut ExtCtxt,
                 // Replace all the tokens for the corresponding positions in the macro, to maintain
                 // proper positions in error reporting, while maintaining the macro_backtrace.
                 if rhs_spans.len() == tts.len() {
-                    tts = tts.map_enumerated(|i, tt| {
-                        let mut tt = tt.clone();
+                    tts = tts.map_enumerated(|i, mut tt| {
                         let mut sp = rhs_spans[i];
                         sp = sp.with_ctxt(tt.span().ctxt());
                         tt.set_span(sp);
@@ -187,10 +191,11 @@ fn generic_extension<'cx>(cx: &'cx mut ExtCtxt,
                     if comma_span == DUMMY_SP {
                         err.note("you might be missing a comma");
                     } else {
-                        err.span_suggestion_short(
+                        err.span_suggestion_short_with_applicability(
                             comma_span,
                             "missing comma here",
                             ", ".to_string(),
+                            Applicability::MachineApplicable,
                         );
                     }
                 }
@@ -706,8 +711,7 @@ fn check_matcher_core(sess: &ParseSess,
                 if let Err(bad_frag) = has_legal_fragment_specifier(sess, features, attrs, token) {
                     let msg = format!("invalid fragment specifier `{}`", bad_frag);
                     sess.span_diagnostic.struct_span_err(token.span(), &msg)
-                        .help("valid fragment specifiers are `ident`, `block`, `stmt`, `expr`, \
-                              `pat`, `ty`, `literal`, `path`, `meta`, `tt`, `item` and `vis`")
+                        .help(VALID_FRAGMENT_NAMES_MSG)
                         .emit();
                     // (This eliminates false positives and duplicates
                     // from error messages.)
@@ -900,7 +904,8 @@ fn is_in_follow(tok: &quoted::TokenTree, frag: &str) -> Result<bool, (String, &'
             "path" | "ty" => match *tok {
                 TokenTree::Token(_, ref tok) => match *tok {
                     OpenDelim(token::DelimToken::Brace) | OpenDelim(token::DelimToken::Bracket) |
-                    Comma | FatArrow | Colon | Eq | Gt | Semi | BinOp(token::Or) => Ok(true),
+                    Comma | FatArrow | Colon | Eq | Gt | BinOp(token::Shr) | Semi |
+                    BinOp(token::Or) => Ok(true),
                     Ident(i, false) if i.name == "as" || i.name == "where" => Ok(true),
                     _ => Ok(false)
                 },
@@ -936,9 +941,7 @@ fn is_in_follow(tok: &quoted::TokenTree, frag: &str) -> Result<bool, (String, &'
             },
             "" => Ok(true), // keywords::Invalid
             _ => Err((format!("invalid fragment specifier `{}`", frag),
-                     "valid fragment specifiers are `ident`, `block`, \
-                      `stmt`, `expr`, `pat`, `ty`, `path`, `meta`, `tt`, \
-                      `literal`, `item` and `vis`"))
+                     VALID_FRAGMENT_NAMES_MSG))
         }
     }
 }

@@ -12,9 +12,9 @@ use std::io::Write;
 
 use rustc_serialize::json::as_json;
 
-use rls_data::{self, Analysis, CratePreludeData, Def, DefKind, Import, MacroRef, Ref, RefKind,
-               Relation, Impl};
 use rls_data::config::Config;
+use rls_data::{self, Analysis, CompilationOptions, CratePreludeData, Def, DefKind, Impl, Import,
+               MacroRef, Ref, RefKind, Relation};
 use rls_span::{Column, Row};
 
 #[derive(Debug)]
@@ -89,7 +89,11 @@ impl<'b, O: DumpOutput + 'b> JsonDumper<O> {
         self.result.prelude = Some(data)
     }
 
-    pub fn macro_use(&mut self, data: MacroRef) {
+    pub fn compilation_opts(&mut self, data: CompilationOptions) {
+        self.result.compilation = Some(data);
+    }
+
+    pub fn _macro_use(&mut self, data: MacroRef) {
         if self.config.pub_only || self.config.reachable_only {
             return;
         }

@@ -31,7 +31,6 @@ use channel;
 use util::{libdir, is_dylib, exe};
 use builder::{Builder, RunConfig, ShouldRun, Step};
 use compile;
-use native;
 use tool::{self, Tool};
 use cache::{INTERNER, Interned};
 use time;
@@ -65,6 +64,14 @@ pub fn tmpdir(builder: &Builder) -> PathBuf {
 
 fn rust_installer(builder: &Builder) -> Command {
     builder.tool_cmd(Tool::RustInstaller)
+}
+
+fn missing_tool(tool_name: &str, skip: bool) {
+    if skip {
+        println!("Unable to build {}, skipping dist", tool_name)
+    } else {
+        panic!("Unable to build {}", tool_name)
+    }
 }
 
 #[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
@@ -985,12 +992,6 @@ impl Step for PlainSourceTarball {
                    .arg("--debug")
                    .arg("--vers").arg(CARGO_VENDOR_VERSION)
                    .arg("cargo-vendor");
-                if let Some(dir) = builder.openssl_install_dir(builder.config.build) {
-                    builder.ensure(native::Openssl {
-                        target: builder.config.build,
-                    });
-                    cmd.env("OPENSSL_DIR", dir);
-                }
                 builder.run(&mut cmd);
             }
 
@@ -1169,7 +1170,7 @@ impl Step for Rls {
         let rls = builder.ensure(tool::Rls {
             compiler: builder.compiler(stage, builder.config.build),
             target, extra_features: Vec::new()
-        }).or_else(|| { println!("Unable to build RLS, skipping dist"); None })?;
+        }).or_else(|| { missing_tool("RLS", builder.build.config.missing_tools); None })?;
 
         builder.install(&rls, &image.join("bin"), 0o755);
         let doc = image.join("share/doc/rls");
@@ -1248,24 +1249,26 @@ impl Step for Clippy {
         let clippy = builder.ensure(tool::Clippy {
             compiler: builder.compiler(stage, builder.config.build),
             target, extra_features: Vec::new()
-        }).or_else(|| { println!("Unable to build clippy, skipping dist"); None })?;
+        }).or_else(|| { missing_tool("clippy", builder.build.config.missing_tools); None })?;
         let cargoclippy = builder.ensure(tool::CargoClippy {
             compiler: builder.compiler(stage, builder.config.build),
             target, extra_features: Vec::new()
-        }).or_else(|| { println!("Unable to build cargo clippy, skipping dist"); None })?;
+        }).or_else(|| { missing_tool("cargo clippy", builder.build.config.missing_tools); None })?;
 
         builder.install(&clippy, &image.join("bin"), 0o755);
         builder.install(&cargoclippy, &image.join("bin"), 0o755);
         let doc = image.join("share/doc/clippy");
         builder.install(&src.join("README.md"), &doc, 0o644);
-        builder.install(&src.join("LICENSE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-APACHE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-MIT"), &doc, 0o644);
 
         // Prepare the overlay
         let overlay = tmp.join("clippy-overlay");
         drop(fs::remove_dir_all(&overlay));
         t!(fs::create_dir_all(&overlay));
         builder.install(&src.join("README.md"), &overlay, 0o644);
-        builder.install(&src.join("LICENSE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-APACHE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-MIT"), &doc, 0o644);
         builder.create(&overlay.join("version"), &version);
 
         // Generate the installer tarball
@@ -1327,11 +1330,11 @@ impl Step for Rustfmt {
         let rustfmt = builder.ensure(tool::Rustfmt {
             compiler: builder.compiler(stage, builder.config.build),
             target, extra_features: Vec::new()
-        }).or_else(|| { println!("Unable to build Rustfmt, skipping dist"); None })?;
+        }).or_else(|| { missing_tool("Rustfmt", builder.build.config.missing_tools); None })?;
         let cargofmt = builder.ensure(tool::Cargofmt {
             compiler: builder.compiler(stage, builder.config.build),
             target, extra_features: Vec::new()
-        }).or_else(|| { println!("Unable to build Cargofmt, skipping dist"); None })?;
+        }).or_else(|| { missing_tool("Cargofmt", builder.build.config.missing_tools); None })?;
 
         builder.install(&rustfmt, &image.join("bin"), 0o755);
         builder.install(&cargofmt, &image.join("bin"), 0o755);
@@ -1447,8 +1450,8 @@ impl Step for Extended {
         tarballs.extend(rls_installer.clone());
         tarballs.extend(clippy_installer.clone());
         tarballs.extend(rustfmt_installer.clone());
-        tarballs.extend(llvm_tools_installer.clone());
-        tarballs.extend(lldb_installer.clone());
+        tarballs.extend(llvm_tools_installer);
+        tarballs.extend(lldb_installer);
         tarballs.push(analysis_installer);
         tarballs.push(std_installer);
         if builder.config.docs {

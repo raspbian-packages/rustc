@@ -26,18 +26,22 @@ use um::minwinbase::{
     FILE_INFO_BY_HANDLE_CLASS, FINDEX_INFO_LEVELS, FINDEX_SEARCH_OPS, GET_FILEEX_INFO_LEVELS,
     LPOVERLAPPED, LPOVERLAPPED_COMPLETION_ROUTINE, LPSECURITY_ATTRIBUTES, PREASON_CONTEXT,
 };
-use um::processthreadsapi::LPSTARTUPINFOA;
+use um::processthreadsapi::{LPPROC_THREAD_ATTRIBUTE_LIST, LPSTARTUPINFOA, STARTUPINFOA, STARTUPINFOW};
 use um::winnt::{
     BOOLEAN, CHAR, DWORDLONG, EXECUTION_STATE, FILE_ID_128, HANDLE, HRESULT, INT, LANGID,
     LARGE_INTEGER, LATENCY_TIME, LONG, LPCCH, LPCH, LPCSTR, LPCWSTR, LPOSVERSIONINFOEXA,
     LPOSVERSIONINFOEXW, LPSTR, LPWSTR, MAXLONG, PBOOLEAN, PCONTEXT, PCWSTR, PFIRMWARE_TYPE,
     PHANDLE, PIO_COUNTERS, PJOB_SET_ARRAY, PLUID, POWER_REQUEST_TYPE, PPERFORMANCE_DATA,
-    PPROCESSOR_NUMBER, PQUOTA_LIMITS, PRTL_UMS_SCHEDULER_ENTRY_POINT, PSECURE_MEMORY_CACHE_CALLBACK,
-    PSID, PSID_NAME_USE, PULONGLONG, PVOID, PWOW64_CONTEXT, PWOW64_LDT_ENTRY, PWSTR,
-    RTL_UMS_THREAD_INFO_CLASS, STATUS_ABANDONED_WAIT_0, STATUS_USER_APC, STATUS_WAIT_0,
-    THREAD_BASE_PRIORITY_IDLE, THREAD_BASE_PRIORITY_LOWRT, THREAD_BASE_PRIORITY_MAX,
-    THREAD_BASE_PRIORITY_MIN, ULARGE_INTEGER, VOID, WAITORTIMERCALLBACK, WCHAR, WOW64_CONTEXT,
+    PPROCESSOR_NUMBER, PQUOTA_LIMITS, PRTL_UMS_SCHEDULER_ENTRY_POINT,
+    PSECURE_MEMORY_CACHE_CALLBACK, PSID, PSID_NAME_USE, PULONGLONG, PVOID, PWOW64_CONTEXT,
+    PWOW64_LDT_ENTRY, PWSTR, RTL_UMS_THREAD_INFO_CLASS, STATUS_ABANDONED_WAIT_0, STATUS_USER_APC,
+    STATUS_WAIT_0, SecurityAnonymous, SecurityDelegation, SecurityIdentification,
+    SecurityImpersonation, THREAD_BASE_PRIORITY_IDLE, THREAD_BASE_PRIORITY_LOWRT,
+    THREAD_BASE_PRIORITY_MAX, THREAD_BASE_PRIORITY_MIN, ULARGE_INTEGER, VOID, WAITORTIMERCALLBACK,
+    WCHAR, WOW64_CONTEXT,
 };
+#[cfg(target_arch = "x86")]
+use um::winnt::PLDT_ENTRY;
 use vc::vadefs::va_list;
 pub const FILE_BEGIN: DWORD = 0;
 pub const FILE_CURRENT: DWORD = 1;
@@ -75,6 +79,8 @@ pub const COPY_FILE_NO_BUFFERING: DWORD = 0x00001000;
 pub const COPY_FILE_REQUEST_SECURITY_PRIVILEGES: DWORD = 0x00002000;
 pub const COPY_FILE_RESUME_FROM_PAUSE: DWORD = 0x00004000;
 pub const COPY_FILE_NO_OFFLOAD: DWORD = 0x00040000;
+pub const COPY_FILE_IGNORE_EDP_BLOCK: DWORD = 0x00400000;
+pub const COPY_FILE_IGNORE_SOURCE_ENCRYPTION: DWORD = 0x00800000;
 pub const REPLACEFILE_WRITE_THROUGH: DWORD = 0x00000001;
 pub const REPLACEFILE_IGNORE_MERGE_ERRORS: DWORD = 0x00000002;
 pub const REPLACEFILE_IGNORE_ACL_ERRORS: DWORD = 0x00000004;
@@ -92,6 +98,10 @@ pub const PIPE_TYPE_MESSAGE: DWORD = 0x00000004;
 pub const PIPE_ACCEPT_REMOTE_CLIENTS: DWORD = 0x00000000;
 pub const PIPE_REJECT_REMOTE_CLIENTS: DWORD = 0x00000008;
 pub const PIPE_UNLIMITED_INSTANCES: DWORD = 255;
+pub const SECURITY_ANONYMOUS: DWORD = SecurityAnonymous << 16;
+pub const SECURITY_IDENTIFICATION: DWORD = SecurityIdentification << 16;
+pub const SECURITY_IMPERSONATION: DWORD = SecurityImpersonation << 16;
+pub const SECURITY_DELEGATION: DWORD = SecurityDelegation << 16;
 pub const SECURITY_CONTEXT_TRACKING: DWORD = 0x00040000;
 pub const SECURITY_EFFECTIVE_ONLY: DWORD = 0x00080000;
 pub const SECURITY_SQOS_PRESENT: DWORD = 0x00100000;
@@ -104,6 +114,9 @@ FN!{stdcall PFIBER_CALLOUT_ROUTINE(
     lpParameter: LPVOID,
 ) -> LPVOID}
 // FAIL_FAST_*
+#[cfg(target_arch = "x86")]
+pub type LPLDT_ENTRY = PLDT_ENTRY;
+#[cfg(target_arch = "x86_64")]
 pub type LPLDT_ENTRY = LPVOID; // TODO - fix this for 32-bit
 //SP_SERIALCOMM
 //PST_*
@@ -139,7 +152,7 @@ STRUCT!{struct COMSTAT {
     cbInQue: DWORD,
     cbOutQue: DWORD,
 }}
-BITFIELD!(COMSTAT BitFields: DWORD [
+BITFIELD!{COMSTAT BitFields: DWORD [
     fCtsHold set_fCtsHold[0..1],
     fDsrHold set_fDsrHold[1..2],
     fRlsdHold set_fRlsdHold[2..3],
@@ -148,7 +161,7 @@ BITFIELD!(COMSTAT BitFields: DWORD [
     fEof set_fEof[5..6],
     fTxim set_fTxim[6..7],
     fReserved set_fReserved[7..32],
-]);
+]}
 pub type LPCOMSTAT = *mut COMSTAT;
 pub const DTR_CONTROL_DISABLE: DWORD = 0x00;
 pub const DTR_CONTROL_ENABLE: DWORD = 0x01;
@@ -174,7 +187,7 @@ STRUCT!{struct DCB {
     EvtChar: c_char,
     wReserved1: WORD,
 }}
-BITFIELD!(DCB BitFields: DWORD [
+BITFIELD!{DCB BitFields: DWORD [
     fBinary set_fBinary[0..1],
     fParity set_fParity[1..2],
     fOutxCtsFlow set_fOutxCtsFlow[2..3],
@@ -189,7 +202,7 @@ BITFIELD!(DCB BitFields: DWORD [
     fRtsControl set_fRtsControl[12..14],
     fAbortOnError set_fAbortOnError[14..15],
     fDummy2 set_fDummy2[15..32],
-]);
+]}
 pub type LPDCB = *mut DCB;
 STRUCT!{struct COMMTIMEOUTS {
     ReadIntervalTimeout: DWORD,
@@ -281,9 +294,9 @@ pub const FILE_TYPE_DISK: DWORD = 0x0001;
 pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
-pub const STD_INPUT_HANDLE: DWORD = 0xFFFFFFF6;
-pub const STD_OUTPUT_HANDLE: DWORD = 0xFFFFFFF5;
-pub const STD_ERROR_HANDLE: DWORD = 0xFFFFFFF4;
+pub const STD_INPUT_HANDLE: DWORD = -10i32 as u32;
+pub const STD_OUTPUT_HANDLE: DWORD = -11i32 as u32;
+pub const STD_ERROR_HANDLE: DWORD = -12i32 as u32;
 pub const NOPARITY: BYTE = 0;
 pub const ODDPARITY: BYTE = 1;
 pub const EVENPARITY: BYTE = 2;
@@ -321,7 +334,10 @@ pub const CLRDTR: DWORD = 6;
 pub const RESETDEV: DWORD = 7;
 pub const SETBREAK: DWORD = 8;
 pub const CLRBREAK: DWORD = 9;
-// PURGE_*
+pub const PURGE_TXABORT: DWORD = 0x0001;
+pub const PURGE_RXABORT: DWORD = 0x0002;
+pub const PURGE_TXCLEAR: DWORD = 0x0004;
+pub const PURGE_RXCLEAR: DWORD = 0x0008;
 pub const MS_CTS_ON: DWORD = 0x0010;
 pub const MS_DSR_ON: DWORD = 0x0020;
 pub const MS_RING_ON: DWORD = 0x0040;
@@ -699,6 +715,10 @@ extern "system" {
         hFile: HANDLE,
         lpShortName: LPCWSTR
     ) -> BOOL;
+}
+pub const HANDLE_FLAG_INHERIT: DWORD = 0x00000001;
+pub const HANDLE_FLAG_PROTECT_FROM_CLOSE: DWORD = 0x00000002;
+extern "system" {
     pub fn LoadModule(
         lpModuleName: LPCSTR,
         lpParameterBlock: LPVOID
@@ -999,6 +1019,16 @@ pub const STARTF_TITLEISLINKNAME: DWORD = 0x00000800;
 pub const STARTF_TITLEISAPPID: DWORD = 0x00001000;
 pub const STARTF_PREVENTPINNING: DWORD = 0x00002000;
 pub const STARTF_UNTRUSTEDSOURCE: DWORD = 0x00008000;
+STRUCT!{struct STARTUPINFOEXA {
+    StartupInfo: STARTUPINFOA,
+    lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST,
+}}
+pub type LPSTARTUPINFOEXA = *mut STARTUPINFOEXA;
+STRUCT!{struct STARTUPINFOEXW {
+    StartupInfo: STARTUPINFOW,
+    lpAttributeList: LPPROC_THREAD_ATTRIBUTE_LIST,
+}}
+pub type LPSTARTUPINFOEXW = *mut STARTUPINFOEXW;
 extern "system" {
     pub fn OpenMutexA(
         dwDesiredAccess: DWORD,
@@ -2063,8 +2093,24 @@ extern "system" {
         lpsz: LPCWSTR,
         ucchMax: UINT_PTR
     ) -> BOOL;
-    // pub fn LookupAccountSidA();
-    // pub fn LookupAccountSidW();
+    pub fn LookupAccountSidA(
+        lpSystemName: LPCSTR,
+        Sid: PSID,
+        Name: LPSTR,
+        cchName: LPDWORD,
+        ReferencedDomainName: LPSTR,
+        cchReferencedDomainName: LPDWORD,
+        peUse: PSID_NAME_USE,
+    ) -> BOOL;
+    pub fn LookupAccountSidW(
+        lpSystemName: LPCWSTR,
+        Sid: PSID,
+        Name: LPWSTR,
+        cchName: LPDWORD,
+        ReferencedDomainName: LPWSTR,
+        cchReferencedDomainName: LPDWORD,
+        peUse: PSID_NAME_USE,
+    ) -> BOOL;
     pub fn LookupAccountNameA(
         lpSystemName: LPCSTR,
         lpAccountName: LPCSTR,

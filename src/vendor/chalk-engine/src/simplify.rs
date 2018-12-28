@@ -1,8 +1,8 @@
-use crate::fallible::Fallible;
-use crate::{ExClause, Literal};
-use crate::forest::Forest;
-use crate::hh::HhGoal;
-use crate::context::prelude::*;
+use fallible::Fallible;
+use {ExClause, Literal};
+use forest::Forest;
+use hh::HhGoal;
+use context::prelude::*;
 
 impl<C: Context, CO: ContextOps<C>> Forest<C, CO> {
     /// Simplifies an HH goal into a series of positive domain goals
@@ -56,7 +56,7 @@ impl<C: Context, CO: ContextOps<C>> Forest<C, CO> {
                         .subgoals
                         .push(Literal::Positive(I::goal_in_environment(
                             &environment,
-                            I::into_goal(domain_goal),
+                            infer.into_goal(domain_goal),
                         )));
                 }
                 HhGoal::CannotProve => {
@@ -66,7 +66,7 @@ impl<C: Context, CO: ContextOps<C>> Forest<C, CO> {
                     // course, will always create a negative cycle and
                     // hence a delayed literal that cannot be
                     // resolved.
-                    let goal = I::cannot_prove();
+                    let goal = infer.cannot_prove();
                     ex_clause
                         .subgoals
                         .push(Literal::Negative(I::goal_in_environment(&environment, goal)));

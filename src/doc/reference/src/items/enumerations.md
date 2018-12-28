@@ -68,10 +68,10 @@ then the discriminant can be directly chosen and accessed.
 
 These enumerations can be cast to integer types with the `as` operator by a
 [numeric cast]. The enumeration can optionally specify which integer each
-discriminant gets by following the variant name with `=` and then an integer
-literal. If the first variant in the declaration is unspecified, then it is set
-to zero. For every unspecified discriminant, it is set to one higher than the
-previous variant in the declaration.
+discriminant gets by following the variant name with `=` followed by a [constant
+expression]. If the first variant in the declaration is unspecified, then it is
+set to zero. For every other unspecified discriminant, it is set to one higher
+than the previous variant in the declaration.
 
 ```rust
 enum Foo {
@@ -137,10 +137,11 @@ enum ZeroVariants {}
 [_Expression_]: expressions.html
 [_TupleFields_]: items/structs.html
 [_StructFields_]: items/structs.html
-[enumerated type]: types.html#enumerated-types
+[enumerated type]: types/enum.html
 [`mem::discriminant`]: ../std/mem/fn.discriminant.html
 [numeric cast]: expressions/operator-expr.html#semantics
 [`repr` attribute]: attributes.html#ffi-attributes
+[constant expression]: const_eval.html#constant-expressions
 [default representation]: type-layout.html#the-default-representation
 [primitive representation]: type-layout.html#primitive-representations
 [`C` representation]: type-layout.html#the-c-representation

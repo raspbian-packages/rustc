@@ -12,13 +12,13 @@
 > &nbsp;&nbsp; ( _LifetimeParam_ `,` )<sup>\*</sup> _LifetimeParam_<sup>?</sup>
 >
 > _LifetimeParam_ :\
-> &nbsp;&nbsp; [_OuterAttribute_]<sup>?</sup> [LIFETIME_OR_LABEL] `:` [_LifetimeBounds_]<sup>?</sup>
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>?</sup> [LIFETIME_OR_LABEL]&nbsp;( `:` [_LifetimeBounds_] )<sup>?</sup>
 >
 > _TypeParams_:\
-> &nbsp;&nbsp; ( _TypeParam_ `,` )<sup>\*</sup> _TypeParam_ <sup>?</sup>
+> &nbsp;&nbsp; ( _TypeParam_ `,` )<sup>\*</sup> _TypeParam_<sup>?</sup>
 >
 > _TypeParam_ :\
-> &nbsp;&nbsp; [_OuterAttribute_]<sup>?</sup> [IDENTIFIER] ( `:` [_TypeParamBounds_] )<sup>?</sup> ( `=` [_Type_] )<sup>?</sup>
+> &nbsp;&nbsp; [_OuterAttribute_]<sup>?</sup> [IDENTIFIER] ( `:` [_TypeParamBounds_]<sup>?</sup> )<sup>?</sup> ( `=` [_Type_] )<sup>?</sup>
 
 Functions, type aliases, structs, enumerations, unions, traits and
 implementations may be *parameterized* by types and lifetimes. These parameters
@@ -106,20 +106,16 @@ generic parameter.
 [_LifetimeBounds_]: trait-bounds.html
 [_Lifetime_]: trait-bounds.html
 [_OuterAttribute_]: attributes.html
-[_Type_]: types.html
+[_Type_]: types.html#type-expressions
 [_TypeParamBounds_]: trait-bounds.html
 
-[arrays]: types.html#array-and-slice-types
-[function pointers]: types.html#function-pointer-types
-[references]: types.html#shared-references-
-[raw pointers]: types.html#raw-pointers-const-and-mut
+[arrays]: types/array.html
+[function pointers]: types/function-pointer.html
+[references]: types/pointer.html#shared-references-
+[raw pointers]: types/pointer.html#raw-pointers-const-and-mut
 [`Clone`]: special-types-and-traits.html#clone
 [`Copy`]: special-types-and-traits.html#copy
 [`Sized`]: special-types-and-traits.html#sized
-[tuples]: types.html#tuple-types
-[trait object]: types.html#trait-objects
+[tuples]: types/tuple.html
+[trait object]: types/trait-object.html
 [attributes]: attributes.html
-
-[path]: ../paths.html
-[Trait]: traits.html#trait-bounds
-[_TypePath_]: paths.html

@@ -18,6 +18,7 @@ use llvm::{True, False};
 use llvm;
 use memmap;
 use rustc::dep_graph::WorkProduct;
+use rustc::dep_graph::cgu_reuse_tracker::CguReuse;
 use rustc::hir::def_id::LOCAL_CRATE;
 use rustc::middle::exported_symbols::SymbolExportLevel;
 use rustc::session::config::{self, Lto};
@@ -501,7 +502,7 @@ fn thin_lto(cgcx: &CodegenContext,
             // If we don't compile incrementally, we don't need to load the
             // import data from LLVM.
             assert!(green_modules.is_empty());
-            ThinLTOImports::new()
+            ThinLTOImports::default()
         };
         info!("thin LTO import map loaded");
         timeline.record("import-map-loaded");
@@ -538,6 +539,8 @@ fn thin_lto(cgcx: &CodegenContext,
                     let work_product = green_modules[module_name].clone();
                     copy_jobs.push(work_product);
                     info!(" - {}: re-used", module_name);
+                    cgcx.cgu_reuse_tracker.set_actual_reuse(module_name,
+                                                            CguReuse::PostLto);
                     continue
                 }
             }
@@ -870,19 +873,13 @@ impl ThinModule {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ThinLTOImports {
     // key = llvm name of importing module, value = list of modules it imports from
     imports: FxHashMap<String, Vec<String>>,
 }
 
 impl ThinLTOImports {
-    fn new() -> ThinLTOImports {
-        ThinLTOImports {
-            imports: FxHashMap(),
-        }
-    }
-
     fn modules_imported_by(&self, llvm_module_name: &str) -> &[String] {
         self.imports.get(llvm_module_name).map(|v| &v[..]).unwrap_or(&[])
     }
@@ -907,9 +904,7 @@ impl ThinLTOImports {
                .unwrap()
                .push(imported_module_name.to_owned());
         }
-        let mut map = ThinLTOImports {
-            imports: FxHashMap(),
-        };
+        let mut map = ThinLTOImports::default();
         llvm::LLVMRustGetThinLTOModuleImports(data,
                                               imported_module_callback,
                                               &mut map as *mut _ as *mut libc::c_void);

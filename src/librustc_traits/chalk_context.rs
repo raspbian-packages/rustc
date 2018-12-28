@@ -10,7 +10,9 @@
 
 use chalk_engine::fallible::Fallible as ChalkEngineFallible;
 use chalk_engine::{context, hh::HhGoal, DelayedLiteral, ExClause};
-use rustc::infer::canonical::{Canonical, CanonicalVarValues, QueryRegionConstraint, QueryResult};
+use rustc::infer::canonical::{
+    Canonical, CanonicalVarValues, OriginalQueryValues, QueryRegionConstraint, QueryResponse,
+};
 use rustc::infer::{InferCtxt, InferOk, LateBoundRegionConversionTime};
 use rustc::traits::{
     WellFormed,
@@ -19,13 +21,17 @@ use rustc::traits::{
     ExClauseFold,
     ExClauseLift,
     Goal,
-    ProgramClause,
-    QuantifierKind
+    GoalKind,
+    Clause,
+    ProgramClauseCategory,
+    QuantifierKind,
+    Environment,
+    InEnvironment,
 };
 use rustc::ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
 use rustc::ty::subst::Kind;
 use rustc::ty::{self, TyCtxt};
-use smallvec::SmallVec;
+use rustc::hir::def_id::DefId;
 
 use std::fmt::{self, Debug};
 use std::marker::PhantomData;
@@ -66,71 +72,66 @@ BraceStructTypeFoldableImpl! {
 impl context::Context for ChalkArenas<'tcx> {
     type CanonicalExClause = Canonical<'tcx, ExClause<Self>>;
 
-    type CanonicalGoalInEnvironment = Canonical<'tcx, ty::ParamEnvAnd<'tcx, Goal<'tcx>>>;
+    type CanonicalGoalInEnvironment = Canonical<'tcx, InEnvironment<'tcx, Goal<'tcx>>>;
 
     // u-canonicalization not yet implemented
-    type UCanonicalGoalInEnvironment = Canonical<'tcx, ty::ParamEnvAnd<'tcx, Goal<'tcx>>>;
+    type UCanonicalGoalInEnvironment = Canonical<'tcx, InEnvironment<'tcx, Goal<'tcx>>>;
 
     type CanonicalConstrainedSubst = Canonical<'tcx, ConstrainedSubst<'tcx>>;
 
     // u-canonicalization not yet implemented
     type UniverseMap = UniverseMap;
 
-    type Solution = Canonical<'tcx, QueryResult<'tcx, ()>>;
+    type Solution = Canonical<'tcx, QueryResponse<'tcx, ()>>;
 
     type InferenceNormalizedSubst = CanonicalVarValues<'tcx>;
 
-    type GoalInEnvironment = ty::ParamEnvAnd<'tcx, Goal<'tcx>>;
+    type GoalInEnvironment = InEnvironment<'tcx, Goal<'tcx>>;
 
     type RegionConstraint = QueryRegionConstraint<'tcx>;
 
     type Substitution = CanonicalVarValues<'tcx>;
 
-    type Environment = ty::ParamEnv<'tcx>;
+    type Environment = Environment<'tcx>;
 
     type Goal = Goal<'tcx>;
 
     type DomainGoal = DomainGoal<'tcx>;
 
-    type BindersGoal = ty::Binder<&'tcx Goal<'tcx>>;
+    type BindersGoal = ty::Binder<Goal<'tcx>>;
 
     type Parameter = Kind<'tcx>;
 
-    type ProgramClause = ProgramClause<'tcx>;
+    type ProgramClause = Clause<'tcx>;
 
-    type ProgramClauses = Vec<ProgramClause<'tcx>>;
+    type ProgramClauses = Vec<Clause<'tcx>>;
 
     type UnificationResult = InferOk<'tcx, ()>;
 
-    fn into_goal(domain_goal: DomainGoal<'tcx>) -> Goal<'tcx> {
-        Goal::DomainGoal(domain_goal)
-    }
-
-    fn cannot_prove() -> Goal<'tcx> {
-        Goal::CannotProve
-    }
-
     fn goal_in_environment(
-        env: &ty::ParamEnv<'tcx>,
+        env: &Environment<'tcx>,
         goal: Goal<'tcx>,
-    ) -> ty::ParamEnvAnd<'tcx, Goal<'tcx>> {
-        env.and(goal)
+    ) -> InEnvironment<'tcx, Goal<'tcx>> {
+        env.with(goal)
     }
 }
 
 impl context::AggregateOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
     fn make_solution(
         &self,
-        _root_goal: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        _root_goal: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
         _simplified_answers: impl context::AnswerStream<ChalkArenas<'gcx>>,
-    ) -> Option<Canonical<'gcx, QueryResult<'gcx, ()>>> {
+    ) -> Option<Canonical<'gcx, QueryResponse<'gcx, ()>>> {
         unimplemented!()
     }
 }
 
 impl context::ContextOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
     /// True if this is a coinductive goal -- e.g., proving an auto trait.
-    fn is_coinductive(&self, _goal: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>) -> bool {
+    fn is_coinductive(
+        &self,
+        _goal: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>
+    ) -> bool {
         unimplemented!()
     }
 
@@ -148,7 +149,7 @@ impl context::ContextOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
     /// - the environment and goal found by substitution `S` into `arg`
     fn instantiate_ucanonical_goal<R>(
         &self,
-        _arg: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        _arg: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
         _op: impl context::WithInstantiatedUCanonicalGoal<ChalkArenas<'gcx>, Output = R>,
     ) -> R {
         unimplemented!()
@@ -181,19 +182,19 @@ impl context::ContextOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
     }
 
     fn canonical(
-        u_canon: &'a Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
-    ) -> &'a Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>> {
+        u_canon: &'a Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
+    ) -> &'a Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>> {
         u_canon
     }
 
     fn is_trivial_substitution(
-        _u_canon: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        _u_canon: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
         _canonical_subst: &Canonical<'gcx, ConstrainedSubst<'gcx>>,
     ) -> bool {
         unimplemented!()
     }
 
-    fn num_universes(_: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>) -> usize {
+    fn num_universes(_: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>) -> usize {
         0 // FIXME
     }
 
@@ -202,8 +203,8 @@ impl context::ContextOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
     /// but for the universes of universally quantified names.
     fn map_goal_from_canonical(
         _map: &UniverseMap,
-        value: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
-    ) -> Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>> {
+        value: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
+    ) -> Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>> {
         *value // FIXME universe maps not implemented yet
     }
 
@@ -251,24 +252,36 @@ impl context::ContextOps<ChalkArenas<'gcx>> for ChalkContext<'cx, 'gcx> {
 impl context::InferenceTable<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
     for ChalkInferenceContext<'cx, 'gcx, 'tcx>
 {
+    fn into_goal(&self, domain_goal: DomainGoal<'tcx>) -> Goal<'tcx> {
+        self.infcx.tcx.mk_goal(GoalKind::DomainGoal(domain_goal))
+    }
+
+    fn cannot_prove(&self) -> Goal<'tcx> {
+        self.infcx.tcx.mk_goal(GoalKind::CannotProve)
+    }
+
     fn into_hh_goal(&mut self, goal: Goal<'tcx>) -> ChalkHhGoal<'tcx> {
-        match goal {
-            Goal::Implies(..) => panic!("FIXME rust-lang-nursery/chalk#94"),
-            Goal::And(left, right) => HhGoal::And(*left, *right),
-            Goal::Not(subgoal) => HhGoal::Not(*subgoal),
-            Goal::DomainGoal(d) => HhGoal::DomainGoal(d),
-            Goal::Quantified(QuantifierKind::Universal, binder) => HhGoal::ForAll(binder),
-            Goal::Quantified(QuantifierKind::Existential, binder) => HhGoal::Exists(binder),
-            Goal::CannotProve => HhGoal::CannotProve,
+        match *goal {
+            GoalKind::Implies(..) => panic!("FIXME rust-lang-nursery/chalk#94"),
+            GoalKind::And(left, right) => HhGoal::And(left, right),
+            GoalKind::Not(subgoal) => HhGoal::Not(subgoal),
+            GoalKind::DomainGoal(d) => HhGoal::DomainGoal(d),
+            GoalKind::Quantified(QuantifierKind::Universal, binder) => HhGoal::ForAll(binder),
+            GoalKind::Quantified(QuantifierKind::Existential, binder) => HhGoal::Exists(binder),
+            GoalKind::CannotProve => HhGoal::CannotProve,
         }
     }
 
     fn add_clauses(
         &mut self,
-        _env: &ty::ParamEnv<'tcx>,
-        _clauses: Vec<ProgramClause<'tcx>>,
-    ) -> ty::ParamEnv<'tcx> {
-        panic!("FIXME no method to add clauses to ParamEnv yet")
+        env: &Environment<'tcx>,
+        clauses: Vec<Clause<'tcx>>,
+    ) -> Environment<'tcx> {
+        Environment {
+            clauses: self.infcx.tcx.mk_clauses(
+                env.clauses.iter().cloned().chain(clauses.into_iter())
+            )
+        }
     }
 }
 
@@ -277,10 +290,10 @@ impl context::ResolventOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 {
     fn resolvent_clause(
         &mut self,
-        _environment: &ty::ParamEnv<'tcx>,
+        _environment: &Environment<'tcx>,
         _goal: &DomainGoal<'tcx>,
         _subst: &CanonicalVarValues<'tcx>,
-        _clause: &ProgramClause<'tcx>,
+        _clause: &Clause<'tcx>,
     ) -> chalk_engine::fallible::Fallible<Canonical<'gcx, ChalkExClause<'gcx>>> {
         panic!()
     }
@@ -288,8 +301,8 @@ impl context::ResolventOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
     fn apply_answer_subst(
         &mut self,
         _ex_clause: ChalkExClause<'tcx>,
-        _selected_goal: &ty::ParamEnvAnd<'tcx, Goal<'tcx>>,
-        _answer_table_goal: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        _selected_goal: &InEnvironment<'tcx, Goal<'tcx>>,
+        _answer_table_goal: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
         _canonical_answer_subst: &Canonical<'gcx, ConstrainedSubst<'gcx>>,
     ) -> chalk_engine::fallible::Fallible<ChalkExClause<'tcx>> {
         panic!()
@@ -301,8 +314,8 @@ impl context::TruncateOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 {
     fn truncate_goal(
         &mut self,
-        subgoal: &ty::ParamEnvAnd<'tcx, Goal<'tcx>>,
-    ) -> Option<ty::ParamEnvAnd<'tcx, Goal<'tcx>>> {
+        subgoal: &InEnvironment<'tcx, Goal<'tcx>>,
+    ) -> Option<InEnvironment<'tcx, Goal<'tcx>>> {
         Some(*subgoal) // FIXME we should truncate at some point!
     }
 
@@ -319,65 +332,249 @@ impl context::UnificationOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 {
     fn program_clauses(
         &self,
-        _environment: &ty::ParamEnv<'tcx>,
+        environment: &Environment<'tcx>,
         goal: &DomainGoal<'tcx>,
-    ) -> Vec<ProgramClause<'tcx>> {
+    ) -> Vec<Clause<'tcx>> {
         use rustc::traits::WhereClause::*;
 
-        match goal {
-            DomainGoal::Holds(Implemented(_trait_predicate)) => {
-                // These come from:
-                //
-                // - Trait definitions (implied bounds)
-                // - Implementations of the trait itself
-                panic!()
-            }
-
-            DomainGoal::Holds(ProjectionEq(_projection_predicate)) => {
-                // These come from:
-                panic!()
-            }
-
-            DomainGoal::Holds(RegionOutlives(_region_outlives)) => {
-                panic!()
-            }
-
-            DomainGoal::Holds(TypeOutlives(_type_outlives)) => {
-                panic!()
-            }
-
-            DomainGoal::WellFormed(WellFormed::Trait(_trait_predicate)) => {
-                // These come from -- the trait decl.
-                panic!()
-            }
-
-            DomainGoal::WellFormed(WellFormed::Ty(_ty)) => panic!(),
-
-            DomainGoal::FromEnv(FromEnv::Trait(_trait_predicate)) => panic!(),
-
-            DomainGoal::FromEnv(FromEnv::Ty(_ty)) => panic!(),
-
-            DomainGoal::Normalize(_) => panic!(),
+        fn assemble_clauses_from_impls<'tcx>(
+            tcx: ty::TyCtxt<'_, '_, 'tcx>,
+            trait_def_id: DefId,
+            clauses: &mut Vec<Clause<'tcx>>
+        ) {
+            tcx.for_each_impl(trait_def_id, |impl_def_id| {
+                clauses.extend(
+                    tcx.program_clauses_for(impl_def_id)
+                        .into_iter()
+                        .cloned()
+                );
+            });
         }
+
+        fn assemble_clauses_from_assoc_ty_values<'tcx>(
+            tcx: ty::TyCtxt<'_, '_, 'tcx>,
+            trait_def_id: DefId,
+            clauses: &mut Vec<Clause<'tcx>>
+        ) {
+            tcx.for_each_impl(trait_def_id, |impl_def_id| {
+                for def_id in tcx.associated_item_def_ids(impl_def_id).iter() {
+                    clauses.extend(
+                        tcx.program_clauses_for(*def_id)
+                            .into_iter()
+                            .cloned()
+                    );
+                }
+            });
+        }
+
+        let mut clauses = match goal {
+            DomainGoal::Holds(Implemented(trait_predicate)) => {
+                // These come from:
+                // * implementations of the trait itself (rule `Implemented-From-Impl`)
+                // * the trait decl (rule `Implemented-From-Env`)
+
+                let mut clauses = vec![];
+                assemble_clauses_from_impls(
+                    self.infcx.tcx,
+                    trait_predicate.def_id(),
+                    &mut clauses
+                );
+
+                // FIXME: we need to add special rules for builtin impls:
+                // * `Copy` / `Clone`
+                // * `Sized`
+                // * `Unsize`
+                // * `Generator`
+                // * `FnOnce` / `FnMut` / `Fn`
+                // * trait objects
+                // * auto traits
+
+                // Rule `Implemented-From-Env` will be computed from the environment.
+                clauses
+            }
+
+            DomainGoal::Holds(ProjectionEq(projection_predicate)) => {
+                // These come from:
+                // * the assoc type definition (rule `ProjectionEq-Placeholder`)
+                // * normalization of the assoc ty values (rule `ProjectionEq-Normalize`)
+                // * implied bounds from trait definitions (rule `Implied-Bound-From-Trait`)
+                // * implied bounds from type definitions (rule `Implied-Bound-From-Type`)
+
+                let clauses = self.infcx.tcx.program_clauses_for(
+                    projection_predicate.projection_ty.item_def_id
+                ).into_iter()
+
+                    // only select `ProjectionEq-Placeholder` and `ProjectionEq-Normalize`
+                    .filter(|clause| clause.category() == ProgramClauseCategory::Other)
+
+                    .cloned()
+                    .collect::<Vec<_>>();
+
+                // Rules `Implied-Bound-From-Trait` and `Implied-Bound-From-Type` will be computed
+                // from the environment.
+                clauses
+            }
+
+            DomainGoal::Holds(RegionOutlives(..)) => {
+                // These come from:
+                // * implied bounds from trait definitions (rule `Implied-Bound-From-Trait`)
+                // * implied bounds from type definitions (rule `Implied-Bound-From-Type`)
+
+                // All of these rules are computed in the environment.
+                vec![]
+            }
+
+            DomainGoal::Holds(TypeOutlives(..)) => {
+                // These come from:
+                // * implied bounds from trait definitions (rule `Implied-Bound-From-Trait`)
+                // * implied bounds from type definitions (rule `Implied-Bound-From-Type`)
+
+                // All of these rules are computed in the environment.
+                vec![]
+            }
+
+            DomainGoal::WellFormed(WellFormed::Trait(trait_predicate)) => {
+                // These come from -- the trait decl (rule `WellFormed-TraitRef`).
+                self.infcx.tcx.program_clauses_for(trait_predicate.def_id())
+                    .into_iter()
+
+                    // only select `WellFormed-TraitRef`
+                    .filter(|clause| clause.category() == ProgramClauseCategory::WellFormed)
+
+                    .cloned()
+                    .collect()
+            }
+
+            DomainGoal::WellFormed(WellFormed::Ty(ty)) => {
+                // These come from:
+                // * the associated type definition if `ty` refers to an unnormalized
+                //   associated type (rule `WellFormed-AssocTy`)
+                // * custom rules for built-in types
+                // * the type definition otherwise (rule `WellFormed-Type`)
+                let clauses = match ty.sty {
+                    ty::Projection(data) => {
+                        self.infcx.tcx.program_clauses_for(data.item_def_id)
+                    }
+
+                    // These types are always WF (recall that we do not check
+                    // for parameters to be WF)
+                    ty::Bool |
+                    ty::Char |
+                    ty::Int(..) |
+                    ty::Uint(..) |
+                    ty::Float(..) |
+                    ty::Str |
+                    ty::RawPtr(..) |
+                    ty::FnPtr(..) |
+                    ty::Param(..) |
+                    ty::Never => {
+                        ty::List::empty()
+                    }
+
+                    // WF if inner type is `Sized`
+                    ty::Slice(..) |
+                    ty::Array(..) => {
+                        ty::List::empty()
+                    }
+
+                    ty::Tuple(..) => {
+                        ty::List::empty()
+                    }
+
+                    // WF if `sub_ty` outlives `region`
+                    ty::Ref(..) => {
+                        ty::List::empty()
+                    }
+
+                    ty::Dynamic(..) => {
+                        // FIXME: no rules yet for trait objects
+                        ty::List::empty()
+                    }
+
+                    ty::Adt(def, ..) => {
+                        self.infcx.tcx.program_clauses_for(def.did)
+                    }
+
+                    ty::Foreign(def_id) |
+                    ty::FnDef(def_id, ..) |
+                    ty::Closure(def_id, ..) |
+                    ty::Generator(def_id, ..) |
+                    ty::Opaque(def_id, ..) => {
+                        self.infcx.tcx.program_clauses_for(def_id)
+                    }
+
+                    ty::GeneratorWitness(..) |
+                    ty::UnnormalizedProjection(..) |
+                    ty::Infer(..) |
+                    ty::Error => {
+                        bug!("unexpected type {:?}", ty)
+                    }
+                };
+
+                clauses.into_iter()
+                    .filter(|clause| clause.category() == ProgramClauseCategory::WellFormed)
+                    .cloned()
+                    .collect()
+            }
+
+            DomainGoal::FromEnv(FromEnv::Trait(..)) => {
+                // These come from:
+                // * implied bounds from trait definitions (rule `Implied-Bound-From-Trait`)
+                // * implied bounds from type definitions (rule `Implied-Bound-From-Type`)
+                // * implied bounds from assoc type defs (rules `Implied-Trait-From-AssocTy`,
+                //   `Implied-Bound-From-AssocTy` and `Implied-WC-From-AssocTy`)
+
+                // All of these rules are computed in the environment.
+                vec![]
+            }
+
+            DomainGoal::FromEnv(FromEnv::Ty(..)) => {
+                // There are no `FromEnv::Ty(..) :- ...` rules (this predicate only
+                // comes from the environment).
+                vec![]
+            }
+
+            DomainGoal::Normalize(projection_predicate) => {
+                // These come from -- assoc ty values (rule `Normalize-From-Impl`).
+                let mut clauses = vec![];
+
+                assemble_clauses_from_assoc_ty_values(
+                    self.infcx.tcx,
+                    projection_predicate.projection_ty.trait_ref(self.infcx.tcx).def_id,
+                    &mut clauses
+                );
+
+                clauses
+            }
+        };
+
+        let environment = self.infcx.tcx.lift_to_global(environment)
+            .expect("environment is not global");
+        clauses.extend(
+            self.infcx.tcx.program_clauses_for_env(environment)
+                .into_iter()
+                .cloned()
+        );
+        clauses
     }
 
     fn instantiate_binders_universally(
         &mut self,
-        _arg: &ty::Binder<&'tcx Goal<'tcx>>,
+        _arg: &ty::Binder<Goal<'tcx>>,
     ) -> Goal<'tcx> {
         panic!("FIXME -- universal instantiation needs sgrif's branch")
     }
 
     fn instantiate_binders_existentially(
         &mut self,
-        arg: &ty::Binder<&'tcx Goal<'tcx>>,
+        arg: &ty::Binder<Goal<'tcx>>,
     ) -> Goal<'tcx> {
         let (value, _map) = self.infcx.replace_late_bound_regions_with_fresh_var(
             DUMMY_SP,
             LateBoundRegionConversionTime::HigherRankedType,
             arg,
         );
-        *value
+        value
     }
 
     fn debug_ex_clause(&mut self, value: &'v ChalkExClause<'tcx>) -> Box<dyn Debug + 'v> {
@@ -387,9 +584,9 @@ impl context::UnificationOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 
     fn canonicalize_goal(
         &mut self,
-        value: &ty::ParamEnvAnd<'tcx, Goal<'tcx>>,
-    ) -> Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>> {
-        let mut _orig_values = SmallVec::new();
+        value: &InEnvironment<'tcx, Goal<'tcx>>,
+    ) -> Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>> {
+        let mut _orig_values = OriginalQueryValues::default();
         self.infcx.canonicalize_query(value, &mut _orig_values)
     }
 
@@ -410,9 +607,9 @@ impl context::UnificationOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 
     fn u_canonicalize_goal(
         &mut self,
-        value: &Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        value: &Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
     ) -> (
-        Canonical<'gcx, ty::ParamEnvAnd<'gcx, Goal<'gcx>>>,
+        Canonical<'gcx, InEnvironment<'gcx, Goal<'gcx>>>,
         UniverseMap,
     ) {
         (value.clone(), UniverseMap)
@@ -420,14 +617,14 @@ impl context::UnificationOps<ChalkArenas<'gcx>, ChalkArenas<'tcx>>
 
     fn invert_goal(
         &mut self,
-        _value: &ty::ParamEnvAnd<'tcx, Goal<'tcx>>,
-    ) -> Option<ty::ParamEnvAnd<'tcx, Goal<'tcx>>> {
+        _value: &InEnvironment<'tcx, Goal<'tcx>>,
+    ) -> Option<InEnvironment<'tcx, Goal<'tcx>>> {
         panic!("goal inversion not yet implemented")
     }
 
     fn unify_parameters(
         &mut self,
-        _environment: &ty::ParamEnv<'tcx>,
+        _environment: &Environment<'tcx>,
         _a: &Kind<'tcx>,
         _b: &Kind<'tcx>,
     ) -> ChalkEngineFallible<InferOk<'tcx, ()>> {

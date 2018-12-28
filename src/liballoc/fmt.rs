@@ -152,7 +152,7 @@
 //! Additionally, the return value of this function is [`fmt::Result`] which is a
 //! type alias of [`Result`]`<(), `[`std::fmt::Error`]`>`. Formatting implementations
 //! should ensure that they propagate errors from the [`Formatter`][`Formatter`] (e.g., when
-//! calling [`write!`]) however, they should never return errors spuriously. That
+//! calling [`write!`]). However, they should never return errors spuriously. That
 //! is, a formatting implementation must and may only return an error if the
 //! passed-in [`Formatter`] returns an error. This is because, contrary to what
 //! the function signature might suggest, string formatting is an infallible
@@ -335,8 +335,7 @@
 //!
 //! Each argument being formatted can be transformed by a number of formatting
 //! parameters (corresponding to `format_spec` in the syntax above). These
-//! parameters affect the string representation of what's being formatted. This
-//! syntax draws heavily from Python's, so it may seem a bit familiar.
+//! parameters affect the string representation of what's being formatted.
 //!
 //! ## Fill/Alignment
 //!

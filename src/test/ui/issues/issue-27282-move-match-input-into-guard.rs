@@ -24,10 +24,9 @@ fn main() {
     match b {
         &mut false => {},
         _ if { (|| { let bar = b; *bar = false; })();
-                     //~^ ERROR cannot move out of `b` because it is borrowed [E0505]
                      false } => { },
         &mut true => { println!("You might think we should get here"); },
-        //~^ ERROR use of moved value: `*b` [E0382]
+        //~^ ERROR use of moved value: `b` [E0382]
         _ => panic!("surely we could never get here, since rustc warns it is unreachable."),
     }
 }

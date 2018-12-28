@@ -31,8 +31,8 @@ pub struct LibFeatures {
 impl LibFeatures {
     fn new() -> LibFeatures {
         LibFeatures {
-            stable: FxHashMap(),
-            unstable: FxHashSet(),
+            stable: Default::default(),
+            unstable: Default::default(),
         }
     }
 
@@ -128,8 +128,8 @@ impl<'a, 'tcx> LibFeatureCollector<'a, 'tcx> {
                 let msg = format!(
                     "feature `{}` is declared {}, but was previously declared {}",
                     feature,
-                    if since.is_some() { "stable"} else { "unstable" },
-                    if since.is_none() { "stable"} else { "unstable" },
+                    if since.is_some() { "stable" } else { "unstable" },
+                    if since.is_none() { "stable" } else { "unstable" },
                 );
                 self.tcx.sess.struct_span_err_with_code(span, &msg,
                     DiagnosticId::Error("E0711".into())).emit();

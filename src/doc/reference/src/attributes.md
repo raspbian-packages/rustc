@@ -11,15 +11,16 @@
 > &nbsp;&nbsp; `#[` MetaItem `]`
 >
 > _MetaItem_ :\
-> &nbsp;&nbsp; &nbsp;&nbsp; IDENTIFIER\
-> &nbsp;&nbsp; | IDENTIFIER `=` LITERAL\
-> &nbsp;&nbsp; | IDENTIFIER `(` _MetaSeq_ `)`
+> &nbsp;&nbsp; &nbsp;&nbsp; [_SimplePath_]\
+> &nbsp;&nbsp; | [_SimplePath_] `=` [_LiteralExpression_]<sub>_without suffix_</sub>\
+> &nbsp;&nbsp; | [_SimplePath_] `(` _MetaSeq_<sup>?</sup> `)`
 >
 > _MetaSeq_ :\
-> &nbsp;&nbsp; &nbsp;&nbsp; EMPTY\
-> &nbsp;&nbsp; | _MetaItem_\
-> &nbsp;&nbsp; | LITERAL\
-> &nbsp;&nbsp; | _MetaItem_ `,` _MetaSeq_
+> &nbsp;&nbsp; _MetaItemInner_ ( `,` MetaItemInner )<sup>\*</sup> `,`<sup>?</sup>
+>
+> _MetaItemInner_ :\
+> &nbsp;&nbsp; &nbsp;&nbsp; _MetaItem_\
+> &nbsp;&nbsp; | [_LiteralExpression_]<sub>_without suffix_</sub>
 
 An _attribute_ is a general, free-form metadatum that is interpreted according
 to name, convention, and language and compiler version. Attributes are modeled
@@ -33,6 +34,8 @@ Attributes may appear as any of:
 * An identifier followed by a parenthesized list of sub-attribute arguments
   which include literals
 
+Literal values must not include integer or float type suffixes.
+
 _Inner attributes_, written with a bang ("!") after the hash ("#"), apply to the
 item that the attribute is declared within. _Outer attributes_, written without
 the bang after the hash, apply to the thing that follows the attribute.
@@ -41,13 +44,16 @@ Attributes may be applied to many things in the language:
 
 * All [item declarations] accept outer attributes while [external blocks],
   [functions], [implementations], and [modules] accept inner attributes.
-* [Statements] accept outer attributes.
+* Most [statements] accept outer attributes (see [Expression Attributes] for
+  limitations on expression statements).
 * [Block expressions] accept outer and inner attributes, but only when they are
   the outer expression of an [expression statement] or the final expression of
   another block expression.
 * [Enum] variants and [struct] and [union] fields accept outer attributes.
 * [Match expression arms][match expressions] accept outer attributes.
 * [Generic lifetime or type parameter][generics] accept outer attributes.
+* Expressions accept outer attributes in limited situations, see [Expression
+  Attributes] for details.
 
 Some examples of attributes:
 
@@ -74,7 +80,7 @@ type int8_t = i8;
 // Outer attribute applies to the entire function.
 fn some_unused_variables() {
   #![allow(unused_variables)]
-  
+
   let x = ();
   let y = ();
   let z = ();
@@ -90,7 +96,7 @@ There are three kinds of attributes:
 ## Active and inert attributes
 
 An attribute is either active or inert. During attribute processing, *active
-attributes* remove themselves from the thing they are on while *inert attriutes*
+attributes* remove themselves from the thing they are on while *inert attributes*
 stay on.
 
 The `cfg` and `cfg_attr` attributes are active. The `test` attribute is inert
@@ -104,6 +110,9 @@ names have meaning.
 
 ## Crate-only attributes
 
+> **Note**: This section is in the process of being removed, with specific
+> sections for each attribute. It is not the full list of crate-root attributes.
+
 - `crate_name` - specify the crate's crate name.
 - `crate_type` - see [linkage](linkage.html).
 - `no_builtins` - disable optimizing certain code patterns to invocations of
@@ -112,7 +121,6 @@ names have meaning.
    object being linked to defines `main`.
 - `no_start` - disable linking to the `native` crate, which specifies the
   "start" language item.
-- `no_std` - disable linking to the `std` crate.
 - `recursion_limit` - Sets the maximum depth for potentially
                       infinitely-recursive compile-time operations like
                       auto-dereference or macro expansion. The default is
@@ -126,14 +134,6 @@ names have meaning.
                         non-Windows targets.
 
 [subsystem]: https://msdn.microsoft.com/en-us/library/fcc1zstk.aspx
-
-## Module-only attributes
-
-- `no_implicit_prelude` - disable injecting `use std::prelude::*` in this
-  module.
-- `path` - specifies the file to load the module from. `#[path="foo.rs"] mod
-  bar;` is equivalent to `mod bar { /* contents of foo.rs */ }`. The path is
-  taken relative to the directory that the current module is in.
 
 ## FFI attributes
 
@@ -173,8 +173,7 @@ which can be used to control type layout.
 - `macro_use` on an `extern crate` — load macros from this crate.  An optional
   list of names `#[macro_use(foo, bar)]` restricts the import to just those
   macros named.  The `extern crate` must appear at the crate root, not inside
-  `mod`, which ensures proper function of the [`$crate` macro
-  variable](../book/first-edition/macros.html#the-variable-crate).
+  `mod`, which ensures proper function of the `$crate` macro variable.
 
 - `macro_reexport` on an `extern crate` — re-export the named macros.
 
@@ -182,10 +181,6 @@ which can be used to control type layout.
 
 - `no_link` on an `extern crate` — even if we load this crate for macros, don't
   link it into the output.
-
-See the [macros section of the first edition of the
-book](../book/first-edition/macros.html#scoping-and-macro-importexport) for more
-information on `macro_rules` macro scope.
 
 - `proc_macro` - Defines a [function-like macro].
 
@@ -241,6 +236,17 @@ The `doc` attribute is used to document items and fields. [Doc comments]
 are transformed into `doc` attributes.
 
 See [The Rustdoc Book] for reference material on this attribute.
+
+### `path`
+
+The `path` attribute says where a [module]'s source file is. See [modules] for
+more information.
+
+### Preludes
+
+The [prelude] behavior can be modified with attributes. The [`no_std`] attribute
+changes the prelude to the core prelude while the [`no_implicit_prelude`]
+prevents the prelude from being added to the module.
 
 ### Testing
 
@@ -351,6 +357,35 @@ pub mod m3 {
     #[allow(missing_docs)]
     /// Returns 2.
     pub fn undocumented_too() -> i32 { 2 }
+}
+```
+
+#### Tool lint attributes
+
+Tool lints let you use scoped lints, to `allow`, `warn`, `deny` or `forbid` lints of
+certain tools.
+
+Currently `clippy` is the only available lint tool.
+
+They only get checked when the associated tool is active, so if you try to use an `allow` attribute for a nonexistent tool lint, the compiler will not warn about the nonexistent lint until you use the tool.
+
+Otherwise, they work just like regular lint attributes:
+
+
+```rust,ignore
+// set the entire `pedantic` clippy lint group to warn
+#![warn(clippy::pedantic)]
+// silence warnings from the `filter_map` clippy lint
+#![allow(clippy::filter_map)]
+
+fn main() {
+    // ...
+}
+
+// silence the `cmp_nan` clippy lint just for this function
+#[allow(clippy::cmp_nan)]
+fn foo() {
+    // ...
 }
 ```
 
@@ -472,7 +507,7 @@ function for a trait implementation and not to all trait implementations.
 
 > ***Note***: The compiler automatically inlines functions based on internal
 > heuristics. Incorrectly inlining functions can actually make the program
-> slower, so this attibute should be used with care.
+> slower, so this attribute should be used with care.
 
 There are three ways of using the inline attribute:
 
@@ -494,7 +529,7 @@ function for a trait implementation and not to all trait implementations.
 
 The `derive` attribute allows certain traits to be automatically implemented
 for data structures. For example, the following will create an `impl` for the
-`PartialEq` and `Clone` traits for `Foo`, the type parameter `T` will be given
+`PartialEq` and `Clone` traits for `Foo`, and the type parameter `T` will be given
 the `PartialEq` or `Clone` constraints for the appropriate `impl`:
 
 ```rust
@@ -522,8 +557,14 @@ impl<T: PartialEq> PartialEq for Foo<T> {
 
 You can implement `derive` for your own traits through [procedural macros].
 
+[_LiteralExpression_]: expressions/literal-expr.html
+[_SimplePath_]: paths.html#simple-paths
+[`no_implicit_prelude`]: items/modules.html
+[`no_std`]: crates-and-source-files.html#preludes-and-no_std
 [Doc comments]: comments.html#doc-comments
 [The Rustdoc Book]: ../rustdoc/the-doc-attribute.html
+[module]: items/modules.html
+[prelude]: crates-and-source-files.html#preludes-and-no_std
 [procedural macros]: procedural-macros.html
 [struct]: items/structs.html
 [enum]: items/enumerations.html
@@ -552,7 +593,9 @@ You can implement `derive` for your own traits through [procedural macros].
 [function-like macro]: procedural-macros.html#function-like-procedural-macros
 [conditional compilation]: conditional-compilation.html
 [derive mode macro]: procedural-macros.html#derive-mode-macros
-[trait]: items/traits.html[main]: crates-and-source-files.html
+[trait]: items/traits.html
+[main]: crates-and-source-files.html
 [`Termination`]: ../std/process/trait.Termination.html
 [where clause]: items/where-clauses.html
 [trait or lifetime bounds]: trait-bounds.html
+[Expression Attributes]: expressions.html#expression-attributes

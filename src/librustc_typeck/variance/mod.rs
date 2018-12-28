@@ -48,14 +48,14 @@ pub fn provide(providers: &mut Providers) {
 fn crate_variances<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, crate_num: CrateNum)
                              -> Lrc<CrateVariancesMap> {
     assert_eq!(crate_num, LOCAL_CRATE);
-    let mut arena = arena::TypedArena::new();
+    let mut arena = arena::TypedArena::default();
     let terms_cx = terms::determine_parameters_to_be_inferred(tcx, &mut arena);
     let constraints_cx = constraints::add_constraints_from_crate(terms_cx);
     Lrc::new(solve::solve_constraints(constraints_cx))
 }
 
 fn variances_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, item_def_id: DefId)
-                            -> Lrc<Vec<ty::Variance>> {
+                          -> Lrc<Vec<ty::Variance>> {
     let id = tcx.hir.as_local_node_id(item_def_id).expect("expected local def-id");
     let unsupported = || {
         // Variance not relevant.

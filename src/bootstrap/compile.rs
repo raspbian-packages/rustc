@@ -249,7 +249,7 @@ impl Step for StdLink {
 
 fn copy_apple_sanitizer_dylibs(builder: &Builder, native_dir: &Path, platform: &str, into: &Path) {
     for &sanitizer in &["asan", "tsan"] {
-        let filename = format!("libclang_rt.{}_{}_dynamic.dylib", sanitizer, platform);
+        let filename = format!("lib__rustc__clang_rt.{}_{}_dynamic.dylib", sanitizer, platform);
         let mut src_path = native_dir.join(sanitizer);
         src_path.push("build");
         src_path.push("lib");
@@ -568,6 +568,9 @@ pub fn rustc_cargo_env(builder: &Builder, cargo: &mut Command) {
     }
     if builder.config.rustc_parallel_queries {
         cargo.env("RUSTC_PARALLEL_QUERIES", "1");
+    }
+    if builder.config.rust_verify_llvm_ir {
+        cargo.env("RUSTC_VERIFY_LLVM_IR", "1");
     }
 }
 

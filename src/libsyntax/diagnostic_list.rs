@@ -375,15 +375,15 @@ and likely to change in the future.
 
 E0705: r##"
 A `#![feature]` attribute was declared for a feature that is stable in
-the current edition.
+the current edition, but not in all editions.
 
 Erroneous code example:
 
 ```ignore (limited to a warning during 2018 edition development)
 #![feature(rust_2018_preview)]
-#![feature(impl_header_lifetime_elision)] // error: the feature
-                                          // `impl_header_lifetime_elision` is
-                                          // included in the Rust 2018 edition
+#![feature(test_2018_feature)] // error: the feature
+                               // `test_2018_feature` is
+                               // included in the Rust 2018 edition
 ```
 
 "##,
@@ -413,4 +413,5 @@ register_diagnostics! {
     E0694, // an unknown tool name found in scoped attributes
     E0703, // invalid ABI
     E0704, // incorrect visibility restriction
+    E0717, // rustc_promotable without stability attribute
 }

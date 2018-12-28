@@ -26,7 +26,7 @@ use rustc_metadata::creader::CrateLoader;
 use rustc_metadata::cstore::CStore;
 use rustc_target::spec::TargetTriple;
 
-use syntax::ast::{self, Ident};
+use syntax::ast::{self, Ident, NodeId};
 use syntax::source_map;
 use syntax::edition::Edition;
 use syntax::feature_gate::UnstableFeatures;
@@ -36,11 +36,13 @@ use syntax::symbol::keywords;
 use syntax_pos::DUMMY_SP;
 use errors;
 use errors::emitter::{Emitter, EmitterWriter};
+use parking_lot::ReentrantMutex;
 
-use std::cell::{RefCell, Cell};
+use std::cell::RefCell;
 use std::mem;
 use rustc_data_structures::sync::{self, Lrc};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::path::PathBuf;
 
 use visit_ast::RustdocVisitor;
@@ -60,16 +62,13 @@ pub struct DocContext<'a, 'tcx: 'a, 'rcx: 'a, 'cstore: 'rcx> {
     /// The stack of module NodeIds up till this point
     pub crate_name: Option<String>,
     pub cstore: Rc<CStore>,
-    pub populated_all_crate_impls: Cell<bool>,
     // Note that external items for which `doc(hidden)` applies to are shown as
     // non-reachable while local items aren't. This is because we're reusing
     // the access levels from crateanalysis.
-    /// Later on moved into `clean::Crate`
-    pub access_levels: RefCell<AccessLevels<DefId>>,
     /// Later on moved into `html::render::CACHE_KEY`
     pub renderinfo: RefCell<RenderInfo>,
     /// Later on moved through `clean::Crate` into `html::render::CACHE_KEY`
-    pub external_traits: RefCell<FxHashMap<DefId, clean::Trait>>,
+    pub external_traits: Arc<ReentrantMutex<RefCell<FxHashMap<DefId, clean::Trait>>>>,
     /// Used while populating `external_traits` to ensure we don't process the same trait twice at
     /// the same time.
     pub active_extern_traits: RefCell<Vec<DefId>>,
@@ -164,6 +163,16 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocContext<'a, 'tcx, 'rcx, 'cstore> {
         def_id.clone()
     }
 
+    /// Like the function of the same name on the HIR map, but skips calling it on fake DefIds.
+    /// (This avoids a slice-index-out-of-bounds panic.)
+    pub fn as_local_node_id(&self, def_id: DefId) -> Option<NodeId> {
+        if self.all_fake_def_ids.borrow().contains(&def_id) {
+            None
+        } else {
+            self.tcx.hir.as_local_node_id(def_id)
+        }
+    }
+
     pub fn get_real_ty<F>(&self,
                           def_id: DefId,
                           def_ctor: &F,
@@ -177,6 +186,8 @@ impl<'a, 'tcx, 'rcx, 'cstore> DocContext<'a, 'tcx, 'rcx, 'cstore> {
 
         segments.push(hir::PathSegment::new(
             real_name.unwrap_or(last.ident),
+            None,
+            None,
             self.generics_to_path_params(generics.clone()),
             false,
         ));
@@ -260,9 +271,11 @@ impl DocAccessLevels for AccessLevels<DefId> {
 ///
 /// If the given `error_format` is `ErrorOutputType::Json` and no `SourceMap` is given, a new one
 /// will be created for the handler.
-pub fn new_handler(error_format: ErrorOutputType, source_map: Option<Lrc<source_map::SourceMap>>)
-    -> errors::Handler
-{
+pub fn new_handler(error_format: ErrorOutputType,
+                   source_map: Option<Lrc<source_map::SourceMap>>,
+                   treat_err_as_bug: bool,
+                   ui_testing: bool,
+) -> errors::Handler {
     // rustdoc doesn't override (or allow to override) anything from this that is relevant here, so
     // stick to the defaults
     let sessopts = Options::default();
@@ -273,7 +286,7 @@ pub fn new_handler(error_format: ErrorOutputType, source_map: Option<Lrc<source_
                 source_map.map(|cm| cm as _),
                 false,
                 sessopts.debugging_opts.teach,
-            ).ui_testing(sessopts.debugging_opts.ui_testing)
+            ).ui_testing(ui_testing)
         ),
         ErrorOutputType::Json(pretty) => {
             let source_map = source_map.unwrap_or_else(
@@ -283,7 +296,7 @@ pub fn new_handler(error_format: ErrorOutputType, source_map: Option<Lrc<source_
                     None,
                     source_map,
                     pretty,
-                ).ui_testing(sessopts.debugging_opts.ui_testing)
+                ).ui_testing(ui_testing)
             )
         },
         ErrorOutputType::Short(color_config) => Box::new(
@@ -299,7 +312,7 @@ pub fn new_handler(error_format: ErrorOutputType, source_map: Option<Lrc<source_
         emitter,
         errors::HandlerFlags {
             can_emit_warnings: true,
-            treat_err_as_bug: false,
+            treat_err_as_bug,
             report_delayed_bugs: false,
             external_macro_backtrace: false,
             ..Default::default()
@@ -323,9 +336,10 @@ pub fn run_core(search_paths: SearchPaths,
                 lint_cap: Option<lint::Level>,
                 describe_lints: bool,
                 mut manual_passes: Vec<String>,
-                mut default_passes: passes::DefaultPassOption)
-    -> (clean::Crate, RenderInfo, Vec<String>)
-{
+                mut default_passes: passes::DefaultPassOption,
+                treat_err_as_bug: bool,
+                ui_testing: bool,
+) -> (clean::Crate, RenderInfo, Vec<String>) {
     // Parse, resolve, and typecheck the given crate.
 
     let cpath = match input {
@@ -336,12 +350,14 @@ pub fn run_core(search_paths: SearchPaths,
     let intra_link_resolution_failure_name = lint::builtin::INTRA_DOC_LINK_RESOLUTION_FAILURE.name;
     let warnings_lint_name = lint::builtin::WARNINGS.name;
     let missing_docs = rustc_lint::builtin::MISSING_DOCS.name;
+    let missing_doc_example = rustc_lint::builtin::MISSING_DOC_CODE_EXAMPLES.name;
 
     // In addition to those specific lints, we also need to whitelist those given through
     // command line, otherwise they'll get ignored and we don't want that.
     let mut whitelisted_lints = vec![warnings_lint_name.to_owned(),
                                      intra_link_resolution_failure_name.to_owned(),
-                                     missing_docs.to_owned()];
+                                     missing_docs.to_owned(),
+                                     missing_doc_example.to_owned()];
 
     whitelisted_lints.extend(cmd_lints.iter().map(|(lint, _)| lint).cloned());
 
@@ -379,6 +395,8 @@ pub fn run_core(search_paths: SearchPaths,
         actually_rustdoc: true,
         debugging_opts: config::DebuggingOptions {
             force_unstable_if_unmarked,
+            treat_err_as_bug,
+            ui_testing,
             ..config::basic_debugging_options()
         },
         error_format,
@@ -388,7 +406,10 @@ pub fn run_core(search_paths: SearchPaths,
     };
     driver::spawn_thread_pool(sessopts, move |sessopts| {
         let source_map = Lrc::new(source_map::SourceMap::new(sessopts.file_path_mapping()));
-        let diagnostic_handler = new_handler(error_format, Some(source_map.clone()));
+        let diagnostic_handler = new_handler(error_format,
+                                             Some(source_map.clone()),
+                                             treat_err_as_bug,
+                                             ui_testing);
 
         let mut sess = session::build_session_(
             sessopts, cpath, diagnostic_handler, source_map,
@@ -457,7 +478,9 @@ pub fn run_core(search_paths: SearchPaths,
             trait_map: resolver.trait_map.clone(),
             maybe_unused_trait_imports: resolver.maybe_unused_trait_imports.clone(),
             maybe_unused_extern_crates: resolver.maybe_unused_extern_crates.clone(),
-            extern_prelude: resolver.extern_prelude.clone(),
+            extern_prelude: resolver.extern_prelude.iter().map(|(ident, entry)| {
+                (ident.name, entry.introduced_by_item)
+            }).collect(),
         };
         let analysis = ty::CrateAnalysis {
             access_levels: Lrc::new(AccessLevels::default()),
@@ -505,23 +528,24 @@ pub fn run_core(search_paths: SearchPaths,
                 clean::path_to_def(&tcx, &["core", "marker", "Send"])
             };
 
+            let mut renderinfo = RenderInfo::default();
+            renderinfo.access_levels = access_levels;
+
             let ctxt = DocContext {
                 tcx,
                 resolver: &resolver,
                 crate_name,
                 cstore: cstore.clone(),
-                populated_all_crate_impls: Cell::new(false),
-                access_levels: RefCell::new(access_levels),
                 external_traits: Default::default(),
                 active_extern_traits: Default::default(),
-                renderinfo: Default::default(),
+                renderinfo: RefCell::new(renderinfo),
                 ty_substs: Default::default(),
                 lt_substs: Default::default(),
                 impl_trait_bounds: Default::default(),
                 send_trait: send_trait,
-                fake_def_ids: RefCell::new(FxHashMap()),
-                all_fake_def_ids: RefCell::new(FxHashSet()),
-                generated_synthetics: RefCell::new(FxHashSet()),
+                fake_def_ids: Default::default(),
+                all_fake_def_ids: Default::default(),
+                generated_synthetics: Default::default(),
                 all_traits: tcx.all_traits(LOCAL_CRATE).to_vec(),
             };
             debug!("crate: {:?}", tcx.hir.krate());

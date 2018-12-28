@@ -100,11 +100,11 @@ impl<'a, 'tcx> CrateDebugContext<'a, 'tcx> {
             llcontext,
             llmod,
             builder,
-            created_files: RefCell::new(FxHashMap()),
-            created_enum_disr_types: RefCell::new(FxHashMap()),
-            type_map: RefCell::new(TypeMap::new()),
+            created_files: Default::default(),
+            created_enum_disr_types: Default::default(),
+            type_map: Default::default(),
             namespace_map: RefCell::new(DefIdMap()),
-            composite_types_completed: RefCell::new(FxHashSet()),
+            composite_types_completed: Default::default(),
         }
     }
 }
@@ -271,16 +271,14 @@ pub fn create_function_debug_context(
     let mut flags = DIFlags::FlagPrototyped;
 
     let local_id = cx.tcx.hir.as_local_node_id(def_id);
-    match *cx.sess().entry_fn.borrow() {
-        Some((id, _, _)) => {
-            if local_id == Some(id) {
-                flags = flags | DIFlags::FlagMainSubprogram;
-            }
+    if let Some((id, _, _)) = *cx.sess().entry_fn.borrow() {
+        if local_id == Some(id) {
+            flags |= DIFlags::FlagMainSubprogram;
         }
-        None => {}
-    };
-    if cx.layout_of(sig.output()).abi == ty::layout::Abi::Uninhabited {
-        flags = flags | DIFlags::FlagNoReturn;
+    }
+
+    if cx.layout_of(sig.output()).abi.is_uninhabited() {
+        flags |= DIFlags::FlagNoReturn;
     }
 
     let fn_metadata = unsafe {
@@ -371,7 +369,7 @@ pub fn create_function_debug_context(
             }
         }
 
-        return create_DIArray(DIB(cx), &signature[..]);
+        create_DIArray(DIB(cx), &signature[..])
     }
 
     fn get_template_parameters(
@@ -428,7 +426,7 @@ pub fn create_function_debug_context(
             vec![]
         };
 
-        return create_DIArray(DIB(cx), &template_params[..]);
+        create_DIArray(DIB(cx), &template_params[..])
     }
 
     fn get_parameter_names(cx: &CodegenCx,

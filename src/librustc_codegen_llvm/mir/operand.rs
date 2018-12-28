@@ -8,9 +8,8 @@
 // option. This file may not be copied, modified, or distributed
 // except according to those terms.
 
-use rustc::mir::interpret::ConstEvalErr;
+use rustc::mir::interpret::{ConstValue, ConstEvalErr};
 use rustc::mir;
-use rustc::mir::interpret::{ConstValue, ScalarMaybeUndef};
 use rustc::ty;
 use rustc::ty::layout::{self, Align, LayoutOf, TyLayout};
 use rustc_data_structures::sync::Lrc;
@@ -114,15 +113,12 @@ impl OperandRef<'ll, 'tcx> {
                     layout.scalar_pair_element_llvm_type(bx.cx, 0, true),
                 );
                 let b_layout = layout.scalar_pair_element_llvm_type(bx.cx, 1, true);
-                let b_llval = match b {
-                    ScalarMaybeUndef::Scalar(b) => scalar_to_llvm(
-                        bx.cx,
-                        b,
-                        b_scalar,
-                        b_layout,
-                    ),
-                    ScalarMaybeUndef::Undef => C_undef(b_layout),
-                };
+                let b_llval = scalar_to_llvm(
+                    bx.cx,
+                    b,
+                    b_scalar,
+                    b_layout,
+                );
                 OperandValue::Pair(a_llval, b_llval)
             },
             ConstValue::ByRef(_, alloc, offset) => {
@@ -298,11 +294,21 @@ impl OperandValue<'ll> {
                 bx.store_with_flags(val, dest.llval, dest.align, flags);
             }
             OperandValue::Pair(a, b) => {
-                for (i, &x) in [a, b].iter().enumerate() {
-                    let llptr = bx.struct_gep(dest.llval, i as u64);
-                    let val = base::from_immediate(bx, x);
-                    bx.store_with_flags(val, llptr, dest.align, flags);
-                }
+                let (a_scalar, b_scalar) = match dest.layout.abi {
+                    layout::Abi::ScalarPair(ref a, ref b) => (a, b),
+                    _ => bug!("store_with_flags: invalid ScalarPair layout: {:#?}", dest.layout)
+                };
+                let b_offset = a_scalar.value.size(bx.cx).abi_align(b_scalar.value.align(bx.cx));
+
+                let llptr = bx.struct_gep(dest.llval, 0);
+                let val = base::from_immediate(bx, a);
+                let align = dest.align;
+                bx.store_with_flags(val, llptr, align, flags);
+
+                let llptr = bx.struct_gep(dest.llval, 1);
+                let val = base::from_immediate(bx, b);
+                let align = dest.align.restrict_for_offset(b_offset);
+                bx.store_with_flags(val, llptr, align, flags);
             }
         }
     }

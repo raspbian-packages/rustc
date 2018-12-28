@@ -31,7 +31,7 @@ use syntax::symbol::keywords;
 
 use std::iter;
 
-use rustc_data_structures::bitvec::BitArray;
+use rustc_data_structures::bit_set::BitSet;
 use rustc_data_structures::indexed_vec::IndexVec;
 
 pub use self::constant::codegen_static_initializer;
@@ -162,16 +162,16 @@ impl FunctionCx<'a, 'll, 'tcx> {
     // corresponding to span's containing source scope.  If so, we need to create a DIScope
     // "extension" into that file.
     fn scope_metadata_for_loc(&self, scope_id: mir::SourceScope, pos: BytePos)
-                               -> Option<&'ll DIScope> {
+                              -> Option<&'ll DIScope> {
         let scope_metadata = self.scopes[scope_id].scope_metadata;
         if pos < self.scopes[scope_id].file_start_pos ||
            pos >= self.scopes[scope_id].file_end_pos {
             let cm = self.cx.sess().source_map();
             let defining_crate = self.debug_context.get_ref(DUMMY_SP).defining_crate;
             Some(debuginfo::extend_scope_to_file(self.cx,
-                                            scope_metadata.unwrap(),
-                                            &cm.lookup_char_pos(pos).file,
-                                            defining_crate))
+                                                 scope_metadata.unwrap(),
+                                                 &cm.lookup_char_pos(pos).file,
+                                                 defining_crate))
         } else {
             scope_metadata
         }
@@ -341,7 +341,7 @@ pub fn codegen_mir(
     debuginfo::start_emitting_source_locations(&fx.debug_context);
 
     let rpo = traversal::reverse_postorder(&mir);
-    let mut visited = BitArray::new(mir.basic_blocks().len());
+    let mut visited = BitSet::new_empty(mir.basic_blocks().len());
 
     // Codegen the body of each block using reverse postorder
     for (bb, _) in rpo {
@@ -435,7 +435,7 @@ fn arg_local_refs(
     bx: &Builder<'a, 'll, 'tcx>,
     fx: &FunctionCx<'a, 'll, 'tcx>,
     scopes: &IndexVec<mir::SourceScope, debuginfo::MirDebugScope<'ll>>,
-    memory_locals: &BitArray<mir::Local>,
+    memory_locals: &BitSet<mir::Local>,
 ) -> Vec<LocalRef<'ll, 'tcx>> {
     let mir = fx.mir;
     let tcx = bx.tcx();

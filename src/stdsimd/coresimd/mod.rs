@@ -25,6 +25,8 @@ mod simd;
 /// * [`mips64`]
 /// * [`PowerPC`]
 /// * [`PowerPC64`]
+/// * [`NVPTX`]
+/// * [`wasm32`]
 ///
 /// [`x86`]: https://rust-lang-nursery.github.io/stdsimd/x86/stdsimd/arch/index.html
 /// [`x86_64`]: https://rust-lang-nursery.github.io/stdsimd/x86_64/stdsimd/arch/index.html
@@ -34,6 +36,8 @@ mod simd;
 /// [`mips64`]: https://rust-lang-nursery.github.io/stdsimd/mips64/stdsimd/arch/index.html
 /// [`PowerPC`]: https://rust-lang-nursery.github.io/stdsimd/powerpc/stdsimd/arch/index.html
 /// [`PowerPC64`]: https://rust-lang-nursery.github.io/stdsimd/powerpc64/stdsimd/arch/index.html
+/// [`NVPTX`]: https://rust-lang-nursery.github.io/stdsimd/nvptx/stdsimd/arch/index.html
+/// [`wasm32`]: https://rust-lang-nursery.github.io/stdsimd/wasm32/stdsimd/arch/index.html
 #[stable(feature = "simd_arch", since = "1.27.0")]
 pub mod arch {
     /// Platform-specific intrinsics for the `x86` platform.
@@ -84,7 +88,8 @@ pub mod arch {
     /// Platform-specific intrinsics for the `wasm32` platform.
     ///
     /// See the [module documentation](../index.html) for more details.
-    #[cfg(target_arch = "wasm32")]
+    #[cfg(any(target_arch = "wasm32", dox))]
+    #[doc(cfg(target_arch = "mips"))]
     #[unstable(feature = "stdsimd", issue = "27731")]
     pub mod wasm32 {
         pub use coresimd::wasm32::*;
@@ -129,6 +134,16 @@ pub mod arch {
     pub mod powerpc64 {
         pub use coresimd::powerpc64::*;
     }
+
+    /// Platform-specific intrinsics for the `NVPTX` platform.
+    ///
+    /// See the [module documentation](../index.html) for more details.
+    #[cfg(any(target_arch = "nvptx", target_arch = "nvptx64", dox))]
+    #[doc(cfg(any(target_arch = "nvptx", target_arch = "nvptx64")))]
+    #[unstable(feature = "stdsimd", issue = "27731")]
+    pub mod nvptx {
+        pub use coresimd::nvptx::*;
+    }
 }
 
 mod simd_llvm;
@@ -146,7 +161,9 @@ mod aarch64;
 #[cfg(any(target_arch = "arm", target_arch = "aarch64", dox))]
 #[doc(cfg(any(target_arch = "arm", target_arch = "aarch64")))]
 mod arm;
-#[cfg(target_arch = "wasm32")]
+
+#[cfg(any(target_arch = "wasm32", dox))]
+#[doc(cfg(target_arch = "wasm32"))]
 mod wasm32;
 
 #[cfg(any(target_arch = "mips", target_arch = "mips64", dox))]
@@ -161,4 +178,6 @@ mod powerpc;
 #[doc(cfg(target_arch = "powerpc64"))]
 mod powerpc64;
 
+#[cfg(any(target_arch = "nvptx", target_arch = "nvptx64", dox))]
+#[doc(cfg(any(target_arch = "nvptx", target_arch = "nvptx64")))]
 mod nvptx;

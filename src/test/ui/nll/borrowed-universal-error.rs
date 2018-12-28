@@ -18,7 +18,7 @@ fn gimme(x: &(u32,)) -> &u32 {
 fn foo<'a>(x: &'a (u32,)) -> &'a u32 {
     let v = 22;
     gimme(&(v,))
-    //~^ ERROR borrowed value does not live long enough [E0597]
+    //~^ ERROR cannot return value referencing temporary value [E0515]
 }
 
 fn main() {}

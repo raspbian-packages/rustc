@@ -539,6 +539,7 @@ impl<'a, 'tcx> CrateMetadata {
                           data.unsafety,
                           data.paren_sugar,
                           data.has_auto_impl,
+                          data.is_marker,
                           self.def_path_table.def_path_hash(item_id))
     }
 
@@ -556,9 +557,12 @@ impl<'a, 'tcx> CrateMetadata {
             _ => bug!(),
         };
 
+        let def_id = self.local_def_id(data.struct_ctor.unwrap_or(index));
+        let attribute_def_id = self.local_def_id(index);
+
         ty::VariantDef::new(
             tcx,
-            self.local_def_id(data.struct_ctor.unwrap_or(index)),
+            def_id,
             self.item_name(index).as_symbol(),
             data.discr,
             item.children.decode(self).map(|index| {
@@ -570,7 +574,8 @@ impl<'a, 'tcx> CrateMetadata {
                 }
             }).collect(),
             adt_kind,
-            data.ctor_kind
+            data.ctor_kind,
+            attribute_def_id
         )
     }
 
@@ -1109,7 +1114,7 @@ impl<'a, 'tcx> CrateMetadata {
         }
     }
 
-    pub fn is_const_fn(&self, id: DefIndex) -> bool {
+    crate fn is_const_fn_raw(&self, id: DefIndex) -> bool {
         let constness = match self.entry(id).kind {
             EntryKind::Method(data) => data.decode(self).fn_data.constness,
             EntryKind::Fn(data) => data.decode(self).constness,

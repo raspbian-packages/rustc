@@ -38,9 +38,9 @@ impl<'a, 'tcx, 'rcx, 'cstore> LibEmbargoVisitor<'a, 'tcx, 'rcx, 'cstore> {
     ) -> LibEmbargoVisitor<'a, 'tcx, 'rcx, 'cstore> {
         LibEmbargoVisitor {
             cx,
-            access_levels: cx.access_levels.borrow_mut(),
+            access_levels: RefMut::map(cx.renderinfo.borrow_mut(), |ri| &mut ri.access_levels),
             prev_level: Some(AccessLevel::Public),
-            visited_mods: FxHashSet()
+            visited_mods: FxHashSet::default()
         }
     }
 

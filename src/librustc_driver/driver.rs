@@ -44,7 +44,7 @@ use serialize::json;
 
 use std::any::Any;
 use std::env;
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::fs;
 use std::io::{self, Write};
 use std::iter;
@@ -91,7 +91,7 @@ pub fn spawn_thread_pool<F: FnOnce(config::Options) -> R + sync::Send, R: sync::
     let config = ThreadPoolBuilder::new()
         .num_threads(Session::query_threads_from_opts(&opts))
         .deadlock_handler(|| unsafe { ty::query::handle_deadlock() })
-        .stack_size(16 * 1024 * 1024);
+        .stack_size(::STACK_SIZE);
 
     let with_pool = move |pool: &ThreadPool| {
         pool.install(move || f(opts))
@@ -790,7 +790,9 @@ where
                 trait_map: resolver.trait_map,
                 maybe_unused_trait_imports: resolver.maybe_unused_trait_imports,
                 maybe_unused_extern_crates: resolver.maybe_unused_extern_crates,
-                extern_prelude: resolver.extern_prelude,
+                extern_prelude: resolver.extern_prelude.iter().map(|(ident, entry)| {
+                    (ident.name, entry.introduced_by_item)
+                }).collect(),
             },
 
             analysis: ty::CrateAnalysis {
@@ -882,7 +884,7 @@ where
         )
     });
 
-    let mut registry = registry.unwrap_or(Registry::new(sess, krate.span));
+    let mut registry = registry.unwrap_or_else(|| Registry::new(sess, krate.span));
 
     time(sess, "plugin registration", || {
         if sess.features_untracked().rustc_diagnostic_macros {
@@ -1022,6 +1024,7 @@ where
             .cloned()
             .collect();
         missing_fragment_specifiers.sort();
+
         for span in missing_fragment_specifiers {
             let lint = lint::builtin::MISSING_FRAGMENT_SPECIFIER;
             let msg = "missing fragment specifier";
@@ -1473,7 +1476,7 @@ fn write_out_deps(sess: &Session, outputs: &OutputFilenames, out_filenames: &[Pa
             .collect();
         let mut file = fs::File::create(&deps_filename)?;
         for path in out_filenames {
-            write!(file, "{}: {}\n\n", path.display(), files.join(" "))?;
+            writeln!(file, "{}: {}\n", path.display(), files.join(" "))?;
         }
 
         // Emit a fake target for each input file to the compilation. This
@@ -1485,15 +1488,12 @@ fn write_out_deps(sess: &Session, outputs: &OutputFilenames, out_filenames: &[Pa
         Ok(())
     })();
 
-    match result {
-        Ok(()) => {}
-        Err(e) => {
-            sess.fatal(&format!(
-                "error writing dependencies to `{}`: {}",
-                deps_filename.display(),
-                e
-            ));
-        }
+    if let Err(e) = result {
+        sess.fatal(&format!(
+            "error writing dependencies to `{}`: {}",
+            deps_filename.display(),
+            e
+        ));
     }
 }
 
@@ -1521,6 +1521,7 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                             Symbol::intern("proc-macro"),
                             Symbol::intern("bin")
                         ];
+
                         if let ast::MetaItemKind::NameValue(spanned) = a.meta().unwrap().node {
                             let span = spanned.span;
                             let lev_candidate = find_best_match_for_name(
@@ -1552,7 +1553,7 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
                         }
                         None
                     }
-                    _ => {
+                    None => {
                         session
                             .struct_span_err(a.span, "`crate_type` requires a value")
                             .note("for example: `#![crate_type=\"lib\"]`")
@@ -1582,25 +1583,26 @@ pub fn collect_crate_types(session: &Session, attrs: &[ast::Attribute]) -> Vec<c
             base.push(::rustc_codegen_utils::link::default_output_for_target(
                 session,
             ));
+        } else {
+            base.sort();
+            base.dedup();
         }
-        base.sort();
-        base.dedup();
     }
 
-    base.into_iter()
-        .filter(|crate_type| {
-            let res = !::rustc_codegen_utils::link::invalid_output_for_target(session, *crate_type);
+    base.retain(|crate_type| {
+        let res = !::rustc_codegen_utils::link::invalid_output_for_target(session, *crate_type);
 
-            if !res {
-                session.warn(&format!(
-                    "dropping unsupported crate type `{}` for target `{}`",
-                    *crate_type, session.opts.target_triple
-                ));
-            }
+        if !res {
+            session.warn(&format!(
+                "dropping unsupported crate type `{}` for target `{}`",
+                *crate_type, session.opts.target_triple
+            ));
+        }
 
-            res
-        })
-        .collect()
+        res
+    });
+
+    base
 }
 
 pub fn compute_crate_disambiguator(session: &Session) -> CrateDisambiguator {
@@ -1651,17 +1653,14 @@ pub fn build_output_filenames(
             // "-" as input file will cause the parser to read from stdin so we
             // have to make up a name
             // We want to toss everything after the final '.'
-            let dirpath = match *odir {
-                Some(ref d) => d.clone(),
-                None => PathBuf::new(),
-            };
+            let dirpath = (*odir).as_ref().cloned().unwrap_or_default();
 
             // If a crate name is present, we use it as the link name
             let stem = sess.opts
                 .crate_name
                 .clone()
                 .or_else(|| attr::find_crate_name(attrs).map(|n| n.to_string()))
-                .unwrap_or(input.filestem());
+                .unwrap_or_else(|| input.filestem().to_owned());
 
             OutputFilenames {
                 out_directory: dirpath,
@@ -1694,13 +1693,11 @@ pub fn build_output_filenames(
                 sess.warn("ignoring -C extra-filename flag due to -o flag");
             }
 
-            let cur_dir = Path::new("");
-
             OutputFilenames {
-                out_directory: out_file.parent().unwrap_or(cur_dir).to_path_buf(),
+                out_directory: out_file.parent().unwrap_or_else(|| Path::new("")).to_path_buf(),
                 out_filestem: out_file
                     .file_stem()
-                    .unwrap_or(OsStr::new(""))
+                    .unwrap_or_default()
                     .to_str()
                     .unwrap()
                     .to_string(),

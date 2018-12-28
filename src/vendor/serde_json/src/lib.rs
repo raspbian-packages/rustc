@@ -315,7 +315,8 @@
 //! [macro]: https://docs.serde.rs/serde_json/macro.json.html
 //! [`serde-json-core`]: https://japaric.github.io/serde-json-core/serde_json_core/
 
-#![doc(html_root_url = "https://docs.rs/serde_json/1.0.26")]
+#![doc(html_root_url = "https://docs.rs/serde_json/1.0.31")]
+#![cfg_attr(feature = "cargo-clippy", allow(renamed_and_removed_lints))]
 #![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
 // Whitelisted clippy lints
 #![cfg_attr(
@@ -350,10 +351,10 @@
 
 #[macro_use]
 extern crate serde;
-extern crate ryu;
 #[cfg(feature = "preserve_order")]
 extern crate indexmap;
 extern crate itoa;
+extern crate ryu;
 
 #[doc(inline)]
 pub use self::de::{from_reader, from_slice, from_str, Deserializer, StreamDeserializer};
@@ -389,3 +390,6 @@ pub mod value;
 mod iter;
 mod number;
 mod read;
+
+#[cfg(feature = "raw_value")]
+mod raw;

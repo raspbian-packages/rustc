@@ -18,8 +18,8 @@
 use build::Builder;
 use build::matches::{Candidate, MatchPair, Test, TestKind};
 use hair::*;
+use rustc_data_structures::bit_set::BitSet;
 use rustc_data_structures::fx::FxHashMap;
-use rustc_data_structures::bitvec::BitArray;
 use rustc::ty::{self, Ty};
 use rustc::ty::util::IntTypeExt;
 use rustc::mir::*;
@@ -38,7 +38,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     span: match_pair.pattern.span,
                     kind: TestKind::Switch {
                         adt_def: adt_def.clone(),
-                        variants: BitArray::new(adt_def.variants.len()),
+                        variants: BitSet::new_empty(adt_def.variants.len()),
                     },
                 }
             }
@@ -55,7 +55,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                         // these maps are empty to start; cases are
                         // added below in add_cases_to_switch
                         options: vec![],
-                        indices: FxHashMap(),
+                        indices: Default::default(),
                     }
                 }
             }
@@ -152,7 +152,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
     pub fn add_variants_to_switch<'pat>(&mut self,
                                         test_place: &Place<'tcx>,
                                         candidate: &Candidate<'pat, 'tcx>,
-                                        variants: &mut BitArray<usize>)
+                                        variants: &mut BitSet<usize>)
                                         -> bool
     {
         let match_pair = match candidate.match_pairs.iter().find(|mp| mp.place == *test_place) {
@@ -324,7 +324,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                     let ref_ty = self.hir.tcx().mk_ref(region, tam);
 
                     // let lhs_ref_place = &lhs;
-                    let ref_rvalue = Rvalue::Ref(region, BorrowKind::Shared, place.clone());
+                    let ref_rvalue = Rvalue::Ref(region, BorrowKind::Shared, place);
                     let lhs_ref_place = self.temp(ref_ty, test.span);
                     self.cfg.push_assign(block, source_info, &lhs_ref_place, ref_rvalue);
                     let val = Operand::Move(lhs_ref_place);
@@ -361,6 +361,7 @@ impl<'a, 'gcx, 'tcx> Builder<'a, 'gcx, 'tcx> {
                         args: vec![val, expect],
                         destination: Some((eq_result.clone(), eq_block)),
                         cleanup: Some(cleanup),
+                        from_hir_call: false,
                     });
 
                     // check the result

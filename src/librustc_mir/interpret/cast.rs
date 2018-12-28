@@ -21,7 +21,7 @@ use rustc_apfloat::Float;
 
 use super::{EvalContext, Machine, PlaceTy, OpTy, Value};
 
-impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
+impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
     fn type_is_fat_ptr(&self, ty: Ty<'tcx>) -> bool {
         match ty.sty {
             ty::RawPtr(ty::TypeAndMut { ty, .. }) |
@@ -33,12 +33,10 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
     pub fn cast(
         &mut self,
-        src: OpTy<'tcx>,
+        src: OpTy<'tcx, M::PointerTag>,
         kind: CastKind,
-        dest: PlaceTy<'tcx>,
+        dest: PlaceTy<'tcx, M::PointerTag>,
     ) -> EvalResult<'tcx> {
-        let src_layout = src.layout;
-        let dst_layout = dest.layout;
         use rustc::mir::CastKind::*;
         match kind {
             Unsize => {
@@ -46,15 +44,28 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
             }
 
             Misc => {
+                let src_layout = src.layout;
                 let src = self.read_value(src)?;
+
+                let src = if M::ENABLE_PTR_TRACKING_HOOKS && src_layout.ty.is_region_ptr() {
+                    // The only `Misc` casts on references are those creating raw pointers.
+                    assert!(dest.layout.ty.is_unsafe_ptr());
+                    // For the purpose of the "ptr tag hooks", treat this as creating
+                    // a new, raw reference.
+                    let place = self.ref_to_mplace(src)?;
+                    self.create_ref(place, None)?
+                } else {
+                    *src
+                };
+
                 if self.type_is_fat_ptr(src_layout.ty) {
-                    match (*src, self.type_is_fat_ptr(dest.layout.ty)) {
+                    match (src, self.type_is_fat_ptr(dest.layout.ty)) {
                         // pointers to extern types
                         (Value::Scalar(_),_) |
                         // slices and trait objects to other slices/trait objects
                         (Value::ScalarPair(..), true) => {
                             // No change to value
-                            self.write_value(*src, dest)?;
+                            self.write_value(src, dest)?;
                         }
                         // slices and trait objects to thin pointers (dropping the metadata)
                         (Value::ScalarPair(data, _), false) => {
@@ -65,11 +76,13 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                     match src_layout.variants {
                         layout::Variants::Single { index } => {
                             if let Some(def) = src_layout.ty.ty_adt_def() {
+                                // Cast from a univariant enum
+                                assert!(src_layout.is_zst());
                                 let discr_val = def
                                     .discriminant_for_variant(*self.tcx, index)
                                     .val;
                                 return self.write_scalar(
-                                    Scalar::from_uint(discr_val, dst_layout.size),
+                                    Scalar::from_uint(discr_val, dest.layout.size),
                                     dest);
                             }
                         }
@@ -85,7 +98,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
             ReifyFnPointer => {
                 // The src operand does not matter, just its type
-                match src_layout.ty.sty {
+                match src.layout.ty.sty {
                     ty::FnDef(def_id, substs) => {
                         if self.tcx.has_attr(def_id, "rustc_args_required_const") {
                             bug!("reifying a fn ptr that requires \
@@ -117,7 +130,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
             ClosureFnPointer => {
                 // The src operand does not matter, just its type
-                match src_layout.ty.sty {
+                match src.layout.ty.sty {
                     ty::Closure(def_id, substs) => {
                         let substs = self.tcx.subst_and_normalize_erasing_regions(
                             self.substs(),
@@ -143,10 +156,10 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
     pub(super) fn cast_scalar(
         &self,
-        val: Scalar,
+        val: Scalar<M::PointerTag>,
         src_layout: TyLayout<'tcx>,
         dest_layout: TyLayout<'tcx>,
-    ) -> EvalResult<'tcx, Scalar> {
+    ) -> EvalResult<'tcx, Scalar<M::PointerTag>> {
         use rustc::ty::TyKind::*;
         trace!("Casting {:?}: {:?} to {:?}", val, src_layout.ty, dest_layout.ty);
 
@@ -182,7 +195,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
         v: u128,
         src_layout: TyLayout<'tcx>,
         dest_layout: TyLayout<'tcx>,
-    ) -> EvalResult<'tcx, Scalar> {
+    ) -> EvalResult<'tcx, Scalar<M::PointerTag>> {
         let signed = src_layout.abi.is_signed();
         let v = if signed {
             self.sign_extend(v, src_layout)
@@ -239,13 +252,13 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
         bits: u128,
         fty: FloatTy,
         dest_ty: Ty<'tcx>
-    ) -> EvalResult<'tcx, Scalar> {
+    ) -> EvalResult<'tcx, Scalar<M::PointerTag>> {
         use rustc::ty::TyKind::*;
         use rustc_apfloat::FloatConvert;
         match dest_ty.sty {
             // float -> uint
             Uint(t) => {
-                let width = t.bit_width().unwrap_or(self.pointer_size().bits() as usize);
+                let width = t.bit_width().unwrap_or_else(|| self.pointer_size().bits() as usize);
                 let v = match fty {
                     FloatTy::F32 => Single::from_bits(bits).to_u128(width).value,
                     FloatTy::F64 => Double::from_bits(bits).to_u128(width).value,
@@ -255,7 +268,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
             },
             // float -> int
             Int(t) => {
-                let width = t.bit_width().unwrap_or(self.pointer_size().bits() as usize);
+                let width = t.bit_width().unwrap_or_else(|| self.pointer_size().bits() as usize);
                 let v = match fty {
                     FloatTy::F32 => Single::from_bits(bits).to_i128(width).value,
                     FloatTy::F64 => Double::from_bits(bits).to_i128(width).value,
@@ -283,7 +296,11 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
         }
     }
 
-    fn cast_from_ptr(&self, ptr: Pointer, ty: Ty<'tcx>) -> EvalResult<'tcx, Scalar> {
+    fn cast_from_ptr(
+        &self,
+        ptr: Pointer<M::PointerTag>,
+        ty: Ty<'tcx>
+    ) -> EvalResult<'tcx, Scalar<M::PointerTag>> {
         use rustc::ty::TyKind::*;
         match ty.sty {
             // Casting to a reference or fn pointer is not permitted by rustc,
@@ -298,8 +315,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
     fn unsize_into_ptr(
         &mut self,
-        src: OpTy<'tcx>,
-        dest: PlaceTy<'tcx>,
+        src: OpTy<'tcx, M::PointerTag>,
+        dest: PlaceTy<'tcx, M::PointerTag>,
         // The pointee types
         sty: Ty<'tcx>,
         dty: Ty<'tcx>,
@@ -318,16 +335,12 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
                 // For now, upcasts are limited to changes in marker
                 // traits, and hence never actually require an actual
                 // change to the vtable.
-                self.copy_op(src, dest)
+                let val = self.read_value(src)?;
+                self.write_value(*val, dest)
             }
             (_, &ty::Dynamic(ref data, _)) => {
                 // Initial cast from sized to dyn trait
-                let trait_ref = data.principal().unwrap().with_self_ty(
-                    *self.tcx,
-                    src_pointee_ty,
-                );
-                let trait_ref = self.tcx.erase_regions(&trait_ref);
-                let vtable = self.get_vtable(src_pointee_ty, trait_ref)?;
+                let vtable = self.get_vtable(src_pointee_ty, data.principal())?;
                 let ptr = self.read_value(src)?.to_scalar_ptr()?;
                 let val = Value::new_dyn_trait(ptr, vtable);
                 self.write_value(val, dest)
@@ -339,8 +352,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
 
     fn unsize_into(
         &mut self,
-        src: OpTy<'tcx>,
-        dest: PlaceTy<'tcx>,
+        src: OpTy<'tcx, M::PointerTag>,
+        dest: PlaceTy<'tcx, M::PointerTag>,
     ) -> EvalResult<'tcx> {
         match (&src.layout.ty.sty, &dest.layout.ty.sty) {
             (&ty::Ref(_, s, _), &ty::Ref(_, d, _)) |

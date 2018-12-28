@@ -1,4 +1,8 @@
 //! ARM DSP Intrinsics.
+//!
+//! Based on "Arm C Language Extensions (ACLE) Version Q2 2018"
+//!
+//! https://developer.arm.com/products/software-development-tools/compilers/arm-compiler-5/docs/101028/0006
 
 #[cfg(test)]
 use stdsimd_test::assert_instr;
@@ -54,6 +58,12 @@ extern "C" {
     #[link_name = "llvm.arm.sasx"]
     fn arm_sasx(a: i32, b: i32) -> i32;
 
+    #[link_name = "llvm.arm.smlad"]
+    fn arm_smlad(a: i32, b: i32, c: i32) -> i32;
+
+    #[link_name = "llvm.arm.smlsd"]
+    fn arm_smlsd(a: i32, b: i32, c: i32) -> i32;
+
     #[link_name = "llvm.arm.sel"]
     fn arm_sel(a: i32, b: i32) -> i32;
 
@@ -80,6 +90,9 @@ extern "C" {
 
     #[link_name = "llvm.arm.smusdx"]
     fn arm_smusdx(a: i32, b: i32) -> i32;
+
+    #[link_name = "llvm.arm.usad8"]
+    fn arm_usad8(a: i32, b: i32) -> u32;
 }
 
 /// Signed saturating addition
@@ -198,6 +211,28 @@ pub unsafe fn sadd8(a: int8x4_t, b: int8x4_t) -> int8x4_t {
     dsp_call!(arm_sadd8, a, b)
 }
 
+/// Dual 16-bit Signed Multiply with Addition of products
+/// and 32-bit accumulation.
+///
+/// Returns the 16-bit signed equivalent of
+/// res = a\[0\] * b\[0\] + a\[1\] * b\[1\] + c
+#[inline]
+#[cfg_attr(test, assert_instr(smlad))]
+pub unsafe fn smlad(a: int16x2_t, b: int16x2_t, c: i32) -> i32 {
+    arm_smlad(::mem::transmute(a), ::mem::transmute(b), c)
+}
+
+/// Dual 16-bit Signed Multiply with Subtraction  of products
+/// and 32-bit accumulation and overflow detection.
+///
+/// Returns the 16-bit signed equivalent of
+/// res = a\[0\] * b\[0\] - a\[1\] * b\[1\] + c
+#[inline]
+#[cfg_attr(test, assert_instr(smlsd))]
+pub unsafe fn smlsd(a: int16x2_t, b: int16x2_t, c: i32) -> i32 {
+    arm_smlsd(::mem::transmute(a), ::mem::transmute(b), c)
+}
+
 /// Returns the 16-bit signed equivalent of
 ///
 /// res\[0\] = a\[0\] - b\[1\]
@@ -210,6 +245,8 @@ pub unsafe fn sasx(a: int16x2_t, b: int16x2_t) -> int16x2_t {
     dsp_call!(arm_sasx, a, b)
 }
 
+/// Select bytes from each operand according to APSR GE flags
+///
 /// Returns the equivalent of
 ///
 /// res\[0\] = GE\[0\] ? a\[0\] : b\[0\]
@@ -284,6 +321,7 @@ pub unsafe fn shsub16(a: int16x2_t, b: int16x2_t) -> int16x2_t {
 /// res = a\[0\] * b\[0\] + a\[1\] * b\[1\]
 ///
 /// and sets the Q flag if overflow occurs on the addition.
+#[inline]
 #[cfg_attr(test, assert_instr(smuad))]
 pub unsafe fn smuad(a: int16x2_t, b: int16x2_t) -> i32 {
     arm_smuad(::mem::transmute(a), ::mem::transmute(b))
@@ -326,6 +364,30 @@ pub unsafe fn smusd(a: int16x2_t, b: int16x2_t) -> i32 {
 #[cfg_attr(test, assert_instr(smusdx))]
 pub unsafe fn smusdx(a: int16x2_t, b: int16x2_t) -> i32 {
     arm_smusdx(::mem::transmute(a), ::mem::transmute(b))
+}
+
+/// Sum of 8-bit absolute differences.
+///
+/// Returns the 8-bit unsigned equivalent of
+///
+/// res = abs(a\[0\] - b\[0\]) + abs(a\[1\] - b\[1\]) +\
+///          (a\[2\] - b\[2\]) + (a\[3\] - b\[3\])
+#[inline]
+#[cfg_attr(test, assert_instr(usad8))]
+pub unsafe fn usad8(a: int8x4_t, b: int8x4_t) -> u32 {
+    arm_usad8(::mem::transmute(a), ::mem::transmute(b))
+}
+
+/// Sum of 8-bit absolute differences and constant.
+///
+/// Returns the 8-bit unsigned equivalent of
+///
+/// res = abs(a\[0\] - b\[0\]) + abs(a\[1\] - b\[1\]) +\
+///          (a\[2\] - b\[2\]) + (a\[3\] - b\[3\]) + c
+#[inline]
+#[cfg_attr(test, assert_instr(usad8))]
+pub unsafe fn usad8a(a: int8x4_t, b: int8x4_t, c: u32) -> u32 {
+    usad8(a, b) + c
 }
 
 #[cfg(test)]
@@ -453,6 +515,26 @@ mod tests {
     }
 
     #[test]
+    fn smlad() {
+        unsafe {
+            let a = i16x2::new(1, 2);
+            let b = i16x2::new(3, 4);
+            let r = dsp::smlad(::mem::transmute(a), ::mem::transmute(b), 10);
+            assert_eq!(r, (1 * 3) + (2 * 4) + 10);
+        }
+    }
+
+    #[test]
+    fn smlsd() {
+        unsafe {
+            let a = i16x2::new(1, 2);
+            let b = i16x2::new(3, 4);
+            let r = dsp::smlsd(::mem::transmute(a), ::mem::transmute(b), 10);
+            assert_eq!(r, ((1 * 3) - (2 * 4)) + 10);
+        }
+    }
+
+    #[test]
     fn sel() {
         unsafe {
             let a = i8x4::new(1, 2, 3, ::std::i8::MAX);
@@ -546,6 +628,27 @@ mod tests {
             let b = i16x2::new(5, 4);
             let r = dsp::smusdx(::mem::transmute(a), ::mem::transmute(b));
             assert_eq!(r, -6);
+        }
+    }
+
+    #[test]
+    fn usad8() {
+        unsafe {
+            let a = i8x4::new(1, 2, 3, 4);
+            let b = i8x4::new(4, 3, 2, 1);
+            let r = dsp::usad8(::mem::transmute(a), ::mem::transmute(b));
+            assert_eq!(r, 8);
+        }
+    }
+
+    #[test]
+    fn usad8a() {
+        unsafe {
+            let a = i8x4::new(1, 2, 3, 4);
+            let b = i8x4::new(4, 3, 2, 1);
+            let c = 10;
+            let r = dsp::usad8a(::mem::transmute(a), ::mem::transmute(b), c);
+            assert_eq!(r, 8 + c);
         }
     }
 }

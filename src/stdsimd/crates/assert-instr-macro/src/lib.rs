@@ -12,7 +12,6 @@ extern crate proc_macro;
 extern crate proc_macro2;
 #[macro_use]
 extern crate quote;
-#[macro_use]
 extern crate syn;
 
 use proc_macro2::TokenStream;
@@ -38,17 +37,9 @@ pub fn assert_instr(
     // testing for.
     let disable_assert_instr =
         std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
-    let maybe_ignore = if cfg!(optimized) && !disable_assert_instr {
-        TokenStream::new()
-    } else {
-        (quote! { #[ignore] }).into()
-    };
 
     use quote::ToTokens;
     let instr_str = instr
-        .clone()
-        .into_token_stream()
-        .to_string()
         .replace('.', "_")
         .replace(|c: char| c.is_whitespace(), "");
     let assert_name = syn::Ident::new(
@@ -94,8 +85,7 @@ pub fn assert_instr(
                 .ident
                 .to_string()
                 .starts_with("target")
-        })
-        .collect::<Vec<_>>();
+        }).collect::<Vec<_>>();
     let attrs = Append(&attrs);
 
     // Use an ABI on Windows that passes SIMD values in registers, like what
@@ -125,16 +115,22 @@ pub fn assert_instr(
         }
     };
 
+    // If instruction tests are disabled avoid emitting this shim at all, just
+    // return the original item without our attribute.
+    if !cfg!(optimized) || disable_assert_instr {
+        return (quote! { #item }).into();
+    }
+
     let tts: TokenStream = quote! {
-        #[test]
+        #[cfg_attr(target_arch = "wasm32", wasm_bindgen_test)]
+        #[cfg_attr(not(target_arch = "wasm32"), test)]
         #[allow(non_snake_case)]
-        #maybe_ignore
         fn #assert_name() {
             #to_test
 
             ::stdsimd_test::assert(#shim_name as usize,
                                    stringify!(#shim_name),
-                                   stringify!(#instr));
+                                   #instr);
         }
     }.into();
     // why? necessary now to get tests to work?
@@ -149,25 +145,27 @@ pub fn assert_instr(
 }
 
 struct Invoc {
-    instr: syn::Expr,
+    instr: String,
     args: Vec<(syn::Ident, syn::Expr)>,
 }
 
-impl syn::synom::Synom for Invoc {
-    named!(parse -> Self, do_parse!(
-        instr: syn!(syn::Expr) >>
-        args: many0!(do_parse!(
-            syn!(syn::token::Comma) >>
-            name: syn!(syn::Ident) >>
-            syn!(syn::token::Eq) >>
-            expr: syn!(syn::Expr) >>
-            (name, expr)
-        )) >>
-        (Invoc {
-            instr,
-            args,
-        })
-    ));
+impl syn::parse::Parse for Invoc {
+    fn parse(input: syn::parse::ParseStream) -> syn::parse::Result<Self> {
+        use syn::Token;
+
+        let instr = match input.parse::<syn::Ident>() {
+            Ok(s) => s.to_string(),
+            Err(_) => input.parse::<syn::LitStr>()?.value(),
+        };
+        let mut args = Vec::new();
+        while input.parse::<Token![,]>().is_ok() {
+            let name = input.parse::<syn::Ident>()?;
+            input.parse::<Token![=]>()?;
+            let expr = input.parse::<syn::Expr>()?;
+            args.push((name, expr));
+        }
+        Ok(Invoc { instr, args })
+    }
 }
 
 struct Append<T>(T);

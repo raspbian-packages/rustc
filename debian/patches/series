@@ -8,15 +8,12 @@ u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 u-mips-fixes.diff
 
-# https://github.com/rust-lang/compiler-rt/pull/35/
-u-compiler-rt.patch
-
-# Extra ignored tests. We now instead raise FAILURES_ALLOWED in d/rules but
-# these patches are kept in case they are useful for derivatives.
-#u-ignoretest-ppc64el_02.patch
-
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
+
+# this isn't ready yet for 1.31.0, causes segfaults compiling with LTO
+#u-debuginfo-gdb-8.2.patch
+d-temp-ignore-debuginfo-gdb-enum.patch
 
 gcc-4.8-aarch64-ice.diff
 # Porter fixes under discussion, not suitable for upstreaming
@@ -25,15 +22,15 @@ d-fix-mips64el-bootstrap.patch
 d-sparc64-dont-pack-spans.patch
 
 # Debian-specific patches, not suitable for upstream
+d-ignore-error-detail-diff.patch
 d-disable-cargo-vendor.patch
-d-temp-ignore-debuginfo-gdb-enum.patch
 d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
 d-ignore-removed-submodules.patch
 d-read-beta-version-from-file.patch
-d-ignore-impl-generic-mismatch-diff.patch
+d-ignore-avx-44056.patch
 d-i686-baseline.patch
 
 d-no-web-dependencies-in-doc.patch

@@ -29,7 +29,7 @@ An *associated function declaration* declares a signature for an associated
 function definition. It is written as a function item, except the
 function body is replaced with a `;`.
 
-The identifier if the name of the function. The generics, parameter list,
+The identifier is the name of the function. The generics, parameter list,
 return type, and where clause of the associated function must be the same as the
 associated function declarations's.
 
@@ -79,17 +79,31 @@ let _: f64 = f64::from_i32(42);
 
 ### Methods
 
+> _Method_ :\
+> &nbsp;&nbsp; [_FunctionQualifiers_] `fn` [IDENTIFIER]&nbsp;[_Generics_]<sup>?</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; `(` _SelfParam_ (`,` [_FunctionParam_])<sup>\*</sup> `,`<sup>?</sup> `)`\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_FunctionReturnType_]<sup>?</sup> [_WhereClause_]<sup>?</sup>\
+> &nbsp;&nbsp; &nbsp;&nbsp; [_BlockExpression_]
+>
+> _SelfParam_ :\
+> &nbsp;&nbsp; &nbsp;&nbsp; (`&` | `&` [_Lifetime_])<sup>?</sup> `mut`<sup>?</sup> `self`\
+> &nbsp;&nbsp; | `mut`<sup>?</sup> `self` (`:` [_Type_])<sup>?</sup>
+
 Associated functions whose first parameter is named `self` are called *methods*
 and may be invoked using the [method call operator], for example, `x.foo()`, as
 well as the usual function call notation.
 
-The `self` parameter must have one of the following types. As a result, the
-following shorthands may be used to declare `self`:
+If the type of the `self` parameter is specified, it is limited to the type
+being implemented (or `Self`), or a reference or mutable reference to the
+type, or a boxed value of the type being implemented (such as `Box<Self>`).
+Shorthand syntax can be used without specifying a type, which have the
+following equivalents:
 
-* `self` -> `self: Self`
-* `&'lifetime self` -> `self: &'lifetime Self`
-* `&'lifetime mut self` -> `self: &'lifetime mut Self`
-* `self : Box<Self>` (no shorthand)
+Shorthand             | Equivalent
+----------------------|-----------
+`self`                | `self: Self`
+`&'lifetime self`     | `self: &'lifetime Self`
+`&'lifetime mut self` | `self: &'lifetime mut Self`
 
 > Note: Lifetimes can be and usually are elided with this shorthand.
 
@@ -99,7 +113,7 @@ Consider the following trait:
 # type Surface = i32;
 # type BoundingBox = i32;
 trait Shape {
-    fn draw(&self, Surface);
+    fn draw(&self, surface: Surface);
     fn bounding_box(&self) -> BoundingBox;
 }
 ```
@@ -112,7 +126,7 @@ of this trait while the trait is in scope can have their `draw` and
 # type Surface = i32;
 # type BoundingBox = i32;
 # trait Shape {
-#     fn draw(&self, Surface);
+#     fn draw(&self, surface: Surface);
 #     fn bounding_box(&self) -> BoundingBox;
 # }
 #
@@ -133,6 +147,10 @@ impl Shape for Circle {
 let circle_shape = Circle::new();
 let bounding_box = circle_shape.bounding_box();
 ```
+
+> **Edition Differences**: In the 2015 edition, it is possible to declare trait
+> methods with anonymous parameters (e.g. `fn foo(u8)`). This is deprecated and
+> an error as of the 2018 edition. All parameters must have an argument name.
 
 ## Associated Types
 
@@ -191,7 +209,7 @@ available for use in the method signatures:
 trait Container {
     type E;
     fn empty() -> Self;
-    fn insert(&mut self, Self::E);
+    fn insert(&mut self, elem: Self::E);
 }
 ```
 
@@ -203,7 +221,7 @@ implementation of `Container` for the standard library type `Vec`:
 # trait Container {
 #     type E;
 #     fn empty() -> Self;
-#     fn insert(&mut self, Self::E);
+#     fn insert(&mut self, elem: Self::E);
 # }
 impl<T> Container for Vec<T> {
     type E = T;
@@ -268,18 +286,26 @@ fn main() {
 }
 ```
 
+[_BlockExpression_]: expressions/block-expr.html
+[_FunctionParam_]: items/functions.html
+[_FunctionQualifiers_]: items/functions.html
+[_FunctionReturnType_]: items/functions.html
+[_Generics_]: items/generics.html
+[_Lifetime_]: trait-bounds.html
+[_Type_]: types.html#type-expressions
+[_WhereClause_]: items/generics.html#where-clauses
 [trait]: items/traits.html
 [traits]: items/traits.html
 [type aliases]: items/type-aliases.html
 [inherent implementations]: items/implementations.html#inherent-implementations
 [identifier]: identifiers.html
-[trait object]: types.html#trait-objects
+[trait object]: types/trait-object.html
 [implementations]: items/implementations.html
-[type]: types.html
+[type]: types.html#type-expressions
 [constants]: items/constant-items.html
 [constant item]: items/constant-items.html
 [functions]: items/functions.html
-[function item]: types.html#function-item-types
+[function item]: types/function-item.html
 [method call operator]: expressions/method-call-expr.html
 [block]: expressions/block-expr.html
 [path]: paths.html

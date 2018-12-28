@@ -62,7 +62,7 @@ impl<'a, 'gcx, 'tcx> TypeFreshener<'a, 'gcx, 'tcx> {
         TypeFreshener {
             infcx,
             freshen_count: 0,
-            freshen_map: FxHashMap(),
+            freshen_map: Default::default(),
         }
     }
 
@@ -107,7 +107,7 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for TypeFreshener<'a, 'gcx, 'tcx> {
             ty::ReFree(_) |
             ty::ReScope(_) |
             ty::ReVar(_) |
-            ty::ReSkolemized(..) |
+            ty::RePlaceholder(..) |
             ty::ReEmpty |
             ty::ReErased => {
                 // replace all free regions with 'erased
@@ -171,7 +171,7 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for TypeFreshener<'a, 'gcx, 'tcx> {
                 t
             }
 
-            ty::Infer(ty::CanonicalTy(..)) =>
+            ty::Infer(ty::BoundTy(..)) =>
                 bug!("encountered canonical ty during freshening"),
 
             ty::Generator(..) |
@@ -193,6 +193,7 @@ impl<'a, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for TypeFreshener<'a, 'gcx, 'tcx> {
             ty::Never |
             ty::Tuple(..) |
             ty::Projection(..) |
+            ty::UnnormalizedProjection(..) |
             ty::Foreign(..) |
             ty::Param(..) |
             ty::Closure(..) |

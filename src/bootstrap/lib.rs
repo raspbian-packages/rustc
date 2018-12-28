@@ -278,10 +278,6 @@ pub struct Build {
     initial_rustc: PathBuf,
     initial_cargo: PathBuf,
 
-    // Probed tools at runtime
-    lldb_version: Option<String>,
-    lldb_python_dir: Option<String>,
-
     // Runtime state filled in later on
     // C/C++ compilers and archiver for all targets
     cc: HashMap<Interned<String>, cc::Tool>,
@@ -416,8 +412,6 @@ impl Build {
             ar: HashMap::new(),
             ranlib: HashMap::new(),
             crates: HashMap::new(),
-            lldb_version: None,
-            lldb_python_dir: None,
             is_sudo,
             ci_env: CiEnv::current(),
             delayed_failures: RefCell::new(Vec::new()),
@@ -641,9 +635,28 @@ impl Build {
     /// Returns the path to `FileCheck` binary for the specified target
     fn llvm_filecheck(&self, target: Interned<String>) -> PathBuf {
         let target_config = self.config.target_config.get(&target);
-        if let Some(s) = target_config.and_then(|c| c.llvm_config.as_ref()) {
+        if let Some(s) = target_config.and_then(|c| c.llvm_filecheck.as_ref()) {
+            s.to_path_buf()
+        } else if let Some(s) = target_config.and_then(|c| c.llvm_config.as_ref()) {
             let llvm_bindir = output(Command::new(s).arg("--bindir"));
-            Path::new(llvm_bindir.trim()).join(exe("FileCheck", &*target))
+            let filecheck = Path::new(llvm_bindir.trim()).join(exe("FileCheck", &*target));
+            if filecheck.exists() {
+                filecheck
+            } else {
+                // On Fedora the system LLVM installs FileCheck in the
+                // llvm subdirectory of the libdir.
+                let llvm_libdir = output(Command::new(s).arg("--libdir"));
+                let lib_filecheck = Path::new(llvm_libdir.trim())
+                    .join("llvm").join(exe("FileCheck", &*target));
+                if lib_filecheck.exists() {
+                    lib_filecheck
+                } else {
+                    // Return the most normal file name, even though
+                    // it doesn't exist, so that any error message
+                    // refers to that.
+                    filecheck
+                }
+            }
         } else {
             let base = self.llvm_out(self.config.build).join("build");
             let base = if !self.config.ninja && self.config.build.contains("msvc") {
@@ -752,7 +765,7 @@ impl Build {
 
         let path = match which {
             GitRepo::Rustc => {
-                let sha = self.rust_info.sha().expect("failed to find sha");
+                let sha = self.rust_sha().unwrap_or(channel::CFG_RELEASE_NUM);
                 format!("/rustc/{}", sha)
             }
             GitRepo::Llvm => format!("/rustc/llvm"),
@@ -911,25 +924,6 @@ impl Build {
         !self.config.full_bootstrap &&
             compiler.stage >= 2 &&
             (self.hosts.iter().any(|h| *h == target) || target == self.build)
-    }
-
-    /// Returns the directory that OpenSSL artifacts are compiled into if
-    /// configured to do so.
-    fn openssl_dir(&self, target: Interned<String>) -> Option<PathBuf> {
-        // OpenSSL not used on Windows
-        if target.contains("windows") {
-            None
-        } else if self.config.openssl_static {
-            Some(self.out.join(&*target).join("openssl"))
-        } else {
-            None
-        }
-    }
-
-    /// Returns the directory that OpenSSL artifacts are installed into if
-    /// configured as such.
-    fn openssl_install_dir(&self, target: Interned<String>) -> Option<PathBuf> {
-        self.openssl_dir(target).map(|p| p.join("install"))
     }
 
     /// Given `num` in the form "a.b.c" return a "release string" which
@@ -1247,6 +1241,9 @@ impl Build {
         t!(fs::create_dir_all(dstdir));
         drop(fs::remove_file(&dst));
         {
+            if !src.exists() {
+                panic!("Error: File \"{}\" not found!", src.display());
+            }
             let mut s = t!(fs::File::open(&src));
             let mut d = t!(fs::File::create(&dst));
             io::copy(&mut s, &mut d).expect("failed to copy");

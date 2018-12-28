@@ -1,10 +1,10 @@
-use crate::fallible::Fallible;
-use crate::hh::HhGoal;
-use crate::{DelayedLiteral, ExClause, SimplifiedAnswer};
+use fallible::Fallible;
+use hh::HhGoal;
+use {DelayedLiteral, ExClause, SimplifiedAnswer};
 use std::fmt::Debug;
 use std::hash::Hash;
 
-crate mod prelude;
+pub(crate) mod prelude;
 
 /// The "context" in which the SLG solver operates. It defines all the
 /// types that the SLG solver may need to refer to, as well as a few
@@ -113,12 +113,6 @@ pub trait Context: Clone + Debug {
         environment: &Self::Environment,
         goal: Self::Goal,
     ) -> Self::GoalInEnvironment;
-
-    /// Upcast this domain goal into a more general goal.
-    fn into_goal(domain_goal: Self::DomainGoal) -> Self::Goal;
-
-    /// Create a "cannot prove" goal (see `HhGoal::CannotProve`).
-    fn cannot_prove() -> Self::Goal;
 }
 
 pub trait ContextOps<C: Context>: Sized + Clone + Debug + AggregateOps<C> {
@@ -250,6 +244,12 @@ pub trait InferenceTable<C: Context, I: Context>:
         env: &I::Environment,
         clauses: I::ProgramClauses,
     ) -> I::Environment;
+
+    /// Upcast this domain goal into a more general goal.
+    fn into_goal(&self, domain_goal: I::DomainGoal) -> I::Goal;
+
+    /// Create a "cannot prove" goal (see `HhGoal::CannotProve`).
+    fn cannot_prove(&self) -> I::Goal;
 }
 
 /// Methods for unifying and manipulating terms and binders.

@@ -21,12 +21,11 @@
 #![feature(const_fn)]
 #![feature(crate_visibility_modifier)]
 #![feature(custom_attribute)]
-#![cfg_attr(not(stage0), feature(nll))]
-#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(nll)]
 #![feature(non_exhaustive)]
 #![feature(optin_builtin_traits)]
 #![feature(specialization)]
-#![feature(stdsimd)]
+#![cfg_attr(not(stage0), feature(stdsimd))]
 
 use std::borrow::Cow;
 use std::cell::Cell;
@@ -324,6 +323,16 @@ impl Span {
     pub fn edition(self) -> edition::Edition {
         self.ctxt().outer().expn_info().map_or_else(|| hygiene::default_edition(),
                                                     |einfo| einfo.edition)
+    }
+
+    #[inline]
+    pub fn rust_2015(&self) -> bool {
+        self.edition() == edition::Edition::Edition2015
+    }
+
+    #[inline]
+    pub fn rust_2018(&self) -> bool {
+        self.edition() >= edition::Edition::Edition2018
     }
 
     /// Return the source callee.

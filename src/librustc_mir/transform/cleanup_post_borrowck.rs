@@ -33,13 +33,15 @@
 use rustc_data_structures::fx::FxHashSet;
 
 use rustc::middle::region;
-use rustc::mir::{BasicBlock, Location, Mir, Rvalue, Statement, StatementKind};
+use rustc::mir::{BasicBlock, FakeReadCause, Local, Location, Mir, Place};
+use rustc::mir::{Rvalue, Statement, StatementKind};
 use rustc::mir::visit::{MutVisitor, Visitor, TyContext};
 use rustc::ty::{Ty, RegionKind, TyCtxt};
 use transform::{MirPass, MirSource};
 
 pub struct CleanEndRegions;
 
+#[derive(Default)]
 struct GatherBorrowedRegions {
     seen_regions: FxHashSet<region::Scope>,
 }
@@ -55,9 +57,7 @@ impl MirPass for CleanEndRegions {
                           mir: &mut Mir<'tcx>) {
         if !tcx.emit_end_regions() { return; }
 
-        let mut gather = GatherBorrowedRegions {
-            seen_regions: FxHashSet()
-        };
+        let mut gather = GatherBorrowedRegions::default();
         gather.visit_mir(mir);
 
         let mut delete = DeleteTrivialEndRegions { seen_regions: &mut gather.seen_regions };
@@ -131,6 +131,64 @@ impl<'tcx> MutVisitor<'tcx> for DeleteAscribeUserType {
                        location: Location) {
         if let StatementKind::AscribeUserType(..) = statement.kind {
             statement.make_nop();
+        }
+        self.super_statement(block, statement, location);
+    }
+}
+
+pub struct CleanFakeReadsAndBorrows;
+
+#[derive(Default)]
+pub struct DeleteAndRecordFakeReads {
+    fake_borrow_temporaries: FxHashSet<Local>,
+}
+
+pub struct DeleteFakeBorrows {
+    fake_borrow_temporaries: FxHashSet<Local>,
+}
+
+// Removes any FakeReads from the MIR
+impl MirPass for CleanFakeReadsAndBorrows {
+    fn run_pass<'a, 'tcx>(&self,
+                          _tcx: TyCtxt<'a, 'tcx, 'tcx>,
+                          _source: MirSource,
+                          mir: &mut Mir<'tcx>) {
+        let mut delete_reads = DeleteAndRecordFakeReads::default();
+        delete_reads.visit_mir(mir);
+        let mut delete_borrows = DeleteFakeBorrows {
+            fake_borrow_temporaries: delete_reads.fake_borrow_temporaries,
+        };
+        delete_borrows.visit_mir(mir);
+    }
+}
+
+impl<'tcx> MutVisitor<'tcx> for DeleteAndRecordFakeReads {
+    fn visit_statement(&mut self,
+                       block: BasicBlock,
+                       statement: &mut Statement<'tcx>,
+                       location: Location) {
+        if let StatementKind::FakeRead(cause, ref place) = statement.kind {
+            if let FakeReadCause::ForMatchGuard = cause {
+                match *place {
+                    Place::Local(local) => self.fake_borrow_temporaries.insert(local),
+                    _ => bug!("Fake match guard read of non-local: {:?}", place),
+                };
+            }
+            statement.make_nop();
+        }
+        self.super_statement(block, statement, location);
+    }
+}
+
+impl<'tcx> MutVisitor<'tcx> for DeleteFakeBorrows {
+    fn visit_statement(&mut self,
+                       block: BasicBlock,
+                       statement: &mut Statement<'tcx>,
+                       location: Location) {
+        if let StatementKind::Assign(Place::Local(local), _) = statement.kind {
+            if self.fake_borrow_temporaries.contains(&local) {
+                statement.make_nop();
+            }
         }
         self.super_statement(block, statement, location);
     }

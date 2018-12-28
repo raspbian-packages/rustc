@@ -134,6 +134,7 @@ pub struct Config {
     pub test_miri: bool,
     pub save_toolstates: Option<PathBuf>,
     pub print_step_timings: bool,
+    pub missing_tools: bool,
 
     // Fallback musl-root for all targets
     pub musl_root: Option<PathBuf>,
@@ -148,7 +149,7 @@ pub struct Config {
     pub nodejs: Option<PathBuf>,
     pub gdb: Option<PathBuf>,
     pub python: Option<PathBuf>,
-    pub openssl_static: bool,
+    pub cargo_native_static: bool,
     pub configure_args: Vec<String>,
 
     // These are either the stage0 downloaded binaries or the locally installed ones.
@@ -162,6 +163,8 @@ pub struct Config {
 pub struct Target {
     /// Some(path to llvm-config) if using an external LLVM.
     pub llvm_config: Option<PathBuf>,
+    /// Some(path to FileCheck) if one was specified.
+    pub llvm_filecheck: Option<PathBuf>,
     pub jemalloc: Option<PathBuf>,
     pub cc: Option<PathBuf>,
     pub cxx: Option<PathBuf>,
@@ -218,7 +221,7 @@ struct Build {
     verbose: Option<usize>,
     sanitizers: Option<bool>,
     profiler: Option<bool>,
-    openssl_static: Option<bool>,
+    cargo_native_static: Option<bool>,
     configure_args: Option<Vec<String>>,
     local_rebuild: Option<bool>,
     print_step_timings: Option<bool>,
@@ -269,6 +272,7 @@ struct Dist {
     gpg_password_file: Option<String>,
     upload_addr: Option<String>,
     src_tarball: Option<bool>,
+    missing_tools: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -330,6 +334,7 @@ struct Rust {
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 struct TomlTarget {
     llvm_config: Option<String>,
+    llvm_filecheck: Option<String>,
     jemalloc: Option<String>,
     cc: Option<String>,
     cxx: Option<String>,
@@ -372,6 +377,7 @@ impl Config {
         config.rust_codegen_backends = vec![INTERNER.intern_str("llvm")];
         config.rust_codegen_backends_dir = "codegen-backends".to_owned();
         config.deny_warnings = true;
+        config.missing_tools = false;
 
         // set by bootstrap.py
         config.build = INTERNER.intern_str(&env::var("BUILD").expect("'BUILD' to be set"));
@@ -424,7 +430,7 @@ impl Config {
             }
         }).unwrap_or_else(|| TomlConfig::default());
 
-        let build = toml.build.clone().unwrap_or(Build::default());
+        let build = toml.build.clone().unwrap_or_default();
         // set by bootstrap.py
         config.hosts.push(config.build.clone());
         for host in build.host.iter() {
@@ -468,7 +474,7 @@ impl Config {
         set(&mut config.verbose, build.verbose);
         set(&mut config.sanitizers, build.sanitizers);
         set(&mut config.profiler, build.profiler);
-        set(&mut config.openssl_static, build.openssl_static);
+        set(&mut config.cargo_native_static, build.cargo_native_static);
         set(&mut config.configure_args, build.configure_args);
         set(&mut config.local_rebuild, build.local_rebuild);
         set(&mut config.print_step_timings, build.print_step_timings);
@@ -518,7 +524,7 @@ impl Config {
             set(&mut config.llvm_link_shared, llvm.link_shared);
             config.llvm_targets = llvm.targets.clone();
             config.llvm_experimental_targets = llvm.experimental_targets.clone()
-                .unwrap_or("WebAssembly;RISCV".to_string());
+                .unwrap_or_else(|| "WebAssembly;RISCV".to_string());
             config.llvm_link_jobs = llvm.link_jobs;
             config.llvm_version_suffix = llvm.version_suffix.clone();
             config.llvm_clang_cl = llvm.clang_cl.clone();
@@ -583,6 +589,9 @@ impl Config {
                 if let Some(ref s) = cfg.llvm_config {
                     target.llvm_config = Some(config.src.join(s));
                 }
+                if let Some(ref s) = cfg.llvm_filecheck {
+                    target.llvm_filecheck = Some(config.src.join(s));
+                }
                 if let Some(ref s) = cfg.jemalloc {
                     target.jemalloc = Some(config.src.join(s));
                 }
@@ -607,6 +616,7 @@ impl Config {
             config.dist_gpg_password_file = t.gpg_password_file.clone().map(PathBuf::from);
             config.dist_upload_addr = t.upload_addr.clone();
             set(&mut config.rust_dist_src, t.src_tarball);
+            set(&mut config.missing_tools, t.missing_tools);
         }
 
         // Now that we've reached the end of our configuration, infer the
@@ -617,6 +627,9 @@ impl Config {
 
         let default = false;
         config.llvm_assertions = llvm_assertions.unwrap_or(default);
+
+        let default = true;
+        config.rust_optimize = optimize.unwrap_or(default);
 
         let default = match &config.channel[..] {
             "stable" | "beta" | "nightly" => true,
@@ -630,7 +643,6 @@ impl Config {
         config.debug_jemalloc = debug_jemalloc.unwrap_or(default);
         config.rust_debuginfo = debuginfo.unwrap_or(default);
         config.rust_debug_assertions = debug_assertions.unwrap_or(default);
-        config.rust_optimize = optimize.unwrap_or(!default);
 
         let default = config.channel == "dev";
         config.ignore_git = ignore_git.unwrap_or(default);

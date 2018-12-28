@@ -12,7 +12,7 @@
 
 [package]
 name = "pkg-config"
-version = "0.3.13"
+version = "0.3.14"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "A library to run the pkg-config system tool at build time in order to be used in\nCargo build scripts.\n"
 documentation = "https://docs.rs/pkg-config"

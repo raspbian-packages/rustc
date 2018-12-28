@@ -34,9 +34,12 @@ use mir::interpret::GlobalId;
 use session::{CompileResult, CrateDisambiguator};
 use session::config::OutputFilenames;
 use traits::{self, Vtable};
-use traits::query::{CanonicalPredicateGoal, CanonicalProjectionGoal,
-                    CanonicalTyGoal, CanonicalTypeOpEqGoal, CanonicalTypeOpSubtypeGoal,
-                    CanonicalTypeOpProvePredicateGoal, CanonicalTypeOpNormalizeGoal, NoSolution};
+use traits::query::{
+    CanonicalPredicateGoal, CanonicalProjectionGoal,
+    CanonicalTyGoal, CanonicalTypeOpAscribeUserTypeGoal, CanonicalTypeOpEqGoal,
+    CanonicalTypeOpSubtypeGoal, CanonicalTypeOpProvePredicateGoal,
+    CanonicalTypeOpNormalizeGoal, NoSolution,
+};
 use traits::query::dropck_outlives::{DtorckConstraint, DropckOutlivesResult};
 use traits::query::normalize::NormalizationResult;
 use traits::query::outlives_bounds::OutlivesBound;
@@ -49,14 +52,15 @@ use util::nodemap::{DefIdSet, DefIdMap, ItemLocalSet};
 use util::common::{ErrorReported};
 use util::profiling::ProfileCategory::*;
 
-use rustc_data_structures::indexed_set::IdxSet;
-use rustc_target::spec::PanicStrategy;
+use rustc_data_structures::bit_set::BitSet;
 use rustc_data_structures::indexed_vec::IndexVec;
 use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 use rustc_data_structures::stable_hasher::StableVec;
-
-use std::ops::Deref;
 use rustc_data_structures::sync::Lrc;
+use rustc_target::spec::PanicStrategy;
+
+use std::borrow::Cow;
+use std::ops::Deref;
 use std::sync::Arc;
 use syntax_pos::{Span, DUMMY_SP};
 use syntax_pos::symbol::InternedString;
@@ -160,8 +164,23 @@ define_queries! { <'tcx>
             DefId
         ) -> Result<DtorckConstraint<'tcx>, NoSolution>,
 
-        /// True if this is a const fn
-        [] fn is_const_fn: IsConstFn(DefId) -> bool,
+        /// True if this is a const fn, use the `is_const_fn` to know whether your crate actually
+        /// sees it as const fn (e.g. the const-fn-ness might be unstable and you might not have
+        /// the feature gate active)
+        ///
+        /// DO NOT CALL MANUALLY, it is only meant to cache the base data for the `is_const_fn`
+        /// function
+        [] fn is_const_fn_raw: IsConstFn(DefId) -> bool,
+
+
+        /// Returns true if calls to the function may be promoted
+        ///
+        /// This is either because the function is e.g. a tuple-struct or tuple-variant constructor,
+        /// or because it has the `#[rustc_promotable]` attribute. The attribute should be removed
+        /// in the future in favour of some form of check which figures out whether the function
+        /// does not inspect the bits of any of its arguments (so is essentially just a constructor
+        /// function)
+        [] fn is_promotable_const_fn: IsPromotableConstFn(DefId) -> bool,
 
         /// True if this is a foreign item (i.e., linked via `extern { ... }`).
         [] fn is_foreign_item: IsForeignItem(DefId) -> bool,
@@ -208,7 +227,7 @@ define_queries! { <'tcx>
         /// Maps DefId's that have an associated Mir to the result
         /// of the MIR qualify_consts pass. The actual meaning of
         /// the value isn't known except to the pass itself.
-        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Lrc<IdxSet<mir::Local>>),
+        [] fn mir_const_qualif: MirConstQualif(DefId) -> (u8, Lrc<BitSet<mir::Local>>),
 
         /// Fetch the MIR for a given def-id right after it's built - this includes
         /// unreachable code.
@@ -353,16 +372,16 @@ define_queries! { <'tcx>
             -> Lrc<specialization_graph::Graph>,
         [] fn is_object_safe: ObjectSafety(DefId) -> bool,
 
-        // Get the ParameterEnvironment for a given item; this environment
-        // will be in "user-facing" mode, meaning that it is suitabe for
-        // type-checking etc, and it does not normalize specializable
-        // associated types. This is almost always what you want,
-        // unless you are doing MIR optimizations, in which case you
-        // might want to use `reveal_all()` method to change modes.
+        /// Get the ParameterEnvironment for a given item; this environment
+        /// will be in "user-facing" mode, meaning that it is suitabe for
+        /// type-checking etc, and it does not normalize specializable
+        /// associated types. This is almost always what you want,
+        /// unless you are doing MIR optimizations, in which case you
+        /// might want to use `reveal_all()` method to change modes.
         [] fn param_env: ParamEnv(DefId) -> ty::ParamEnv<'tcx>,
 
-        // Trait selection queries. These are best used by invoking `ty.moves_by_default()`,
-        // `ty.is_copy()`, etc, since that will prune the environment where possible.
+        /// Trait selection queries. These are best used by invoking `ty.moves_by_default()`,
+        /// `ty.is_copy()`, etc, since that will prune the environment where possible.
         [] fn is_copy_raw: is_copy_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>) -> bool,
         [] fn is_sized_raw: is_sized_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>) -> bool,
         [] fn is_freeze_raw: is_freeze_dep_node(ty::ParamEnvAnd<'tcx, Ty<'tcx>>) -> bool,
@@ -543,7 +562,7 @@ define_queries! { <'tcx>
         [] fn normalize_projection_ty: NormalizeProjectionTy(
             CanonicalProjectionGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, NormalizationResult<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, NormalizationResult<'tcx>>>>,
             NoSolution,
         >,
 
@@ -555,7 +574,7 @@ define_queries! { <'tcx>
         [] fn implied_outlives_bounds: ImpliedOutlivesBounds(
             CanonicalTyGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, Vec<OutlivesBound<'tcx>>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, Vec<OutlivesBound<'tcx>>>>>,
             NoSolution,
         >,
 
@@ -563,7 +582,7 @@ define_queries! { <'tcx>
         [] fn dropck_outlives: DropckOutlives(
             CanonicalTyGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, DropckOutlivesResult<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, DropckOutlivesResult<'tcx>>>>,
             NoSolution,
         >,
 
@@ -574,10 +593,18 @@ define_queries! { <'tcx>
         ) -> Result<traits::EvaluationResult, traits::OverflowError>,
 
         /// Do not call this query directly: part of the `Eq` type-op
+        [] fn type_op_ascribe_user_type: TypeOpAscribeUserType(
+            CanonicalTypeOpAscribeUserTypeGoal<'tcx>
+        ) -> Result<
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
+            NoSolution,
+        >,
+
+        /// Do not call this query directly: part of the `Eq` type-op
         [] fn type_op_eq: TypeOpEq(
             CanonicalTypeOpEqGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ()>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -585,7 +612,7 @@ define_queries! { <'tcx>
         [] fn type_op_subtype: TypeOpSubtype(
             CanonicalTypeOpSubtypeGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ()>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -593,7 +620,7 @@ define_queries! { <'tcx>
         [] fn type_op_prove_predicate: TypeOpProvePredicate(
             CanonicalTypeOpProvePredicateGoal<'tcx>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ()>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ()>>>,
             NoSolution,
         >,
 
@@ -601,7 +628,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_ty: TypeOpNormalizeTy(
             CanonicalTypeOpNormalizeGoal<'tcx, Ty<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, Ty<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, Ty<'tcx>>>>,
             NoSolution,
         >,
 
@@ -609,7 +636,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_predicate: TypeOpNormalizePredicate(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::Predicate<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ty::Predicate<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::Predicate<'tcx>>>>,
             NoSolution,
         >,
 
@@ -617,7 +644,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_poly_fn_sig: TypeOpNormalizePolyFnSig(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::PolyFnSig<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ty::PolyFnSig<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::PolyFnSig<'tcx>>>>,
             NoSolution,
         >,
 
@@ -625,7 +652,7 @@ define_queries! { <'tcx>
         [] fn type_op_normalize_fn_sig: TypeOpNormalizeFnSig(
             CanonicalTypeOpNormalizeGoal<'tcx, ty::FnSig<'tcx>>
         ) -> Result<
-            Lrc<Canonical<'tcx, canonical::QueryResult<'tcx, ty::FnSig<'tcx>>>>,
+            Lrc<Canonical<'tcx, canonical::QueryResponse<'tcx, ty::FnSig<'tcx>>>>,
             NoSolution,
         >,
 
@@ -648,8 +675,11 @@ define_queries! { <'tcx>
         [] fn program_clauses_for: ProgramClausesFor(DefId) -> Clauses<'tcx>,
 
         [] fn program_clauses_for_env: ProgramClausesForEnv(
-            ty::ParamEnv<'tcx>
+            traits::Environment<'tcx>
         ) -> Clauses<'tcx>,
+
+        // Get the chalk-style environment of the given item.
+        [] fn environment: Environment(DefId) -> traits::Environment<'tcx>,
     },
 
     Linking {
@@ -666,21 +696,21 @@ impl<'a, 'tcx, 'lcx> TyCtxt<'a, 'tcx, 'lcx> {
         span: Span,
         key: DefId,
     ) -> Result<&'tcx [Ty<'tcx>], DiagnosticBuilder<'a>> {
-        self.try_get_query::<queries::adt_sized_constraint>(span, key)
+        self.try_get_query::<queries::adt_sized_constraint<'_>>(span, key)
     }
     pub fn try_needs_drop_raw(
         self,
         span: Span,
         key: ty::ParamEnvAnd<'tcx, Ty<'tcx>>,
     ) -> Result<bool, DiagnosticBuilder<'a>> {
-        self.try_get_query::<queries::needs_drop_raw>(span, key)
+        self.try_get_query::<queries::needs_drop_raw<'_>>(span, key)
     }
     pub fn try_optimized_mir(
         self,
         span: Span,
         key: DefId,
     ) -> Result<&'tcx mir::Mir<'tcx>, DiagnosticBuilder<'a>> {
-        self.try_get_query::<queries::optimized_mir>(span, key)
+        self.try_get_query::<queries::optimized_mir<'_>>(span, key)
     }
 }
 

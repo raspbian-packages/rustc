@@ -65,7 +65,7 @@ nodes within the function.
 The types of top-level items, which never contain unbound type
 variables, are stored directly into the `tcx` tables.
 
-n.b.: A type variable is not the same thing as a type parameter.  A
+N.B.: A type variable is not the same thing as a type parameter.  A
 type variable is rather an "instance" of a type parameter: that is,
 given a generic function `fn foo<T>(t: T)`: while checking the
 function `foo`, the type `ty_param(0)` refers to the type `T`, which
@@ -95,7 +95,8 @@ use rustc::infer::opaque_types::OpaqueTypeDecl;
 use rustc::infer::type_variable::{TypeVariableOrigin};
 use rustc::middle::region;
 use rustc::mir::interpret::{ConstValue, GlobalId};
-use rustc::ty::subst::{CanonicalSubsts, UnpackedKind, Subst, Substs};
+use rustc::ty::subst::{CanonicalUserSubsts, UnpackedKind, Subst, Substs,
+                       UserSelfTy, UserSubsts};
 use rustc::traits::{self, ObligationCause, ObligationCauseCode, TraitEngine};
 use rustc::ty::{self, Ty, TyCtxt, GenericParamDefKind, Visibility, ToPredicate, RegionKind};
 use rustc::ty::adjustment::{Adjust, Adjustment, AllowTwoPhase, AutoBorrow, AutoBorrowMutability};
@@ -154,6 +155,13 @@ mod generator_interior;
 mod intrinsic;
 mod op;
 
+/// The type of a local binding, including the revealed type for anon types.
+#[derive(Copy, Clone)]
+pub struct LocalTy<'tcx> {
+    decl_ty: Ty<'tcx>,
+    revealed_ty: Ty<'tcx>
+}
+
 /// A wrapper for InferCtxt's `in_progress_tables` field.
 #[derive(Copy, Clone)]
 struct MaybeInProgressTables<'a, 'tcx: 'a> {
@@ -180,7 +188,6 @@ impl<'a, 'tcx> MaybeInProgressTables<'a, 'tcx> {
     }
 }
 
-
 /// closures defined within the function.  For example:
 ///
 ///     fn foo() {
@@ -195,7 +202,7 @@ pub struct Inherited<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
 
     tables: MaybeInProgressTables<'a, 'tcx>,
 
-    locals: RefCell<NodeMap<Ty<'tcx>>>,
+    locals: RefCell<NodeMap<LocalTy<'tcx>>>,
 
     fulfillment_cx: RefCell<Box<dyn TraitEngine<'tcx>>>,
 
@@ -656,7 +663,8 @@ impl<'a, 'gcx, 'tcx> Inherited<'a, 'gcx, 'tcx> {
     }
 
     fn register_predicates<I>(&self, obligations: I)
-    where I: IntoIterator<Item = traits::PredicateObligation<'tcx>> {
+        where I: IntoIterator<Item = traits::PredicateObligation<'tcx>>
+    {
         for obligation in obligations {
             self.register_predicate(obligation);
         }
@@ -815,8 +823,8 @@ fn has_typeck_tables<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 }
 
 fn used_trait_imports<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
-                              def_id: DefId)
-                              -> Lrc<DefIdSet> {
+                                def_id: DefId)
+                                -> Lrc<DefIdSet> {
     tcx.typeck_tables_of(def_id).used_trait_imports.clone()
 }
 
@@ -846,7 +854,7 @@ fn typeck_tables_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
             check_abi(tcx, span, fn_sig.abi());
 
-            // Compute the fty from point of view of inside fn.
+            // Compute the fty from point of view of inside the fn.
             let fn_sig =
                 tcx.liberate_late_bound_regions(def_id, &fn_sig);
             let fn_sig =
@@ -863,10 +871,19 @@ fn typeck_tables_of<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             let expected_type = fcx.normalize_associated_types_in(body.value.span, &expected_type);
             fcx.require_type_is_sized(expected_type, body.value.span, traits::ConstSized);
 
-            // Gather locals in statics (because of block expressions).
-            GatherLocalsVisitor { fcx: &fcx }.visit_body(body);
+            let revealed_ty = if tcx.features().impl_trait_in_bindings {
+                fcx.instantiate_opaque_types_from_value(
+                    id,
+                    &expected_type
+                )
+            } else {
+                expected_type
+            };
 
-            fcx.check_expr_coercable_to_type(&body.value, expected_type);
+            // Gather locals in statics (because of block expressions).
+            GatherLocalsVisitor { fcx: &fcx, parent_id: id, }.visit_body(body);
+
+            fcx.check_expr_coercable_to_type(&body.value, revealed_ty);
 
             fcx
         };
@@ -914,22 +931,26 @@ fn check_abi<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, span: Span, abi: Abi) {
 }
 
 struct GatherLocalsVisitor<'a, 'gcx: 'a+'tcx, 'tcx: 'a> {
-    fcx: &'a FnCtxt<'a, 'gcx, 'tcx>
+    fcx: &'a FnCtxt<'a, 'gcx, 'tcx>,
+    parent_id: ast::NodeId,
 }
 
 impl<'a, 'gcx, 'tcx> GatherLocalsVisitor<'a, 'gcx, 'tcx> {
-    fn assign(&mut self, span: Span, nid: ast::NodeId, ty_opt: Option<Ty<'tcx>>) -> Ty<'tcx> {
+    fn assign(&mut self, span: Span, nid: ast::NodeId, ty_opt: Option<LocalTy<'tcx>>) -> Ty<'tcx> {
         match ty_opt {
             None => {
                 // infer the variable's type
                 let var_ty = self.fcx.next_ty_var(TypeVariableOrigin::TypeInference(span));
-                self.fcx.locals.borrow_mut().insert(nid, var_ty);
+                self.fcx.locals.borrow_mut().insert(nid, LocalTy {
+                    decl_ty: var_ty,
+                    revealed_ty: var_ty
+                });
                 var_ty
             }
             Some(typ) => {
                 // take type that the user specified
                 self.fcx.locals.borrow_mut().insert(nid, typ);
-                typ
+                typ.revealed_ty
             }
         }
     }
@@ -942,24 +963,34 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for GatherLocalsVisitor<'a, 'gcx, 'tcx> {
 
     // Add explicitly-declared locals.
     fn visit_local(&mut self, local: &'gcx hir::Local) {
-        let o_ty = match local.ty {
+        let local_ty = match local.ty {
             Some(ref ty) => {
                 let o_ty = self.fcx.to_ty(&ty);
 
-                let c_ty = self.fcx.inh.infcx.canonicalize_response(&o_ty);
-                debug!("visit_local: ty.hir_id={:?} o_ty={:?} c_ty={:?}", ty.hir_id, o_ty, c_ty);
+                let revealed_ty = if self.fcx.tcx.features().impl_trait_in_bindings {
+                    self.fcx.instantiate_opaque_types_from_value(
+                        self.parent_id,
+                        &o_ty
+                    )
+                } else {
+                    o_ty
+                };
+
+                let c_ty = self.fcx.inh.infcx.canonicalize_response(&revealed_ty);
+                debug!("visit_local: ty.hir_id={:?} o_ty={:?} revealed_ty={:?} c_ty={:?}",
+                       ty.hir_id, o_ty, revealed_ty, c_ty);
                 self.fcx.tables.borrow_mut().user_provided_tys_mut().insert(ty.hir_id, c_ty);
 
-                Some(o_ty)
+                Some(LocalTy { decl_ty: o_ty, revealed_ty })
             },
             None => None,
         };
-        self.assign(local.span, local.id, o_ty);
+        self.assign(local.span, local.id, local_ty);
 
         debug!("Local variable {:?} is assigned type {}",
                local.pat,
                self.fcx.ty_to_string(
-                   self.fcx.locals.borrow().get(&local.id).unwrap().clone()));
+                   self.fcx.locals.borrow().get(&local.id).unwrap().clone().decl_ty));
         intravisit::walk_local(self, local);
     }
 
@@ -976,7 +1007,7 @@ impl<'a, 'gcx, 'tcx> Visitor<'gcx> for GatherLocalsVisitor<'a, 'gcx, 'tcx> {
             debug!("Pattern binding {} is assigned to {} with type {:?}",
                    ident,
                    self.fcx.ty_to_string(
-                       self.fcx.locals.borrow().get(&p.id).unwrap().clone()),
+                       self.fcx.locals.borrow().get(&p.id).unwrap().clone().decl_ty),
                    var_ty);
         }
         intravisit::walk_pat(self, p);
@@ -1027,7 +1058,7 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
 
     let declared_ret_ty = fn_sig.output();
     fcx.require_type_is_sized(declared_ret_ty, decl.output.span(), traits::SizedReturnType);
-    let revealed_ret_ty = fcx.instantiate_opaque_types_from_return_value(fn_id, &declared_ret_ty);
+    let revealed_ret_ty = fcx.instantiate_opaque_types_from_value(fn_id, &declared_ret_ty);
     fcx.ret_coercion = Some(RefCell::new(CoerceMany::new(revealed_ret_ty)));
     fn_sig = fcx.tcx.mk_fn_sig(
         fn_sig.inputs().iter().cloned(),
@@ -1045,7 +1076,9 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
         fcx.yield_ty = Some(yield_ty);
     }
 
-    GatherLocalsVisitor { fcx: &fcx, }.visit_body(body);
+    let outer_def_id = fcx.tcx.closure_base_def_id(fcx.tcx.hir.local_def_id(fn_id));
+    let outer_node_id = fcx.tcx.hir.as_local_node_id(outer_def_id).unwrap();
+    GatherLocalsVisitor { fcx: &fcx, parent_id: outer_node_id, }.visit_body(body);
 
     // Add formal parameters.
     for (arg_ty, arg) in fn_sig.inputs().iter().zip(&body.arguments) {
@@ -1119,19 +1152,16 @@ fn check_fn<'a, 'gcx, 'tcx>(inherited: &'a Inherited<'a, 'gcx, 'tcx>,
     if let Some(term_id) = fcx.tcx.lang_items().termination() {
         if let Some((id, _, entry_type)) = *fcx.tcx.sess.entry_fn.borrow() {
             if id == fn_id {
-                match entry_type {
-                    config::EntryFnType::Main => {
-                        let substs = fcx.tcx.mk_substs_trait(declared_ret_ty, &[]);
-                        let trait_ref = ty::TraitRef::new(term_id, substs);
-                        let return_ty_span = decl.output.span();
-                        let cause = traits::ObligationCause::new(
-                            return_ty_span, fn_id, ObligationCauseCode::MainFunctionType);
+                if let config::EntryFnType::Main = entry_type {
+                    let substs = fcx.tcx.mk_substs_trait(declared_ret_ty, &[]);
+                    let trait_ref = ty::TraitRef::new(term_id, substs);
+                    let return_ty_span = decl.output.span();
+                    let cause = traits::ObligationCause::new(
+                        return_ty_span, fn_id, ObligationCauseCode::MainFunctionType);
 
-                        inherited.register_predicate(
-                            traits::Obligation::new(
-                                cause, param_env, trait_ref.to_predicate()));
-                    },
-                    config::EntryFnType::Start => {},
+                    inherited.register_predicate(
+                        traits::Obligation::new(
+                            cause, param_env, trait_ref.to_predicate()));
                 }
             }
         }
@@ -1274,90 +1304,96 @@ fn check_union<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
     check_packed(tcx, span, def_id);
 }
 
-pub fn check_item_type<'a,'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Item) {
-    debug!("check_item_type(it.id={}, it.name={})",
-           it.id,
-           tcx.item_path_str(tcx.hir.local_def_id(it.id)));
+pub fn check_item_type<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, it: &'tcx hir::Item) {
+    debug!(
+        "check_item_type(it.id={}, it.name={})",
+        it.id,
+        tcx.item_path_str(tcx.hir.local_def_id(it.id))
+    );
     let _indenter = indenter();
     match it.node {
-      // Consts can play a role in type-checking, so they are included here.
-      hir::ItemKind::Static(..) => {
-        let def_id = tcx.hir.local_def_id(it.id);
-        tcx.typeck_tables_of(def_id);
-        maybe_check_static_with_link_section(tcx, def_id, it.span);
-      }
-      hir::ItemKind::Const(..) => {
-        tcx.typeck_tables_of(tcx.hir.local_def_id(it.id));
-      }
-      hir::ItemKind::Enum(ref enum_definition, _) => {
-        check_enum(tcx,
-                   it.span,
-                   &enum_definition.variants,
-                   it.id);
-      }
-      hir::ItemKind::Fn(..) => {} // entirely within check_item_body
-      hir::ItemKind::Impl(.., ref impl_item_refs) => {
-          debug!("ItemKind::Impl {} with id {}", it.name, it.id);
-          let impl_def_id = tcx.hir.local_def_id(it.id);
-          if let Some(impl_trait_ref) = tcx.impl_trait_ref(impl_def_id) {
-              check_impl_items_against_trait(tcx,
-                                             it.span,
-                                             impl_def_id,
-                                             impl_trait_ref,
-                                             impl_item_refs);
-              let trait_def_id = impl_trait_ref.def_id;
-              check_on_unimplemented(tcx, trait_def_id, it);
-          }
-      }
-      hir::ItemKind::Trait(..) => {
-        let def_id = tcx.hir.local_def_id(it.id);
-        check_on_unimplemented(tcx, def_id, it);
-      }
-      hir::ItemKind::Struct(..) => {
-        check_struct(tcx, it.id, it.span);
-      }
-      hir::ItemKind::Union(..) => {
-        check_union(tcx, it.id, it.span);
-      }
-      hir::ItemKind::Existential(..) |
-      hir::ItemKind::Ty(..) => {
-        let def_id = tcx.hir.local_def_id(it.id);
-        let pty_ty = tcx.type_of(def_id);
-        let generics = tcx.generics_of(def_id);
-        check_bounds_are_used(tcx, &generics, pty_ty);
-      }
-      hir::ItemKind::ForeignMod(ref m) => {
-        check_abi(tcx, it.span, m.abi);
+        // Consts can play a role in type-checking, so they are included here.
+        hir::ItemKind::Static(..) => {
+            let def_id = tcx.hir.local_def_id(it.id);
+            tcx.typeck_tables_of(def_id);
+            maybe_check_static_with_link_section(tcx, def_id, it.span);
+        }
+        hir::ItemKind::Const(..) => {
+            tcx.typeck_tables_of(tcx.hir.local_def_id(it.id));
+        }
+        hir::ItemKind::Enum(ref enum_definition, _) => {
+            check_enum(tcx, it.span, &enum_definition.variants, it.id);
+        }
+        hir::ItemKind::Fn(..) => {} // entirely within check_item_body
+        hir::ItemKind::Impl(.., ref impl_item_refs) => {
+            debug!("ItemKind::Impl {} with id {}", it.name, it.id);
+            let impl_def_id = tcx.hir.local_def_id(it.id);
+            if let Some(impl_trait_ref) = tcx.impl_trait_ref(impl_def_id) {
+                check_impl_items_against_trait(
+                    tcx,
+                    it.span,
+                    impl_def_id,
+                    impl_trait_ref,
+                    impl_item_refs,
+                );
+                let trait_def_id = impl_trait_ref.def_id;
+                check_on_unimplemented(tcx, trait_def_id, it);
+            }
+        }
+        hir::ItemKind::Trait(..) => {
+            let def_id = tcx.hir.local_def_id(it.id);
+            check_on_unimplemented(tcx, def_id, it);
+        }
+        hir::ItemKind::Struct(..) => {
+            check_struct(tcx, it.id, it.span);
+        }
+        hir::ItemKind::Union(..) => {
+            check_union(tcx, it.id, it.span);
+        }
+        hir::ItemKind::Existential(..) | hir::ItemKind::Ty(..) => {
+            let def_id = tcx.hir.local_def_id(it.id);
+            let pty_ty = tcx.type_of(def_id);
+            let generics = tcx.generics_of(def_id);
+            check_bounds_are_used(tcx, &generics, pty_ty);
+        }
+        hir::ItemKind::ForeignMod(ref m) => {
+            check_abi(tcx, it.span, m.abi);
 
-        if m.abi == Abi::RustIntrinsic {
-            for item in &m.items {
-                intrinsic::check_intrinsic_type(tcx, item);
-            }
-        } else if m.abi == Abi::PlatformIntrinsic {
-            for item in &m.items {
-                intrinsic::check_platform_intrinsic_type(tcx, item);
-            }
-        } else {
-            for item in &m.items {
-                let generics = tcx.generics_of(tcx.hir.local_def_id(item.id));
-                if generics.params.len() - generics.own_counts().lifetimes != 0 {
-                    let mut err = struct_span_err!(tcx.sess, item.span, E0044,
-                        "foreign items may not have type parameters");
-                    err.span_label(item.span, "can't have type parameters");
-                    // FIXME: once we start storing spans for type arguments, turn this into a
-                    // suggestion.
-                    err.help("use specialization instead of type parameters by replacing them \
-                              with concrete types like `u32`");
-                    err.emit();
+            if m.abi == Abi::RustIntrinsic {
+                for item in &m.items {
+                    intrinsic::check_intrinsic_type(tcx, item);
                 }
+            } else if m.abi == Abi::PlatformIntrinsic {
+                for item in &m.items {
+                    intrinsic::check_platform_intrinsic_type(tcx, item);
+                }
+            } else {
+                for item in &m.items {
+                    let generics = tcx.generics_of(tcx.hir.local_def_id(item.id));
+                    if generics.params.len() - generics.own_counts().lifetimes != 0 {
+                        let mut err = struct_span_err!(
+                            tcx.sess,
+                            item.span,
+                            E0044,
+                            "foreign items may not have type parameters"
+                        );
+                        err.span_label(item.span, "can't have type parameters");
+                        // FIXME: once we start storing spans for type arguments, turn this into a
+                        // suggestion.
+                        err.help(
+                            "use specialization instead of type parameters by replacing them \
+                             with concrete types like `u32`",
+                        );
+                        err.emit();
+                    }
 
-                if let hir::ForeignItemKind::Fn(ref fn_decl, _, _) = item.node {
-                    require_c_abi_if_variadic(tcx, fn_decl, m.abi, item.span);
+                    if let hir::ForeignItemKind::Fn(ref fn_decl, _, _) = item.node {
+                        require_c_abi_if_variadic(tcx, fn_decl, m.abi, item.span);
+                    }
                 }
             }
         }
-      }
-      _ => {/* nothing to do */ }
+        _ => { /* nothing to do */ }
     }
 }
 
@@ -1503,10 +1539,10 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                            impl_trait_ref);
                     } else {
                          let mut err = struct_span_err!(tcx.sess, impl_item.span, E0323,
-                                  "item `{}` is an associated const, \
-                                  which doesn't match its trait `{}`",
-                                  ty_impl_item.ident,
-                                  impl_trait_ref);
+                             "item `{}` is an associated const, \
+                              which doesn't match its trait `{}`",
+                             ty_impl_item.ident,
+                             impl_trait_ref);
                          err.span_label(impl_item.span, "does not match trait");
                          // We can only get the spans from local trait definition
                          // Same for E0324 and E0325
@@ -1527,10 +1563,10 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                             trait_span);
                     } else {
                         let mut err = struct_span_err!(tcx.sess, impl_item.span, E0324,
-                                  "item `{}` is an associated method, \
-                                  which doesn't match its trait `{}`",
-                                  ty_impl_item.ident,
-                                  impl_trait_ref);
+                            "item `{}` is an associated method, \
+                             which doesn't match its trait `{}`",
+                            ty_impl_item.ident,
+                            impl_trait_ref);
                          err.span_label(impl_item.span, "does not match trait");
                          if let Some(trait_span) = tcx.hir.span_if_local(ty_trait_item.def_id) {
                             err.span_label(trait_span, "item in trait");
@@ -1546,10 +1582,10 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                         }
                     } else {
                         let mut err = struct_span_err!(tcx.sess, impl_item.span, E0325,
-                                  "item `{}` is an associated type, \
-                                  which doesn't match its trait `{}`",
-                                  ty_impl_item.ident,
-                                  impl_trait_ref);
+                            "item `{}` is an associated type, \
+                             which doesn't match its trait `{}`",
+                            ty_impl_item.ident,
+                            impl_trait_ref);
                          err.span_label(impl_item.span, "does not match trait");
                          if let Some(trait_span) = tcx.hir.span_if_local(ty_trait_item.def_id) {
                             err.span_label(trait_span, "item in trait");
@@ -1587,8 +1623,8 @@ fn check_impl_items_against_trait<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         let mut err = struct_span_err!(tcx.sess, impl_span, E0046,
             "not all trait items implemented, missing: `{}`",
             missing_items.iter()
-                  .map(|trait_item| trait_item.ident.to_string())
-                  .collect::<Vec<_>>().join("`, `"));
+                .map(|trait_item| trait_item.ident.to_string())
+                .collect::<Vec<_>>().join("`, `"));
         err.span_label(impl_span, format!("missing `{}` in implementation",
                 missing_items.iter()
                     .map(|trait_item| trait_item.ident.to_string())
@@ -1646,8 +1682,8 @@ fn check_representable<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
 pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId) {
     let t = tcx.type_of(def_id);
-    match t.sty {
-        ty::Adt(def, substs) if def.is_struct() => {
+    if let ty::Adt(def, substs) = t.sty {
+        if def.is_struct() {
             let fields = &def.non_enum_variant().fields;
             if fields.is_empty() {
                 span_err!(tcx.sess, sp, E0075, "SIMD vector cannot be empty");
@@ -1662,7 +1698,7 @@ pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId
             }
             match e.sty {
                 ty::Param(_) => { /* struct<T>(T, T, T, T) is ok */ }
-                _ if e.is_machine()  => { /* struct(u8, u8, u8, u8) is ok */ }
+                _ if e.is_machine() => { /* struct(u8, u8, u8, u8) is ok */ }
                 _ => {
                     span_err!(tcx.sess, sp, E0077,
                               "SIMD vector element type should be machine type");
@@ -1670,7 +1706,6 @@ pub fn check_simd<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: DefId
                 }
             }
         }
-        _ => ()
     }
 }
 
@@ -1706,8 +1741,8 @@ fn check_packed_inner<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         debug!("check_packed_inner: {:?} is recursive", t);
         return false;
     }
-    match t.sty {
-        ty::Adt(def, substs) if def.is_struct() || def.is_union() => {
+    if let ty::Adt(def, substs) = t.sty {
+        if def.is_struct() || def.is_union() {
             if tcx.adt_def(def.did).repr.align > 0 {
                 return true;
             }
@@ -1715,19 +1750,15 @@ fn check_packed_inner<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             stack.push(def_id);
             for field in &def.non_enum_variant().fields {
                 let f = field.ty(tcx, substs);
-                match f.sty {
-                    ty::Adt(def, _) => {
-                        if check_packed_inner(tcx, def.did, stack) {
-                            return true;
-                        }
+                if let ty::Adt(def, _) = f.sty {
+                    if check_packed_inner(tcx, def.did, stack) {
+                        return true;
                     }
-                    _ => ()
                 }
             }
             // only need to pop if not early out
             stack.pop();
         }
-        _ => ()
     }
     false
 }
@@ -1739,7 +1770,7 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
     }
 
     // For each field, figure out if it's known to be a ZST and align(1)
-    let field_infos: Vec<_> = adt.non_enum_variant().fields.iter().map(|field| {
+    let field_infos = adt.non_enum_variant().fields.iter().map(|field| {
         let ty = field.ty(tcx, Substs::identity_for_item(tcx, field.did));
         let param_env = tcx.param_env(field.did);
         let layout = tcx.layout_of(param_env.and(ty));
@@ -1748,19 +1779,19 @@ fn check_transparent<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, sp: Span, def_id: De
         let zst = layout.map(|layout| layout.is_zst()).unwrap_or(false);
         let align1 = layout.map(|layout| layout.align.abi() == 1).unwrap_or(false);
         (span, zst, align1)
-    }).collect();
+    });
 
-    let non_zst_fields = field_infos.iter().filter(|(_span, zst, _align1)| !*zst);
+    let non_zst_fields = field_infos.clone().filter(|(_span, zst, _align1)| !*zst);
     let non_zst_count = non_zst_fields.clone().count();
     if non_zst_count != 1 {
-        let field_spans: Vec<_> = non_zst_fields.map(|(span, _zst, _align1)| *span).collect();
+        let field_spans: Vec<_> = non_zst_fields.map(|(span, _zst, _align1)| span).collect();
         struct_span_err!(tcx.sess, sp, E0690,
                          "transparent struct needs exactly one non-zero-sized field, but has {}",
-                          non_zst_count)
+                         non_zst_count)
         .span_note(field_spans, "non-zero-sized field")
         .emit();
     }
-    for &(span, zst, align1) in &field_infos {
+    for (span, zst, align1) in field_infos {
         if zst && !align1 {
             span_err!(tcx.sess, span, E0691,
                       "zero-sized field in transparent struct has alignment larger than 1");
@@ -1805,7 +1836,7 @@ pub fn check_enum<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         }
     }
 
-    let mut disr_vals: Vec<Discr<'tcx>> = Vec::new();
+    let mut disr_vals: Vec<Discr<'tcx>> = Vec::with_capacity(vs.len());
     for (discr, v) in def.discriminants(tcx).zip(vs) {
         // Check for duplicate discriminant values
         if let Some(i) = disr_vals.iter().position(|&x| x.val == discr.val) {
@@ -1845,14 +1876,17 @@ impl<'a, 'gcx, 'tcx> AstConv<'gcx, 'tcx> for FnCtxt<'a, 'gcx, 'tcx> {
         let index = generics.param_def_id_to_index[&def_id];
         ty::GenericPredicates {
             parent: None,
-            predicates: self.param_env.caller_bounds.iter().filter(|predicate| {
-                match **predicate {
-                    ty::Predicate::Trait(ref data) => {
-                        data.skip_binder().self_ty().is_param(index)
+            predicates: self.param_env.caller_bounds.iter().filter_map(|&predicate| {
+                match predicate {
+                    ty::Predicate::Trait(ref data)
+                    if data.skip_binder().self_ty().is_param(index) => {
+                        // HACK(eddyb) should get the original `Span`.
+                        let span = tcx.def_span(def_id);
+                        Some((predicate, span))
                     }
-                    _ => false
+                    _ => None
                 }
-            }).cloned().collect()
+            }).collect()
         }
     }
 
@@ -2040,14 +2074,11 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         format!("{:?}", self_ptr)
     }
 
-    pub fn local_ty(&self, span: Span, nid: ast::NodeId) -> Ty<'tcx> {
-        match self.locals.borrow().get(&nid) {
-            Some(&t) => t,
-            None => {
-                span_bug!(span, "no type for local variable {}",
-                          self.tcx.hir.node_to_string(nid));
-            }
-        }
+    pub fn local_ty(&self, span: Span, nid: ast::NodeId) -> LocalTy<'tcx> {
+        self.locals.borrow().get(&nid).cloned().unwrap_or_else(||
+            span_bug!(span, "no type for local variable {}",
+                      self.tcx.hir.node_to_string(nid))
+        )
     }
 
     #[inline]
@@ -2106,7 +2137,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             method.substs[i]
                         }
                     });
-                    self.infcx.canonicalize_response(&just_method_substs)
+                    self.infcx.canonicalize_response(&UserSubsts {
+                        substs: just_method_substs,
+                        user_self_ty: None, // not relevant here
+                    })
                 });
 
                 debug!("write_method_call: user_substs = {:?}", user_substs);
@@ -2133,15 +2167,30 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     /// This should be invoked **before any unifications have
     /// occurred**, so that annotations like `Vec<_>` are preserved
     /// properly.
-    pub fn write_user_substs_from_substs(&self, hir_id: hir::HirId, substs: &'tcx Substs<'tcx>) {
+    pub fn write_user_substs_from_substs(
+        &self,
+        hir_id: hir::HirId,
+        substs: &'tcx Substs<'tcx>,
+        user_self_ty: Option<UserSelfTy<'tcx>>,
+    ) {
+        debug!(
+            "write_user_substs_from_substs({:?}, {:?}) in fcx {}",
+            hir_id,
+            substs,
+            self.tag(),
+        );
+
         if !substs.is_noop() {
-            let user_substs = self.infcx.canonicalize_response(&substs);
+            let user_substs = self.infcx.canonicalize_response(&UserSubsts {
+                substs,
+                user_self_ty,
+            });
             debug!("instantiate_value_path: user_substs = {:?}", user_substs);
             self.write_user_substs(hir_id, user_substs);
         }
     }
 
-    pub fn write_user_substs(&self, hir_id: hir::HirId, substs: CanonicalSubsts<'tcx>) {
+    pub fn write_user_substs(&self, hir_id: hir::HirId, substs: CanonicalUserSubsts<'tcx>) {
         debug!(
             "write_user_substs({:?}, {:?}) in fcx {}",
             hir_id,
@@ -2225,25 +2274,22 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         result
     }
 
-    /// Replace the opaque types from the return value of the
-    /// function with type variables and records the `OpaqueTypeMap` for
-    /// later use during writeback. See
+    /// Replace the opaque types from the given value with type variables,
+    /// and records the `OpaqueTypeMap` for later use during writeback. See
     /// `InferCtxt::instantiate_opaque_types` for more details.
-    fn instantiate_opaque_types_from_return_value<T: TypeFoldable<'tcx>>(
+    fn instantiate_opaque_types_from_value<T: TypeFoldable<'tcx>>(
         &self,
-        fn_id: ast::NodeId,
+        parent_id: ast::NodeId,
         value: &T,
     ) -> T {
-        let fn_def_id = self.tcx.hir.local_def_id(fn_id);
-        debug!(
-            "instantiate_opaque_types_from_return_value(fn_def_id={:?}, value={:?})",
-            fn_def_id,
-            value
-        );
+        let parent_def_id = self.tcx.hir.local_def_id(parent_id);
+        debug!("instantiate_opaque_types_from_value(parent_def_id={:?}, value={:?})",
+               parent_def_id,
+               value);
 
         let (value, opaque_type_map) = self.register_infer_ok_obligations(
             self.instantiate_opaque_types(
-                fn_def_id,
+                parent_def_id,
                 self.body_id,
                 self.param_env,
                 value,
@@ -2311,6 +2357,24 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         t
     }
 
+    pub fn to_ty_saving_user_provided_ty(&self, ast_ty: &hir::Ty) -> Ty<'tcx> {
+        let ty = self.to_ty(ast_ty);
+
+        // If the type given by the user has free regions, save it for
+        // later, since NLL would like to enforce those. Also pass in
+        // types that involve projections, since those can resolve to
+        // `'static` bounds (modulo #54940, which hopefully will be
+        // fixed by the time you see this comment, dear reader,
+        // although I have my doubts). Other sorts of things are
+        // already sufficiently enforced with erased regions. =)
+        if ty.has_free_regions() || ty.has_projections() {
+            let c_ty = self.infcx.canonicalize_response(&ty);
+            self.tables.borrow_mut().user_provided_tys_mut().insert(ast_ty.hir_id, c_ty);
+        }
+
+        ty
+    }
+
     pub fn node_ty(&self, id: hir::HirId) -> Ty<'tcx> {
         match self.tables.borrow().node_types().get(id) {
             Some(&t) => t,
@@ -2339,8 +2403,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     }
 
     /// Registers obligations that all types appearing in `substs` are well-formed.
-    pub fn add_wf_bounds(&self, substs: &Substs<'tcx>, expr: &hir::Expr)
-    {
+    pub fn add_wf_bounds(&self, substs: &Substs<'tcx>, expr: &hir::Expr) {
         for ty in substs.types() {
             self.register_wf_obligation(ty, expr.span, traits::MiscObligation);
         }
@@ -2387,8 +2450,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     substs: &Substs<'tcx>)
                     -> Ty<'tcx>
     {
-        self.normalize_associated_types_in(span,
-                                           &field.ty(self.tcx, substs))
+        self.normalize_associated_types_in(span, &field.ty(self.tcx, substs))
     }
 
     fn check_casts(&self) {
@@ -2439,64 +2501,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
     /// Select as many obligations as we can at present.
     fn select_obligations_where_possible(&self, fallback_has_occurred: bool) {
-        match self.fulfillment_cx.borrow_mut().select_where_possible(self) {
-            Ok(()) => { }
-            Err(errors) => {
-                self.report_fulfillment_errors(&errors, self.inh.body_id, fallback_has_occurred);
-            },
-        }
-    }
-
-    fn is_place_expr(&self, expr: &hir::Expr) -> bool {
-         match expr.node {
-            hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) => {
-                match path.def {
-                    Def::Local(..) | Def::Upvar(..) | Def::Static(..) | Def::Err => true,
-                    _ => false,
-                }
-            }
-
-            hir::ExprKind::Type(ref e, _) => {
-                self.is_place_expr(e)
-            }
-
-            hir::ExprKind::Unary(hir::UnDeref, _) |
-            hir::ExprKind::Field(..) |
-            hir::ExprKind::Index(..) => {
-                true
-            }
-
-            // Partially qualified paths in expressions can only legally
-            // refer to associated items which are always rvalues.
-            hir::ExprKind::Path(hir::QPath::TypeRelative(..)) |
-
-            hir::ExprKind::Call(..) |
-            hir::ExprKind::MethodCall(..) |
-            hir::ExprKind::Struct(..) |
-            hir::ExprKind::Tup(..) |
-            hir::ExprKind::If(..) |
-            hir::ExprKind::Match(..) |
-            hir::ExprKind::Closure(..) |
-            hir::ExprKind::Block(..) |
-            hir::ExprKind::Repeat(..) |
-            hir::ExprKind::Array(..) |
-            hir::ExprKind::Break(..) |
-            hir::ExprKind::Continue(..) |
-            hir::ExprKind::Ret(..) |
-            hir::ExprKind::While(..) |
-            hir::ExprKind::Loop(..) |
-            hir::ExprKind::Assign(..) |
-            hir::ExprKind::InlineAsm(..) |
-            hir::ExprKind::AssignOp(..) |
-            hir::ExprKind::Lit(_) |
-            hir::ExprKind::Unary(..) |
-            hir::ExprKind::Box(..) |
-            hir::ExprKind::AddrOf(..) |
-            hir::ExprKind::Binary(..) |
-            hir::ExprKind::Yield(..) |
-            hir::ExprKind::Cast(..) => {
-                false
-            }
+        if let Err(errors) = self.fulfillment_cx.borrow_mut().select_where_possible(self) {
+            self.report_fulfillment_errors(&errors, self.inh.body_id, fallback_has_occurred);
         }
     }
 
@@ -2738,17 +2744,16 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         let expected_arg_count = fn_inputs.len();
 
         let param_count_error = |expected_count: usize,
-                                arg_count: usize,
-                                error_code: &str,
-                                variadic: bool,
-                                sugg_unit: bool| {
+                                 arg_count: usize,
+                                 error_code: &str,
+                                 variadic: bool,
+                                 sugg_unit: bool| {
             let mut err = tcx.sess.struct_span_err_with_code(sp,
-                &format!("this function takes {}{} parameter{} but {} parameter{} supplied",
+                &format!("this function takes {}{} but {} {} supplied",
                     if variadic {"at least "} else {""},
-                    expected_count,
-                    if expected_count == 1 {""} else {"s"},
-                    arg_count,
-                    if arg_count == 1 {" was"} else {"s were"}),
+                    potentially_plural_count(expected_count, "parameter"),
+                    potentially_plural_count(arg_count, "parameter"),
+                    if arg_count == 1 {"was"} else {"were"}),
                 DiagnosticId::Error(error_code.to_owned()));
 
             if let Some(def_s) = def_span.map(|sp| tcx.sess.source_map().def_span(sp)) {
@@ -2764,10 +2769,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     String::from("()"),
                     Applicability::MachineApplicable);
             } else {
-                err.span_label(sp, format!("expected {}{} parameter{}",
-                                            if variadic {"at least "} else {""},
-                                            expected_count,
-                                            if expected_count == 1 {""} else {"s"}));
+                err.span_label(sp, format!("expected {}{}",
+                                           if variadic {"at least "} else {""},
+                                           potentially_plural_count(expected_count, "parameter")));
             }
             err.emit();
         };
@@ -2889,7 +2893,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 let coerce_ty = expected.only_has_type(self).unwrap_or(formal_ty);
                 // We're processing function arguments so we definitely want to use
                 // two-phase borrows.
-                self.demand_coerce(&arg, checked_ty, coerce_ty,  AllowTwoPhase::Yes);
+                self.demand_coerce(&arg, checked_ty, coerce_ty, AllowTwoPhase::Yes);
 
                 // 3. Relate the expected type and the formal one,
                 //    if the expected type was used for the coercion.
@@ -2933,7 +2937,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn err_args(&self, len: usize) -> Vec<Ty<'tcx>> {
-        (0..len).map(|_| self.tcx.types.err).collect()
+        vec![self.tcx.types.err; len]
     }
 
     // AST fragment checking
@@ -2948,7 +2952,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             ast::LitKind::Str(..) => tcx.mk_static_str(),
             ast::LitKind::ByteStr(ref v) => {
                 tcx.mk_imm_ref(tcx.types.re_static,
-                                tcx.mk_array(tcx.types.u8, v.len() as u64))
+                               tcx.mk_array(tcx.types.u8, v.len() as u64))
             }
             ast::LitKind::Byte(_) => tcx.types.u8,
             ast::LitKind::Char(_) => tcx.types.char,
@@ -3017,23 +3021,22 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         if let Some(mut err) = self.demand_suptype_diag(expr.span, expected_ty, ty) {
             // Add help to type error if this is an `if` condition with an assignment
-            match (expected, &expr.node) {
-                (ExpectIfCondition, &hir::ExprKind::Assign(ref lhs, ref rhs)) => {
-                    let msg = "try comparing for equality";
-                    if let (Ok(left), Ok(right)) = (
-                        self.tcx.sess.source_map().span_to_snippet(lhs.span),
-                        self.tcx.sess.source_map().span_to_snippet(rhs.span))
-                    {
-                        err.span_suggestion_with_applicability(
-                            expr.span,
-                            msg,
-                            format!("{} == {}", left, right),
-                            Applicability::MaybeIncorrect);
-                    } else {
-                        err.help(msg);
-                    }
+            if let (ExpectIfCondition, &hir::ExprKind::Assign(ref lhs, ref rhs))
+                 = (expected, &expr.node)
+            {
+                let msg = "try comparing for equality";
+                if let (Ok(left), Ok(right)) = (
+                    self.tcx.sess.source_map().span_to_snippet(lhs.span),
+                    self.tcx.sess.source_map().span_to_snippet(rhs.span))
+                {
+                    err.span_suggestion_with_applicability(
+                        expr.span,
+                        msg,
+                        format!("{} == {}", left, right),
+                        Applicability::MaybeIncorrect);
+                } else {
+                    err.help(msg);
                 }
-                _ => (),
             }
             err.emit();
         }
@@ -3048,7 +3051,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         self.demand_coerce(expr, ty, expected, AllowTwoPhase::No)
     }
 
-    fn check_expr_with_hint(&self, expr: &'gcx hir::Expr,
+    fn check_expr_with_hint(&self,
+                            expr: &'gcx hir::Expr,
                             expected: Ty<'tcx>) -> Ty<'tcx> {
         self.check_expr_with_expectation(expr, ExpectHasType(expected))
     }
@@ -3129,7 +3133,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             Ok(formal_args.iter().map(|ty| {
                 self.resolve_type_vars_if_possible(ty)
             }).collect())
-        }).unwrap_or(Vec::new());
+        }).unwrap_or_default();
         debug!("expected_inputs_for_expected_output(formal={:?} -> {:?}, expected={:?} -> {:?})",
                formal_args, formal_ret,
                expect_args, expected_ret);
@@ -3196,7 +3200,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                             return_expr,
                             return_expr_ty);
     }
-
 
     // A generic function for checking the then and else in an if
     // or if-else.
@@ -3321,8 +3324,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             self.tcx().types.err
         } else if self.method_exists(field, expr_t, expr.id, true) {
             type_error_struct!(self.tcx().sess, field.span, expr_t, E0615,
-                              "attempted to take value of method `{}` on type `{}`",
-                              field, expr_t)
+                               "attempted to take value of method `{}` on type `{}`",
+                               field, expr_t)
                 .help("maybe a `()` to call it is missing?")
                 .emit();
             self.tcx().types.err
@@ -3347,11 +3350,34 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 }
                             };
                     }
+                    ty::Array(_, len) => {
+                        if let (Some(len), Ok(user_index)) = (
+                            len.assert_usize(self.tcx),
+                            field.as_str().parse::<u64>()
+                        ) {
+                            let base = self.tcx.hir.node_to_pretty_string(base.id);
+                            let help = "instead of using tuple indexing, use array indexing";
+                            let suggestion = format!("{}[{}]", base, field);
+                            let applicability = if len < user_index {
+                                Applicability::MachineApplicable
+                            } else {
+                                Applicability::MaybeIncorrect
+                            };
+                            err.span_suggestion_with_applicability(
+                                expr.span, help, suggestion, applicability
+                            );
+                        }
+                    }
                     ty::RawPtr(..) => {
                         let base = self.tcx.hir.node_to_pretty_string(base.id);
                         let msg = format!("`{}` is a native pointer; try dereferencing it", base);
                         let suggestion = format!("(*{}).{}", base, field);
-                        err.span_suggestion(field.span, &msg, suggestion);
+                        err.span_suggestion_with_applicability(
+                            field.span,
+                            &msg,
+                            suggestion,
+                            Applicability::MaybeIncorrect,
+                        );
                     }
                     _ => {}
                 }
@@ -3384,14 +3410,12 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn available_field_names(&self, variant: &'tcx ty::VariantDef) -> Vec<ast::Name> {
-        let mut available = Vec::new();
-        for field in variant.fields.iter() {
+        variant.fields.iter().filter(|field| {
             let def_scope = self.tcx.adjust_ident(field.ident, variant.did, self.body_id).1;
-            if field.vis.is_accessible_from(def_scope, self.tcx) {
-                available.push(field.ident.name);
-            }
-        }
-        available
+            field.vis.is_accessible_from(def_scope, self.tcx)
+        })
+        .map(|field| field.ident.name)
+        .collect()
     }
 
     fn name_series_display(&self, names: Vec<ast::Name>) -> String {
@@ -3423,13 +3447,13 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             |actual| match ty.sty {
                 ty::Adt(adt, ..) if adt.is_enum() => {
                     struct_span_err!(self.tcx.sess, field.ident.span, E0559,
-                                    "{} `{}::{}` has no field named `{}`",
-                                    kind_name, actual, variant.name, field.ident)
+                                     "{} `{}::{}` has no field named `{}`",
+                                     kind_name, actual, variant.name, field.ident)
                 }
                 _ => {
                     struct_span_err!(self.tcx.sess, field.ident.span, E0560,
-                                    "{} `{}` has no field named `{}`",
-                                    kind_name, actual, field.ident)
+                                     "{} `{}` has no field named `{}`",
+                                     kind_name, actual, field.ident)
                 }
             },
             ty);
@@ -3486,12 +3510,12 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             _ => span_bug!(span, "non-ADT passed to check_expr_struct_fields")
         };
 
-        let mut remaining_fields = FxHashMap();
+        let mut remaining_fields = FxHashMap::default();
         for (i, field) in variant.fields.iter().enumerate() {
             remaining_fields.insert(field.ident.modern(), (i, field));
         }
 
-        let mut seen_fields = FxHashMap();
+        let mut seen_fields = FxHashMap::default();
 
         let mut error_happened = false;
 
@@ -3514,10 +3538,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 error_happened = true;
                 if let Some(prev_span) = seen_fields.get(&ident) {
                     let mut err = struct_span_err!(self.tcx.sess,
-                                                field.ident.span,
-                                                E0062,
-                                                "field `{}` specified more than once",
-                                                ident);
+                                                   field.ident.span,
+                                                   E0062,
+                                                   "field `{}` specified more than once",
+                                                   ident);
 
                     err.span_label(field.ident.span, "used more than once");
                     err.span_label(*prev_span, format!("first use of `{}`", ident));
@@ -3581,11 +3605,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         for field in fields {
             self.check_expr(&field.expr);
         }
-        match *base_expr {
-            Some(ref base) => {
-                self.check_expr(&base);
-            },
-            None => {}
+        if let Some(ref base) = *base_expr {
+            self.check_expr(&base);
         }
     }
 
@@ -3626,7 +3647,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         if let Some((variant, did, substs)) = variant {
             debug!("check_struct_path: did={:?} substs={:?}", did, substs);
             let hir_id = self.tcx.hir.node_to_hir_id(node_id);
-            self.write_user_substs_from_substs(hir_id, substs);
+            self.write_user_substs_from_substs(hir_id, substs, None);
 
             // Check bounds on type arguments used in the path.
             let bounds = self.instantiate_bounds(path_span, did, substs);
@@ -3716,9 +3737,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     /// that there are actually multiple representations for `Error`, so avoid
     /// that when err needs to be handled differently.
     fn check_expr_with_expectation_and_needs(&self,
-                                                   expr: &'gcx hir::Expr,
-                                                   expected: Expectation<'tcx>,
-                                                   needs: Needs) -> Ty<'tcx> {
+                                             expr: &'gcx hir::Expr,
+                                             expected: Expectation<'tcx>,
+                                             needs: Needs) -> Ty<'tcx> {
         debug!(">> typechecking: expr={:?} expected={:?}",
                expr, expected);
 
@@ -3762,10 +3783,19 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         ty
     }
 
-    fn check_expr_kind(&self,
-                       expr: &'gcx hir::Expr,
-                       expected: Expectation<'tcx>,
-                       needs: Needs) -> Ty<'tcx> {
+    fn check_expr_kind(
+        &self,
+        expr: &'gcx hir::Expr,
+        expected: Expectation<'tcx>,
+        needs: Needs
+    ) -> Ty<'tcx> {
+        debug!(
+            "check_expr_kind(expr={:?}, expected={:?}, needs={:?})",
+            expr,
+            expected,
+            needs,
+        );
+
         let tcx = self.tcx;
         let id = expr.id;
         match expr.node {
@@ -3804,8 +3834,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     _ => Needs::None
                 };
                 let mut oprnd_t = self.check_expr_with_expectation_and_needs(&oprnd,
-                                                                                    expected_inner,
-                                                                                    needs);
+                                                                             expected_inner,
+                                                                             needs);
 
                 if !oprnd_t.references_error() {
                     oprnd_t = self.structurally_resolved_type(expr.span, oprnd_t);
@@ -3835,8 +3865,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 self.write_method_call(expr.hir_id, method);
                             } else {
                                 type_error_struct!(tcx.sess, expr.span, oprnd_t, E0614,
-                                                    "type `{}` cannot be dereferenced",
-                                                    oprnd_t).emit();
+                                                   "type `{}` cannot be dereferenced",
+                                                   oprnd_t).emit();
                                 oprnd_t = tcx.types.err;
                             }
                         }
@@ -3862,7 +3892,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 let hint = expected.only_has_type(self).map_or(NoExpectation, |ty| {
                     match ty.sty {
                         ty::Ref(_, ty, _) | ty::RawPtr(ty::TypeAndMut { ty, .. }) => {
-                            if self.is_place_expr(&oprnd) {
+                            if oprnd.is_place_expr() {
                                 // Places may legitimately have unsized types.
                                 // For example, dereferences of a fat pointer and
                                 // the last field of a struct can be unsized.
@@ -3915,11 +3945,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 ty
             }
             hir::ExprKind::InlineAsm(_, ref outputs, ref inputs) => {
-                for output in outputs {
-                    self.check_expr(output);
-                }
-                for input in inputs {
-                    self.check_expr(input);
+                for expr in outputs.iter().chain(inputs.iter()) {
+                    self.check_expr(expr);
                 }
                 tcx.mk_unit()
             }
@@ -4018,7 +4045,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             hir::ExprKind::Ret(ref expr_opt) => {
                 if self.ret_coercion.is_none() {
                     struct_span_err!(self.tcx.sess, expr.span, E0572,
-                                        "return statement outside of function body").emit();
+                                     "return statement outside of function body").emit();
                 } else if let Some(ref e) = *expr_opt {
                     self.check_return_expr(e);
                 } else {
@@ -4041,7 +4068,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     _ => {
                         // Only check this if not in an `if` condition, as the
                         // mistyped comparison help is more appropriate.
-                        if !self.is_place_expr(&lhs) {
+                        if !lhs.is_place_expr() {
                             struct_span_err!(self.tcx.sess, expr.span, E0070,
                                                 "invalid left-hand side expression")
                                 .span_label(expr.span, "left-hand of expression not valid")
@@ -4060,7 +4087,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
             hir::ExprKind::If(ref cond, ref then_expr, ref opt_else_expr) => {
                 self.check_then_else(&cond, then_expr, opt_else_expr.as_ref().map(|e| &**e),
-                                    expr.span, expected)
+                                     expr.span, expected)
             }
             hir::ExprKind::While(ref cond, ref body, _) => {
                 let ctxt = BreakableCtxt {
@@ -4124,7 +4151,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     // [1]
                     self.tcx.sess.delay_span_bug(body.span, "no coercion, but loop may not break");
                 }
-                ctxt.coerce.map(|c| c.complete(self)).unwrap_or(self.tcx.mk_unit())
+                ctxt.coerce.map(|c| c.complete(self)).unwrap_or_else(|| self.tcx.mk_unit())
             }
             hir::ExprKind::Match(ref discrim, ref arms, match_src) => {
                 self.check_match(expr, &discrim, arms, expected, match_src)
@@ -4144,7 +4171,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             hir::ExprKind::Cast(ref e, ref t) => {
                 // Find the type of `e`. Supply hints based on the type we are casting to,
                 // if appropriate.
-                let t_cast = self.to_ty(t);
+                let t_cast = self.to_ty_saving_user_provided_ty(t);
                 let t_cast = self.resolve_type_vars_if_possible(&t_cast);
                 let t_expr = self.check_expr_with_expectation(e, ExpectCastableToType(t_cast));
                 let t_cast = self.resolve_type_vars_if_possible(&t_cast);
@@ -4167,7 +4194,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 }
             }
             hir::ExprKind::Type(ref e, ref t) => {
-                let ty = self.to_ty(&t);
+                let ty = self.to_ty_saving_user_provided_ty(&t);
                 self.check_expr_eq_type(&e, ty);
                 ty
             }
@@ -4336,7 +4363,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                 }
                                 if needs_note {
                                     err.help("to access tuple elements, use tuple indexing \
-                                            syntax (e.g. `tuple.0`)");
+                                              syntax (e.g. `tuple.0`)");
                                 }
                             }
                             err.emit();
@@ -4352,7 +4379,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     }
                     None => {
                         struct_span_err!(self.tcx.sess, expr.span, E0627,
-                                        "yield statement outside of generator literal").emit();
+                                         "yield statement outside of generator literal").emit();
                     }
                 }
                 tcx.mk_unit()
@@ -4448,7 +4475,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // See #44848.
         let ref_bindings = local.pat.contains_explicit_ref_binding();
 
-        let local_ty = self.local_ty(init.span, local.id);
+        let local_ty = self.local_ty(init.span, local.id).revealed_ty;
         if let Some(m) = ref_bindings {
             // Somewhat subtle: if we have a `ref` binding in the pattern,
             // we want to avoid introducing coercions for the RHS. This is
@@ -4466,8 +4493,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
-    pub fn check_decl_local(&self, local: &'gcx hir::Local)  {
-        let t = self.local_ty(local.span, local.id);
+    pub fn check_decl_local(&self, local: &'gcx hir::Local) {
+        let t = self.local_ty(local.span, local.id).decl_ty;
         self.write_ty(local.hir_id, t);
 
         if let Some(ref init) = local.init {
@@ -4490,11 +4517,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // Don't do all the complex logic below for DeclItem.
         match stmt.node {
             hir::StmtKind::Decl(ref decl, _) => {
-                match decl.node {
-                    hir::DeclKind::Local(_) => {}
-                    hir::DeclKind::Item(_) => {
-                        return;
-                    }
+                if let hir::DeclKind::Item(_) = decl.node {
+                    return
                 }
             }
             hir::StmtKind::Expr(..) | hir::StmtKind::Semi(..) => {}
@@ -4719,37 +4743,39 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         found: Ty<'tcx>,
     ) {
         if let Some((sp, msg, suggestion)) = self.check_ref(expr, found, expected) {
-            err.span_suggestion(sp, msg, suggestion);
+            err.span_suggestion_with_applicability(
+                sp,
+                msg,
+                suggestion,
+                Applicability::MachineApplicable,
+            );
         } else if !self.check_for_cast(err, expr, found, expected) {
             let methods = self.get_conversion_methods(expr.span, expected, found);
             if let Ok(expr_text) = self.sess().source_map().span_to_snippet(expr.span) {
-                let suggestions = iter::repeat(expr_text).zip(methods.iter())
+                let suggestions = iter::repeat(&expr_text).zip(methods.iter())
                     .filter_map(|(receiver, method)| {
                         let method_call = format!(".{}()", method.ident);
                         if receiver.ends_with(&method_call) {
                             None  // do not suggest code that is already there (#53348)
                         } else {
-                            /*
-                            methods defined in `method_call_list` will overwrite
-                            `.clone()` in copy of `receiver`
-                            */
                             let method_call_list = [".to_vec()", ".to_string()"];
                             if receiver.ends_with(".clone()")
-                                    && method_call_list.contains(&method_call.as_str()){
-                                // created copy of `receiver` because we don't want other
-                                // suggestion to get affected
-                                let mut new_receiver = receiver.clone();
-                                let max_len = new_receiver.rfind(".").unwrap();
-                                new_receiver.truncate(max_len);
-                                Some(format!("{}{}", new_receiver, method_call))
+                                    && method_call_list.contains(&method_call.as_str()) {
+                                let max_len = receiver.rfind(".").unwrap();
+                                Some(format!("{}{}", &receiver[..max_len], method_call))
                             }
                             else {
                                 Some(format!("{}{}", receiver, method_call))
                             }
                         }
-                    }) .collect::<Vec<_>>();
+                    }).collect::<Vec<_>>();
                 if !suggestions.is_empty() {
-                    err.span_suggestions(expr.span, "try using a conversion method", suggestions);
+                    err.span_suggestions_with_applicability(
+                        expr.span,
+                        "try using a conversion method",
+                        suggestions,
+                        Applicability::MaybeIncorrect,
+                    );
                 }
             }
         }
@@ -4793,7 +4819,6 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
             }
         }
     }
-
 
     /// A possible error is to forget to add a return type that is needed:
     ///
@@ -4990,14 +5015,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                                   span: Span,
                                   node_id: ast::NodeId)
                                   -> (Ty<'tcx>, Def) {
-        debug!("instantiate_value_path(path={:?}, def={:?}, node_id={})",
-               segments,
-               def,
-               node_id);
+        debug!(
+            "instantiate_value_path(segments={:?}, self_ty={:?}, def={:?}, node_id={})",
+            segments,
+            self_ty,
+            def,
+            node_id,
+        );
 
         let path_segs = self.def_ids_for_path_segments(segments, def);
 
-        let mut ufcs_associated = None;
+        let mut user_self_ty = None;
         match def {
             Def::Method(def_id) |
             Def::AssociatedConst(def_id) => {
@@ -5006,12 +5034,20 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                     ty::TraitContainer(trait_did) => {
                         callee::check_legal_trait_for_method_call(self.tcx, span, trait_did)
                     }
-                    ty::ImplContainer(_) => {}
-                }
-                if segments.len() == 1 {
-                    // `<T>::assoc` will end up here, and so can `T::assoc`.
-                    let self_ty = self_ty.expect("UFCS sugared assoc missing Self");
-                    ufcs_associated = Some((container, self_ty));
+                    ty::ImplContainer(impl_def_id) => {
+                        if segments.len() == 1 {
+                            // `<T>::assoc` will end up here, and so
+                            // can `T::assoc`. It this came from an
+                            // inherent impl, we need to record the
+                            // `T` for posterity (see `UserSelfTy` for
+                            // details).
+                            let self_ty = self_ty.expect("UFCS sugared assoc missing Self");
+                            user_self_ty = Some(UserSelfTy {
+                                impl_def_id,
+                                self_ty,
+                            });
+                        }
+                    }
                 }
             }
             _ => {}
@@ -5036,7 +5072,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         match def {
             Def::Local(nid) | Def::Upvar(nid, ..) => {
-                let ty = self.local_ty(span, nid);
+                let ty = self.local_ty(span, nid).decl_ty;
                 let ty = self.normalize_associated_types_in(span, &ty);
                 self.write_ty(self.tcx.hir.node_to_hir_id(node_id), ty);
                 return (ty, def);
@@ -5154,7 +5190,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         } else {
                             // If no type arguments were provided, we have to infer them.
                             // This case also occurs as a result of some malformed input, e.g.
-                            // a lifetime argument being given instead of a type paramter.
+                            // a lifetime argument being given instead of a type parameter.
                             // Using inference instead of `Error` gives better error messages.
                             self.var_for_def(span, param)
                         }
@@ -5164,6 +5200,10 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         );
         assert!(!substs.has_escaping_regions());
         assert!(!ty.has_escaping_regions());
+
+        // Write the "user substs" down first thing for later.
+        let hir_id = self.tcx.hir.node_to_hir_id(node_id);
+        self.write_user_substs_from_substs(hir_id, substs, user_self_ty);
 
         // Add all the obligations that are required, substituting and
         // normalized appropriately.
@@ -5176,7 +5216,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         // the referenced item.
         let ty_substituted = self.instantiate_type_scheme(span, &substs, &ty);
 
-        if let Some((ty::ImplContainer(impl_def_id), self_ty)) = ufcs_associated {
+        if let Some(UserSelfTy { impl_def_id, self_ty }) = user_self_ty {
             // In the case of `Foo<T>::method` and `<Foo<T>>::method`, if `method`
             // is inherent, there is no `Self` parameter, instead, the impl needs
             // type parameters, which we can infer by unifying the provided `Self`
@@ -5200,10 +5240,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         debug!("instantiate_value_path: type of {:?} is {:?}",
                node_id,
                ty_substituted);
-        let hir_id = self.tcx.hir.node_to_hir_id(node_id);
         self.write_substs(hir_id, substs);
-
-        self.write_user_substs_from_substs(hir_id, substs);
 
         (ty_substituted, new_def)
     }
@@ -5220,18 +5257,12 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
         // If our calling expression is indeed the function itself, we're good!
         // If not, generate an error that this can only be called directly.
-        match self.tcx.hir.get(self.tcx.hir.get_parent_node(node_id)) {
-            Node::Expr(expr) => {
-                match expr.node {
-                    hir::ExprKind::Call(ref callee, ..) => {
-                        if callee.id == node_id {
-                            return
-                        }
-                    }
-                    _ => {}
+        if let Node::Expr(expr) = self.tcx.hir.get(self.tcx.hir.get_parent_node(node_id)) {
+            if let hir::ExprKind::Call(ref callee, ..) = expr.node {
+                if callee.id == node_id {
+                    return
                 }
             }
-            _ => {}
         }
 
         self.tcx.sess.span_err(span, "this function can only be invoked \
@@ -5257,8 +5288,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     }
 
     fn with_breakable_ctxt<F: FnOnce() -> R, R>(&self, id: ast::NodeId,
-                                        ctxt: BreakableCtxt<'gcx, 'tcx>, f: F)
-                                   -> (BreakableCtxt<'gcx, 'tcx>, R) {
+                                                ctxt: BreakableCtxt<'gcx, 'tcx>, f: F)
+                                                -> (BreakableCtxt<'gcx, 'tcx>, R) {
         let index;
         {
             let mut enclosing_breakables = self.enclosing_breakables.borrow_mut();
@@ -5331,4 +5362,8 @@ fn fatally_break_rust(sess: &Session) {
         option_env!("CFG_VERSION").unwrap_or("unknown_version"),
         ::session::config::host_triple(),
     ));
+}
+
+fn potentially_plural_count(count: usize, word: &str) -> String {
+    format!("{} {}{}", count, word, if count == 1 { "" } else { "s" })
 }

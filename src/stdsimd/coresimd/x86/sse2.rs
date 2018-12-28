@@ -1286,7 +1286,8 @@ pub unsafe fn _mm_stream_si32(mem_addr: *mut i32, a: i32) {
 #[target_feature(enable = "sse2")]
 // FIXME movd on windows, movd on i686
 #[cfg_attr(
-    all(test, not(windows), target_arch = "x86_64"), assert_instr(movq)
+    all(test, not(windows), target_arch = "x86_64"),
+    assert_instr(movq)
 )]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_move_epi64(a: __m128i) -> __m128i {
@@ -2786,7 +2787,7 @@ pub unsafe fn _mm_castpd_ps(a: __m128d) -> __m128 {
 #[target_feature(enable = "sse2")]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_castpd_si128(a: __m128d) -> __m128i {
-    mem::transmute::<i64x2, _>(simd_cast(a))
+    mem::transmute(a)
 }
 
 /// Casts a 128-bit floating-point vector of `[4 x float]` into a 128-bit
@@ -2819,7 +2820,7 @@ pub unsafe fn _mm_castps_si128(a: __m128) -> __m128i {
 #[target_feature(enable = "sse2")]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_castsi128_pd(a: __m128i) -> __m128d {
-    simd_cast(a.as_i64x2())
+    mem::transmute(a)
 }
 
 /// Casts a 128-bit integer vector into a 128-bit floating-point vector

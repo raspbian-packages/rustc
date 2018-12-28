@@ -13,6 +13,7 @@
 //! hand, though we've recently added some macros (e.g.,
 //! `BraceStructLiftImpl!`) to help with the tedium.
 
+use mir::ProjectionKind;
 use mir::interpret::{ConstValue, ConstEvalErr};
 use ty::{self, Lift, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
@@ -57,6 +58,7 @@ CloneTypeFoldableAndLiftImpls! {
     ::ty::ClosureKind,
     ::ty::IntVarValue,
     ::ty::ParamTy,
+    ::ty::UniverseIndex,
     ::ty::Variance,
     ::syntax_pos::Span,
 }
@@ -386,12 +388,12 @@ impl<'a, 'tcx> Lift<'tcx> for ty::GenSig<'a> {
     type Lifted = ty::GenSig<'tcx>;
     fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
         tcx.lift(&(self.yield_ty, self.return_ty))
-            .map(|(yield_ty, return_ty)| {
-                ty::GenSig {
-                    yield_ty,
-                    return_ty,
-                }
-            })
+           .map(|(yield_ty, return_ty)| {
+               ty::GenSig {
+                   yield_ty,
+                   return_ty,
+               }
+           })
     }
 }
 
@@ -452,7 +454,6 @@ impl<'a, 'tcx> Lift<'tcx> for ty::error::TypeError<'a> {
             CyclicTy(t) => return tcx.lift(&t).map(|t| CyclicTy(t)),
             ProjectionMismatched(x) => ProjectionMismatched(x),
             ProjectionBoundsLength(x) => ProjectionBoundsLength(x),
-
             Sorts(ref x) => return tcx.lift(x).map(Sorts),
             OldStyleLUB(ref x) => return tcx.lift(x).map(OldStyleLUB),
             ExistentialMismatch(ref x) => return tcx.lift(x).map(ExistentialMismatch)
@@ -490,6 +491,10 @@ impl<'a, 'tcx, O: Lift<'tcx>> Lift<'tcx> for interpret::EvalErrorKind<'a, O> {
             MachineError(ref err) => MachineError(err.clone()),
             FunctionAbiMismatch(a, b) => FunctionAbiMismatch(a, b),
             FunctionArgMismatch(a, b) => FunctionArgMismatch(
+                tcx.lift(&a)?,
+                tcx.lift(&b)?,
+            ),
+            FunctionRetMismatch(a, b) => FunctionRetMismatch(
                 tcx.lift(&a)?,
                 tcx.lift(&b)?,
             ),
@@ -720,6 +725,16 @@ impl<'tcx, T: TypeFoldable<'tcx>> TypeFoldable<'tcx> for Vec<T> {
     }
 }
 
+impl<'tcx, T: TypeFoldable<'tcx>> TypeFoldable<'tcx> for Box<[T]> {
+    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
+        self.iter().map(|t| t.fold_with(folder)).collect::<Vec<_>>().into_boxed_slice()
+    }
+
+    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
+        self.iter().any(|t| t.visit_with(visitor))
+    }
+}
+
 impl<'tcx, T:TypeFoldable<'tcx>> TypeFoldable<'tcx> for ty::Binder<T> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         self.map_bound_ref(|ty| ty.fold_with(folder))
@@ -772,6 +787,17 @@ impl<'tcx> TypeFoldable<'tcx> for &'tcx ty::List<Ty<'tcx>> {
     }
 }
 
+impl<'tcx> TypeFoldable<'tcx> for &'tcx ty::List<ProjectionKind<'tcx>> {
+    fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
+        let v = self.iter().map(|t| t.fold_with(folder)).collect::<SmallVec<[_; 8]>>();
+        folder.tcx().intern_projs(&v)
+    }
+
+    fn super_visit_with<V: TypeVisitor<'tcx>>(&self, visitor: &mut V) -> bool {
+        self.iter().any(|t| t.visit_with(visitor))
+    }
+}
+
 impl<'tcx> TypeFoldable<'tcx> for ty::instance::Instance<'tcx> {
     fn super_fold_with<'gcx: 'tcx, F: TypeFolder<'gcx, 'tcx>>(&self, folder: &mut F) -> Self {
         use ty::InstanceDef::*;
@@ -807,22 +833,16 @@ impl<'tcx> TypeFoldable<'tcx> for ty::instance::Instance<'tcx> {
         use ty::InstanceDef::*;
         self.substs.visit_with(visitor) ||
         match self.def {
-            Item(did) => did.visit_with(visitor),
-            Intrinsic(did) => did.visit_with(visitor),
-            FnPtrShim(did, ty) => {
-                did.visit_with(visitor) ||
-                ty.visit_with(visitor)
+            Item(did) | Intrinsic(did) | Virtual(did, _) => {
+                did.visit_with(visitor)
             },
-            Virtual(did, _) => did.visit_with(visitor),
-            ClosureOnceShim { call_once } => call_once.visit_with(visitor),
+            FnPtrShim(did, ty) | CloneShim(did, ty) => {
+                did.visit_with(visitor) || ty.visit_with(visitor)
+            },
             DropGlue(did, ty) => {
-                did.visit_with(visitor) ||
-                ty.visit_with(visitor)
+                did.visit_with(visitor) || ty.visit_with(visitor)
             },
-            CloneShim(did, ty) => {
-                did.visit_with(visitor) ||
-                ty.visit_with(visitor)
-            },
+            ClosureOnceShim { call_once } => call_once.visit_with(visitor),
         }
     }
 }
@@ -866,6 +886,9 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             ty::GeneratorWitness(types) => ty::GeneratorWitness(types.fold_with(folder)),
             ty::Closure(did, substs) => ty::Closure(did, substs.fold_with(folder)),
             ty::Projection(ref data) => ty::Projection(data.fold_with(folder)),
+            ty::UnnormalizedProjection(ref data) => {
+                ty::UnnormalizedProjection(data.fold_with(folder))
+            }
             ty::Opaque(did, substs) => ty::Opaque(did, substs.fold_with(folder)),
             ty::Bool | ty::Char | ty::Str | ty::Int(_) |
             ty::Uint(_) | ty::Float(_) | ty::Error | ty::Infer(_) |
@@ -900,7 +923,9 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
             }
             ty::GeneratorWitness(ref types) => types.visit_with(visitor),
             ty::Closure(_did, ref substs) => substs.visit_with(visitor),
-            ty::Projection(ref data) => data.visit_with(visitor),
+            ty::Projection(ref data) | ty::UnnormalizedProjection(ref data) => {
+                data.visit_with(visitor)
+            }
             ty::Opaque(_, ref substs) => substs.visit_with(visitor),
             ty::Bool | ty::Char | ty::Str | ty::Int(_) |
             ty::Uint(_) | ty::Float(_) | ty::Error | ty::Infer(_) |

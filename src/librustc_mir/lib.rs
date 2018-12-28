@@ -14,10 +14,9 @@ Rust MIR: a lowered representation of Rust. Also: an experiment!
 
 */
 
-#![cfg_attr(not(stage0), feature(nll))]
-#![cfg_attr(not(stage0), feature(infer_outlives_requirements))]
+#![feature(nll)]
 #![feature(in_band_lifetimes)]
-#![feature(impl_header_lifetime_elision)]
+#![cfg_attr(stage0, feature(impl_header_lifetime_elision))]
 #![feature(slice_patterns)]
 #![feature(slice_sort_by_cached_key)]
 #![feature(box_patterns)]
@@ -26,12 +25,10 @@ Rust MIR: a lowered representation of Rust. Also: an experiment!
 #![feature(core_intrinsics)]
 #![feature(const_fn)]
 #![feature(decl_macro)]
-#![cfg_attr(stage0, feature(macro_vis_matcher))]
 #![feature(exhaustive_patterns)]
 #![feature(range_contains)]
 #![feature(rustc_diagnostic_macros)]
 #![feature(rustc_attrs)]
-#![cfg_attr(stage0, feature(attr_literals))]
 #![feature(never_type)]
 #![feature(specialization)]
 #![feature(try_trait)]
@@ -82,6 +79,7 @@ mod borrow_check;
 mod build;
 mod dataflow;
 mod hair;
+mod lints;
 mod shim;
 pub mod transform;
 pub mod util;
@@ -96,7 +94,7 @@ pub fn provide(providers: &mut Providers) {
     borrow_check::provide(providers);
     shim::provide(providers);
     transform::provide(providers);
-    providers.const_eval = interpret::const_eval_provider;
+    providers.const_eval = const_eval::const_eval_provider;
     providers.check_match = hair::pattern::check_match;
 }
 

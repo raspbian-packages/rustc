@@ -47,6 +47,7 @@ fn main() {
 //    bb0: {
 //        StorageLive(_1);
 //        _1 = const false;
+//        FakeRead(ForLet, _1);
 //        StorageLive(_2);
 //        StorageLive(_3);
 //        _3 = _1;
@@ -54,7 +55,8 @@ fn main() {
 //        StorageDead(_3);
 //        StorageLive(_4);
 //        _4 = std::option::Option<std::boxed::Box<u32>>::None;
-//        AscribeUserType(_4, o, Canonical { variables: [], value: std::option::Option<std::boxed::Box<u32>> });
+//        FakeRead(ForLet, _4);
+//        AscribeUserType(_4, o, UserTypeProjection { base: Ty(Canonical { variables: [], value: std::option::Option<std::boxed::Box<u32>> }), projs: [] });
 //        StorageLive(_5);
 //        StorageLive(_6);
 //        _6 = move _4;

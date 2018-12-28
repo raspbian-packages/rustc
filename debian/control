@@ -2,18 +2,16 @@ Source: rustc
 Section: devel
 Priority: optional
 Maintainer: Debian Rust Maintainers <pkg-rust-maintainers@alioth-lists.debian.net>
-Uploaders: Jordan Justen <jordan.l.justen@intel.com>,
- Luca Bruno <lucab@debian.org>,
- Sylvestre Ledru <sylvestre@debian.org>,
- Angus Lees <gus@debian.org>,
- Ximin Luo <infinity0@debian.org>
+Uploaders:
+ Ximin Luo <infinity0@debian.org>,
+ Sylvestre Ledru <sylvestre@debian.org>
 # :native annotations are to support cross-compiling, see README.Debian
 Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
-               cargo:native (>= 0.19.0)      <!pkg.rustc.dlstage0>,
-               rustc:native (>= 1.29.0+dfsg) <!pkg.rustc.dlstage0>,
-               rustc:native (<= 1.30.0++)    <!pkg.rustc.dlstage0>,
+               cargo:native (>= 0.31.0)      <!pkg.rustc.dlstage0>,
+               rustc:native (>= 1.30.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc:native (<= 1.31.0++)    <!pkg.rustc.dlstage0>,
                llvm-7-dev:native,
                llvm-7-tools:native,
                libllvm7,
@@ -49,7 +47,7 @@ Multi-Arch: allowed
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, binutils (>= 2.26)
-Recommends: cargo (>= 0.31.0~~), cargo (<< 0.32.0~~), rust-gdb | rust-lldb
+Recommends: cargo (>= 0.32.0~~), cargo (<< 0.33.0~~), rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
 Replaces: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
 Breaks: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
@@ -66,7 +64,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.30
+Package: libstd-rust-1.31
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -91,7 +89,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.30 (= ${binary:Version})
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.31 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

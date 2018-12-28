@@ -26,6 +26,7 @@ use core::intrinsics::abort;
 use core::mem::{self, align_of_val, size_of_val};
 use core::ops::Deref;
 use core::ops::CoerceUnsized;
+use core::pin::Pin;
 use core::ptr::{self, NonNull};
 use core::marker::{Unpin, Unsize, PhantomData};
 use core::hash::{Hash, Hasher};
@@ -119,8 +120,8 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 ///
 /// `Arc<T>` automatically dereferences to `T` (via the [`Deref`][deref] trait),
 /// so you can call `T`'s methods on a value of type `Arc<T>`. To avoid name
-/// clashes with `T`'s methods, the methods of `Arc<T>` itself are [associated
-/// functions][assoc], called using function-like syntax:
+/// clashes with `T`'s methods, the methods of `Arc<T>` itself are associated
+/// functions, called using function-like syntax:
 ///
 /// ```
 /// use std::sync::Arc;
@@ -145,7 +146,6 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// [downgrade]: struct.Arc.html#method.downgrade
 /// [upgrade]: struct.Weak.html#method.upgrade
 /// [`None`]: ../../std/option/enum.Option.html#variant.None
-/// [assoc]: ../../book/first-edition/method-syntax.html#associated-functions
 /// [`RefCell<T>`]: ../../std/cell/struct.RefCell.html
 /// [`std::sync`]: ../../std/sync/index.html
 /// [`Arc::clone(&from)`]: #method.clone
@@ -198,6 +198,7 @@ const MAX_REFCOUNT: usize = (isize::MAX) as usize;
 /// counting in general.
 ///
 /// [rc_examples]: ../../std/rc/index.html#examples
+#[cfg_attr(all(not(stage0), not(test)), lang = "arc")]
 #[stable(feature = "rust1", since = "1.0.0")]
 pub struct Arc<T: ?Sized> {
     ptr: NonNull<ArcInner<T>>,
@@ -295,6 +296,11 @@ impl<T> Arc<T> {
             data,
         };
         Arc { ptr: Box::into_raw_non_null(x), phantom: PhantomData }
+    }
+
+    #[unstable(feature = "pin", issue = "49150")]
+    pub fn pinned(data: T) -> Pin<Arc<T>> {
+        unsafe { Pin::new_unchecked(Arc::new(data)) }
     }
 
     /// Returns the contained value, if the `Arc` has exactly one strong reference.
@@ -706,7 +712,7 @@ impl<T: ?Sized> Clone for Arc<T> {
     ///
     /// let five = Arc::new(5);
     ///
-    /// Arc::clone(&five);
+    /// let _ = Arc::clone(&five);
     /// ```
     #[inline]
     fn clone(&self) -> Arc<T> {
@@ -1128,7 +1134,7 @@ impl<T: ?Sized> Clone for Weak<T> {
     ///
     /// let weak_five = Arc::downgrade(&Arc::new(5));
     ///
-    /// Weak::clone(&weak_five);
+    /// let _ = Weak::clone(&weak_five);
     /// ```
     #[inline]
     fn clone(&self) -> Weak<T> {
