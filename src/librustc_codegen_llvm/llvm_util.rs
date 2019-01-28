@@ -74,6 +74,9 @@ unsafe fn configure_llvm(sess: &Session) {
             add("-mergefunc-use-aliases");
         }
 
+    if sess.target.target.arch == "mips" ||
+        sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
+
         for arg in &sess.opts.cg.llvm_args {
             add(&(*arg));
         }
