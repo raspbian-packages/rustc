@@ -77,7 +77,7 @@ accomplishing various tasks.
 
 ## The Cargo Book
 
-[The Cargo Book](cargo/index.html) is a guide to Cargo, Rust's build tool and dependency manager.
+[The Cargo Book](../../cargo-doc/doc/index.html) is a guide to Cargo, Rust's build tool and dependency manager.
 
 ## The Rustdoc Book
 
