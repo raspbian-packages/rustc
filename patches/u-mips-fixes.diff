@@ -1,0 +1,46 @@
+Description: Various fixes for Rust on MIPS
+Author: Dragan Mladjenovic <dmladjenovic@wavecomp.com>
+Bug-Debian: https://bugs.debian.org/881845
+Last-Update: 2018-10-24
+
+--- a/src/librustc_codegen_llvm/llvm_util.rs
++++ b/src/librustc_codegen_llvm/llvm_util.rs
+@@ -74,6 +74,9 @@
+             add("-mergefunc-use-aliases");
+         }
+ 
++    if sess.target.target.arch == "mips" ||
++        sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
++
+         for arg in &sess.opts.cg.llvm_args {
+             add(&(*arg));
+         }
+--- a/src/test/ui/asm/asm-out-assign-imm.rs
++++ b/src/test/ui/asm/asm-out-assign-imm.rs
+@@ -10,6 +10,8 @@
+ 
+ // ignore-s390x
+ // ignore-emscripten
++// ignore-mips
++// ignore-mips64
+ // ignore-powerpc
+ // ignore-powerpc64
+ // ignore-powerpc64le
+--- a/src/test/ui/asm/asm-out-assign-imm.nll.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.nll.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     let x: isize;
+    |         - help: make this binding mutable: `mut x`
+--- a/src/test/ui/asm/asm-out-assign-imm.stderr
++++ b/src/test/ui/asm/asm-out-assign-imm.stderr
+@@ -1,5 +1,5 @@
+ error[E0384]: cannot assign twice to immutable variable `x`
+-  --> $DIR/asm-out-assign-imm.rs:34:34
++  --> $DIR/asm-out-assign-imm.rs:36:34
+    |
+ LL |     x = 1;
+    |     ----- first assignment to `x`
