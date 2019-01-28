@@ -9,7 +9,7 @@
 // except according to those terms.
 
 // compile-pass
-// only-x86_64
+// ignore-test
 // no-prefer-dynamic
 // compile-flags: -Ctarget-feature=+avx -Clto
 
