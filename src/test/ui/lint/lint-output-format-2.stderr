@@ -1,0 +1,14 @@
+warning: use of deprecated item 'lint_output_format::foo': text
+  --> $DIR/lint-output-format-2.rs:17:26
+   |
+LL | use lint_output_format::{foo, bar};
+   |                          ^^^
+   |
+   = note: #[warn(deprecated)] on by default
+
+warning: use of deprecated item 'lint_output_format::foo': text
+  --> $DIR/lint-output-format-2.rs:22:14
+   |
+LL |     let _x = foo();
+   |              ^^^
+

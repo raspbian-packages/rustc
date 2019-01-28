@@ -1,0 +1,16 @@
+[workspace]
+members = [
+  "crates/stdsimd-verify",
+  "crates/stdsimd",
+]
+exclude = [
+  "crates/wasm-assert-instr-tests"
+]
+
+[profile.release]
+debug = true
+opt-level = 3
+
+[profile.bench]
+debug = 1
+opt-level = 3
