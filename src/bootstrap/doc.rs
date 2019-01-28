@@ -419,7 +419,7 @@ impl Step for Standalone {
 
             if filename == "not_found.md" {
                 cmd.arg("--markdown-css")
-                   .arg("https://doc.rust-lang.org/rust.css");
+                   .arg("rust.css");
             } else {
                 cmd.arg("--markdown-css").arg("rust.css");
             }
