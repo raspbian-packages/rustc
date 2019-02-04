@@ -128,17 +128,16 @@ impl<'cx, 'tcx, 'gcx> Visitor<'tcx> for InvalidationGenerator<'cx, 'tcx, 'gcx> {
                         );
                     }
                 }
-                for input in inputs.iter() {
+                for (_, input) in inputs.iter() {
                     self.consume_operand(context, input);
                 }
             }
-            // EndRegion matters to older NLL/MIR AST borrowck, not to alias NLL
-            StatementKind::EndRegion(..) |
             StatementKind::Nop |
             StatementKind::AscribeUserType(..) |
-            StatementKind::Validate(..) |
+            StatementKind::Retag { .. } |
+            StatementKind::EscapeToRaw { .. } |
             StatementKind::StorageLive(..) => {
-                // `Nop`, `AscribeUserType`, `Validate`, and `StorageLive` are irrelevant
+                // `Nop`, `AscribeUserType`, `Retag`, and `StorageLive` are irrelevant
                 // to borrow check.
             }
             StatementKind::StorageDead(local) => {

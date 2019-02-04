@@ -33,6 +33,10 @@ pub type Elf64_Word = u32;
 pub type Elf64_Off = u64;
 pub type Elf64_Addr = u64;
 pub type Elf64_Xword = u64;
+pub type Elf64_Sxword = i64;
+
+pub type Elf32_Section = u16;
+pub type Elf64_Section = u16;
 
 pub enum fpos64_t {} // TODO: fill this out with a struct
 
@@ -479,6 +483,58 @@ s! {
         pub dlpi_tls_data: *mut ::c_void,
     }
 
+    pub struct Elf32_Ehdr {
+        pub e_ident: [::c_uchar; 16],
+        pub e_type: Elf32_Half,
+        pub e_machine: Elf32_Half,
+        pub e_version: Elf32_Word,
+        pub e_entry: Elf32_Addr,
+        pub e_phoff: Elf32_Off,
+        pub e_shoff: Elf32_Off,
+        pub e_flags: Elf32_Word,
+        pub e_ehsize: Elf32_Half,
+        pub e_phentsize: Elf32_Half,
+        pub e_phnum: Elf32_Half,
+        pub e_shentsize: Elf32_Half,
+        pub e_shnum: Elf32_Half,
+        pub e_shstrndx: Elf32_Half,
+    }
+
+    pub struct Elf64_Ehdr {
+        pub e_ident: [::c_uchar; 16],
+        pub e_type: Elf64_Half,
+        pub e_machine: Elf64_Half,
+        pub e_version: Elf64_Word,
+        pub e_entry: Elf64_Addr,
+        pub e_phoff: Elf64_Off,
+        pub e_shoff: Elf64_Off,
+        pub e_flags: Elf64_Word,
+        pub e_ehsize: Elf64_Half,
+        pub e_phentsize: Elf64_Half,
+        pub e_phnum: Elf64_Half,
+        pub e_shentsize: Elf64_Half,
+        pub e_shnum: Elf64_Half,
+        pub e_shstrndx: Elf64_Half,
+    }
+
+    pub struct Elf32_Sym {
+        pub st_name: Elf32_Word,
+        pub st_value: Elf32_Addr,
+        pub st_size: Elf32_Word,
+        pub st_info: ::c_uchar,
+        pub st_other: ::c_uchar,
+        pub st_shndx: Elf32_Section,
+    }
+
+    pub struct Elf64_Sym {
+        pub st_name: Elf64_Word,
+        pub st_info: ::c_uchar,
+        pub st_other: ::c_uchar,
+        pub st_shndx: Elf64_Section,
+        pub st_value: Elf64_Addr,
+        pub st_size: Elf64_Xword,
+    }
+
     pub struct Elf32_Phdr {
         pub p_type: Elf32_Word,
         pub p_offset: Elf32_Off,
@@ -499,6 +555,45 @@ s! {
         pub p_filesz: Elf64_Xword,
         pub p_memsz: Elf64_Xword,
         pub p_align: Elf64_Xword,
+    }
+
+    pub struct Elf32_Shdr {
+        pub sh_name: Elf32_Word,
+        pub sh_type: Elf32_Word,
+        pub sh_flags: Elf32_Word,
+        pub sh_addr: Elf32_Addr,
+        pub sh_offset: Elf32_Off,
+        pub sh_size: Elf32_Word,
+        pub sh_link: Elf32_Word,
+        pub sh_info: Elf32_Word,
+        pub sh_addralign: Elf32_Word,
+        pub sh_entsize: Elf32_Word,
+    }
+
+    pub struct Elf64_Shdr {
+        pub sh_name: Elf64_Word,
+        pub sh_type: Elf64_Word,
+        pub sh_flags: Elf64_Xword,
+        pub sh_addr: Elf64_Addr,
+        pub sh_offset: Elf64_Off,
+        pub sh_size: Elf64_Xword,
+        pub sh_link: Elf64_Word,
+        pub sh_info: Elf64_Word,
+        pub sh_addralign: Elf64_Xword,
+        pub sh_entsize: Elf64_Xword,
+    }
+
+    pub struct Elf32_Chdr {
+        pub ch_type: Elf32_Word,
+        pub ch_size: Elf32_Word,
+        pub ch_addralign: Elf32_Word,
+    }
+
+    pub struct Elf64_Chdr {
+        pub ch_type: Elf64_Word,
+        pub ch_reserved: Elf64_Word,
+        pub ch_size: Elf64_Xword,
+        pub ch_addralign: Elf64_Xword,
     }
 
     pub struct ucred {
@@ -1721,8 +1816,12 @@ extern {
     pub fn ftello64(stream: *mut ::FILE) -> ::off64_t;
     pub fn fallocate(fd: ::c_int, mode: ::c_int,
                      offset: ::off_t, len: ::off_t) -> ::c_int;
+    pub fn fallocate64(fd: ::c_int, mode: ::c_int,
+                       offset: ::off64_t, len: ::off64_t) -> ::c_int;
     pub fn posix_fallocate(fd: ::c_int, offset: ::off_t,
                            len: ::off_t) -> ::c_int;
+    pub fn posix_fallocate64(fd: ::c_int, offset: ::off64_t,
+                             len: ::off64_t) -> ::c_int;
     pub fn readahead(fd: ::c_int, offset: ::off64_t,
                      count: ::size_t) -> ::ssize_t;
     pub fn getxattr(path: *const c_char, name: *const c_char,

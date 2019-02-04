@@ -16,7 +16,7 @@ use decoder::proc_macro_def_path_table;
 use schema::CrateRoot;
 use rustc_data_structures::sync::{Lrc, RwLock, Lock};
 
-use rustc::hir::def_id::{CrateNum, CRATE_DEF_INDEX};
+use rustc::hir::def_id::CrateNum;
 use rustc_data_structures::svh::Svh;
 use rustc::middle::allocator::AllocatorKind;
 use rustc::middle::cstore::DepKind;
@@ -30,15 +30,12 @@ use rustc::util::common::record_time;
 use rustc::util::nodemap::FxHashSet;
 use rustc::hir::map::Definitions;
 
-use rustc_metadata_utils::validate_crate_name;
-
 use std::ops::Deref;
 use std::path::PathBuf;
 use std::{cmp, fs};
 
 use syntax::ast;
 use syntax::attr;
-use syntax::edition::Edition;
 use syntax::ext::base::SyntaxExtension;
 use syntax::symbol::Symbol;
 use syntax::visit;
@@ -233,7 +230,7 @@ impl<'a> CrateLoader<'a> {
 
         let dependencies: Vec<CrateNum> = cnum_map.iter().cloned().collect();
 
-        let proc_macros = crate_root.macro_derive_registrar.map(|_| {
+        let proc_macros = crate_root.proc_macro_decls_static.map(|_| {
             self.load_derive_macros(&crate_root, dylib.clone().map(|p| p.0), span)
         });
 
@@ -341,7 +338,7 @@ impl<'a> CrateLoader<'a> {
         match result {
             LoadResult::Previous(cnum) => {
                 let data = self.cstore.get_crate_data(cnum);
-                if data.root.macro_derive_registrar.is_some() {
+                if data.root.proc_macro_decls_static.is_some() {
                     dep_kind = DepKind::UnexportedMacrosOnly;
                 }
                 data.dep_kind.with_lock(|data_dep_kind| {
@@ -433,7 +430,7 @@ impl<'a> CrateLoader<'a> {
                           dep_kind: DepKind)
                           -> cstore::CrateNumMap {
         debug!("resolving deps of external crate");
-        if crate_root.macro_derive_registrar.is_some() {
+        if crate_root.proc_macro_decls_static.is_some() {
             return cstore::CrateNumMap::new();
         }
 
@@ -535,9 +532,8 @@ impl<'a> CrateLoader<'a> {
     fn load_derive_macros(&mut self, root: &CrateRoot, dylib: Option<PathBuf>, span: Span)
                           -> Vec<(ast::Name, Lrc<SyntaxExtension>)> {
         use std::{env, mem};
-        use proc_macro::TokenStream;
-        use proc_macro::__internal::Registry;
         use dynamic_lib::DynamicLibrary;
+        use proc_macro::bridge::client::ProcMacro;
         use syntax_ext::deriving::custom::ProcMacroDerive;
         use syntax_ext::proc_macro_impl::{AttrProcMacro, BangProcMacro};
 
@@ -552,61 +548,49 @@ impl<'a> CrateLoader<'a> {
             Err(err) => self.sess.span_fatal(span, &err),
         };
 
-        let sym = self.sess.generate_derive_registrar_symbol(root.disambiguator);
-        let registrar = unsafe {
+        let sym = self.sess.generate_proc_macro_decls_symbol(root.disambiguator);
+        let decls = unsafe {
             let sym = match lib.symbol(&sym) {
                 Ok(f) => f,
                 Err(err) => self.sess.span_fatal(span, &err),
             };
-            mem::transmute::<*mut u8, fn(&mut dyn Registry)>(sym)
+            *(sym as *const &[ProcMacro])
         };
 
-        struct MyRegistrar {
-            extensions: Vec<(ast::Name, Lrc<SyntaxExtension>)>,
-            edition: Edition,
-        }
-
-        impl Registry for MyRegistrar {
-            fn register_custom_derive(&mut self,
-                                      trait_name: &str,
-                                      expand: fn(TokenStream) -> TokenStream,
-                                      attributes: &[&'static str]) {
-                let attrs = attributes.iter().cloned().map(Symbol::intern).collect::<Vec<_>>();
-                let derive = ProcMacroDerive::new(expand, attrs.clone());
-                let derive = SyntaxExtension::ProcMacroDerive(
-                    Box::new(derive), attrs, self.edition
-                );
-                self.extensions.push((Symbol::intern(trait_name), Lrc::new(derive)));
+        let extensions = decls.iter().map(|&decl| {
+            match decl {
+                ProcMacro::CustomDerive { trait_name, attributes, client } => {
+                    let attrs = attributes.iter().cloned().map(Symbol::intern).collect::<Vec<_>>();
+                    (trait_name, SyntaxExtension::ProcMacroDerive(
+                        Box::new(ProcMacroDerive {
+                            client,
+                            attrs: attrs.clone(),
+                        }),
+                        attrs,
+                        root.edition,
+                    ))
+                }
+                ProcMacro::Attr { name, client } => {
+                    (name, SyntaxExtension::AttrProcMacro(
+                        Box::new(AttrProcMacro { client }),
+                        root.edition,
+                    ))
+                }
+                ProcMacro::Bang { name, client } => {
+                    (name, SyntaxExtension::ProcMacro {
+                        expander: Box::new(BangProcMacro { client }),
+                        allow_internal_unstable: false,
+                        edition: root.edition,
+                    })
+                }
             }
-
-            fn register_attr_proc_macro(&mut self,
-                                        name: &str,
-                                        expand: fn(TokenStream, TokenStream) -> TokenStream) {
-                let expand = SyntaxExtension::AttrProcMacro(
-                    Box::new(AttrProcMacro { inner: expand }), self.edition
-                );
-                self.extensions.push((Symbol::intern(name), Lrc::new(expand)));
-            }
-
-            fn register_bang_proc_macro(&mut self,
-                                        name: &str,
-                                        expand: fn(TokenStream) -> TokenStream) {
-                let expand = SyntaxExtension::ProcMacro {
-                    expander: Box::new(BangProcMacro { inner: expand }),
-                    allow_internal_unstable: false,
-                    edition: self.edition,
-                };
-                self.extensions.push((Symbol::intern(name), Lrc::new(expand)));
-            }
-        }
-
-        let mut my_registrar = MyRegistrar { extensions: Vec::new(), edition: root.edition };
-        registrar(&mut my_registrar);
+        }).map(|(name, ext)| (Symbol::intern(name), Lrc::new(ext))).collect();
 
         // Intentionally leak the dynamic library. We can't ever unload it
         // since the library can make things that will live arbitrarily long.
         mem::forget(lib);
-        my_registrar.extensions
+
+        extensions
     }
 
     /// Look for a plugin registrar. Returns library path, crate
@@ -866,7 +850,6 @@ impl<'a> CrateLoader<'a> {
             needs_allocator = needs_allocator || data.root.needs_allocator;
         });
         if !needs_allocator {
-            self.sess.injected_allocator.set(None);
             self.sess.allocator_kind.set(None);
             return
         }
@@ -874,20 +857,15 @@ impl<'a> CrateLoader<'a> {
         // At this point we've determined that we need an allocator. Let's see
         // if our compilation session actually needs an allocator based on what
         // we're emitting.
-        let mut need_lib_alloc = false;
-        let mut need_exe_alloc = false;
-        for ct in self.sess.crate_types.borrow().iter() {
-            match *ct {
-                config::CrateType::Executable => need_exe_alloc = true,
-                config::CrateType::Dylib |
-                config::CrateType::ProcMacro |
-                config::CrateType::Cdylib |
-                config::CrateType::Staticlib => need_lib_alloc = true,
-                config::CrateType::Rlib => {}
-            }
-        }
-        if !need_lib_alloc && !need_exe_alloc {
-            self.sess.injected_allocator.set(None);
+        let all_rlib = self.sess.crate_types.borrow()
+            .iter()
+            .all(|ct| {
+                match *ct {
+                    config::CrateType::Rlib => true,
+                    _ => false,
+                }
+            });
+        if all_rlib {
             self.sess.allocator_kind.set(None);
             return
         }
@@ -926,103 +904,27 @@ impl<'a> CrateLoader<'a> {
         });
         if global_allocator.is_some() {
             self.sess.allocator_kind.set(Some(AllocatorKind::Global));
-            self.sess.injected_allocator.set(None);
             return
         }
 
         // Ok we haven't found a global allocator but we still need an
-        // allocator. At this point we'll either fall back to the "library
-        // allocator" or the "exe allocator" depending on a few variables. Let's
-        // figure out which one.
-        //
-        // Note that here we favor linking to the "library allocator" as much as
-        // possible. If we're not creating rustc's version of libstd
-        // (need_lib_alloc and prefer_dynamic) then we select `None`, and if the
-        // exe allocation crate doesn't exist for this target then we also
-        // select `None`.
-        let exe_allocation_crate_data =
-            if need_lib_alloc && !self.sess.opts.cg.prefer_dynamic {
-                None
-            } else {
-                self.sess
-                    .target
-                    .target
-                    .options
-                    .exe_allocation_crate
-                    .as_ref()
-                    .map(|name| {
-                        // We've determined that we're injecting an "exe allocator" which means
-                        // that we're going to load up a whole new crate. An example of this is
-                        // that we're producing a normal binary on Linux which means we need to
-                        // load the `alloc_jemalloc` crate to link as an allocator.
-                        let name = Symbol::intern(name);
-                        let (cnum, data) = self.resolve_crate(&None,
-                                                              name,
-                                                              name,
-                                                              None,
-                                                              None,
-                                                              DUMMY_SP,
-                                                              PathKind::Crate,
-                                                              DepKind::Implicit)
-                            .unwrap_or_else(|err| err.report());
-                        self.sess.injected_allocator.set(Some(cnum));
-                        data
-                    })
-            };
-
-        let allocation_crate_data = exe_allocation_crate_data.or_else(|| {
-            // No allocator was injected
-            self.sess.injected_allocator.set(None);
-
-            if attr::contains_name(&krate.attrs, "default_lib_allocator") {
-                // Prefer self as the allocator if there's a collision
-                return None;
+        // allocator. At this point our allocator request is typically fulfilled
+        // by the standard library, denoted by the `#![default_lib_allocator]`
+        // attribute.
+        let mut has_default = attr::contains_name(&krate.attrs, "default_lib_allocator");
+        self.cstore.iter_crate_data(|_, data| {
+            if data.root.has_default_lib_allocator {
+                has_default = true;
             }
-            // We're not actually going to inject an allocator, we're going to
-            // require that something in our crate graph is the default lib
-            // allocator. This is typically libstd, so this'll rarely be an
-            // error.
-            let mut allocator = None;
-            self.cstore.iter_crate_data(|_, data| {
-                if allocator.is_none() && data.root.has_default_lib_allocator {
-                    allocator = Some(data.clone());
-                }
-            });
-            allocator
         });
 
-        match allocation_crate_data {
-            Some(data) => {
-                // We have an allocator. We detect separately what kind it is, to allow for some
-                // flexibility in misconfiguration.
-                let attrs = data.get_item_attrs(CRATE_DEF_INDEX, self.sess);
-                let kind_interned = attr::first_attr_value_str_by_name(&attrs, "rustc_alloc_kind")
-                    .map(Symbol::as_str);
-                let kind_str = kind_interned
-                    .as_ref()
-                    .map(|s| s as &str);
-                let alloc_kind = match kind_str {
-                    None |
-                    Some("lib") => AllocatorKind::DefaultLib,
-                    Some("exe") => AllocatorKind::DefaultExe,
-                    Some(other) => {
-                        self.sess.err(&format!("Allocator kind {} not known", other));
-                        return;
-                    }
-                };
-                self.sess.allocator_kind.set(Some(alloc_kind));
-            },
-            None => {
-                if !attr::contains_name(&krate.attrs, "default_lib_allocator") {
-                    self.sess.err("no global memory allocator found but one is \
-                                   required; link to std or \
-                                   add #[global_allocator] to a static item \
-                                   that implements the GlobalAlloc trait.");
-                    return;
-                }
-                self.sess.allocator_kind.set(Some(AllocatorKind::DefaultLib));
-            }
+        if !has_default {
+            self.sess.err("no global memory allocator found but one is \
+                           required; link to std or \
+                           add #[global_allocator] to a static item \
+                           that implements the GlobalAlloc trait.");
         }
+        self.sess.allocator_kind.set(Some(AllocatorKind::DefaultLib));
 
         fn has_global_allocator(krate: &ast::Crate) -> bool {
             struct Finder(bool);
@@ -1085,8 +987,6 @@ impl<'a> CrateLoader<'a> {
 
 impl<'a> CrateLoader<'a> {
     pub fn postprocess(&mut self, krate: &ast::Crate) {
-        // inject the sanitizer runtime before the allocator runtime because all
-        // sanitizers force the use of the `alloc_system` allocator
         self.inject_sanitizer_runtime();
         self.inject_profiler_runtime();
         self.inject_allocator_crate(krate);
@@ -1106,7 +1006,7 @@ impl<'a> CrateLoader<'a> {
                        item.ident, orig_name);
                 let orig_name = match orig_name {
                     Some(orig_name) => {
-                        validate_crate_name(Some(self.sess), &orig_name.as_str(),
+                        ::validate_crate_name(Some(self.sess), &orig_name.as_str(),
                                             Some(item.span));
                         orig_name
                     }

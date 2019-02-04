@@ -27,8 +27,6 @@
 //!
 //! - core may not have platform-specific code
 //! - libcompiler_builtins may have platform-specific code
-//! - liballoc_system may have platform-specific code
-//! - liballoc_jemalloc may have platform-specific code
 //! - libpanic_abort may have platform-specific code
 //! - libpanic_unwind may have platform-specific code
 //! - libunwind may have platform-specific code
@@ -52,8 +50,6 @@ use std::iter::Iterator;
 // Paths that may contain platform-specific code
 const EXCEPTION_PATHS: &[&str] = &[
     // std crates
-    "src/liballoc_jemalloc",
-    "src/liballoc_system",
     "src/libcompiler_builtins",
     "src/liblibc",
     "src/libpanic_abort",
@@ -77,6 +73,13 @@ const EXCEPTION_PATHS: &[&str] = &[
     // std testing crates, ok for now at least
     "src/libcore/tests",
     "src/liballoc/tests/lib.rs",
+
+    // The `VaList` implementation must have platform specific code.
+    // The Windows implementation of a `va_list` is always a character
+    // pointer regardless of the target architecture. As a result,
+    // we must use `#[cfg(windows)]` to conditionally compile the
+    // correct `VaList` structure for windows.
+    "src/libcore/ffi.rs",
 
     // non-std crates
     "src/test",

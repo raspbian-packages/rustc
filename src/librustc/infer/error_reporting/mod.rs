@@ -152,7 +152,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
             }
 
             // We shouldn't encounter an error message with ReClosureBound.
-            ty::ReCanonical(..) | ty::ReClosureBound(..) => {
+            ty::ReClosureBound(..) => {
                 bug!("encountered unexpected ReClosureBound: {:?}", region,);
             }
         };
@@ -178,6 +178,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                 self.msg_span_from_early_bound_and_free_regions(region)
             }
             ty::ReStatic => ("the static lifetime".to_owned(), None),
+            ty::ReEmpty => ("an empty lifetime".to_owned(), None),
             _ => bug!("{:?}", region),
         }
     }
@@ -1314,7 +1315,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 format!(" for lifetime parameter `{}` in coherence check", name)
             }
             infer::UpvarRegion(ref upvar_id, _) => {
-                let var_node_id = self.tcx.hir.hir_to_node_id(upvar_id.var_id);
+                let var_node_id = self.tcx.hir.hir_to_node_id(upvar_id.var_path.hir_id);
                 let var_name = self.tcx.hir.name(var_node_id);
                 format!(" for capture of `{}` by closure", var_name)
             }

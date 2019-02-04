@@ -129,10 +129,12 @@ fn main() {
         // Help the libc crate compile by assisting it in finding the MUSL
         // native libraries.
         if let Some(s) = env::var_os("MUSL_ROOT") {
-            let mut root = OsString::from("native=");
-            root.push(&s);
-            root.push("/lib");
-            cmd.arg("-L").arg(&root);
+            if target.contains("musl") {
+                let mut root = OsString::from("native=");
+                root.push(&s);
+                root.push("/lib");
+                cmd.arg("-L").arg(&root);
+            }
         }
 
         // Override linker if necessary.
@@ -232,7 +234,9 @@ fn main() {
                 // flesh out rpath support more fully in the future.
                 cmd.arg("-Z").arg("osx-rpath-install-name");
                 Some("-Wl,-rpath,@loader_path/../lib")
-            } else if !target.contains("windows") && !target.contains("wasm32") {
+            } else if !target.contains("windows") &&
+                      !target.contains("wasm32") &&
+                      !target.contains("fuchsia") {
                 Some("-Wl,-rpath,$ORIGIN/../lib")
             } else {
                 None
@@ -253,8 +257,15 @@ fn main() {
 
         // When running miri tests, we need to generate MIR for all libraries
         if env::var("TEST_MIRI").ok().map_or(false, |val| val == "true") {
+            // The flags here should be kept in sync with `add_miri_default_args`
+            // in miri's `src/lib.rs`.
             cmd.arg("-Zalways-encode-mir");
-            cmd.arg("-Zmir-emit-validate=1");
+            // These options are preferred by miri, to be able to perform better validation,
+            // but the bootstrap compiler might not understand them.
+            if stage != "0" {
+                cmd.arg("-Zmir-emit-retag");
+                cmd.arg("-Zmir-opt-level=0");
+            }
         }
 
         // Force all crates compiled by this compiler to (a) be unstable and (b)

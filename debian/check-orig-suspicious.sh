@@ -26,7 +26,7 @@ find . -type f -and -not -name '.cargo-checksum.json' -exec file '{}' \; | \
   grep -v '\b\(text\|empty\)\b' || true
 
 # Most C and JS code should be in their own package
-find src/vendor/ -name '*.c' -o -name '*.js'
+find vendor/ -name '*.c' -o -name '*.js'
 
 echo "The above files (if any) seem suspicious, please audit them."
 echo "If good, add them to ${SUS_WHITELIST}."

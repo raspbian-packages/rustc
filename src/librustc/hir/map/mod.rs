@@ -301,9 +301,7 @@ impl<'hir> Map<'hir> {
                     ItemKind::Struct(..) => Some(Def::Struct(def_id())),
                     ItemKind::Union(..) => Some(Def::Union(def_id())),
                     ItemKind::Trait(..) => Some(Def::Trait(def_id())),
-                    ItemKind::TraitAlias(..) => {
-                        bug!("trait aliases are not yet implemented (see issue #41517)")
-                    },
+                    ItemKind::TraitAlias(..) => Some(Def::TraitAlias(def_id())),
                     ItemKind::ExternCrate(_) |
                     ItemKind::Use(..) |
                     ItemKind::ForeignMod(..) |
@@ -1254,7 +1252,7 @@ fn node_id_to_string(map: &Map<'_>, id: NodeId, include_id: bool) -> String {
         Some(Node::MacroDef(_)) => {
             format!("macro {}{}",  path_str(), id_str)
         }
-        Some(Node::Crate) => format!("root_crate"),
+        Some(Node::Crate) => String::from("root_crate"),
         None => format!("unknown node{}", id_str),
     }
 }

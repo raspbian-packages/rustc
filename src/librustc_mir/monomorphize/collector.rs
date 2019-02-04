@@ -178,10 +178,6 @@
 //! Some things are not yet fully implemented in the current version of this
 //! module.
 //!
-//! ### Initializers of Constants and Statics
-//! Since no MIR is constructed yet for initializer expressions of constants and
-//! statics we cannot inspect these properly.
-//!
 //! ### Const Fns
 //! Ideally, no mono item should be generated for const fns unless there
 //! is a call to them that cannot be evaluated at compile time. At the moment
@@ -191,7 +187,6 @@
 use rustc::hir::{self, CodegenFnAttrFlags};
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
 
-use rustc::hir::Node;
 use rustc::hir::def_id::DefId;
 use rustc::mir::interpret::{AllocId, ConstValue};
 use rustc::middle::lang_items::{ExchangeMallocFnLangItem, StartFnLangItem};
@@ -202,7 +197,7 @@ use rustc::session::config;
 use rustc::mir::{self, Location, Promoted};
 use rustc::mir::visit::Visitor as MirVisitor;
 use rustc::mir::mono::MonoItem;
-use rustc::mir::interpret::{Scalar, GlobalId, AllocType};
+use rustc::mir::interpret::{Scalar, GlobalId, AllocType, ErrorHandled};
 
 use monomorphize::{self, Instance};
 use rustc::util::nodemap::{FxHashSet, FxHashMap, DefIdMap};
@@ -314,7 +309,7 @@ pub fn collect_crate_mono_items<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         time(tcx.sess, "collecting mono items", || {
             par_iter(roots).for_each(|root| {
-                let mut recursion_depths = DefIdMap();
+                let mut recursion_depths = DefIdMap::default();
                 collect_items_rec(tcx,
                                 root,
                                 visited,
@@ -705,6 +700,7 @@ fn visit_instance_use<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                 bug!("intrinsic {:?} being reified", def_id);
             }
         }
+        ty::InstanceDef::VtableShim(..) |
         ty::InstanceDef::Virtual(..) |
         ty::InstanceDef::DropGlue(_, None) => {
             // don't need to emit shim if we are calling directly.
@@ -731,6 +727,7 @@ fn should_monomorphize_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, instance: 
                                          -> bool {
     let def_id = match instance.def {
         ty::InstanceDef::Item(def_id) => def_id,
+        ty::InstanceDef::VtableShim(..) |
         ty::InstanceDef::ClosureOnceShim { .. } |
         ty::InstanceDef::Virtual(..) |
         ty::InstanceDef::FnPtrShim(..) |
@@ -739,27 +736,27 @@ fn should_monomorphize_locally<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, instance: 
         ty::InstanceDef::CloneShim(..) => return true
     };
 
-    return match tcx.hir.get_if_local(def_id) {
-        Some(Node::ForeignItem(..)) => {
-            false // foreign items are linked against, not codegened.
-        }
-        Some(_) => true,
-        None => {
-            if tcx.is_reachable_non_generic(def_id) ||
-                tcx.is_foreign_item(def_id) ||
-                is_available_upstream_generic(tcx, def_id, instance.substs)
-            {
-                // We can link to the item in question, no instance needed
-                // in this crate
-                false
-            } else {
-                if !tcx.is_mir_available(def_id) {
-                    bug!("Cannot create local mono-item for {:?}", def_id)
-                }
-                true
-            }
-        }
-    };
+    if tcx.is_foreign_item(def_id) {
+        // We can always link to foreign items
+        return false;
+    }
+
+    if def_id.is_local() {
+        // local items cannot be referred to locally without monomorphizing them locally
+        return true;
+    }
+
+    if tcx.is_reachable_non_generic(def_id) ||
+       is_available_upstream_generic(tcx, def_id, instance.substs) {
+        // We can link to the item in question, no instance needed
+        // in this crate
+        return false;
+    }
+
+    if !tcx.is_mir_available(def_id) {
+        bug!("Cannot create local mono-item for {:?}", def_id)
+    }
+    return true;
 
     fn is_available_upstream_generic<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                def_id: DefId,
@@ -903,17 +900,17 @@ fn create_mono_items_for_vtable_methods<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
                                                   trait_ty: Ty<'tcx>,
                                                   impl_ty: Ty<'tcx>,
                                                   output: &mut Vec<MonoItem<'tcx>>) {
-    assert!(!trait_ty.needs_subst() && !trait_ty.has_escaping_regions() &&
-            !impl_ty.needs_subst() && !impl_ty.has_escaping_regions());
+    assert!(!trait_ty.needs_subst() && !trait_ty.has_escaping_bound_vars() &&
+            !impl_ty.needs_subst() && !impl_ty.has_escaping_bound_vars());
 
     if let ty::Dynamic(ref trait_ty, ..) = trait_ty.sty {
         let poly_trait_ref = trait_ty.principal().with_self_ty(tcx, impl_ty);
-        assert!(!poly_trait_ref.has_escaping_regions());
+        assert!(!poly_trait_ref.has_escaping_bound_vars());
 
         // Walk all methods of the trait, including those of its supertraits
         let methods = tcx.vtable_methods(poly_trait_ref);
         let methods = methods.iter().cloned().filter_map(|method| method)
-            .map(|(def_id, substs)| ty::Instance::resolve(
+            .map(|(def_id, substs)| ty::Instance::resolve_for_vtable(
                     tcx,
                     ty::ParamEnv::reveal_all(),
                     def_id,
@@ -988,6 +985,20 @@ impl<'b, 'a, 'v> ItemLikeVisitor<'v> for RootCollector<'b, 'a, 'v> {
             hir::ItemKind::Const(..) => {
                 // const items only generate mono items if they are
                 // actually used somewhere. Just declaring them is insufficient.
+
+                // but even just declaring them must collect the items they refer to
+                let def_id = self.tcx.hir.local_def_id(item.id);
+
+                let instance = Instance::mono(self.tcx, def_id);
+                let cid = GlobalId {
+                    instance,
+                    promoted: None,
+                };
+                let param_env = ty::ParamEnv::reveal_all();
+
+                if let Ok(val) = self.tcx.const_eval(param_env.and(cid)) {
+                    collect_const(self.tcx, val, instance.substs, &mut self.output);
+                }
             }
             hir::ItemKind::Fn(..) => {
                 let def_id = self.tcx.hir.local_def_id(item.id);
@@ -1066,7 +1077,7 @@ impl<'b, 'a, 'v> RootCollector<'b, 'a, 'v> {
         // regions must appear in the argument
         // listing.
         let main_ret_ty = self.tcx.erase_regions(
-            &main_ret_ty.no_late_bound_regions().unwrap(),
+            &main_ret_ty.no_bound_vars().unwrap(),
         );
 
         let start_instance = Instance::resolve(
@@ -1198,15 +1209,10 @@ fn collect_neighbours<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
         };
         match tcx.const_eval(param_env.and(cid)) {
             Ok(val) => collect_const(tcx, val, instance.substs, output),
-            Err(err) => {
-                use rustc::mir::interpret::EvalErrorKind;
-                if let EvalErrorKind::ReferencedConstant(_) = err.error.kind {
-                    err.report_as_error(
-                        tcx.at(mir.promoted[i].span),
-                        "erroneous constant used",
-                    );
-                }
-            },
+            Err(ErrorHandled::Reported) => {},
+            Err(ErrorHandled::TooGeneric) => span_bug!(
+                mir.promoted[i].span, "collection encountered polymorphic constant",
+            ),
         }
     }
 }
@@ -1247,14 +1253,10 @@ fn collect_const<'a, 'tcx>(
             };
             match tcx.const_eval(param_env.and(cid)) {
                 Ok(val) => val.val,
-                Err(err) => {
-                    let span = tcx.def_span(def_id);
-                    err.report_as_error(
-                        tcx.at(span),
-                        "constant evaluation error",
-                    );
-                    return;
-                }
+                Err(ErrorHandled::Reported) => return,
+                Err(ErrorHandled::TooGeneric) => span_bug!(
+                    tcx.def_span(def_id), "collection encountered polymorphic constant",
+                ),
             }
         },
         _ => constant.val,

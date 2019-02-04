@@ -73,14 +73,15 @@ use core::convert::From;
 use core::fmt;
 use core::future::Future;
 use core::hash::{Hash, Hasher};
-use core::iter::FusedIterator;
+use core::iter::{Iterator, FromIterator, FusedIterator};
 use core::marker::{Unpin, Unsize};
 use core::mem;
 use core::pin::Pin;
-use core::ops::{CoerceUnsized, Deref, DerefMut, Generator, GeneratorState};
+use core::ops::{CoerceUnsized, DispatchFromDyn, Deref, DerefMut, Generator, GeneratorState};
 use core::ptr::{self, NonNull, Unique};
 use core::task::{LocalWaker, Poll};
 
+use vec::Vec;
 use raw_vec::RawVec;
 use str::from_boxed_utf8_unchecked;
 
@@ -488,7 +489,7 @@ impl Box<dyn Any> {
     /// ```
     /// use std::any::Any;
     ///
-    /// fn print_if_string(value: Box<Any>) {
+    /// fn print_if_string(value: Box<dyn Any>) {
     ///     if let Ok(string) = value.downcast::<String>() {
     ///         println!("String ({}): {}", string.len(), string);
     ///     }
@@ -522,7 +523,7 @@ impl Box<dyn Any + Send> {
     /// ```
     /// use std::any::Any;
     ///
-    /// fn print_if_string(value: Box<Any + Send>) {
+    /// fn print_if_string(value: Box<dyn Any + Send>) {
     ///     if let Ok(string) = value.downcast::<String>() {
     ///         println!("String ({}): {}", string.len(), string);
     ///     }
@@ -617,10 +618,10 @@ impl<I: FusedIterator + ?Sized> FusedIterator for Box<I> {}
 
 /// `FnBox` is a version of the `FnOnce` intended for use with boxed
 /// closure objects. The idea is that where one would normally store a
-/// `Box<FnOnce()>` in a data structure, you should use
-/// `Box<FnBox()>`. The two traits behave essentially the same, except
+/// `Box<dyn FnOnce()>` in a data structure, you should use
+/// `Box<dyn FnBox()>`. The two traits behave essentially the same, except
 /// that a `FnBox` closure can only be called if it is boxed. (Note
-/// that `FnBox` may be deprecated in the future if `Box<FnOnce()>`
+/// that `FnBox` may be deprecated in the future if `Box<dyn FnOnce()>`
 /// closures become directly usable.)
 ///
 /// # Examples
@@ -628,7 +629,7 @@ impl<I: FusedIterator + ?Sized> FusedIterator for Box<I> {}
 /// Here is a snippet of code which creates a hashmap full of boxed
 /// once closures and then removes them one by one, calling each
 /// closure as it is removed. Note that the type of the closures
-/// stored in the map is `Box<FnBox() -> i32>` and not `Box<FnOnce()
+/// stored in the map is `Box<dyn FnBox() -> i32>` and not `Box<dyn FnOnce()
 /// -> i32>`.
 ///
 /// ```
@@ -637,8 +638,8 @@ impl<I: FusedIterator + ?Sized> FusedIterator for Box<I> {}
 /// use std::boxed::FnBox;
 /// use std::collections::HashMap;
 ///
-/// fn make_map() -> HashMap<i32, Box<FnBox() -> i32>> {
-///     let mut map: HashMap<i32, Box<FnBox() -> i32>> = HashMap::new();
+/// fn make_map() -> HashMap<i32, Box<dyn FnBox() -> i32>> {
+///     let mut map: HashMap<i32, Box<dyn FnBox() -> i32>> = HashMap::new();
 ///     map.insert(1, Box::new(|| 22));
 ///     map.insert(2, Box::new(|| 44));
 ///     map
@@ -695,6 +696,16 @@ impl<'a, A, R> FnOnce<A> for Box<dyn FnBox<A, Output = R> + Send + 'a> {
 
 #[unstable(feature = "coerce_unsized", issue = "27732")]
 impl<T: ?Sized + Unsize<U>, U: ?Sized> CoerceUnsized<Box<U>> for Box<T> {}
+
+#[unstable(feature = "dispatch_from_dyn", issue = "0")]
+impl<T: ?Sized + Unsize<U>, U: ?Sized> DispatchFromDyn<Box<U>> for Box<T> {}
+
+#[stable(feature = "boxed_slice_from_iter", since = "1.32.0")]
+impl<A> FromIterator<A> for Box<[A]> {
+    fn from_iter<T: IntoIterator<Item = A>>(iter: T) -> Self {
+        iter.into_iter().collect::<Vec<_>>().into_boxed_slice()
+    }
+}
 
 #[stable(feature = "box_slice_clone", since = "1.3.0")]
 impl<T: Clone> Clone for Box<[T]> {

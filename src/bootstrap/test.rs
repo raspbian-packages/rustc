@@ -521,7 +521,7 @@ impl Step for RustdocTheme {
     fn make_run(run: RunConfig) {
         let compiler = run.builder.compiler(run.builder.top_stage, run.host);
 
-        run.builder.ensure(RustdocTheme { compiler: compiler });
+        run.builder.ensure(RustdocTheme { compiler });
     }
 
     fn run(self, builder: &Builder) {
@@ -584,9 +584,9 @@ impl Step for RustdocJS {
             });
             builder.run(&mut command);
         } else {
-            builder.info(&format!(
+            builder.info(
                 "No nodejs found, skipping \"src/test/rustdoc-js\" tests"
-            ));
+            );
         }
     }
 }
@@ -653,7 +653,7 @@ impl Step for Tidy {
         }
 
         let _folder = builder.fold_output(|| "tidy");
-        builder.info(&format!("tidy check"));
+        builder.info("tidy check");
         try_run(builder, &mut cmd);
     }
 
@@ -839,12 +839,6 @@ host_test!(CompileFailFullDeps {
     suite: "compile-fail-fulldeps"
 });
 
-host_test!(IncrementalFullDeps {
-    path: "src/test/incremental-fulldeps",
-    mode: "incremental",
-    suite: "incremental-fulldeps"
-});
-
 host_test!(Rustdoc {
     path: "src/test/rustdoc",
     mode: "rustdoc",
@@ -982,6 +976,11 @@ impl Step for Compiletest {
             builder.ensure(compile::Std { compiler, target: compiler.host });
         }
 
+        // HACK(eddyb) ensure that `libproc_macro` is available on the host.
+        builder.ensure(compile::Test { compiler, target: compiler.host });
+        // Also provide `rust_test_helpers` for the host.
+        builder.ensure(native::TestHelpers { target: compiler.host });
+
         builder.ensure(native::TestHelpers { target });
         builder.ensure(RemoteCopyLibs { compiler, target });
 
@@ -1023,7 +1022,13 @@ impl Step for Compiletest {
             cmd.arg("--bless");
         }
 
-        let compare_mode = builder.config.cmd.compare_mode().or(self.compare_mode);
+        let compare_mode = builder.config.cmd.compare_mode().or_else(|| {
+            if builder.config.test_compare_mode {
+                self.compare_mode
+            } else {
+                None
+            }
+        });
 
         if let Some(ref nodejs) = builder.config.nodejs {
             cmd.arg("--nodejs").arg(nodejs);
@@ -1049,7 +1054,11 @@ impl Step for Compiletest {
             cmd.arg("--linker").arg(linker);
         }
 
-        let hostflags = flags.clone();
+        let mut hostflags = flags.clone();
+        hostflags.push(format!(
+            "-Lnative={}",
+            builder.test_helpers_out(compiler.host).display()
+        ));
         cmd.arg("--host-rustcflags").arg(hostflags.join(" "));
 
         let mut targetflags = flags;
@@ -1168,9 +1177,9 @@ impl Step for Compiletest {
             }
         }
         if suite == "run-make-fulldeps" && !builder.config.llvm_enabled {
-            builder.info(&format!(
+            builder.info(
                 "Ignoring run-make test suite as they generally don't work without LLVM"
-            ));
+            );
             return;
         }
 
@@ -1504,8 +1513,7 @@ impl Step for CrateNotDefault {
     type Output = ();
 
     fn should_run(run: ShouldRun) -> ShouldRun {
-        run.path("src/liballoc_jemalloc")
-            .path("src/librustc_asan")
+        run.path("src/librustc_asan")
             .path("src/librustc_lsan")
             .path("src/librustc_msan")
             .path("src/librustc_tsan")
@@ -1522,7 +1530,6 @@ impl Step for CrateNotDefault {
             target: run.target,
             test_kind,
             krate: match run.path {
-                _ if run.path.ends_with("src/liballoc_jemalloc") => "alloc_jemalloc",
                 _ if run.path.ends_with("src/librustc_asan") => "rustc_asan",
                 _ if run.path.ends_with("src/librustc_lsan") => "rustc_lsan",
                 _ if run.path.ends_with("src/librustc_msan") => "rustc_msan",
@@ -1561,7 +1568,6 @@ impl Step for Crate {
         run = run.krate("test");
         for krate in run.builder.in_tree_crates("std") {
             if krate.is_local(&run.builder)
-                && !krate.name.contains("jemalloc")
                 && !(krate.name.starts_with("rustc_") && krate.name.ends_with("san"))
                 && krate.name != "dlmalloc"
             {
@@ -1692,10 +1698,10 @@ impl Step for Crate {
             // The javascript shim implements the syscall interface so that test
             // output can be correctly reported.
             if !builder.config.wasm_syscall {
-                builder.info(&format!(
+                builder.info(
                     "Libstd was built without `wasm_syscall` feature enabled: \
                      test output may not be visible."
-                ));
+                );
             }
 
             // On the wasm32-unknown-unknown target we're using LTO which is
@@ -1891,7 +1897,7 @@ impl Step for Distcheck {
 
     /// Run "distcheck", a 'make check' from a tarball
     fn run(self, builder: &Builder) {
-        builder.info(&format!("Distcheck"));
+        builder.info("Distcheck");
         let dir = builder.out.join("tmp").join("distcheck");
         let _ = fs::remove_dir_all(&dir);
         t!(fs::create_dir_all(&dir));
@@ -1919,7 +1925,7 @@ impl Step for Distcheck {
         );
 
         // Now make sure that rust-src has all of libstd's dependencies
-        builder.info(&format!("Distcheck rust-src"));
+        builder.info("Distcheck rust-src");
         let dir = builder.out.join("tmp").join("distcheck-src");
         let _ = fs::remove_dir_all(&dir);
         t!(fs::create_dir_all(&dir));

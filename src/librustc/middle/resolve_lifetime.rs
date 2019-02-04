@@ -425,8 +425,8 @@ fn resolve_lifetimes<'tcx>(
 fn krate<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) -> NamedRegionMap {
     let krate = tcx.hir.krate();
     let mut map = NamedRegionMap {
-        defs: NodeMap(),
-        late_bound: NodeSet(),
+        defs: Default::default(),
+        late_bound: Default::default(),
         object_lifetime_defaults: compute_object_lifetime_defaults(tcx),
     };
     {
@@ -437,14 +437,25 @@ fn krate<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) -> NamedRegionMap {
             trait_ref_hack: false,
             is_in_fn_syntax: false,
             labels_in_fn: vec![],
-            xcrate_object_lifetime_defaults: DefIdMap(),
-            lifetime_uses: &mut DefIdMap(),
+            xcrate_object_lifetime_defaults: Default::default(),
+            lifetime_uses: &mut Default::default(),
         };
         for (_, item) in &krate.items {
             visitor.visit_item(item);
         }
     }
     map
+}
+
+/// In traits, there is an implicit `Self` type parameter which comes before the generics.
+/// We have to account for this when computing the index of the other generic parameters.
+/// This function returns whether there is such an implicit parameter defined on the given item.
+fn sub_items_have_self_param(node: &hir::ItemKind) -> bool {
+    match *node {
+        hir::ItemKind::Trait(..) |
+        hir::ItemKind::TraitAlias(..) => true,
+        _ => false,
+    }
 }
 
 impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
@@ -522,8 +533,8 @@ impl<'a, 'tcx> Visitor<'tcx> for LifetimeContext<'a, 'tcx> {
                     hir::ItemKind::Impl(..) => true,
                     _ => false,
                 };
-                // These kinds of items have only early bound lifetime parameters.
-                let mut index = if let hir::ItemKind::Trait(..) = item.node {
+                // These kinds of items have only early-bound lifetime parameters.
+                let mut index = if sub_items_have_self_param(&item.node) {
                     1 // Self comes before lifetimes
                 } else {
                     0
@@ -1267,7 +1278,7 @@ fn extract_labels(ctxt: &mut LifetimeContext<'_, '_>, body: &hir::Body) {
 fn compute_object_lifetime_defaults(
     tcx: TyCtxt<'_, '_, '_>,
 ) -> NodeMap<Vec<ObjectLifetimeDefault>> {
-    let mut map = NodeMap();
+    let mut map = NodeMap::default();
     for item in tcx.hir.krate().items.values() {
         match item.node {
             hir::ItemKind::Struct(_, ref generics)
@@ -1421,7 +1432,7 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
         } = self;
         let labels_in_fn = replace(&mut self.labels_in_fn, vec![]);
         let xcrate_object_lifetime_defaults =
-            replace(&mut self.xcrate_object_lifetime_defaults, DefIdMap());
+            replace(&mut self.xcrate_object_lifetime_defaults, DefIdMap::default());
         let mut this = LifetimeContext {
             tcx: *tcx,
             map: map,
@@ -1443,23 +1454,101 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
     /// helper method to determine the span to remove when suggesting the
     /// deletion of a lifetime
     fn lifetime_deletion_span(&self, name: ast::Ident, generics: &hir::Generics) -> Option<Span> {
-        if generics.params.len() == 1 {
-            // if sole lifetime, remove the `<>` brackets
-            Some(generics.span)
-        } else {
-            generics.params.iter().enumerate().find_map(|(i, param)| {
-                if param.name.ident() == name {
-                    // We also want to delete a leading or trailing comma
-                    // as appropriate
-                    if i >= generics.params.len() - 1 {
-                        Some(generics.params[i - 1].span.shrink_to_hi().to(param.span))
-                    } else {
-                        Some(param.span.to(generics.params[i + 1].span.shrink_to_lo()))
+        generics.params.iter().enumerate().find_map(|(i, param)| {
+            if param.name.ident() == name {
+                let mut in_band = false;
+                if let hir::GenericParamKind::Lifetime { kind } = param.kind {
+                    if let hir::LifetimeParamKind::InBand = kind {
+                        in_band = true;
                     }
-                } else {
-                    None
                 }
-            })
+                if in_band {
+                    Some(param.span)
+                } else {
+                    if generics.params.len() == 1 {
+                        // if sole lifetime, remove the entire `<>` brackets
+                        Some(generics.span)
+                    } else {
+                        // if removing within `<>` brackets, we also want to
+                        // delete a leading or trailing comma as appropriate
+                        if i >= generics.params.len() - 1 {
+                            Some(generics.params[i - 1].span.shrink_to_hi().to(param.span))
+                        } else {
+                            Some(param.span.to(generics.params[i + 1].span.shrink_to_lo()))
+                        }
+                    }
+                }
+            } else {
+                None
+            }
+        })
+    }
+
+    // helper method to issue suggestions from `fn rah<'a>(&'a T)` to `fn rah(&T)`
+    fn suggest_eliding_single_use_lifetime(
+        &self, err: &mut DiagnosticBuilder<'_>, def_id: DefId, lifetime: &hir::Lifetime
+    ) {
+        // FIXME: future work: also suggest `impl Foo<'_>` for `impl<'a> Foo<'a>`
+        let name = lifetime.name.ident();
+        let mut remove_decl = None;
+        if let Some(parent_def_id) = self.tcx.parent(def_id) {
+            if let Some(generics) = self.tcx.hir.get_generics(parent_def_id) {
+                remove_decl = self.lifetime_deletion_span(name, generics);
+            }
+        }
+
+        let mut remove_use = None;
+        let mut find_arg_use_span = |inputs: &hir::HirVec<hir::Ty>| {
+            for input in inputs {
+                if let hir::TyKind::Rptr(lt, _) = input.node {
+                    if lt.name.ident() == name {
+                        // include the trailing whitespace between the ampersand and the type name
+                        let lt_through_ty_span = lifetime.span.to(input.span.shrink_to_hi());
+                        remove_use = Some(
+                            self.tcx.sess.source_map()
+                                .span_until_non_whitespace(lt_through_ty_span)
+                        );
+                        break;
+                    }
+                }
+            }
+        };
+        if let Node::Lifetime(hir_lifetime) = self.tcx.hir.get(lifetime.id) {
+            if let Some(parent) = self.tcx.hir.find(self.tcx.hir.get_parent(hir_lifetime.id)) {
+                match parent {
+                    Node::Item(item) => {
+                        if let hir::ItemKind::Fn(decl, _, _, _) = &item.node {
+                            find_arg_use_span(&decl.inputs);
+                        }
+                    },
+                    Node::ImplItem(impl_item) => {
+                        if let hir::ImplItemKind::Method(sig, _) = &impl_item.node {
+                            find_arg_use_span(&sig.decl.inputs);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        if let (Some(decl_span), Some(use_span)) = (remove_decl, remove_use) {
+            // if both declaration and use deletion spans start at the same
+            // place ("start at" because the latter includes trailing
+            // whitespace), then this is an in-band lifetime
+            if decl_span.shrink_to_lo() == use_span.shrink_to_lo() {
+                err.span_suggestion_with_applicability(
+                    use_span,
+                    "elide the single-use lifetime",
+                    String::new(),
+                    Applicability::MachineApplicable,
+                );
+            } else {
+                err.multipart_suggestion_with_applicability(
+                    "elide the single-use lifetime",
+                    vec![(decl_span, String::new()), (use_span, String::new())],
+                    Applicability::MachineApplicable,
+                );
+            }
         }
     }
 
@@ -1484,7 +1573,7 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
             .collect();
 
         // ensure that we issue lints in a repeatable order
-        def_ids.sort_by_key(|&def_id| self.tcx.def_path_hash(def_id));
+        def_ids.sort_by_cached_key(|&def_id| self.tcx.def_path_hash(def_id));
 
         for def_id in def_ids {
             debug!(
@@ -1515,14 +1604,26 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
                         _ => None,
                     } {
                         debug!("id = {:?} span = {:?} name = {:?}", node_id, span, name);
+
+                        if name == keywords::UnderscoreLifetime.ident() {
+                            continue;
+                        }
+
                         let mut err = self.tcx.struct_span_lint_node(
                             lint::builtin::SINGLE_USE_LIFETIMES,
                             id,
                             span,
                             &format!("lifetime parameter `{}` only used once", name),
                         );
-                        err.span_label(span, "this lifetime...");
-                        err.span_label(lifetime.span, "...is used only here");
+
+                        if span == lifetime.span {
+                            // spans are the same for in-band lifetime declarations
+                            err.span_label(span, "this lifetime is only used here");
+                        } else {
+                            err.span_label(span, "this lifetime...");
+                            err.span_label(lifetime.span, "...is used only here");
+                        }
+                        self.suggest_eliding_single_use_lifetime(&mut err, def_id, lifetime);
                         err.emit();
                     }
                 }
@@ -1555,7 +1656,7 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
                                 if let Some(span) = unused_lt_span {
                                     err.span_suggestion_with_applicability(
                                         span,
-                                        "remove it",
+                                        "elide the unused lifetime",
                                         String::new(),
                                         Applicability::MachineApplicable,
                                     );
@@ -1602,8 +1703,8 @@ impl<'a, 'tcx> LifetimeContext<'a, 'tcx> {
         let mut index = 0;
         if let Some(parent_id) = parent_id {
             let parent = self.tcx.hir.expect_item(parent_id);
-            if let hir::ItemKind::Trait(..) = parent.node {
-                index += 1; // Self comes first.
+            if sub_items_have_self_param(&parent.node) {
+                index += 1; // Self comes before lifetimes
             }
             match parent.node {
                 hir::ItemKind::Trait(_, _, ref generics, ..)
@@ -2640,9 +2741,7 @@ fn insert_late_bound_lifetimes(
         constrained_by_input.visit_ty(arg_ty);
     }
 
-    let mut appears_in_output = AllCollector {
-        regions: Default::default(),
-    };
+    let mut appears_in_output = AllCollector::default();
     intravisit::walk_fn_ret_ty(&mut appears_in_output, &decl.output);
 
     debug!(
@@ -2654,9 +2753,7 @@ fn insert_late_bound_lifetimes(
     //
     // Subtle point: because we disallow nested bindings, we can just
     // ignore binders here and scrape up all names we see.
-    let mut appears_in_where_clause = AllCollector {
-        regions: Default::default(),
-    };
+    let mut appears_in_where_clause = AllCollector::default();
     appears_in_where_clause.visit_generics(generics);
 
     for param in &generics.params {
@@ -2753,6 +2850,7 @@ fn insert_late_bound_lifetimes(
         }
     }
 
+    #[derive(Default)]
     struct AllCollector {
         regions: FxHashSet<hir::LifetimeName>,
     }

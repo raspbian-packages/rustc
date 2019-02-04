@@ -80,8 +80,8 @@ def _download(path, url, probably_big, verbose, exception):
     # see http://serverfault.com/questions/301128/how-to-download
     if sys.platform == 'win32':
         run(["PowerShell.exe", "/nologo", "-Command",
-             "(New-Object System.Net.WebClient)"
-             ".DownloadFile('{}', '{}')".format(url, path)],
+             "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;",
+             "(New-Object System.Net.WebClient).DownloadFile('{}', '{}')".format(url, path)],
             verbose=verbose,
             exception=exception)
     else:
@@ -714,11 +714,6 @@ class RustBuild(object):
                 backends = self.get_toml('codegen-backends')
                 if backends is None or not 'emscripten' in backends:
                     continue
-            if module.endswith("jemalloc"):
-                if self.get_toml('use-jemalloc') == 'false':
-                    continue
-                if self.get_toml('jemalloc'):
-                    continue
             if module.endswith("lld"):
                 config = self.get_toml('lld')
                 if config is None or config == 'false':
@@ -805,7 +800,7 @@ def bootstrap(help_triggered):
                 registry = 'https://example.com'
 
                 [source.vendored-sources]
-                directory = '{}/src/vendor'
+                directory = '{}/vendor'
             """.format(build.rust_root))
     else:
         if os.path.exists('.cargo'):

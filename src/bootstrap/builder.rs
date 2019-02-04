@@ -390,7 +390,6 @@ impl<'a> Builder<'a> {
                 test::RunPassFullDeps,
                 test::RunFailFullDeps,
                 test::CompileFailFullDeps,
-                test::IncrementalFullDeps,
                 test::Rustdoc,
                 test::Pretty,
                 test::RunPassPretty,
@@ -714,7 +713,7 @@ impl<'a> Builder<'a> {
             "build" => self.cargo_out(compiler, mode, target),
 
             // This is the intended out directory for crate documentation.
-            "doc" =>  self.crate_doc_out(target),
+            "doc" | "rustdoc" =>  self.crate_doc_out(target),
 
             _ => self.stage_out(compiler, mode),
         };
@@ -743,7 +742,7 @@ impl<'a> Builder<'a> {
             _ => compile::librustc_stamp(self, cmp, target),
         };
 
-        if cmd == "doc" {
+        if cmd == "doc" || cmd == "rustdoc" {
             if mode == Mode::Rustc || mode == Mode::ToolRustc || mode == Mode::Codegen {
                 // This is the intended out directory for compiler documentation.
                 my_out = self.compiler_doc_out(target);
@@ -883,7 +882,7 @@ impl<'a> Builder<'a> {
             .env("RUSTDOC", self.out.join("bootstrap/debug/rustdoc"))
             .env(
                 "RUSTDOC_REAL",
-                if cmd == "doc" || (cmd == "test" && want_rustdoc) {
+                if cmd == "doc" || cmd == "rustdoc" || (cmd == "test" && want_rustdoc) {
                     self.rustdoc(compiler.host)
                 } else {
                     PathBuf::from("/path/to/nowhere/rustdoc/not/required")
@@ -1120,10 +1119,15 @@ impl<'a> Builder<'a> {
             cargo.arg("-v");
         }
 
-        // This must be kept before the thinlto check, as we set codegen units
-        // to 1 forcibly there.
-        if let Some(n) = self.config.rust_codegen_units {
-            cargo.env("RUSTC_CODEGEN_UNITS", n.to_string());
+        match (mode, self.config.rust_codegen_units_std, self.config.rust_codegen_units) {
+            (Mode::Std, Some(n), _) |
+            (Mode::Test, Some(n), _) |
+            (_, _, Some(n)) => {
+                cargo.env("RUSTC_CODEGEN_UNITS", n.to_string());
+            }
+            _ => {
+                // Don't set anything
+            }
         }
 
         if self.config.rust_optimize {

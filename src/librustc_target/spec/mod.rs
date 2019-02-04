@@ -297,7 +297,9 @@ supported_targets! {
     ("mipsel-unknown-linux-gnu", mipsel_unknown_linux_gnu),
     ("powerpc-unknown-linux-gnu", powerpc_unknown_linux_gnu),
     ("powerpc-unknown-linux-gnuspe", powerpc_unknown_linux_gnuspe),
+    ("powerpc-unknown-linux-musl", powerpc_unknown_linux_musl),
     ("powerpc64-unknown-linux-gnu", powerpc64_unknown_linux_gnu),
+    ("powerpc64-unknown-linux-musl", powerpc64_unknown_linux_musl),
     ("powerpc64le-unknown-linux-gnu", powerpc64le_unknown_linux_gnu),
     ("powerpc64le-unknown-linux-musl", powerpc64le_unknown_linux_musl),
     ("s390x-unknown-linux-gnu", s390x_unknown_linux_gnu),
@@ -397,6 +399,7 @@ supported_targets! {
     ("thumbv7m-none-eabi", thumbv7m_none_eabi),
     ("thumbv7em-none-eabi", thumbv7em_none_eabi),
     ("thumbv7em-none-eabihf", thumbv7em_none_eabihf),
+    ("thumbv8m.base-none-eabi", thumbv8m_base_none_eabi),
 
     ("msp430-none-elf", msp430_none_elf),
 
@@ -412,6 +415,8 @@ supported_targets! {
     ("riscv32imac-unknown-none-elf", riscv32imac_unknown_none_elf),
 
     ("aarch64-unknown-none", aarch64_unknown_none),
+
+    ("x86_64-fortanix-unknown-sgx", x86_64_fortanix_unknown_sgx),
 }
 
 /// Everything `rustc` knows about how to compile for a specific target.
@@ -444,11 +449,11 @@ pub struct Target {
     pub options: TargetOptions,
 }
 
-pub trait HasTargetSpec: Copy {
+pub trait HasTargetSpec {
     fn target_spec(&self) -> &Target;
 }
 
-impl<'a> HasTargetSpec for &'a Target {
+impl HasTargetSpec for Target {
     fn target_spec(&self) -> &Target {
         self
     }
@@ -556,6 +561,8 @@ pub struct TargetOptions {
     /// Emscripten toolchain.
     /// Defaults to false.
     pub is_like_emscripten: bool,
+    /// Whether the target toolchain is like Fuchsia's.
+    pub is_like_fuchsia: bool,
     /// Whether the linker support GNU-like arguments such as -O. Defaults to false.
     pub linker_is_gnu: bool,
     /// The MinGW toolchain has a known issue that prevents it from correctly
@@ -595,9 +602,6 @@ pub struct TargetOptions {
     /// defined in libgcc.  If this option is enabled, the target must provide
     /// `eh_unwind_resume` lang item.
     pub custom_unwind_resume: bool,
-
-    /// If necessary, a different crate to link exe allocators by default
-    pub exe_allocation_crate: Option<String>,
 
     /// Flag indicating whether ELF TLS (e.g. #[thread_local]) is available for
     /// this target.
@@ -686,6 +690,10 @@ pub struct TargetOptions {
     /// target features. This is `true` by default, and `false` for targets like
     /// wasm32 where the whole program either has simd or not.
     pub simd_types_indirect: bool,
+
+    /// If set, have the linker export exactly these symbols, instead of using
+    /// the usual logic to figure this out from the crate itself.
+    pub override_export_symbols: Option<Vec<String>>
 }
 
 impl Default for TargetOptions {
@@ -724,6 +732,7 @@ impl Default for TargetOptions {
             is_like_android: false,
             is_like_emscripten: false,
             is_like_msvc: false,
+            is_like_fuchsia: false,
             linker_is_gnu: false,
             allows_weak_linkage: true,
             has_rpath: false,
@@ -740,7 +749,6 @@ impl Default for TargetOptions {
             link_env: Vec::new(),
             archive_format: "gnu".to_string(),
             custom_unwind_resume: false,
-            exe_allocation_crate: None,
             allow_asm: true,
             has_elf_tls: false,
             obj_is_bitcode: false,
@@ -767,6 +775,7 @@ impl Default for TargetOptions {
             emit_debug_gdb_scripts: true,
             requires_uwtable: false,
             simd_types_indirect: true,
+            override_export_symbols: None,
         }
     }
 }
@@ -902,6 +911,14 @@ impl Target {
                         )
                     );
             } );
+            ($key_name:ident, opt_list) => ( {
+                let name = (stringify!($key_name)).replace("_", "-");
+                obj.find(&name[..]).map(|o| o.as_array()
+                    .map(|v| base.options.$key_name = Some(v.iter()
+                        .map(|a| a.as_string().unwrap().to_string()).collect())
+                        )
+                    );
+            } );
             ($key_name:ident, optional) => ( {
                 let name = (stringify!($key_name)).replace("_", "-");
                 if let Some(o) = obj.find(&name[..]) {
@@ -979,7 +996,7 @@ impl Target {
 
         key!(is_builtin, bool);
         key!(linker, optional);
-        try!(key!(lld_flavor, LldFlavor));
+        key!(lld_flavor, LldFlavor)?;
         key!(pre_link_args, link_args);
         key!(pre_link_args_crt, link_args);
         key!(pre_link_objects_exe, list);
@@ -1015,24 +1032,24 @@ impl Target {
         key!(is_like_msvc, bool);
         key!(is_like_emscripten, bool);
         key!(is_like_android, bool);
+        key!(is_like_fuchsia, bool);
         key!(linker_is_gnu, bool);
         key!(allows_weak_linkage, bool);
         key!(has_rpath, bool);
         key!(no_default_libraries, bool);
         key!(position_independent_executables, bool);
         key!(needs_plt, bool);
-        try!(key!(relro_level, RelroLevel));
+        key!(relro_level, RelroLevel)?;
         key!(archive_format);
         key!(allow_asm, bool);
         key!(custom_unwind_resume, bool);
-        key!(exe_allocation_crate, optional);
         key!(has_elf_tls, bool);
         key!(obj_is_bitcode, bool);
         key!(no_integrated_as, bool);
         key!(max_atomic_width, Option<u64>);
         key!(min_atomic_width, Option<u64>);
         key!(atomic_cas, bool);
-        try!(key!(panic_strategy, PanicStrategy));
+        key!(panic_strategy, PanicStrategy)?;
         key!(crt_static_allows_dylibs, bool);
         key!(crt_static_default, bool);
         key!(crt_static_respected, bool);
@@ -1049,6 +1066,7 @@ impl Target {
         key!(emit_debug_gdb_scripts, bool);
         key!(requires_uwtable, bool);
         key!(simd_types_indirect, bool);
+        key!(override_export_symbols, opt_list);
 
         if let Some(array) = obj.find("abi-blacklist").and_then(Json::as_array) {
             for name in array.iter().filter_map(|abi| abi.as_string()) {
@@ -1225,6 +1243,7 @@ impl ToJson for Target {
         target_option_val!(is_like_msvc);
         target_option_val!(is_like_emscripten);
         target_option_val!(is_like_android);
+        target_option_val!(is_like_fuchsia);
         target_option_val!(linker_is_gnu);
         target_option_val!(allows_weak_linkage);
         target_option_val!(has_rpath);
@@ -1235,7 +1254,6 @@ impl ToJson for Target {
         target_option_val!(archive_format);
         target_option_val!(allow_asm);
         target_option_val!(custom_unwind_resume);
-        target_option_val!(exe_allocation_crate);
         target_option_val!(has_elf_tls);
         target_option_val!(obj_is_bitcode);
         target_option_val!(no_integrated_as);
@@ -1259,6 +1277,7 @@ impl ToJson for Target {
         target_option_val!(emit_debug_gdb_scripts);
         target_option_val!(requires_uwtable);
         target_option_val!(simd_types_indirect);
+        target_option_val!(override_export_symbols);
 
         if default.abi_blacklist != self.options.abi_blacklist {
             d.insert("abi-blacklist".to_string(), self.options.abi_blacklist.iter()
@@ -1267,14 +1286,6 @@ impl ToJson for Target {
         }
 
         Json::Object(d)
-    }
-}
-
-fn maybe_jemalloc() -> Option<String> {
-    if cfg!(feature = "jemalloc") {
-        Some("alloc_jemalloc".to_string())
-    } else {
-        None
     }
 }
 

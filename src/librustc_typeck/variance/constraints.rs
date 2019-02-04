@@ -336,8 +336,10 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 // types, where we use Error as the Self type
             }
 
+            ty::Placeholder(..) |
             ty::UnnormalizedProjection(..) |
             ty::GeneratorWitness(..) |
+            ty::Bound(..) |
             ty::Infer(..) => {
                 bug!("unexpected type encountered in \
                       variance inference: {}",
@@ -426,7 +428,6 @@ impl<'a, 'tcx> ConstraintContext<'a, 'tcx> {
                 // way early-bound regions do, so we skip them here.
             }
 
-            ty::ReCanonical(_) |
             ty::ReFree(..) |
             ty::ReClosureBound(..) |
             ty::ReScope(..) |

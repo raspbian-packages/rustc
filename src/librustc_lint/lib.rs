@@ -29,7 +29,6 @@
 #![feature(nll)]
 #![feature(quote)]
 #![feature(rustc_diagnostic_macros)]
-#![feature(macro_at_most_once_rep)]
 
 #[macro_use]
 extern crate syntax;
@@ -40,6 +39,7 @@ extern crate log;
 extern crate rustc_mir;
 extern crate rustc_target;
 extern crate syntax_pos;
+extern crate rustc_data_structures;
 
 use rustc::lint;
 use rustc::lint::{LateContext, LateLintPass, LintPass, LintArray};
@@ -315,11 +315,6 @@ pub fn register_builtins(store: &mut lint::LintStore, sess: Option<&Session>) {
         FutureIncompatibleInfo {
             id: LintId::of(WHERE_CLAUSES_OBJECT_SAFETY),
             reference: "issue #51443 <https://github.com/rust-lang/rust/issues/51443>",
-            edition: None,
-        },
-        FutureIncompatibleInfo {
-            id: LintId::of(DUPLICATE_ASSOCIATED_TYPE_BINDINGS),
-            reference: "issue #50589 <https://github.com/rust-lang/rust/issues/50589>",
             edition: None,
         },
         FutureIncompatibleInfo {

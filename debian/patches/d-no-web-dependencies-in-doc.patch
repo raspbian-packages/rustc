@@ -23,8 +23,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          let mut parts = url.splitn(2, "#");
          let url = parts.next().unwrap();
          let fragment = parts.next();
---- a/src/vendor/mdbook/src/book/init.rs
-+++ b/src/vendor/mdbook/src/book/init.rs
+--- a/vendor/mdbook/src/book/init.rs
++++ b/vendor/mdbook/src/book/init.rs
 @@ -136,12 +136,6 @@
          let mut js = File::create(themedir.join("book.js"))?;
          js.write_all(theme::JS)?;
@@ -38,8 +38,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          Ok(())
      }
  
---- a/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
-+++ b/src/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+--- a/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
++++ b/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
 @@ -3,7 +3,7 @@
  use errors::*;
  use renderer::{RenderContext, Renderer};
@@ -111,8 +111,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
  
          Ok(())
      }
---- a/src/vendor/mdbook/src/theme/index.hbs
-+++ b/src/vendor/mdbook/src/theme/index.hbs
+--- a/vendor/mdbook/src/theme/index.hbs
++++ b/vendor/mdbook/src/theme/index.hbs
 @@ -12,15 +12,13 @@
          <base href="{{ path_to_root }}">
  
@@ -232,8 +232,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          <script src="book.js" type="text/javascript" charset="utf-8"></script>
  
          <!-- Custom JS scripts -->
---- a/src/vendor/mdbook/src/theme/mod.rs
-+++ b/src/vendor/mdbook/src/theme/mod.rs
+--- a/vendor/mdbook/src/theme/mod.rs
++++ b/vendor/mdbook/src/theme/mod.rs
 @@ -1,7 +1,5 @@
  #![allow(missing_docs)]
  
@@ -312,8 +312,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          };
  
          assert_eq!(got, empty);
---- a/src/vendor/mdbook/src/renderer/html_handlebars/search.rs
-+++ b/src/vendor/mdbook/src/renderer/html_handlebars/search.rs
+--- a/vendor/mdbook/src/renderer/html_handlebars/search.rs
++++ b/vendor/mdbook/src/renderer/html_handlebars/search.rs
 @@ -29,8 +29,6 @@
      if search_config.copy_js {
          utils::fs::write_file(destination, "searchindex.js", index.as_bytes())?;
@@ -323,8 +323,8 @@ This patch header follows DEP-3: http://dep.debian.net/deps/dep3/
          debug!("Copying search files ✓");
      }
  
---- a/src/vendor/mdbook/src/theme/searcher/mod.rs
-+++ b/src/vendor/mdbook/src/theme/searcher/mod.rs
+--- a/vendor/mdbook/src/theme/searcher/mod.rs
++++ b/vendor/mdbook/src/theme/searcher/mod.rs
 @@ -2,5 +2,3 @@
  //! the "search" cargo feature is disabled.
  

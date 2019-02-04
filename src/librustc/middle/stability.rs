@@ -134,11 +134,11 @@ impl<'a, 'tcx: 'a> Annotator<'a, 'tcx> {
         if self.tcx.features().staged_api {
             // This crate explicitly wants staged API.
             debug!("annotate(id = {:?}, attrs = {:?})", id, attrs);
-            if let Some(..) = attr::find_deprecation(self.tcx.sess.diagnostic(), attrs, item_sp) {
+            if let Some(..) = attr::find_deprecation(&self.tcx.sess.parse_sess, attrs, item_sp) {
                 self.tcx.sess.span_err(item_sp, "`#[deprecated]` cannot be used in staged api, \
                                                  use `#[rustc_deprecated]` instead");
             }
-            if let Some(mut stab) = attr::find_stability(self.tcx.sess.diagnostic(),
+            if let Some(mut stab) = attr::find_stability(&self.tcx.sess.parse_sess,
                                                          attrs, item_sp) {
                 // Error if prohibited, or can't inherit anything from a container
                 if kind == AnnotationKind::Prohibited ||
@@ -224,7 +224,7 @@ impl<'a, 'tcx: 'a> Annotator<'a, 'tcx> {
                 }
             }
 
-            if let Some(depr) = attr::find_deprecation(self.tcx.sess.diagnostic(), attrs, item_sp) {
+            if let Some(depr) = attr::find_deprecation(&self.tcx.sess.parse_sess, attrs, item_sp) {
                 if kind == AnnotationKind::Prohibited {
                     self.tcx.sess.span_err(item_sp, "This deprecation annotation is useless");
                 }
@@ -469,7 +469,7 @@ impl<'a, 'tcx> Index<'tcx> {
 /// Cross-references the feature names of unstable APIs with enabled
 /// features and possibly prints errors.
 pub fn check_unstable_api_usage<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>) {
-    let mut checker = Checker { tcx: tcx };
+    let mut checker = Checker { tcx };
     tcx.hir.krate().visit_all_item_likes(&mut checker.as_deep_visitor());
 }
 

@@ -115,15 +115,21 @@ impl FlagComputation {
                 self.add_substs(&substs.substs);
             }
 
+            &ty::Bound(debruijn, _) => {
+                self.add_binder(debruijn);
+            }
+
+            &ty::Placeholder(..) => {
+                self.add_flags(TypeFlags::HAS_TY_PLACEHOLDER);
+            }
+
             &ty::Infer(infer) => {
                 self.add_flags(TypeFlags::HAS_FREE_LOCAL_NAMES); // it might, right?
                 self.add_flags(TypeFlags::HAS_TY_INFER);
                 match infer {
                     ty::FreshTy(_) |
                     ty::FreshIntTy(_) |
-                    ty::FreshFloatTy(_) |
-                    ty::BoundTy(_) => {
-                        self.add_flags(TypeFlags::HAS_CANONICAL_VARS);
+                    ty::FreshFloatTy(_) => {
                     }
 
                     ty::TyVar(_) |
@@ -141,7 +147,7 @@ impl FlagComputation {
             &ty::Projection(ref data) => {
                 // currently we can't normalize projections that
                 // include bound regions, so track those separately.
-                if !data.has_escaping_regions() {
+                if !data.has_escaping_bound_vars() {
                     self.add_flags(TypeFlags::HAS_NORMALIZABLE_PROJECTION);
                 }
                 self.add_flags(TypeFlags::HAS_PROJECTION);

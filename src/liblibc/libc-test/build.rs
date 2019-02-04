@@ -358,7 +358,15 @@ fn main() {
             "Dl_info" |
             "DIR" |
             "Elf32_Phdr" |
-            "Elf64_Phdr" => ty.to_string(),
+            "Elf64_Phdr" |
+            "Elf32_Shdr" |
+            "Elf64_Shdr" |
+            "Elf32_Sym" |
+            "Elf64_Sym" |
+            "Elf32_Ehdr" |
+            "Elf64_Ehdr" |
+            "Elf32_Chdr" |
+            "Elf64_Chdr" => ty.to_string(),
 
             // Fixup a few types on windows that don't actually exist.
             "time64_t" if windows => "__time64_t".to_string(),
@@ -548,7 +556,8 @@ fn main() {
             "PD_CLOEXEC" | "PD_ALLOWED_AT_FORK" if freebsd => true,
 
             // These constants were added in FreeBSD 12
-            "SF_USER_READAHEAD" if freebsd => true,
+            "SF_USER_READAHEAD" |
+            "SO_REUSEPORT_LB" if freebsd => true,
 
             // These OSX constants are removed in Sierra.
             // https://developer.apple.com/library/content/releasenotes/General/APIDiffsMacOS10_12/Swift/Darwin.html
@@ -785,6 +794,14 @@ fn main() {
         }
     });
 
+    cfg.skip_static(move |name| {
+        match name {
+            // Internal constant, not declared in any headers.
+            "__progname" if android => true,
+            _ => false,
+        }
+    });
+
     cfg.skip_fn_ptrcheck(move |name| {
         match name {
             // dllimport weirdness?
@@ -840,7 +857,8 @@ fn main() {
     // fails on a lot of platforms.
     let mut cfg = ctest::TestGenerator::new();
     cfg.skip_type(|_| true)
-       .skip_fn(|_| true);
+       .skip_fn(|_| true)
+       .skip_static(|_| true);
     if android || linux {
         // musl defines these directly in `fcntl.h`
         if musl {

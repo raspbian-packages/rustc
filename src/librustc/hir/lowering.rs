@@ -67,7 +67,6 @@ use syntax::ast;
 use syntax::ast::*;
 use syntax::errors;
 use syntax::ext::hygiene::{Mark, SyntaxContext};
-use syntax::feature_gate::{emit_feature_err, GateIssue};
 use syntax::print::pprust;
 use syntax::ptr::P;
 use syntax::source_map::{self, respan, CompilerDesugaringKind, Spanned};
@@ -244,9 +243,9 @@ pub fn lower_crate(
         loop_scopes: Vec::new(),
         is_in_loop_condition: false,
         anonymous_lifetime_mode: AnonymousLifetimeMode::PassThrough,
-        type_def_lifetime_params: DefIdMap(),
+        type_def_lifetime_params: Default::default(),
         current_hir_id_owner: vec![(CRATE_DEF_INDEX, 0)],
-        item_local_id_counters: NodeMap(),
+        item_local_id_counters: Default::default(),
         node_id_to_hir_id: IndexVec::new(),
         is_generator: false,
         is_in_trait_impl: false,
@@ -588,7 +587,7 @@ impl<'a> LoweringContext<'a> {
             *local_id_counter += 1;
             hir::HirId {
                 owner: def_index,
-                local_id: hir::ItemLocalId(local_id),
+                local_id: hir::ItemLocalId::from_u32(local_id),
             }
         })
     }
@@ -616,7 +615,7 @@ impl<'a> LoweringContext<'a> {
 
             hir::HirId {
                 owner: def_index,
-                local_id: hir::ItemLocalId(local_id),
+                local_id: hir::ItemLocalId::from_u32(local_id),
             }
         })
     }
@@ -1062,8 +1061,7 @@ impl<'a> LoweringContext<'a> {
         attrs
             .iter()
             .map(|a| self.lower_attr(a))
-            .collect::<Vec<_>>()
-            .into()
+            .collect()
     }
 
     fn lower_attr(&mut self, attr: &Attribute) -> Attribute {
@@ -1169,7 +1167,7 @@ impl<'a> LoweringContext<'a> {
                             hir::TyKind::BareFn(P(hir::BareFnTy {
                                 generic_params: this.lower_generic_params(
                                     &f.generic_params,
-                                    &NodeMap(),
+                                    &NodeMap::default(),
                                     ImplTraitContext::disallowed(),
                                 ),
                                 unsafety: this.lower_unsafety(f.unsafety),
@@ -2472,7 +2470,7 @@ impl<'a> LoweringContext<'a> {
         // FIXME: This could probably be done with less rightward drift. Also looks like two control
         //        paths where report_error is called are also the only paths that advance to after
         //        the match statement, so the error reporting could probably just be moved there.
-        let mut add_bounds: NodeMap<Vec<_>> = NodeMap();
+        let mut add_bounds: NodeMap<Vec<_>> = Default::default();
         for pred in &generics.where_clause.predicates {
             if let WherePredicate::BoundPredicate(ref bound_pred) = *pred {
                 'next_bound: for bound in &bound_pred.bounds {
@@ -2557,7 +2555,7 @@ impl<'a> LoweringContext<'a> {
                         hir::WherePredicate::BoundPredicate(hir::WhereBoundPredicate {
                             bound_generic_params: this.lower_generic_params(
                                 bound_generic_params,
-                                &NodeMap(),
+                                &NodeMap::default(),
                                 ImplTraitContext::disallowed(),
                             ),
                             bounded_ty: this.lower_ty(bounded_ty, ImplTraitContext::disallowed()),
@@ -2641,8 +2639,11 @@ impl<'a> LoweringContext<'a> {
         p: &PolyTraitRef,
         mut itctx: ImplTraitContext<'_>,
     ) -> hir::PolyTraitRef {
-        let bound_generic_params =
-            self.lower_generic_params(&p.bound_generic_params, &NodeMap(), itctx.reborrow());
+        let bound_generic_params = self.lower_generic_params(
+            &p.bound_generic_params,
+            &NodeMap::default(),
+            itctx.reborrow(),
+        );
         let trait_ref = self.with_parent_impl_lifetime_defs(
             &bound_generic_params,
             |this| this.lower_trait_ref(&p.trait_ref, itctx),
@@ -3626,7 +3627,6 @@ impl<'a> LoweringContext<'a> {
                     ParamMode::Optional,
                     ImplTraitContext::disallowed(),
                 );
-                self.check_self_struct_ctor_feature(&qpath);
                 hir::PatKind::TupleStruct(
                     qpath,
                     pats.iter().map(|x| self.lower_pat(x)).collect(),
@@ -3641,7 +3641,6 @@ impl<'a> LoweringContext<'a> {
                     ParamMode::Optional,
                     ImplTraitContext::disallowed(),
                 );
-                self.check_self_struct_ctor_feature(&qpath);
                 hir::PatKind::Path(qpath)
             }
             PatKind::Struct(ref path, ref fields, etc) => {
@@ -3761,7 +3760,7 @@ impl<'a> LoweringContext<'a> {
                 let ohs = P(self.lower_expr(ohs));
                 hir::ExprKind::Unary(op, ohs)
             }
-            ExprKind::Lit(ref l) => hir::ExprKind::Lit(P((**l).clone())),
+            ExprKind::Lit(ref l) => hir::ExprKind::Lit(P((*l).clone())),
             ExprKind::Cast(ref expr, ref ty) => {
                 let expr = P(self.lower_expr(expr));
                 hir::ExprKind::Cast(expr, self.lower_ty(ty, ImplTraitContext::disallowed()))
@@ -4037,7 +4036,6 @@ impl<'a> LoweringContext<'a> {
                     ParamMode::Optional,
                     ImplTraitContext::disallowed(),
                 );
-                self.check_self_struct_ctor_feature(&qpath);
                 hir::ExprKind::Path(qpath)
             }
             ExprKind::Break(opt_label, ref opt_expr) => {
@@ -4932,23 +4930,24 @@ impl<'a> LoweringContext<'a> {
         let node = match qpath {
             hir::QPath::Resolved(None, path) => {
                 // Turn trait object paths into `TyKind::TraitObject` instead.
-                if let Def::Trait(_) = path.def {
-                    let principal = hir::PolyTraitRef {
-                        bound_generic_params: hir::HirVec::new(),
-                        trait_ref: hir::TraitRef {
-                            path: path.and_then(|path| path),
-                            ref_id: id.node_id,
-                            hir_ref_id: id.hir_id,
-                        },
-                        span,
-                    };
+                match path.def {
+                    Def::Trait(_) | Def::TraitAlias(_) => {
+                        let principal = hir::PolyTraitRef {
+                            bound_generic_params: hir::HirVec::new(),
+                            trait_ref: hir::TraitRef {
+                                path: path.and_then(|path| path),
+                                ref_id: id.node_id,
+                                hir_ref_id: id.hir_id,
+                            },
+                            span,
+                        };
 
-                    // The original ID is taken by the `PolyTraitRef`,
-                    // so the `Ty` itself needs a different one.
-                    id = self.next_id();
-                    hir::TyKind::TraitObject(hir_vec![principal], self.elided_dyn_bound(span))
-                } else {
-                    hir::TyKind::Path(hir::QPath::Resolved(None, path))
+                        // The original ID is taken by the `PolyTraitRef`,
+                        // so the `Ty` itself needs a different one.
+                        id = self.next_id();
+                        hir::TyKind::TraitObject(hir_vec![principal], self.elided_dyn_bound(span))
+                    }
+                    _ => hir::TyKind::Path(hir::QPath::Resolved(None, path)),
                 }
             }
             _ => hir::TyKind::Path(qpath),
@@ -5098,18 +5097,6 @@ impl<'a> LoweringContext<'a> {
         let from_err = P(self.expr_std_path(unstable_span, path, None,
                                             ThinVec::new()));
         P(self.expr_call(e.span, from_err, hir_vec![e]))
-    }
-
-    fn check_self_struct_ctor_feature(&self, qp: &hir::QPath) {
-        if let hir::QPath::Resolved(_, ref p) = qp {
-            if p.segments.len() == 1 &&
-               p.segments[0].ident.name == keywords::SelfType.name() &&
-               !self.sess.features_untracked().self_struct_ctor {
-                emit_feature_err(&self.sess.parse_sess, "self_struct_ctor",
-                                 p.span, GateIssue::Language,
-                                 "`Self` struct constructors are unstable");
-            }
-        }
     }
 }
 

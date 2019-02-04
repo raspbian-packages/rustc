@@ -17,7 +17,7 @@ use rustc_target::spec::abi::Abi;
 
 use rustc::mir::interpret::{EvalResult, PointerArithmetic, EvalErrorKind, Scalar};
 use super::{
-    EvalContext, Machine, Value, OpTy, PlaceTy, MPlaceTy, Operand, StackPopCleanup
+    EvalContext, Machine, Immediate, OpTy, PlaceTy, MPlaceTy, Operand, StackPopCleanup
 };
 
 impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> {
@@ -51,7 +51,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 ref targets,
                 ..
             } => {
-                let discr = self.read_value(self.eval_operand(discr, None)?)?;
+                let discr = self.read_immediate(self.eval_operand(discr, None)?)?;
                 trace!("SwitchInt({:?})", *discr);
 
                 // Branch to the `otherwise` case by default, if no match is found.
@@ -138,7 +138,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 target,
                 ..
             } => {
-                let cond_val = self.read_value(self.eval_operand(cond, None)?)?
+                let cond_val = self.read_immediate(self.eval_operand(cond, None)?)?
                     .to_scalar()?.to_bool()?;
                 if expected == cond_val {
                     self.goto_block(Some(target))?;
@@ -147,10 +147,10 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                     use rustc::mir::interpret::EvalErrorKind::*;
                     return match *msg {
                         BoundsCheck { ref len, ref index } => {
-                            let len = self.read_value(self.eval_operand(len, None)?)
+                            let len = self.read_immediate(self.eval_operand(len, None)?)
                                 .expect("can't eval len").to_scalar()?
                                 .to_bits(self.memory().pointer_size())? as u64;
-                            let index = self.read_value(self.eval_operand(index, None)?)
+                            let index = self.read_immediate(self.eval_operand(index, None)?)
                                 .expect("can't eval index").to_scalar()?
                                 .to_bits(self.memory().pointer_size())? as u64;
                             err!(BoundsCheck { len, index })
@@ -182,6 +182,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
     }
 
     fn check_argument_compat(
+        rust_abi: bool,
         caller: TyLayout<'tcx>,
         callee: TyLayout<'tcx>,
     ) -> bool {
@@ -189,13 +190,20 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
             // No question
             return true;
         }
+        if !rust_abi {
+            // Don't risk anything
+            return false;
+        }
         // Compare layout
         match (&caller.abi, &callee.abi) {
+            // Different valid ranges are okay (once we enforce validity,
+            // that will take care to make it UB to leave the range, just
+            // like for transmute).
             (layout::Abi::Scalar(ref caller), layout::Abi::Scalar(ref callee)) =>
-                // Different valid ranges are okay (once we enforce validity,
-                // that will take care to make it UB to leave the range, just
-                // like for transmute).
                 caller.value == callee.value,
+            (layout::Abi::ScalarPair(ref caller1, ref caller2),
+             layout::Abi::ScalarPair(ref callee1, ref callee2)) =>
+                caller1.value == callee1.value && caller2.value == callee2.value,
             // Be conservative
             _ => false
         }
@@ -204,22 +212,22 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
     /// Pass a single argument, checking the types for compatibility.
     fn pass_argument(
         &mut self,
-        skip_zst: bool,
+        rust_abi: bool,
         caller_arg: &mut impl Iterator<Item=OpTy<'tcx, M::PointerTag>>,
         callee_arg: PlaceTy<'tcx, M::PointerTag>,
     ) -> EvalResult<'tcx> {
-        if skip_zst && callee_arg.layout.is_zst() {
+        if rust_abi && callee_arg.layout.is_zst() {
             // Nothing to do.
             trace!("Skipping callee ZST");
             return Ok(());
         }
         let caller_arg = caller_arg.next()
             .ok_or_else(|| EvalErrorKind::FunctionArgCountMismatch)?;
-        if skip_zst {
+        if rust_abi {
             debug_assert!(!caller_arg.layout.is_zst(), "ZSTs must have been already filtered out");
         }
         // Now, check
-        if !Self::check_argument_compat(caller_arg.layout, callee_arg.layout) {
+        if !Self::check_argument_compat(rust_abi, caller_arg.layout, callee_arg.layout) {
             return err!(FunctionArgMismatch(caller_arg.layout.ty, callee_arg.layout.ty));
         }
         // We allow some transmutes here
@@ -256,6 +264,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 self.dump_place(*dest);
                 Ok(())
             }
+            ty::InstanceDef::VtableShim(..) |
             ty::InstanceDef::ClosureOnceShim { .. } |
             ty::InstanceDef::FnPtrShim(..) |
             ty::InstanceDef::DropGlue(..) |
@@ -318,7 +327,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                     // Figure out how to pass which arguments.
                     // We have two iterators: Where the arguments come from,
                     // and where they go to.
-                    let skip_zst = match caller_abi {
+                    let rust_abi = match caller_abi {
                         Abi::Rust | Abi::RustCall => true,
                         _ => false
                     };
@@ -343,7 +352,7 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                         };
                     // Skip ZSTs
                     let mut caller_iter = caller_args.iter()
-                        .filter(|op| !skip_zst || !op.layout.is_zst())
+                        .filter(|op| !rust_abi || !op.layout.is_zst())
                         .map(|op| *op);
 
                     // Now we have to spread them out across the callee's locals,
@@ -358,11 +367,11 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                             // Must be a tuple
                             for i in 0..dest.layout.fields.count() {
                                 let dest = self.place_field(dest, i as u64)?;
-                                self.pass_argument(skip_zst, &mut caller_iter, dest)?;
+                                self.pass_argument(rust_abi, &mut caller_iter, dest)?;
                             }
                         } else {
                             // Normal argument
-                            self.pass_argument(skip_zst, &mut caller_iter, dest)?;
+                            self.pass_argument(rust_abi, &mut caller_iter, dest)?;
                         }
                     }
                     // Now we should have no more caller args
@@ -373,7 +382,11 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                     // Don't forget to check the return type!
                     if let Some(caller_ret) = dest {
                         let callee_ret = self.eval_place(&mir::Place::Local(mir::RETURN_PLACE))?;
-                        if !Self::check_argument_compat(caller_ret.layout, callee_ret.layout) {
+                        if !Self::check_argument_compat(
+                            rust_abi,
+                            caller_ret.layout,
+                            callee_ret.layout,
+                        ) {
                             return err!(FunctionRetMismatch(
                                 caller_ret.layout.ty, callee_ret.layout.ty
                             ));
@@ -400,12 +413,12 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
             // cannot use the shim here, because that will only result in infinite recursion
             ty::InstanceDef::Virtual(_, idx) => {
                 let ptr_size = self.pointer_size();
-                let ptr_align = self.tcx.data_layout.pointer_align;
-                let ptr = self.ref_to_mplace(self.read_value(args[0])?)?;
+                let ptr = self.deref_operand(args[0])?;
                 let vtable = ptr.vtable()?;
-                let fn_ptr = self.memory.read_ptr_sized(
-                    vtable.offset(ptr_size * (idx as u64 + 3), &self)?,
-                    ptr_align
+                self.memory.check_align(vtable.into(), self.tcx.data_layout.pointer_align.abi)?;
+                let fn_ptr = self.memory.get(vtable.alloc_id)?.read_ptr_sized(
+                    self,
+                    vtable.offset(ptr_size * (idx as u64 + 3), self)?,
                 )?.to_ptr()?;
                 let instance = self.memory.get_fn(fn_ptr)?;
 
@@ -415,8 +428,8 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
                 let mut args = args.to_vec();
                 let pointee = args[0].layout.ty.builtin_deref(true).unwrap().ty;
                 let fake_fat_ptr_ty = self.tcx.mk_mut_ptr(pointee);
-                args[0].layout = self.layout_of(fake_fat_ptr_ty)?.field(&self, 0)?;
-                args[0].op = Operand::Immediate(Value::Scalar(ptr.ptr.into())); // strip vtable
+                args[0].layout = self.layout_of(fake_fat_ptr_ty)?.field(self, 0)?;
+                args[0].op = Operand::Immediate(Immediate::Scalar(ptr.ptr.into())); // strip vtable
                 trace!("Patched self operand to {:#?}", args[0]);
                 // recurse with concrete function
                 self.eval_fn_call(instance, span, caller_abi, &args, dest, ret)
@@ -446,15 +459,12 @@ impl<'a, 'mir, 'tcx, M: Machine<'a, 'mir, 'tcx>> EvalContext<'a, 'mir, 'tcx, M> 
         };
 
         let arg = OpTy {
-            op: Operand::Immediate(self.create_ref(
-                place,
-                None // this is a "raw reference"
-            )?),
+            op: Operand::Immediate(place.to_ref()),
             layout: self.layout_of(self.tcx.mk_mut_ptr(place.layout.ty))?,
         };
 
         let ty = self.tcx.mk_unit(); // return type is ()
-        let dest = MPlaceTy::dangling(self.layout_of(ty)?, &self);
+        let dest = MPlaceTy::dangling(self.layout_of(ty)?, self);
 
         self.eval_fn_call(
             instance,

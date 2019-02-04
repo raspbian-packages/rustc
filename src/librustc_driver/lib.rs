@@ -64,6 +64,14 @@ extern crate syntax;
 extern crate syntax_ext;
 extern crate syntax_pos;
 
+// Note that the linkage here should be all that we need, on Linux we're not
+// prefixing the symbols here so this should naturally override our default
+// allocator. On OSX it should override via the zone allocator. We shouldn't
+// enable this by default on other platforms, so other platforms aren't handled
+// here yet.
+#[cfg(feature = "jemalloc-sys")]
+extern crate jemalloc_sys;
+
 use driver::CompileController;
 use pretty::{PpMode, UserIdentifiedItem};
 
@@ -119,7 +127,7 @@ mod test;
 pub mod profile;
 pub mod driver;
 pub mod pretty;
-mod derive_registrar;
+mod proc_macro_decls;
 
 pub mod target_features {
     use syntax::ast;
@@ -635,8 +643,8 @@ impl Compilation {
     }
 }
 
-/// A trait for customising the compilation process. Offers a number of hooks for
-/// executing custom code or customising input.
+/// A trait for customizing the compilation process. Offers a number of hooks for
+/// executing custom code or customizing input.
 pub trait CompilerCalls<'a> {
     /// Hook for a callback early in the process of handling arguments. This will
     /// be called straight after options have been parsed but before anything
@@ -944,7 +952,7 @@ impl<'a> CompilerCalls<'a> for RustcDefaultCalls {
             control.compilation_done.callback = box move |state| {
                 old_callback(state);
                 let sess = state.session;
-                println!("Fuel used by {}: {}",
+                eprintln!("Fuel used by {}: {}",
                     sess.print_fuel_crate.as_ref().unwrap(),
                     sess.print_fuel.get());
             }
@@ -1691,7 +1699,6 @@ pub fn diagnostics_registry() -> errors::registry::Registry {
     all_errors.extend_from_slice(&rustc_privacy::DIAGNOSTICS);
     // FIXME: need to figure out a way to get these back in here
     // all_errors.extend_from_slice(get_codegen_backend(sess).diagnostics());
-    all_errors.extend_from_slice(&rustc_codegen_utils::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_metadata::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_passes::DIAGNOSTICS);
     all_errors.extend_from_slice(&rustc_plugin::DIAGNOSTICS);

@@ -12,7 +12,7 @@
 # containing LLDB commands (one command per line), this script will execute the commands one after
 # the other.
 # LLDB also has the -s and -S commandline options which also execute a list of commands from a text
-# file. However, this command are execute `immediately`: a the command of a `run` or `continue`
+# file. However, this command are execute `immediately`: the command of a `run` or `continue`
 # command will be executed immediately after the `run` or `continue`, without waiting for the next
 # breakpoint to be hit. This a command sequence like the following will not yield reliable results:
 #
@@ -28,9 +28,14 @@ import lldb
 import os
 import sys
 import threading
-import thread
 import re
 import time
+
+try:
+    import thread
+except ModuleNotFoundError:
+    # The `thread` module was renamed to `_thread` in Python 3.
+    import _thread as thread
 
 # Set this to True for additional output
 DEBUG_OUTPUT = False

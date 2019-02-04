@@ -969,7 +969,7 @@ impl<'a, 'tcx> TypeVisitor<'tcx> for TypePrivacyVisitor<'a, 'tcx> {
                             Some(poly_projection_predicate.skip_binder()
                                                           .projection_ty.trait_ref(self.tcx))
                         }
-                        ty::Predicate::TypeOutlives(..) => None,
+                        ty::Predicate::TypeOutlives(..) | ty::Predicate::RegionOutlives(..) => None,
                         _ => bug!("unexpected predicate: {:?}", predicate),
                     };
                     if let Some(trait_ref) = trait_ref {
@@ -1761,7 +1761,7 @@ fn privacy_access_levels<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
             tcx,
             access_levels: &visitor.access_levels,
             in_variant: false,
-            old_error_set: NodeSet(),
+            old_error_set: Default::default(),
         };
         intravisit::walk_crate(&mut visitor, krate);
 

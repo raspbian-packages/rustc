@@ -4,9 +4,9 @@ Bug: https://github.com/rust-lang/rust/pull/45331
 --- a/src/bootstrap/doc.rs
 +++ b/src/bootstrap/doc.rs
 @@ -411,7 +411,7 @@
+ 
              if filename == "not_found.md" {
-                 cmd.arg("--markdown-no-toc")
-                    .arg("--markdown-css")
+                 cmd.arg("--markdown-css")
 -                   .arg("https://doc.rust-lang.org/rust.css");
 +                   .arg("rust.css");
              } else {

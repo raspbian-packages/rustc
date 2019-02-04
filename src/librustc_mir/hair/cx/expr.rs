@@ -15,7 +15,7 @@ use hair::cx::block;
 use hair::cx::to_ref::ToRef;
 use hair::util::UserAnnotatedTyHelpers;
 use rustc::hir::def::{Def, CtorKind};
-use rustc::mir::interpret::GlobalId;
+use rustc::mir::interpret::{GlobalId, ErrorHandled};
 use rustc::ty::{self, AdtKind, Ty};
 use rustc::ty::adjustment::{Adjustment, Adjust, AutoBorrow, AutoBorrowMutability};
 use rustc::ty::cast::CastKind as TyCastKind;
@@ -284,7 +284,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                 Some((adt_def, adt_def.variant_index_with_id(variant_id)))
                             }
                             Def::StructCtor(_, CtorKind::Fn) |
-                            Def::SelfCtor(..) => Some((adt_def, 0)),
+                            Def::SelfCtor(..) => Some((adt_def, VariantIdx::new(0))),
                             _ => None,
                         }
                     })
@@ -468,7 +468,7 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                         AdtKind::Struct | AdtKind::Union => {
                             ExprKind::Adt {
                                 adt_def: adt,
-                                variant_index: 0,
+                                variant_index: VariantIdx::new(0),
                                 substs,
                                 user_ty: cx.user_substs_applied_to_adt(expr.hir_id, adt),
                                 fields: field_refs(cx, fields),
@@ -571,8 +571,9 @@ fn make_mirror_unadjusted<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             let span = cx.tcx.def_span(def_id);
             let count = match cx.tcx.at(span).const_eval(cx.param_env.and(global_id)) {
                 Ok(cv) => cv.unwrap_usize(cx.tcx),
-                Err(e) => {
-                    e.report_as_error(cx.tcx.at(span), "could not evaluate array length");
+                Err(ErrorHandled::Reported) => 0,
+                Err(ErrorHandled::TooGeneric) => {
+                    cx.tcx.sess.span_err(span, "array lengths can't depend on generic parameters");
                     0
                 },
             };
@@ -1060,7 +1061,7 @@ fn convert_var<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
             // ...but the upvar might be an `&T` or `&mut T` capture, at which
             // point we need an implicit deref
             let upvar_id = ty::UpvarId {
-                var_id: var_hir_id,
+                var_path: ty::UpvarPath {hir_id: var_hir_id},
                 closure_expr_id: LocalDefId::from_def_id(closure_def_id),
             };
             match cx.tables().upvar_capture(upvar_id) {
@@ -1177,7 +1178,7 @@ fn capture_freevar<'a, 'gcx, 'tcx>(cx: &mut Cx<'a, 'gcx, 'tcx>,
                                    -> ExprRef<'tcx> {
     let var_hir_id = cx.tcx.hir.node_to_hir_id(freevar.var_id());
     let upvar_id = ty::UpvarId {
-        var_id: var_hir_id,
+        var_path: ty::UpvarPath { hir_id: var_hir_id },
         closure_expr_id: cx.tcx.hir.local_def_id(closure_expr.id).to_local(),
     };
     let upvar_capture = cx.tables().upvar_capture(upvar_id);

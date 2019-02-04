@@ -39,7 +39,7 @@ llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
 link-shared = true
 
 [rust]
-use-jemalloc = false
+jemalloc = false
 optimize = MAKE_OPTIMISATIONS
 dist-src = false
 

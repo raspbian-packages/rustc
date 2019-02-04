@@ -29,7 +29,7 @@ library has defined on it in many different situations where the successful
 value and error value we want to return may differ.
 
 Let’s call a function that returns a `Result` value because the function could
-fail. In Listing 9-3 we try to open a file:
+fail. In Listing 9-3 we try to open a file.
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -43,14 +43,13 @@ fn main() {
 
 <span class="caption">Listing 9-3: Opening a file</span>
 
-How do we know `File::open` returns a `Result`? We could look at the 
-[standard library API documentation](../std/index.html),
-or we could ask the compiler! If we give `f` a type
-annotation that we know is *not* the return type of the function and then try
-to compile the code, the compiler will tell us that the types don’t match. The
-error message will then tell us what the type of `f` *is*. Let’s try it! We
-know that the return type of `File::open` isn’t of type `u32`, so let’s change
-the `let f` statement to this:
+How do we know `File::open` returns a `Result`? We could look at the [standard
+library API documentation](../std/index.html)<!-- ignore -->, or we could ask
+the compiler! If we give `f` a type annotation that we know is *not* the return
+type of the function and then try to compile the code, the compiler will tell
+us that the types don’t match. The error message will then tell us what the
+type of `f` *is*. Let’s try it! We know that the return type of `File::open`
+isn’t of type `u32`, so let’s change the `let f` statement to this:
 
 ```rust,ignore
 let f: u32 = File::open("hello.txt");
@@ -142,7 +141,7 @@ if `File::open` failed because the file doesn’t exist, we want to create the
 file and return the handle to the new file. If `File::open` failed for any
 other reason—for example, because we didn’t have permission to open the file—we
 still want the code to `panic!` in the same way as it did in Listing 9-4. Look
-at Listing 9-5, which adds another arm to the `match`:
+at Listing 9-5, which adds another arm to the `match`.
 
 <span class="filename">Filename: src/main.rs</span>
 
@@ -178,21 +177,21 @@ has a method `kind` that we can call to get an `io::ErrorKind` value. The enum
 `io::ErrorKind` is provided by the standard library and has variants
 representing the different kinds of errors that might result from an `io`
 operation. The variant we want to use is `ErrorKind::NotFound`, which indicates
-the file we’re trying to open doesn’t exist yet. So, we `match` on `f`, but we
-also then have an inner `match` on `error.kind()`.
+the file we’re trying to open doesn’t exist yet. So we `match` on `f`, but we
+also have an inner `match` on `error.kind()`.
 
 The condition we want to check in the match guard is whether the value returned
 by `error.kind()` is the `NotFound` variant of the `ErrorKind` enum. If it is,
 we try to create the file with `File::create`. However, because `File::create`
-could also fail, we need to add another inner `match` statement as well. When
+could also fail, we need to add another inner `match` expression as well. When
 the file can’t be opened, a different error message will be printed. The last
 arm of the outer `match` stays the same so the program panics on any error
 besides the missing file error.
 
-That’s a lot of `match`! `match` is very powerful, but also very much a primitive.
-In Chapter 13, we’ll learn about closures. The `Result<T, E>` type has many
-methods that accept a closure, and are implemented as `match` statements. A more
-seasoned Rustacean might write this:
+That’s a lot of `match`! `match` is very powerful, but also very much a
+primitive. In Chapter 13, we’ll learn about closures. The `Result<T, E>` type
+has many methods that accept a closure, and are implemented as `match`
+expressions. A more seasoned Rustacean might write this:
 
 ```rust,ignore
 use std::fs::File;
@@ -213,16 +212,15 @@ fn main() {
 
 Come back to this example after you’ve read Chapter 13, and look up what the
 `map_err` and `unwrap_or_else` methods do in the standard library
-documentation. There’s many more of these methods that can clean up huge
-nested `match`es when dealing with errors. We’ll be looking at some other
-strategies shortly!
+documentation. There’s many more of these methods that can clean up huge nested
+`match` expressions when dealing with errors.
 
 ### Shortcuts for Panic on Error: `unwrap` and `expect`
 
 Using `match` works well enough, but it can be a bit verbose and doesn’t always
 communicate intent well. The `Result<T, E>` type has many helper methods
 defined on it to do various tasks. One of those methods, called `unwrap`, is a
-shortcut method that is implemented just like the `match` statement we wrote in
+shortcut method that is implemented just like the `match` expression we wrote in
 Listing 9-4. If the `Result` value is the `Ok` variant, `unwrap` will return
 the value inside the `Ok`. If the `Result` is the `Err` variant, `unwrap` will
 call the `panic!` macro for us. Here is an example of `unwrap` in action:

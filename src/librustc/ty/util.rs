@@ -43,7 +43,7 @@ impl<'tcx> fmt::Display for Discr<'tcx> {
         match self.ty.sty {
             ty::Int(ity) => {
                 let bits = ty::tls::with(|tcx| {
-                    Integer::from_attr(tcx, SignedInt(ity)).size().bits()
+                    Integer::from_attr(&tcx, SignedInt(ity)).size().bits()
                 });
                 let x = self.val as i128;
                 // sign extend the raw representation to be an i128
@@ -62,8 +62,8 @@ impl<'tcx> Discr<'tcx> {
     }
     pub fn checked_add<'a, 'gcx>(self, tcx: TyCtxt<'a, 'gcx, 'tcx>, n: u128) -> (Self, bool) {
         let (int, signed) = match self.ty.sty {
-            Int(ity) => (Integer::from_attr(tcx, SignedInt(ity)), true),
-            Uint(uty) => (Integer::from_attr(tcx, UnsignedInt(uty)), false),
+            Int(ity) => (Integer::from_attr(&tcx, SignedInt(ity)), true),
+            Uint(uty) => (Integer::from_attr(&tcx, UnsignedInt(uty)), false),
             _ => bug!("non integer discriminant"),
         };
 
@@ -303,7 +303,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
     /// Same as applying struct_tail on `source` and `target`, but only
     /// keeps going as long as the two types are instances of the same
     /// structure definitions.
-    /// For `(Foo<Foo<T>>, Foo<Trait>)`, the result will be `(Foo<T>, Trait)`,
+    /// For `(Foo<Foo<T>>, Foo<dyn Trait>)`, the result will be `(Foo<T>, Trait)`,
     /// whereas struct_tail produces `T`, and `Trait`, respectively.
     pub fn struct_lockstep_tails(self,
                                  source: Ty<'tcx>,
@@ -363,7 +363,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                erased_self_ty,
                predicates);
 
-        assert!(!erased_self_ty.has_escaping_regions());
+        assert!(!erased_self_ty.has_escaping_bound_vars());
 
         traits::elaborate_predicates(self, predicates)
             .filter_map(|predicate| {
@@ -389,7 +389,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
                         // construct such an object, but this seems
                         // correct even if that code changes).
                         let ty::OutlivesPredicate(ref t, ref r) = predicate.skip_binder();
-                        if t == &erased_self_ty && !r.has_escaping_regions() {
+                        if t == &erased_self_ty && !r.has_escaping_bound_vars() {
                             Some(*r)
                         } else {
                             None
@@ -527,7 +527,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         self.def_key(def_id).disambiguated_data.data == DefPathData::ClosureExpr
     }
 
-    /// True if `def_id` refers to a trait (e.g., `trait Foo { ... }`).
+    /// True if `def_id` refers to a trait (i.e., `trait Foo { ... }`).
     pub fn is_trait(self, def_id: DefId) -> bool {
         if let DefPathData::Trait(_) = self.def_key(def_id).disambiguated_data.data {
             true
@@ -951,8 +951,8 @@ fn needs_drop_raw<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>,
 
         // Can refer to a type which may drop.
         // FIXME(eddyb) check this against a ParamEnv.
-        ty::Dynamic(..) | ty::Projection(..) | ty::Param(_) |
-        ty::Opaque(..) | ty::Infer(_) | ty::Error => true,
+        ty::Dynamic(..) | ty::Projection(..) | ty::Param(_) | ty::Bound(..) |
+        ty::Placeholder(..) | ty::Opaque(..) | ty::Infer(_) | ty::Error => true,
 
         ty::UnnormalizedProjection(..) => bug!("only used with chalk-engine"),
 

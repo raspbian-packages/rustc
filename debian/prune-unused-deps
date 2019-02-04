@@ -10,11 +10,11 @@ had_config_toml=$(if test -e "$scriptdir/debian/config.toml"; then echo true; el
 
 cp "$scriptdir/debian/config.toml" config.toml
 "$scriptdir/debian/ensure-patch" -N "$scriptdir/debian/patches/d-ignore-removed-submodules.patch"
-test -f src/Cargo.lock.orig || cp src/Cargo.lock src/Cargo.lock.orig
+test -f Cargo.lock.orig || cp Cargo.lock Cargo.lock.orig
 ./x.py build nonexistent/path/to/trigger/cargo/metadata src/bootstrap
 
 not_needed() {
-	diff -ru src/Cargo.lock.orig src/Cargo.lock | grep '^-"checksum' | cut '-d ' -f2-3
+	diff -ru Cargo.lock.orig Cargo.lock | grep '^-"checksum' | cut '-d ' -f2-3
 }
 
 ghetto_parse_cargo() {
@@ -25,7 +25,7 @@ ghetto_parse_cargo() {
 }
 
 pruned_paths() {
-	for i in src/vendor/*/Cargo.toml; do
+	for i in vendor/*/Cargo.toml; do
 		pkgnamever=
 		pkgnamever=$(ghetto_parse_cargo "$i")
 		if [ -z "$pkgnamever" ]; then

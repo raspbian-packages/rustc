@@ -1,11 +1,31 @@
-rustc (1.31.0+dfsg1-2+rpi1) buster-staging; urgency=medium
+rustc (1.32.0+dfsg1-1+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Fri, 28 Dec 2018 07:41:25 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Mon, 04 Feb 2019 05:20:52 +0000
+
+rustc (1.32.0+dfsg1-1) unstable; urgency=medium
+
+  * New upstream release.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 27 Jan 2019 22:02:48 -0800
+
+rustc (1.32.0~beta.2+dfsg1-1~exp2) experimental; urgency=medium
+
+  * Note that this upstream version already Closes: #917191.
+  * Backport other upstream fixes. (Closes: #916818, #917000, #917192).
+
+ -- Ximin Luo <infinity0@debian.org>  Tue, 01 Jan 2019 15:26:57 -0800
+
+rustc (1.32.0~beta.2+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+  * Drop obsolete d-sparc64-dont-pack-spans.patch
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 16 Dec 2018 13:48:25 -0800
 
 rustc (1.31.0+dfsg1-2) unstable; urgency=medium
 

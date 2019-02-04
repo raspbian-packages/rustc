@@ -16,6 +16,7 @@ use borrow_check::location::LocationTable;
 use borrow_check::nll::constraints::{ConstraintSet, OutlivesConstraint};
 use borrow_check::nll::facts::AllFacts;
 use borrow_check::nll::region_infer::values::LivenessValues;
+use borrow_check::nll::region_infer::values::PlaceholderIndex;
 use borrow_check::nll::region_infer::values::PlaceholderIndices;
 use borrow_check::nll::region_infer::values::RegionValueElements;
 use borrow_check::nll::region_infer::{ClosureRegionRequirementsExt, TypeTest};
@@ -28,11 +29,12 @@ use borrow_check::nll::ToRegionVid;
 use dataflow::move_paths::MoveData;
 use dataflow::FlowAtLocation;
 use dataflow::MaybeInitializedPlaces;
+use either::Either;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
 use rustc::infer::canonical::QueryRegionConstraint;
 use rustc::infer::outlives::env::RegionBoundPairs;
-use rustc::infer::{InferCtxt, InferOk, LateBoundRegionConversionTime};
+use rustc::infer::{InferCtxt, InferOk, LateBoundRegionConversionTime, NLLRegionVariableOrigin};
 use rustc::mir::interpret::EvalErrorKind::BoundsCheck;
 use rustc::mir::tcx::PlaceTy;
 use rustc::mir::visit::{PlaceContext, Visitor, MutatingUseContext, NonMutatingUseContext};
@@ -44,13 +46,13 @@ use rustc::traits::{ObligationCause, PredicateObligations};
 use rustc::ty::fold::TypeFoldable;
 use rustc::ty::subst::{Subst, Substs, UnpackedKind};
 use rustc::ty::{self, RegionVid, ToPolyTraitRef, Ty, TyCtxt, TyKind};
+use rustc_data_structures::fx::{FxHashMap, FxHashSet};
+use rustc_data_structures::indexed_vec::{IndexVec, Idx};
+use rustc::ty::layout::VariantIdx;
 use std::rc::Rc;
 use std::{fmt, iter};
 use syntax_pos::{Span, DUMMY_SP};
 use transform::{MirPass, MirSource};
-
-use either::Either;
-use rustc_data_structures::fx::{FxHashMap, FxHashSet};
 
 macro_rules! span_mirbug {
     ($context:expr, $elem:expr, $($message:tt)*) => ({
@@ -110,7 +112,7 @@ mod relate_tys;
 /// - `liveness` -- results of a liveness computation on the MIR; used to create liveness
 ///   constraints for the regions in the types of variables
 /// - `flow_inits` -- results of a maybe-init dataflow analysis
-/// - `move_data` -- move-data constructed when performing the maybe-init dataflow analysiss
+/// - `move_data` -- move-data constructed when performing the maybe-init dataflow analysis
 pub(crate) fn type_check<'gcx, 'tcx>(
     infcx: &InferCtxt<'_, 'gcx, 'tcx>,
     param_env: ty::ParamEnv<'gcx>,
@@ -126,12 +128,13 @@ pub(crate) fn type_check<'gcx, 'tcx>(
 ) -> MirTypeckResults<'tcx> {
     let implicit_region_bound = infcx.tcx.mk_region(ty::ReVar(universal_regions.fr_fn_body));
     let mut constraints = MirTypeckRegionConstraints {
+        placeholder_indices: PlaceholderIndices::default(),
+        placeholder_index_to_region: IndexVec::default(),
         liveness_constraints: LivenessValues::new(elements),
         outlives_constraints: ConstraintSet::default(),
         closure_bounds_mapping: Default::default(),
         type_tests: Vec::default(),
     };
-    let mut placeholder_indices = PlaceholderIndices::default();
 
     let CreateResult {
         universal_region_relations,
@@ -151,7 +154,6 @@ pub(crate) fn type_check<'gcx, 'tcx>(
         borrow_set,
         all_facts,
         constraints: &mut constraints,
-        placeholder_indices: &mut placeholder_indices,
     };
 
     type_check_internal(
@@ -175,7 +177,6 @@ pub(crate) fn type_check<'gcx, 'tcx>(
 
     MirTypeckResults {
         constraints,
-        placeholder_indices,
         universal_region_relations,
     }
 }
@@ -359,7 +360,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
     }
 
     fn sanitize_type(&mut self, parent: &dyn fmt::Debug, ty: Ty<'tcx>) -> Ty<'tcx> {
-        if ty.has_escaping_regions() || ty.references_error() {
+        if ty.has_escaping_bound_vars() || ty.references_error() {
             span_mirbug_and_err!(self, parent, "bad type {:?}", ty)
         } else {
             ty
@@ -574,7 +575,7 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
             },
             ProjectionElem::Downcast(adt_def1, index) => match base_ty.sty {
                 ty::Adt(adt_def, substs) if adt_def.is_enum() && adt_def == adt_def1 => {
-                    if index >= adt_def.variants.len() {
+                    if index.as_usize() >= adt_def.variants.len() {
                         PlaceTy::Ty {
                             ty: span_mirbug_and_err!(
                                 self,
@@ -654,7 +655,8 @@ impl<'a, 'b, 'gcx, 'tcx> TypeVerifier<'a, 'b, 'gcx, 'tcx> {
                 variant_index,
             } => (&adt_def.variants[variant_index], substs),
             PlaceTy::Ty { ty } => match ty.sty {
-                ty::Adt(adt_def, substs) if !adt_def.is_enum() => (&adt_def.variants[0], substs),
+                ty::Adt(adt_def, substs) if !adt_def.is_enum() =>
+                    (&adt_def.variants[VariantIdx::new(0)], substs),
                 ty::Closure(def_id, substs) => {
                     return match substs.upvar_tys(def_id, tcx).nth(field.index()) {
                         Some(ty) => Ok(ty),
@@ -730,18 +732,30 @@ struct BorrowCheckContext<'a, 'tcx: 'a> {
     all_facts: &'a mut Option<AllFacts>,
     borrow_set: &'a BorrowSet<'tcx>,
     constraints: &'a mut MirTypeckRegionConstraints<'tcx>,
-    placeholder_indices: &'a mut PlaceholderIndices,
 }
 
 crate struct MirTypeckResults<'tcx> {
     crate constraints: MirTypeckRegionConstraints<'tcx>,
-    crate placeholder_indices: PlaceholderIndices,
     crate universal_region_relations: Rc<UniversalRegionRelations<'tcx>>,
 }
 
 /// A collection of region constraints that must be satisfied for the
 /// program to be considered well-typed.
 crate struct MirTypeckRegionConstraints<'tcx> {
+    /// Maps from a `ty::Placeholder` to the corresponding
+    /// `PlaceholderIndex` bit that we will use for it.
+    ///
+    /// To keep everything in sync, do not insert this set
+    /// directly. Instead, use the `placeholder_region` helper.
+    crate placeholder_indices: PlaceholderIndices,
+
+    /// Each time we add a placeholder to `placeholder_indices`, we
+    /// also create a corresponding "representative" region vid for
+    /// that wraps it. This vector tracks those. This way, when we
+    /// convert the same `ty::RePlaceholder(p)` twice, we can map to
+    /// the same underlying `RegionVid`.
+    crate placeholder_index_to_region: IndexVec<PlaceholderIndex, ty::Region<'tcx>>,
+
     /// In general, the type-checker is not responsible for enforcing
     /// liveness constraints; this job falls to the region inferencer,
     /// which performs a liveness analysis. However, in some limited
@@ -757,6 +771,25 @@ crate struct MirTypeckRegionConstraints<'tcx> {
         FxHashMap<Location, FxHashMap<(RegionVid, RegionVid), (ConstraintCategory, Span)>>,
 
     crate type_tests: Vec<TypeTest<'tcx>>,
+}
+
+impl MirTypeckRegionConstraints<'tcx> {
+    fn placeholder_region(
+        &mut self,
+        infcx: &InferCtxt<'_, '_, 'tcx>,
+        placeholder: ty::PlaceholderRegion,
+    ) -> ty::Region<'tcx> {
+        let placeholder_index = self.placeholder_indices.insert(placeholder);
+        match self.placeholder_index_to_region.get(placeholder_index) {
+            Some(&v) => v,
+            None => {
+                let origin = NLLRegionVariableOrigin::Placeholder(placeholder);
+                let region = infcx.next_nll_region_var_in_universe(origin, placeholder.universe);
+                self.placeholder_index_to_region.push(region);
+                region
+            }
+        }
+    }
 }
 
 /// The `Locations` type summarizes *where* region constraints are
@@ -888,15 +921,14 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
 
         if let Some(ref mut borrowck_context) = self.borrowck_context {
             constraint_conversion::ConstraintConversion::new(
-                self.infcx.tcx,
+                self.infcx,
                 borrowck_context.universal_regions,
                 self.region_bound_pairs,
                 self.implicit_region_bound,
                 self.param_env,
                 locations,
                 category,
-                &mut borrowck_context.constraints.outlives_constraints,
-                &mut borrowck_context.constraints.type_tests,
+                &mut borrowck_context.constraints,
             ).convert_all(&data);
         }
     }
@@ -1250,7 +1282,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                         );
                     }
                 };
-                if variant_index >= adt.variants.len() {
+                if variant_index.as_usize() >= adt.variants.len() {
                     span_bug!(
                         stmt.source_info.span,
                         "bad set discriminant ({:?} = {:?}): value of of range",
@@ -1279,11 +1311,11 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                 }
             }
             StatementKind::FakeRead(..)
-            | StatementKind::StorageLive(_)
-            | StatementKind::StorageDead(_)
+            | StatementKind::StorageLive(..)
+            | StatementKind::StorageDead(..)
             | StatementKind::InlineAsm { .. }
-            | StatementKind::EndRegion(_)
-            | StatementKind::Validate(..)
+            | StatementKind::Retag { .. }
+            | StatementKind::EscapeToRaw { .. }
             | StatementKind::Nop => {}
         }
     }
@@ -1374,7 +1406,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                         return;
                     }
                 };
-                let (sig, map) = self.infcx.replace_late_bound_regions_with_fresh_var(
+                let (sig, map) = self.infcx.replace_bound_vars_with_fresh_vars(
                     term.source_info.span,
                     LateBoundRegionConversionTime::FnCall,
                     &sig,
@@ -1383,7 +1415,7 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                 self.check_call_dest(mir, term, &sig, destination, term_location);
 
                 self.prove_predicates(
-                    sig.inputs().iter().map(|ty| ty::Predicate::WellFormed(ty)),
+                    sig.inputs_and_output.iter().map(|ty| ty::Predicate::WellFormed(ty)),
                     term_location.to_locations(),
                     ConstraintCategory::Boring,
                 );
@@ -2203,8 +2235,8 @@ impl<'a, 'gcx, 'tcx> TypeChecker<'a, 'gcx, 'tcx> {
                     .enumerate()
                     .filter_map(|(idx, constraint)| {
                         let ty::OutlivesPredicate(k1, r2) =
-                            constraint.no_late_bound_regions().unwrap_or_else(|| {
-                                bug!("query_constraint {:?} contained bound regions", constraint,);
+                            constraint.no_bound_vars().unwrap_or_else(|| {
+                                bug!("query_constraint {:?} contained bound vars", constraint,);
                             });
 
                         match k1.unpack() {

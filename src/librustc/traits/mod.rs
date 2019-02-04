@@ -10,7 +10,7 @@
 
 //! Trait Resolution. See [rustc guide] for more info on how this works.
 //!
-//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/traits/resolution.html
+//! [rustc guide]: https://rust-lang.github.io/rustc-guide/traits/resolution.html
 
 pub use self::SelectionError::*;
 pub use self::FulfillmentErrorCode::*;
@@ -23,7 +23,7 @@ use hir::def_id::DefId;
 use infer::SuppressRegionErrors;
 use infer::outlives::env::OutlivesEnvironment;
 use middle::region;
-use mir::interpret::ConstEvalErr;
+use mir::interpret::ErrorHandled;
 use ty::subst::Substs;
 use ty::{self, AdtKind, List, Ty, TyCtxt, GenericParamDefKind, ToPredicate};
 use ty::error::{ExpectedFound, TypeError};
@@ -50,11 +50,8 @@ pub use self::select::{EvaluationResult, IntercrateAmbiguityCause, OverflowError
 pub use self::specialize::{OverlapError, specialization_graph, translate_substs};
 pub use self::specialize::find_associated_item;
 pub use self::engine::{TraitEngine, TraitEngineExt};
-pub use self::util::elaborate_predicates;
-pub use self::util::supertraits;
-pub use self::util::Supertraits;
-pub use self::util::supertrait_def_ids;
-pub use self::util::SupertraitDefIds;
+pub use self::util::{elaborate_predicates, elaborate_trait_ref, elaborate_trait_refs};
+pub use self::util::{supertraits, supertrait_def_ids, Supertraits, SupertraitDefIds};
 pub use self::util::transitive_bounds;
 
 #[allow(dead_code)]
@@ -352,7 +349,7 @@ impl<'tcx> GoalKind<'tcx> {
         domain_goal: PolyDomainGoal<'tcx>,
         tcx: TyCtxt<'a, 'tcx, 'tcx>,
     ) -> GoalKind<'tcx> {
-        match domain_goal.no_late_bound_regions() {
+        match domain_goal.no_bound_vars() {
             Some(p) => p.into_goal(),
             None => GoalKind::Quantified(
                 QuantifierKind::Universal,
@@ -438,7 +435,7 @@ pub enum SelectionError<'tcx> {
                                 ty::PolyTraitRef<'tcx>,
                                 ty::error::TypeError<'tcx>),
     TraitNotObjectSafe(DefId),
-    ConstEvalFailure(Lrc<ConstEvalErr<'tcx>>),
+    ConstEvalFailure(ErrorHandled),
     Overflow,
 }
 
@@ -534,8 +531,11 @@ pub enum Vtable<'tcx, N> {
     /// Same as above, but for a fn pointer type with the given signature.
     VtableFnPointer(VtableFnPointerData<'tcx, N>),
 
-    /// Vtable automatically generated for a generator
+    /// Vtable automatically generated for a generator.
     VtableGenerator(VtableGeneratorData<'tcx, N>),
+
+    /// Vtable for a trait alias.
+    VtableTraitAlias(VtableTraitAliasData<'tcx, N>),
 }
 
 /// Identifies a particular impl in the source, along with a set of
@@ -603,6 +603,13 @@ pub struct VtableObjectData<'tcx, N> {
 pub struct VtableFnPointerData<'tcx, N> {
     pub fn_ty: Ty<'tcx>,
     pub nested: Vec<N>
+}
+
+#[derive(Clone, PartialEq, Eq, RustcEncodable, RustcDecodable)]
+pub struct VtableTraitAliasData<'tcx, N> {
+    pub alias_def_id: DefId,
+    pub substs: &'tcx Substs<'tcx>,
+    pub nested: Vec<N>,
 }
 
 /// Creates predicate obligations from the generic bounds.
@@ -1045,6 +1052,7 @@ impl<'tcx,O> Obligation<'tcx,O> {
 }
 
 impl<'tcx> ObligationCause<'tcx> {
+    #[inline]
     pub fn new(span: Span,
                body_id: ast::NodeId,
                code: ObligationCauseCode<'tcx>)
@@ -1072,6 +1080,7 @@ impl<'tcx, N> Vtable<'tcx, N> {
             VtableGenerator(c) => c.nested,
             VtableObject(d) => d.nested,
             VtableFnPointer(d) => d.nested,
+            VtableTraitAlias(d) => d.nested,
         }
     }
 
@@ -1095,20 +1104,25 @@ impl<'tcx, N> Vtable<'tcx, N> {
                 trait_def_id: d.trait_def_id,
                 nested: d.nested.into_iter().map(f).collect(),
             }),
-            VtableFnPointer(p) => VtableFnPointer(VtableFnPointerData {
-                fn_ty: p.fn_ty,
-                nested: p.nested.into_iter().map(f).collect(),
+            VtableClosure(c) => VtableClosure(VtableClosureData {
+                closure_def_id: c.closure_def_id,
+                substs: c.substs,
+                nested: c.nested.into_iter().map(f).collect(),
             }),
             VtableGenerator(c) => VtableGenerator(VtableGeneratorData {
                 generator_def_id: c.generator_def_id,
                 substs: c.substs,
                 nested: c.nested.into_iter().map(f).collect(),
             }),
-            VtableClosure(c) => VtableClosure(VtableClosureData {
-                closure_def_id: c.closure_def_id,
-                substs: c.substs,
-                nested: c.nested.into_iter().map(f).collect(),
-            })
+            VtableFnPointer(p) => VtableFnPointer(VtableFnPointerData {
+                fn_ty: p.fn_ty,
+                nested: p.nested.into_iter().map(f).collect(),
+            }),
+            VtableTraitAlias(d) => VtableTraitAlias(VtableTraitAliasData {
+                alias_def_id: d.alias_def_id,
+                substs: d.substs,
+                nested: d.nested.into_iter().map(f).collect(),
+            }),
         }
     }
 }

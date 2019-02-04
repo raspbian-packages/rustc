@@ -68,7 +68,7 @@ pub struct Session {
     /// For a library crate, this is always none
     pub entry_fn: Once<Option<(NodeId, Span, config::EntryFnType)>>,
     pub plugin_registrar_fn: Once<Option<ast::NodeId>>,
-    pub derive_registrar_fn: Once<Option<ast::NodeId>>,
+    pub proc_macro_decls_static: Once<Option<ast::NodeId>>,
     pub default_sysroot: Option<PathBuf>,
     /// The name of the root source file of the crate, in the local file system.
     /// `None` means that there is no source file.
@@ -112,7 +112,6 @@ pub struct Session {
     /// The metadata::creader module may inject an allocator/panic_runtime
     /// dependency if it didn't already find one, and this tracks what was
     /// injected.
-    pub injected_allocator: Once<Option<CrateNum>>,
     pub allocator_kind: Once<Option<AllocatorKind>>,
     pub injected_panic_runtime: Once<Option<CrateNum>>,
 
@@ -394,7 +393,7 @@ impl Session {
 
         match id.as_usize().checked_add(count) {
             Some(next) => {
-                self.next_node_id.set(ast::NodeId::new(next));
+                self.next_node_id.set(ast::NodeId::from_usize(next));
             }
             None => bug!("Input too large, ran out of node ids!"),
         }
@@ -688,9 +687,9 @@ impl Session {
         )
     }
 
-    pub fn generate_derive_registrar_symbol(&self, disambiguator: CrateDisambiguator) -> String {
+    pub fn generate_proc_macro_decls_symbol(&self, disambiguator: CrateDisambiguator) -> String {
         format!(
-            "__rustc_derive_registrar_{}__",
+            "__rustc_proc_macro_decls_{}__",
             disambiguator.to_fingerprint().to_hex()
         )
     }
@@ -827,8 +826,10 @@ impl Session {
     }
 
     pub fn profiler<F: FnOnce(&mut SelfProfiler) -> ()>(&self, f: F) {
-        let mut profiler = self.self_profiling.borrow_mut();
-        f(&mut profiler);
+        if self.opts.debugging_opts.self_profile {
+            let mut profiler = self.self_profiling.borrow_mut();
+            f(&mut profiler);
+        }
     }
 
     pub fn print_profiler_results(&self) {
@@ -868,7 +869,7 @@ impl Session {
                 let fuel = self.optimization_fuel_limit.get();
                 ret = fuel != 0;
                 if fuel == 0 && !self.out_of_fuel.get() {
-                    println!("optimization-fuel-exhausted: {}", msg());
+                    eprintln!("optimization-fuel-exhausted: {}", msg());
                     self.out_of_fuel.set(true);
                 } else if fuel > 0 {
                     self.optimization_fuel_limit.set(fuel - 1);
@@ -1145,12 +1146,12 @@ pub fn build_session_(
         // For a library crate, this is always none
         entry_fn: Once::new(),
         plugin_registrar_fn: Once::new(),
-        derive_registrar_fn: Once::new(),
+        proc_macro_decls_static: Once::new(),
         default_sysroot,
         local_crate_source_file,
         working_dir,
         lint_store: RwLock::new(lint::LintStore::new()),
-        buffered_lints: Lock::new(Some(lint::LintBuffer::new())),
+        buffered_lints: Lock::new(Some(Default::default())),
         one_time_diagnostics: Default::default(),
         plugin_llvm_passes: OneThread::new(RefCell::new(Vec::new())),
         plugin_attributes: OneThread::new(RefCell::new(Vec::new())),
@@ -1161,8 +1162,7 @@ pub fn build_session_(
         recursion_limit: Once::new(),
         type_length_limit: Once::new(),
         const_eval_stack_frame_limit: 100,
-        next_node_id: OneThread::new(Cell::new(NodeId::new(1))),
-        injected_allocator: Once::new(),
+        next_node_id: OneThread::new(Cell::new(NodeId::from_u32(1))),
         allocator_kind: Once::new(),
         injected_panic_runtime: Once::new(),
         imported_macro_spans: OneThread::new(RefCell::new(FxHashMap::default())),

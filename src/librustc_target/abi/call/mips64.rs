@@ -27,7 +27,7 @@ fn extend_integer_width_mips<Ty>(arg: &mut ArgType<Ty>, bits: u64) {
     arg.extend_integer_width_to(bits);
 }
 
-fn float_reg<'a, Ty, C>(cx: C, ret: &ArgType<'a, Ty>, i: usize) -> Option<Reg>
+fn float_reg<'a, Ty, C>(cx: &C, ret: &ArgType<'a, Ty>, i: usize) -> Option<Reg>
     where Ty: TyLayoutMethods<'a, C> + Copy,
           C: LayoutOf<Ty = Ty, TyLayout = TyLayout<'a, Ty>> + HasDataLayout
 {
@@ -41,7 +41,7 @@ fn float_reg<'a, Ty, C>(cx: C, ret: &ArgType<'a, Ty>, i: usize) -> Option<Reg>
     }
 }
 
-fn classify_ret_ty<'a, Ty, C>(cx: C, ret: &mut ArgType<'a, Ty>)
+fn classify_ret_ty<'a, Ty, C>(cx: &C, ret: &mut ArgType<'a, Ty>)
     where Ty: TyLayoutMethods<'a, C> + Copy,
           C: LayoutOf<Ty = Ty, TyLayout = TyLayout<'a, Ty>> + HasDataLayout
 {
@@ -83,7 +83,7 @@ fn classify_ret_ty<'a, Ty, C>(cx: C, ret: &mut ArgType<'a, Ty>)
     }
 }
 
-fn classify_arg_ty<'a, Ty, C>(cx: C, arg: &mut ArgType<'a, Ty>)
+fn classify_arg_ty<'a, Ty, C>(cx: &C, arg: &mut ArgType<'a, Ty>)
     where Ty: TyLayoutMethods<'a, C> + Copy,
           C: LayoutOf<Ty = Ty, TyLayout = TyLayout<'a, Ty>> + HasDataLayout
 {
@@ -118,9 +118,9 @@ fn classify_arg_ty<'a, Ty, C>(cx: C, arg: &mut ArgType<'a, Ty>)
                 // We only care about aligned doubles
                 if let abi::Abi::Scalar(ref scalar) = field.abi {
                     if let abi::Float(abi::FloatTy::F64) = scalar.value {
-                        if offset.is_abi_aligned(dl.f64_align) {
+                        if offset.is_aligned(dl.f64_align.abi) {
                             // Insert enough integers to cover [last_offset, offset)
-                            assert!(last_offset.is_abi_aligned(dl.f64_align));
+                            assert!(last_offset.is_aligned(dl.f64_align.abi));
                             for _ in 0..((offset - last_offset).bits() / 64)
                                 .min((prefix.len() - prefix_index) as u64) {
 
@@ -151,7 +151,7 @@ fn classify_arg_ty<'a, Ty, C>(cx: C, arg: &mut ArgType<'a, Ty>)
     });
 }
 
-pub fn compute_abi_info<'a, Ty, C>(cx: C, fty: &mut FnType<'a, Ty>)
+pub fn compute_abi_info<'a, Ty, C>(cx: &C, fty: &mut FnType<'a, Ty>)
     where Ty: TyLayoutMethods<'a, C> + Copy,
           C: LayoutOf<Ty = Ty, TyLayout = TyLayout<'a, Ty>> + HasDataLayout
 {

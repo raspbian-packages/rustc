@@ -1,7 +1,9 @@
 # Patches for upstream
 
 # pending, or forwarded
+u-0001-lldb_batchmode.py-try-import-_thread-for-Python-3.patch
 u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
+u-0001-librustc_codegen_llvm-Don-t-eliminate-empty-structs-.patch
 u-reproducible-build.patch
 u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
@@ -11,15 +13,11 @@ u-mips-fixes.diff
 # not forwarded, or forwarded but unlikely to be merged
 u-reproducible-dl-stage0.patch
 
-# this isn't ready yet for 1.31.0, causes segfaults compiling with LTO
-#u-debuginfo-gdb-8.2.patch
-d-temp-ignore-debuginfo-gdb-enum.patch
-
 gcc-4.8-aarch64-ice.diff
 # Porter fixes under discussion, not suitable for upstreaming
 # as-is but a proper fix is being discussed
 d-fix-mips64el-bootstrap.patch
-d-sparc64-dont-pack-spans.patch
+d-sparc64-fix-fnctls.patch
 
 # Debian-specific patches, not suitable for upstream
 d-ignore-error-detail-diff.patch
@@ -32,6 +30,7 @@ d-ignore-removed-submodules.patch
 d-read-beta-version-from-file.patch
 d-ignore-avx-44056.patch
 d-i686-baseline.patch
+d-no-jemalloc.patch
 
 d-no-web-dependencies-in-doc.patch
 # Work around for some porterboxes, keep this commented

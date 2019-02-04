@@ -79,14 +79,14 @@ pub enum Lit {
 }
 
 impl Lit {
-    crate fn short_name(&self) -> &'static str {
+    crate fn literal_name(&self) -> &'static str {
         match *self {
-            Byte(_) => "byte",
-            Char(_) => "char",
-            Integer(_) => "integer",
-            Float(_) => "float",
-            Str_(_) | StrRaw(..) => "string",
-            ByteStr(_) | ByteStrRaw(..) => "byte string"
+            Byte(_) => "byte literal",
+            Char(_) => "char literal",
+            Integer(_) => "integer literal",
+            Float(_) => "float literal",
+            Str_(_) | StrRaw(..) => "string literal",
+            ByteStr(_) | ByteStrRaw(..) => "byte string literal"
         }
     }
 
@@ -163,7 +163,6 @@ pub enum Token {
     DotDot,
     DotDotDot,
     DotDotEq,
-    DotEq, // HACK(durka42) never produced by the parser, only used for libproc_macro
     Comma,
     Semi,
     Colon,
@@ -454,7 +453,6 @@ impl Token {
             Dot => match joint {
                 Dot => DotDot,
                 DotDot => DotDotDot,
-                DotEq => DotDotEq,
                 _ => return None,
             },
             DotDot => match joint {
@@ -477,7 +475,7 @@ impl Token {
                 _ => return None,
             },
 
-            Le | EqEq | Ne | Ge | AndAnd | OrOr | Tilde | BinOpEq(..) | At | DotDotDot | DotEq |
+            Le | EqEq | Ne | Ge | AndAnd | OrOr | Tilde | BinOpEq(..) | At | DotDotDot |
             DotDotEq | Comma | Semi | ModSep | RArrow | LArrow | FatArrow | Pound | Dollar |
             Question | OpenDelim(..) | CloseDelim(..) => return None,
 
@@ -570,8 +568,9 @@ impl Token {
         //
         // Instead the "probably equal" check here is "does each token
         // recursively have the same discriminant?" We basically don't look at
-        // the token values here and assume that such fine grained modifications
-        // of token streams doesn't happen.
+        // the token values here and assume that such fine grained token stream
+        // modifications, including adding/removing typically non-semantic
+        // tokens such as extra braces and commas, don't happen.
         if let Some(tokens) = tokens {
             if tokens.probably_equal_for_proc_macro(&tokens_for_real) {
                 return tokens
@@ -605,7 +604,6 @@ impl Token {
             (&DotDot, &DotDot) |
             (&DotDotDot, &DotDotDot) |
             (&DotDotEq, &DotDotEq) |
-            (&DotEq, &DotEq) |
             (&Comma, &Comma) |
             (&Semi, &Semi) |
             (&Colon, &Colon) |

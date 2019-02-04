@@ -519,7 +519,7 @@ pub trait Iterator {
     /// element.
     ///
     /// `map()` transforms one iterator into another, by means of its argument:
-    /// something that implements `FnMut`. It produces a new iterator which
+    /// something that implements [`FnMut`]. It produces a new iterator which
     /// calls this closure on each element of the original iterator.
     ///
     /// If you are good at thinking in types, you can think of `map()` like this:
@@ -533,6 +533,7 @@ pub trait Iterator {
     /// more idiomatic to use [`for`] than `map()`.
     ///
     /// [`for`]: ../../book/ch03-05-control-flow.html#looping-through-a-collection-with-for
+    /// [`FnMut`]: ../../std/ops/trait.FnMut.html
     ///
     /// # Examples
     ///
@@ -1857,7 +1858,7 @@ pub trait Iterator {
     /// ```
     /// let a = ["lol", "NaN", "2", "5"];
     ///
-    /// let mut first_number = a.iter().find_map(|s| s.parse().ok());
+    /// let first_number = a.iter().find_map(|s| s.parse().ok());
     ///
     /// assert_eq!(first_number, Some(2));
     /// ```

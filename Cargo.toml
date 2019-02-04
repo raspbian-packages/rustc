@@ -1,0 +1,46 @@
+[workspace]
+members = [
+  "src/bootstrap",
+  "src/rustc",
+  "src/libstd",
+  "src/libtest",
+  "src/librustc_codegen_llvm",
+  "src/tools/cargotest",
+  "src/tools/compiletest",
+  "src/tools/error_index_generator",
+  "src/tools/linkchecker",
+  "src/tools/rustbook",
+  "src/tools/unstable-book-gen",
+  "src/tools/tidy",
+  "src/tools/build-manifest",
+  "src/tools/rust-installer",
+  "src/tools/rustdoc",
+  "src/tools/rustdoc-themes",
+]
+exclude = [
+  "src/tools/rls/test_data",
+  "build",
+  # HACK(eddyb) This hardcodes the fact that our CI uses `/checkout/obj`.
+  "obj",
+]
+
+# Curiously, LLVM 7.0 will segfault if compiled with opt-level=3
+# See issue https://github.com/rust-lang/rust/issues/52378
+[profile.release]
+opt-level = 2
+[profile.bench]
+opt-level = 2
+
+# These options are controlled from our rustc wrapper script, so turn them off
+# here and have them controlled elsewhere.
+[profile.dev]
+debug = false
+debug-assertions = false
+[profile.test]
+debug = false
+debug-assertions = false
+
+[patch.crates-io]
+# See comments in `src/tools/rustc-workspace-hack/README.md` for what's going on
+# here
+rustc-workspace-hack = { path = 'src/tools/rustc-workspace-hack' }

@@ -70,7 +70,7 @@
 /* General structure and fonts */
 
 body {
-	font: 16px/1.4 "Source Serif Pro", Georgia, Times, "Times New Roman", serif;
+	font: 16px/1.4 "Source Serif Pro", serif;
 	margin: 0;
 	position: relative;
 	padding: 10px 15px 20px 15px;
@@ -113,15 +113,16 @@ h3.impl, h3.method, h3.type {
 
 h1, h2, h3, h4,
 .sidebar, a.source, .search-input, .content table :not(code)>a,
-.collapse-toggle, div.item-list .out-of-band {
-	font-family: "Fira Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+.collapse-toggle, div.item-list .out-of-band,
+#source-sidebar, #sidebar-toggle {
+	font-family: "Fira Sans", sans-serif;
 }
 
 ol, ul {
 	padding-left: 25px;
 }
 ul ul, ol ul, ul ol, ol ol {
-	margin-bottom: 0;
+	margin-bottom: .6em;
 }
 
 p {
@@ -133,7 +134,7 @@ summary {
 }
 
 code, pre {
-	font-family: "Source Code Pro", Menlo, Monaco, Consolas, "DejaVu Sans Mono", Inconsolata, monospace;
+	font-family: "Source Code Pro", monospace;
 	white-space: pre-wrap;
 }
 .docblock code, .docblock-short code {
@@ -282,6 +283,32 @@ nav.sub {
 	padding-left: 0;
 }
 
+.rustdoc:not(.source) .example-wrap {
+	display: inline-flex;
+	margin-bottom: 10px;
+}
+
+.example-wrap {
+	width: 100%;
+}
+
+.example-wrap > pre.line-number {
+	overflow: initial;
+	border: 1px solid;
+	border-top-left-radius: 5px;
+	border-bottom-left-radius: 5px;
+	padding: 13px 8px;
+	text-align: right;
+}
+
+.rustdoc:not(.source) .example-wrap > pre.rust {
+	width: 100%;
+}
+
+.rustdoc:not(.source) .example-wrap > pre {
+	margin: 0;
+}
+
 #search {
 	margin-left: 230px;
 	position: relative;
@@ -394,7 +421,7 @@ h4 > code, h3 > code, .invisible > code {
 }
 #main > .since {
 	top: inherit;
-	font-family: "Fira Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+	font-family: "Fira Sans", sans-serif;
 }
 
 .content table:not(.table-display) {
@@ -458,17 +485,6 @@ h4 > code, h3 > code, .invisible > code {
 	margin-bottom: 15px;
 }
 
-.content .impl-items .method, .content .impl-items > .type, .impl-items > .associatedconstant {
-	margin-left: 20px;
-}
-.content .impl-items .docblock, .content .impl-items .stability {
-	margin-bottom: .6em;
-}
-
-.content .impl-items > .stability {
-	margin-left: 40px;
-}
-
 .content .docblock > .impl-items {
 	margin-left: 20px;
 	margin-top: -34px;
@@ -499,6 +515,10 @@ h4 > code, h3 > code, .invisible > code {
 	margin-top: -13px;
 }
 
+.sub-variant > div > .stability {
+	margin-top: initial;
+}
+
 .content .stability::before {
 	content: '˪';
 	font-size: 30px;
@@ -506,7 +526,20 @@ h4 > code, h3 > code, .invisible > code {
 	top: -9px;
 	left: -13px;
 }
-.methods > .stability {
+
+.content .impl-items .method, .content .impl-items > .type, .impl-items > .associatedconstant {
+	margin-left: 20px;
+}
+
+.content .impl-items .docblock, .content .impl-items .stability {
+	margin-bottom: .6em;
+}
+
+.content .impl-items > .stability {
+	margin-left: 40px;
+}
+
+.methods > .stability, .content .impl-items > .stability {
 	margin-top: -8px;
 }
 
@@ -636,9 +669,9 @@ a {
 	padding-right: 10px;
 }
 .content .search-results td:first-child a:after {
-    clear: both;
-    content: "";
-    display: block;
+	clear: both;
+	content: "";
+	display: block;
 }
 .content .search-results td:first-child a span {
 	float: left;
@@ -814,6 +847,11 @@ h3 > .collapse-toggle, h4 > .collapse-toggle {
 	text-align: center;
 }
 
+.collapse-toggle.hidden-default {
+	position: relative;
+	margin-left: 20px;
+}
+
 .ghost {
 	display: none;
 }
@@ -848,7 +886,23 @@ span.since {
 }
 
 .sub-variant, .sub-variant > h3 {
-	margin-top: 0 !important;
+	margin-top: 1px !important;
+}
+
+#main > .sub-variant > h3 {
+	font-size: 15px;
+	margin-left: 25px;
+	margin-bottom: 5px;
+}
+
+.sub-variant > div {
+	margin-left: 20px;
+	margin-bottom: 10px;
+}
+
+.sub-variant > div > span {
+	display: block;
+	position: relative;
 }
 
 .toggle-label {
@@ -908,7 +962,7 @@ span.since {
 		padding-top: 0px;
 	}
 
-	body > .sidebar {
+	.rustdoc > .sidebar {
 		height: 45px;
 		min-height: 40px;
 		margin: 0;
@@ -1290,7 +1344,7 @@ h3.important {
 kbd {
 	display: inline-block;
 	padding: 3px 5px;
-	font: 15px "SFMono-Regular", Consolas, "Liberation Mono", Menlo, Courier, monospace;
+	font: 15px monospace;
 	line-height: 10px;
 	vertical-align: middle;
 	border: solid 1px;
@@ -1405,4 +1459,69 @@ kbd {
 
 .non-exhaustive {
 	margin-bottom: 1em;
+}
+
+#sidebar-toggle {
+	position: fixed;
+	top: 30px;
+	left: 300px;
+	z-index: 10;
+	padding: 3px;
+	border-top-right-radius: 3px;
+	border-bottom-right-radius: 3px;
+	cursor: pointer;
+	font-weight: bold;
+	transition: left .5s;
+	font-size: 1.2em;
+	border: 1px solid;
+	border-left: 0;
+}
+#source-sidebar {
+	position: fixed;
+	top: 0;
+	bottom: 0;
+	left: 0;
+	width: 300px;
+	z-index: 1;
+	overflow: auto;
+	transition: left .5s;
+	border-right: 1px solid;
+}
+#source-sidebar > .title {
+	font-size: 1.5em;
+	text-align: center;
+	border-bottom: 1px solid;
+	margin-bottom: 6px;
+}
+
+div.children {
+	padding-left: 27px;
+	display: none;
+}
+div.name {
+	cursor: pointer;
+	position: relative;
+	margin-left: 16px;
+}
+div.files > a {
+	display: block;
+	padding: 0 3px;
+}
+div.files > a:hover, div.name:hover {
+	background-color: #a14b4b;
+}
+div.name.expand + .children {
+	display: block;
+}
+div.name::before {
+	content: "\25B6";
+	padding-left: 4px;
+	font-size: 0.7em;
+	position: absolute;
+	left: -16px;
+	top: 4px;
+}
+div.name.expand::before {
+	transform: rotate(90deg);
+	left: -14px;
 }

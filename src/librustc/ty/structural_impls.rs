@@ -14,7 +14,7 @@
 //! `BraceStructLiftImpl!`) to help with the tedium.
 
 use mir::ProjectionKind;
-use mir::interpret::{ConstValue, ConstEvalErr};
+use mir::interpret::ConstValue;
 use ty::{self, Lift, Ty, TyCtxt};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
 use rustc_data_structures::indexed_vec::{IndexVec, Idx};
@@ -33,6 +33,7 @@ CloneTypeFoldableAndLiftImpls! {
     (),
     bool,
     usize,
+    ::ty::layout::VariantIdx,
     u64,
     ::middle::region::Scope,
     ::syntax::ast::FloatTy,
@@ -455,167 +456,8 @@ impl<'a, 'tcx> Lift<'tcx> for ty::error::TypeError<'a> {
             ProjectionMismatched(x) => ProjectionMismatched(x),
             ProjectionBoundsLength(x) => ProjectionBoundsLength(x),
             Sorts(ref x) => return tcx.lift(x).map(Sorts),
-            OldStyleLUB(ref x) => return tcx.lift(x).map(OldStyleLUB),
             ExistentialMismatch(ref x) => return tcx.lift(x).map(ExistentialMismatch)
         })
-    }
-}
-
-impl<'a, 'tcx> Lift<'tcx> for ConstEvalErr<'a> {
-    type Lifted = ConstEvalErr<'tcx>;
-    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        tcx.lift(&self.error).map(|error| {
-            ConstEvalErr {
-                span: self.span,
-                stacktrace: self.stacktrace.clone(),
-                error,
-            }
-        })
-    }
-}
-
-impl<'a, 'tcx> Lift<'tcx> for interpret::EvalError<'a> {
-    type Lifted = interpret::EvalError<'tcx>;
-    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        Some(interpret::EvalError {
-            kind: tcx.lift(&self.kind)?,
-        })
-    }
-}
-
-impl<'a, 'tcx, O: Lift<'tcx>> Lift<'tcx> for interpret::EvalErrorKind<'a, O> {
-    type Lifted = interpret::EvalErrorKind<'tcx, <O as Lift<'tcx>>::Lifted>;
-    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        use ::mir::interpret::EvalErrorKind::*;
-        Some(match *self {
-            MachineError(ref err) => MachineError(err.clone()),
-            FunctionAbiMismatch(a, b) => FunctionAbiMismatch(a, b),
-            FunctionArgMismatch(a, b) => FunctionArgMismatch(
-                tcx.lift(&a)?,
-                tcx.lift(&b)?,
-            ),
-            FunctionRetMismatch(a, b) => FunctionRetMismatch(
-                tcx.lift(&a)?,
-                tcx.lift(&b)?,
-            ),
-            FunctionArgCountMismatch => FunctionArgCountMismatch,
-            NoMirFor(ref s) => NoMirFor(s.clone()),
-            UnterminatedCString(ptr) => UnterminatedCString(ptr),
-            DanglingPointerDeref => DanglingPointerDeref,
-            DoubleFree => DoubleFree,
-            InvalidMemoryAccess => InvalidMemoryAccess,
-            InvalidFunctionPointer => InvalidFunctionPointer,
-            InvalidBool => InvalidBool,
-            InvalidDiscriminant(val) => InvalidDiscriminant(val),
-            PointerOutOfBounds {
-                ptr,
-                access,
-                allocation_size,
-            } => PointerOutOfBounds { ptr, access, allocation_size },
-            InvalidNullPointerUsage => InvalidNullPointerUsage,
-            ReadPointerAsBytes => ReadPointerAsBytes,
-            ReadBytesAsPointer => ReadBytesAsPointer,
-            ReadForeignStatic => ReadForeignStatic,
-            InvalidPointerMath => InvalidPointerMath,
-            ReadUndefBytes(offset) => ReadUndefBytes(offset),
-            DeadLocal => DeadLocal,
-            InvalidBoolOp(bop) => InvalidBoolOp(bop),
-            Unimplemented(ref s) => Unimplemented(s.clone()),
-            DerefFunctionPointer => DerefFunctionPointer,
-            ExecuteMemory => ExecuteMemory,
-            BoundsCheck { ref len, ref index } => BoundsCheck {
-                len: tcx.lift(len)?,
-                index: tcx.lift(index)?,
-            },
-            Intrinsic(ref s) => Intrinsic(s.clone()),
-            InvalidChar(c) => InvalidChar(c),
-            StackFrameLimitReached => StackFrameLimitReached,
-            OutOfTls => OutOfTls,
-            TlsOutOfBounds => TlsOutOfBounds,
-            AbiViolation(ref s) => AbiViolation(s.clone()),
-            AlignmentCheckFailed {
-                required,
-                has,
-            } => AlignmentCheckFailed { required, has },
-            MemoryLockViolation {
-                ptr,
-                len,
-                frame,
-                access,
-                ref lock,
-            } => MemoryLockViolation { ptr, len, frame, access, lock: lock.clone() },
-            MemoryAcquireConflict {
-                ptr,
-                len,
-                kind,
-                ref lock,
-            } => MemoryAcquireConflict { ptr, len, kind, lock: lock.clone() },
-            InvalidMemoryLockRelease {
-                ptr,
-                len,
-                frame,
-                ref lock,
-            } => InvalidMemoryLockRelease { ptr, len, frame, lock: lock.clone() },
-            DeallocatedLockedMemory {
-                ptr,
-                ref lock,
-            } => DeallocatedLockedMemory { ptr, lock: lock.clone() },
-            ValidationFailure(ref s) => ValidationFailure(s.clone()),
-            CalledClosureAsFunction => CalledClosureAsFunction,
-            VtableForArgumentlessMethod => VtableForArgumentlessMethod,
-            ModifiedConstantMemory => ModifiedConstantMemory,
-            AssumptionNotHeld => AssumptionNotHeld,
-            InlineAsm => InlineAsm,
-            TypeNotPrimitive(ty) => TypeNotPrimitive(tcx.lift(&ty)?),
-            ReallocatedWrongMemoryKind(ref a, ref b) => {
-                ReallocatedWrongMemoryKind(a.clone(), b.clone())
-            },
-            DeallocatedWrongMemoryKind(ref a, ref b) => {
-                DeallocatedWrongMemoryKind(a.clone(), b.clone())
-            },
-            ReallocateNonBasePtr => ReallocateNonBasePtr,
-            DeallocateNonBasePtr => DeallocateNonBasePtr,
-            IncorrectAllocationInformation(a, b, c, d) => {
-                IncorrectAllocationInformation(a, b, c, d)
-            },
-            Layout(lay) => Layout(tcx.lift(&lay)?),
-            HeapAllocZeroBytes => HeapAllocZeroBytes,
-            HeapAllocNonPowerOfTwoAlignment(n) => HeapAllocNonPowerOfTwoAlignment(n),
-            Unreachable => Unreachable,
-            Panic { ref msg, ref file, line, col } => Panic {
-                msg: msg.clone(),
-                file: file.clone(),
-                line, col,
-            },
-            ReadFromReturnPointer => ReadFromReturnPointer,
-            PathNotFound(ref v) => PathNotFound(v.clone()),
-            UnimplementedTraitSelection => UnimplementedTraitSelection,
-            TypeckError => TypeckError,
-            TooGeneric => TooGeneric,
-            CheckMatchError => CheckMatchError,
-            ReferencedConstant(ref err) => ReferencedConstant(tcx.lift(&**err)?.into()),
-            OverflowNeg => OverflowNeg,
-            Overflow(op) => Overflow(op),
-            DivisionByZero => DivisionByZero,
-            RemainderByZero => RemainderByZero,
-            GeneratorResumedAfterReturn => GeneratorResumedAfterReturn,
-            GeneratorResumedAfterPanic => GeneratorResumedAfterPanic,
-            InfiniteLoop => InfiniteLoop,
-        })
-    }
-}
-
-impl<'a, 'tcx> Lift<'tcx> for ty::layout::LayoutError<'a> {
-    type Lifted = ty::layout::LayoutError<'tcx>;
-    fn lift_to_tcx<'b, 'gcx>(&self, tcx: TyCtxt<'b, 'gcx, 'tcx>) -> Option<Self::Lifted> {
-        match *self {
-            ty::layout::LayoutError::Unknown(ref ty) => {
-                tcx.lift(ty).map(ty::layout::LayoutError::Unknown)
-            }
-            ty::layout::LayoutError::SizeOverflow(ref ty) => {
-                tcx.lift(ty).map(ty::layout::LayoutError::SizeOverflow)
-            }
-        }
     }
 }
 
@@ -625,6 +467,8 @@ impl<'a, 'tcx> Lift<'tcx> for ty::InstanceDef<'a> {
         match *self {
             ty::InstanceDef::Item(def_id) =>
                 Some(ty::InstanceDef::Item(def_id)),
+            ty::InstanceDef::VtableShim(def_id) =>
+                Some(ty::InstanceDef::VtableShim(def_id)),
             ty::InstanceDef::Intrinsic(def_id) =>
                 Some(ty::InstanceDef::Intrinsic(def_id)),
             ty::InstanceDef::FnPtrShim(def_id, ref ty) =>
@@ -805,6 +649,7 @@ impl<'tcx> TypeFoldable<'tcx> for ty::instance::Instance<'tcx> {
             substs: self.substs.fold_with(folder),
             def: match self.def {
                 Item(did) => Item(did.fold_with(folder)),
+                VtableShim(did) => VtableShim(did.fold_with(folder)),
                 Intrinsic(did) => Intrinsic(did.fold_with(folder)),
                 FnPtrShim(did, ty) => FnPtrShim(
                     did.fold_with(folder),
@@ -833,7 +678,7 @@ impl<'tcx> TypeFoldable<'tcx> for ty::instance::Instance<'tcx> {
         use ty::InstanceDef::*;
         self.substs.visit_with(visitor) ||
         match self.def {
-            Item(did) | Intrinsic(did) | Virtual(did, _) => {
+            Item(did) | VtableShim(did) | Intrinsic(did) | Virtual(did, _) => {
                 did.visit_with(visitor)
             },
             FnPtrShim(did, ty) | CloneShim(did, ty) => {
@@ -890,9 +735,20 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
                 ty::UnnormalizedProjection(data.fold_with(folder))
             }
             ty::Opaque(did, substs) => ty::Opaque(did, substs.fold_with(folder)),
-            ty::Bool | ty::Char | ty::Str | ty::Int(_) |
-            ty::Uint(_) | ty::Float(_) | ty::Error | ty::Infer(_) |
-            ty::Param(..) | ty::Never | ty::Foreign(..) => return self
+
+            ty::Bool |
+            ty::Char |
+            ty::Str |
+            ty::Int(_) |
+            ty::Uint(_) |
+            ty::Float(_) |
+            ty::Error |
+            ty::Infer(_) |
+            ty::Param(..) |
+            ty::Bound(..) |
+            ty::Placeholder(..) |
+            ty::Never |
+            ty::Foreign(..) => return self
         };
 
         if self.sty == sty {
@@ -927,9 +783,20 @@ impl<'tcx> TypeFoldable<'tcx> for Ty<'tcx> {
                 data.visit_with(visitor)
             }
             ty::Opaque(_, ref substs) => substs.visit_with(visitor),
-            ty::Bool | ty::Char | ty::Str | ty::Int(_) |
-            ty::Uint(_) | ty::Float(_) | ty::Error | ty::Infer(_) |
-            ty::Param(..) | ty::Never | ty::Foreign(..) => false,
+
+            ty::Bool |
+            ty::Char |
+            ty::Str |
+            ty::Int(_) |
+            ty::Uint(_) |
+            ty::Float(_) |
+            ty::Error |
+            ty::Infer(_) |
+            ty::Bound(..) |
+            ty::Placeholder(..) |
+            ty::Param(..) |
+            ty::Never |
+            ty::Foreign(..) => false,
         }
     }
 
@@ -1158,7 +1025,6 @@ EnumTypeFoldableImpl! {
         (ty::error::TypeError::ProjectionBoundsLength)(x),
         (ty::error::TypeError::Sorts)(x),
         (ty::error::TypeError::ExistentialMismatch)(x),
-        (ty::error::TypeError::OldStyleLUB)(x),
     }
 }
 

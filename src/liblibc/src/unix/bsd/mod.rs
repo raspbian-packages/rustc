@@ -215,6 +215,10 @@ pub const O_NDELAY: ::c_int = O_NONBLOCK;
 pub const F_GETOWN: ::c_int = 5;
 pub const F_SETOWN: ::c_int = 6;
 
+pub const F_RDLCK: ::c_short = 1;
+pub const F_UNLCK: ::c_short = 2;
+pub const F_WRLCK: ::c_short = 3;
+
 pub const MNT_FORCE: ::c_int = 0x80000;
 
 pub const Q_SYNC: ::c_int = 0x600;
@@ -539,6 +543,7 @@ extern {
                           attr: *const ::pthread_attr_t,
                           f: extern fn(*mut ::c_void) -> *mut ::c_void,
                           value: *mut ::c_void) -> ::c_int;
+    pub fn acct(filename: *const ::c_char) -> ::c_int;
 }
 
 cfg_if! {

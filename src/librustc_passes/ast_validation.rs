@@ -403,25 +403,6 @@ impl<'a> Visitor<'a> for AstValidator<'a> {
                     }
                 }
             }
-            ItemKind::TraitAlias(Generics { ref params, .. }, ..) => {
-                for param in params {
-                    match param.kind {
-                        GenericParamKind::Lifetime { .. } => {}
-                        GenericParamKind::Type { ref default, .. } => {
-                            if !param.bounds.is_empty() {
-                                self.err_handler()
-                                    .span_err(param.ident.span, "type parameters on the left \
-                                        side of a trait alias cannot be bounded");
-                            }
-                            if !default.is_none() {
-                                self.err_handler()
-                                    .span_err(param.ident.span, "type parameters on the left \
-                                        side of a trait alias cannot have defaults");
-                            }
-                        }
-                    }
-                }
-            }
             ItemKind::Mod(_) => {
                 // Ensure that `path` attributes on modules are recorded as used (c.f. #35584).
                 attr::first_attr_value_str_by_name(&item.attrs, "path");
@@ -691,5 +672,5 @@ pub fn check_crate(session: &Session, krate: &Crate) {
             is_banned: false,
         }, krate);
 
-    visit::walk_crate(&mut AstValidator { session: session }, krate)
+    visit::walk_crate(&mut AstValidator { session }, krate)
 }

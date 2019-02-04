@@ -13,6 +13,19 @@
 /*jslint browser: true, es5: true */
 /*globals $: true, rootPath: true */
 
+if (!String.prototype.startsWith) {
+    String.prototype.startsWith = function(searchString, position) {
+        position = position || 0;
+        return this.indexOf(searchString, position) === position;
+    };
+}
+if (!String.prototype.endsWith) {
+    String.prototype.endsWith = function(suffix, length) {
+        var l = length || this.length;
+        return this.indexOf(suffix, l - suffix.length) !== -1;
+    };
+}
+
 (function() {
     "use strict";
 
@@ -57,70 +70,12 @@
 
     var titleBeforeSearch = document.title;
 
-    if (!String.prototype.startsWith) {
-        String.prototype.startsWith = function(searchString, position) {
-            position = position || 0;
-            return this.indexOf(searchString, position) === position;
-        };
-    }
-    if (!String.prototype.endsWith) {
-        String.prototype.endsWith = function(suffix, length) {
-            var l = length || this.length;
-            return this.indexOf(suffix, l - suffix.length) !== -1;
-        };
-    }
-
     function getPageId() {
         var id = document.location.href.split('#')[1];
         if (id) {
             return id.split('?')[0].split('&')[0];
         }
         return null;
-    }
-
-    function hasClass(elem, className) {
-        if (elem && className && elem.className) {
-            var elemClass = elem.className;
-            var start = elemClass.indexOf(className);
-            if (start === -1) {
-                return false;
-            } else if (elemClass.length === className.length) {
-                return true;
-            } else {
-                if (start > 0 && elemClass[start - 1] !== ' ') {
-                    return false;
-                }
-                var end = start + className.length;
-                return !(end < elemClass.length && elemClass[end] !== ' ');
-            }
-            if (start > 0 && elemClass[start - 1] !== ' ') {
-                return false;
-            }
-            var end = start + className.length;
-            return !(end < elemClass.length && elemClass[end] !== ' ');
-        }
-        return false;
-    }
-
-    function addClass(elem, className) {
-        if (elem && className && !hasClass(elem, className)) {
-            if (elem.className && elem.className.length > 0) {
-                elem.className += ' ' + className;
-            } else {
-                elem.className = className;
-            }
-        }
-    }
-
-    function removeClass(elem, className) {
-        if (elem && className && elem.className) {
-            elem.className = (" " + elem.className + " ").replace(" " + className + " ", " ")
-                                                         .trim();
-        }
-    }
-
-    function isHidden(elem) {
-        return (elem.offsetParent === null)
     }
 
     function showSidebar() {
@@ -1886,7 +1841,7 @@
             if (hasClass(relatedDoc, "stability")) {
                 relatedDoc = relatedDoc.nextElementSibling;
             }
-            if (hasClass(relatedDoc, "docblock")) {
+            if (hasClass(relatedDoc, "docblock") || hasClass(relatedDoc, "sub-variant")) {
                 var action = mode;
                 if (action === "toggle") {
                     if (hasClass(relatedDoc, "hidden-by-usual-hider")) {
@@ -2057,6 +2012,50 @@
     onEach(document.getElementsByClassName('method'), func);
     onEach(document.getElementsByClassName('associatedconstant'), func);
     onEach(document.getElementsByClassName('impl'), func);
+    onEach(document.getElementsByClassName('impl-items'), function(e) {
+        onEach(e.getElementsByClassName('associatedconstant'), func);
+        var hiddenElems = e.getElementsByClassName('hidden');
+        var needToggle = false;
+
+        for (var i = 0; i < hiddenElems.length; ++i) {
+            if (hasClass(hiddenElems[i], "content") === false &&
+                hasClass(hiddenElems[i], "docblock") === false) {
+                needToggle = true;
+                break;
+            }
+        }
+        if (needToggle === true) {
+            var newToggle = document.createElement('a');
+            newToggle.href = 'javascript:void(0)';
+            newToggle.className = 'collapse-toggle hidden-default collapsed';
+            newToggle.innerHTML = "[<span class='inner'>" + labelForToggleButton(true) + "</span>" +
+                                  "] Show hidden undocumented items";
+            newToggle.onclick = function() {
+                if (hasClass(this, "collapsed")) {
+                    removeClass(this, "collapsed");
+                    onEach(this.parentNode.getElementsByClassName("hidden"), function(x) {
+                        if (hasClass(x, "content") === false) {
+                            removeClass(x, "hidden");
+                            addClass(x, "x");
+                        }
+                    }, true);
+                    this.innerHTML = "[<span class='inner'>" + labelForToggleButton(false) +
+                                     "</span>] Hide undocumented items"
+                } else {
+                    addClass(this, "collapsed");
+                    onEach(this.parentNode.getElementsByClassName("x"), function(x) {
+                        if (hasClass(x, "content") === false) {
+                            addClass(x, "hidden");
+                            removeClass(x, "x");
+                        }
+                    }, true);
+                    this.innerHTML = "[<span class='inner'>" + labelForToggleButton(true) +
+                                     "</span>] Show hidden undocumented items";
+                }
+            };
+            e.insertBefore(newToggle, e.firstChild);
+        }
+    });
 
     function createToggle(otherMessage, fontSize, extraClass, show) {
         var span = document.createElement('span');
@@ -2093,15 +2092,14 @@
         return wrapper;
     }
 
-    onEach(document.getElementsByClassName('docblock'), function(e) {
+    var showItemDeclarations = getCurrentValue('rustdoc-item-declarations') === "false";
+    function buildToggleWrapper(e) {
         if (hasClass(e, 'autohide')) {
             var wrap = e.previousElementSibling;
             if (wrap && hasClass(wrap, 'toggle-wrapper')) {
                 var toggle = wrap.childNodes[0];
-                var extra = false;
-                if (e.childNodes[0].tagName === 'H3') {
-                    extra = true;
-                }
+                var extra = e.childNodes[0].tagName === 'H3';
+
                 e.style.display = 'none';
                 addClass(wrap, 'collapsed');
                 onEach(toggle.getElementsByClassName('inner'), function(e) {
@@ -2116,18 +2114,18 @@
             }
         }
         if (e.parentNode.id === "main") {
-            var otherMessage;
+            var otherMessage = '';
             var fontSize;
             var extraClass;
-            var show = true;
 
             if (hasClass(e, "type-decl")) {
                 fontSize = "20px";
                 otherMessage = '&nbsp;Show&nbsp;declaration';
-                show = getCurrentValue('rustdoc-item-declarations') === "false";
-                if (!show) {
+                if (showItemDeclarations === false) {
                     extraClass = 'collapsed';
                 }
+            } else if (hasClass(e, "sub-variant")) {
+                otherMessage = '&nbsp;Show&nbsp;fields';
             } else if (hasClass(e, "non-exhaustive")) {
                 otherMessage = '&nbsp;This&nbsp;';
                 if (hasClass(e, "non-exhaustive-struct")) {
@@ -2142,12 +2140,20 @@
                 extraClass = "marg-left";
             }
 
-            e.parentNode.insertBefore(createToggle(otherMessage, fontSize, extraClass, show), e);
-            if (otherMessage && show) {
+            e.parentNode.insertBefore(
+                createToggle(otherMessage,
+                             fontSize,
+                             extraClass,
+                             hasClass(e, "type-decl") === false || showItemDeclarations === true),
+                e);
+            if (hasClass(e, "type-decl") === true && showItemDeclarations === true) {
                 collapseDocs(e.previousSibling.childNodes[0], "toggle");
             }
         }
-    });
+    }
+
+    onEach(document.getElementsByClassName('docblock'), buildToggleWrapper);
+    onEach(document.getElementsByClassName('sub-variant'), buildToggleWrapper);
 
     function createToggleWrapper(tog) {
         var span = document.createElement('span');
@@ -2186,29 +2192,50 @@
         });
     }
 
+    // To avoid checking on "rustdoc-item-attributes" value on every loop...
+    var itemAttributesFunc = function() {};
+    if (getCurrentValue("rustdoc-item-attributes") !== "false") {
+        itemAttributesFunc = function(x) {
+            collapseDocs(x.previousSibling.childNodes[0], "toggle");
+        };
+    }
     onEach(document.getElementById('main').getElementsByClassName('attributes'), function(i_e) {
         i_e.parentNode.insertBefore(createToggleWrapper(toggle.cloneNode(true)), i_e);
-        if (getCurrentValue("rustdoc-item-attributes") !== "false") {
-            collapseDocs(i_e.previousSibling.childNodes[0], "toggle");
-        }
+        itemAttributesFunc(i_e);
     });
 
+    // To avoid checking on "rustdoc-line-numbers" value on every loop...
+    var lineNumbersFunc = function() {};
+    if (getCurrentValue("rustdoc-line-numbers") === "true") {
+        lineNumbersFunc = function(x) {
+            var count = x.textContent.split('\n').length;
+            var elems = [];
+            for (var i = 0; i < count; ++i) {
+                elems.push(i + 1);
+            }
+            var node = document.createElement('pre');
+            addClass(node, 'line-number');
+            node.innerHTML = elems.join('\n');
+            x.parentNode.insertBefore(node, x);
+        };
+    }
     onEach(document.getElementsByClassName('rust-example-rendered'), function(e) {
         if (hasClass(e, 'compile_fail')) {
             e.addEventListener("mouseover", function(event) {
-                e.previousElementSibling.childNodes[0].style.color = '#f00';
+                this.parentElement.previousElementSibling.childNodes[0].style.color = '#f00';
             });
             e.addEventListener("mouseout", function(event) {
-                e.previousElementSibling.childNodes[0].style.color = '';
+                this.parentElement.previousElementSibling.childNodes[0].style.color = '';
             });
         } else if (hasClass(e, 'ignore')) {
             e.addEventListener("mouseover", function(event) {
-                e.previousElementSibling.childNodes[0].style.color = '#ff9200';
+                this.parentElement.previousElementSibling.childNodes[0].style.color = '#ff9200';
             });
             e.addEventListener("mouseout", function(event) {
-                e.previousElementSibling.childNodes[0].style.color = '';
+                this.parentElement.previousElementSibling.childNodes[0].style.color = '';
             });
         }
+        lineNumbersFunc(e);
     });
 
     function showModal(content) {

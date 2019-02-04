@@ -241,8 +241,8 @@ fn check_statement(
         // These are all NOPs
         | StatementKind::StorageLive(_)
         | StatementKind::StorageDead(_)
-        | StatementKind::Validate(..)
-        | StatementKind::EndRegion(_)
+        | StatementKind::Retag { .. }
+        | StatementKind::EscapeToRaw { .. }
         | StatementKind::AscribeUserType(..)
         | StatementKind::Nop => Ok(()),
     }

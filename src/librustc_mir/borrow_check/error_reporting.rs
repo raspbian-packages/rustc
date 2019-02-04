@@ -788,7 +788,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
 
         let what_was_dropped = match self.describe_place(place) {
             Some(name) => format!("`{}`", name.as_str()),
-            None => format!("temporary value"),
+            None => String::from("temporary value"),
         };
 
         let label = match self.describe_place(&borrow.borrowed_place) {
@@ -1028,7 +1028,7 @@ impl<'cx, 'gcx, 'tcx> MirBorrowckCtxt<'cx, 'gcx, 'tcx> {
 
         match category {
             ConstraintCategory::Return => {
-                err.span_note(constraint_span, &format!("closure is returned here"));
+                err.span_note(constraint_span, "closure is returned here");
             }
             ConstraintCategory::CallArgument => {
                 fr_name.highlight_region_name(&mut err);
@@ -2193,7 +2193,7 @@ impl<'tcx> AnnotatedBorrowFnSignature<'tcx> {
         match ty.sty {
             ty::TyKind::Ref(ty::RegionKind::ReLateBound(_, br), _, _)
             | ty::TyKind::Ref(
-                ty::RegionKind::RePlaceholder(ty::Placeholder { name: br, .. }),
+                ty::RegionKind::RePlaceholder(ty::PlaceholderRegion { name: br, .. }),
                 _,
                 _,
             ) => with_highlight_region_for_bound_region(*br, counter, || ty.to_string()),
@@ -2207,7 +2207,7 @@ impl<'tcx> AnnotatedBorrowFnSignature<'tcx> {
         match ty.sty {
             ty::TyKind::Ref(region, _, _) => match region {
                 ty::RegionKind::ReLateBound(_, br)
-                | ty::RegionKind::RePlaceholder(ty::Placeholder { name: br, .. }) => {
+                | ty::RegionKind::RePlaceholder(ty::PlaceholderRegion { name: br, .. }) => {
                     with_highlight_region_for_bound_region(*br, counter, || region.to_string())
                 }
                 _ => region.to_string(),

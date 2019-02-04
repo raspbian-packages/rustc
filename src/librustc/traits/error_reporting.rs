@@ -34,7 +34,6 @@ use hir::def_id::DefId;
 use infer::{self, InferCtxt};
 use infer::type_variable::TypeVariableOrigin;
 use std::fmt;
-use std::iter;
 use syntax::ast;
 use session::DiagnosticMessageId;
 use ty::{self, AdtKind, ToPredicate, ToPolyTraitRef, Ty, TyCtxt, TypeFoldable};
@@ -213,10 +212,11 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             // cause I have no idea for a good error message.
             if let ty::Predicate::Projection(ref data) = predicate {
                 let mut selcx = SelectionContext::new(self);
-                let (data, _) = self.replace_late_bound_regions_with_fresh_var(
+                let (data, _) = self.replace_bound_vars_with_fresh_vars(
                     obligation.cause.span,
                     infer::LateBoundRegionConversionTime::HigherRankedType,
-                    data);
+                    data
+                );
                 let mut obligations = vec![];
                 let normalized_ty = super::normalize_projection_type(
                     &mut selcx,
@@ -281,7 +281,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 ty::Generator(..) => Some(18),
                 ty::Foreign(..) => Some(19),
                 ty::GeneratorWitness(..) => Some(20),
-                ty::Infer(..) | ty::Error => None,
+                ty::Placeholder(..) | ty::Bound(..) | ty::Infer(..) | ty::Error => None,
                 ty::UnnormalizedProjection(..) => bug!("only used with chalk-engine"),
             }
         }
@@ -429,7 +429,7 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                 ));
                 let tcx = self.tcx;
                 if let Some(len) = len.val.try_to_scalar().and_then(|scalar| {
-                    scalar.to_usize(tcx).ok()
+                    scalar.to_usize(&tcx).ok()
                 }) {
                     flags.push((
                         "_Self".to_owned(),
@@ -755,7 +755,8 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
                     }
 
                     ty::Predicate::ObjectSafe(trait_def_id) => {
-                        let violations = self.tcx.object_safety_violations(trait_def_id);
+                        let violations = self.tcx.global_tcx()
+                            .object_safety_violations(trait_def_id);
                         self.tcx.report_object_safety_error(span,
                                                             trait_def_id,
                                                             violations)
@@ -876,22 +877,14 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
             }
 
             TraitNotObjectSafe(did) => {
-                let violations = self.tcx.object_safety_violations(did);
+                let violations = self.tcx.global_tcx().object_safety_violations(did);
                 self.tcx.report_object_safety_error(span, did, violations)
             }
 
-            ConstEvalFailure(ref err) => {
-                match err.struct_error(
-                    self.tcx.at(span),
-                    "could not evaluate constant expression",
-                ) {
-                    Some(err) => err,
-                    None => {
-                        self.tcx.sess.delay_span_bug(span,
-                            &format!("constant in type had an ignored error: {:?}", err));
-                        return;
-                    }
-                }
+            // already reported in the query
+            ConstEvalFailure(_) => {
+                self.tcx.sess.delay_span_bug(span, "constant in type had an ignored error");
+                return;
             }
 
             Overflow => {
@@ -1099,16 +1092,27 @@ impl<'a, 'gcx, 'tcx> InferCtxt<'a, 'gcx, 'tcx> {
         if let Some(found_span) = found_span {
             err.span_label(found_span, format!("takes {}", found_str));
 
+            // move |_| { ... }
+            // ^^^^^^^^-- def_span
+            //
+            // move |_| { ... }
+            // ^^^^^-- prefix
+            let prefix_span = self.tcx.sess.source_map().span_until_non_whitespace(found_span);
+            // move |_| { ... }
+            //      ^^^-- pipe_span
+            let pipe_span = if let Some(span) = found_span.trim_start(prefix_span) {
+                span
+            } else {
+                found_span
+            };
+
             // Suggest to take and ignore the arguments with expected_args_length `_`s if
             // found arguments is empty (assume the user just wants to ignore args in this case).
             // For example, if `expected_args_length` is 2, suggest `|_, _|`.
             if found_args.is_empty() && is_closure {
-                let underscores = iter::repeat("_")
-                                      .take(expected_args.len())
-                                      .collect::<Vec<_>>()
-                                      .join(", ");
+                let underscores = vec!["_"; expected_args.len()].join(", ");
                 err.span_suggestion_with_applicability(
-                    found_span,
+                    pipe_span,
                     &format!(
                         "consider changing the closure to take and ignore the expected argument{}",
                         if expected_args.len() < 2 {

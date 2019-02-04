@@ -851,7 +851,7 @@ impl Step for Src {
         t!(fs::create_dir_all(&dst_src));
 
         let src_files = [
-            "src/Cargo.lock",
+            "Cargo.lock",
         ];
         // This is the reduced set of paths which will become the rust-src component
         // (essentially libstd and all of its path dependencies)
@@ -859,8 +859,6 @@ impl Step for Src {
             "src/build_helper",
             "src/dlmalloc",
             "src/liballoc",
-            "src/liballoc_jemalloc",
-            "src/liballoc_system",
             "src/libbacktrace",
             "src/libcompiler_builtins",
             "src/libcore",
@@ -878,13 +876,12 @@ impl Step for Src {
             "src/rustc/dlmalloc_shim",
             "src/libtest",
             "src/libterm",
-            "src/jemalloc",
             "src/libprofiler_builtins",
             "src/stdsimd",
+            "src/libproc_macro",
         ];
         let std_src_dirs_exclude = [
             "src/libcompiler_builtins/compiler-rt/test",
-            "src/jemalloc/test/unit",
         ];
 
         copy_src_dirs(builder, &std_src_dirs[..], &std_src_dirs_exclude[..], &dst_src);
@@ -911,7 +908,7 @@ impl Step for Src {
     }
 }
 
-const CARGO_VENDOR_VERSION: &str = "0.1.4";
+const CARGO_VENDOR_VERSION: &str = "0.1.19";
 
 #[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct PlainSourceTarball;
@@ -952,6 +949,8 @@ impl Step for PlainSourceTarball {
             "configure",
             "x.py",
             "config.toml.example",
+            "Cargo.toml",
+            "Cargo.lock",
         ];
         let src_dirs = [
             "src",
@@ -998,7 +997,7 @@ impl Step for PlainSourceTarball {
             // Vendor all Cargo dependencies
             let mut cmd = Command::new(&builder.initial_cargo);
             cmd.arg("vendor")
-               .current_dir(&plain_dst_src.join("src"));
+               .current_dir(&plain_dst_src);
             builder.run(&mut cmd);
         }
 

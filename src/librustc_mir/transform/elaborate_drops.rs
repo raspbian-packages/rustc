@@ -16,6 +16,7 @@ use dataflow::{drop_flag_effects_for_location, on_lookup_result_bits};
 use dataflow::MoveDataParamEnv;
 use dataflow::{self, do_dataflow, DebugFormatted};
 use rustc::ty::{self, TyCtxt};
+use rustc::ty::layout::VariantIdx;
 use rustc::mir::*;
 use rustc::util::nodemap::FxHashMap;
 use rustc_data_structures::bit_set::BitSet;
@@ -282,7 +283,7 @@ impl<'a, 'b, 'tcx> DropElaborator<'a, 'tcx> for Elaborator<'a, 'b, 'tcx> {
         })
     }
 
-    fn downcast_subpath(&self, path: Self::Path, variant: usize) -> Option<Self::Path> {
+    fn downcast_subpath(&self, path: Self::Path, variant: VariantIdx) -> Option<Self::Path> {
         dataflow::move_path_children_matching(self.ctxt.move_data(), path, |p| {
             match p {
                 &Projection {
@@ -495,7 +496,7 @@ impl<'b, 'tcx> ElaborateDropsCtxt<'b, 'tcx> {
         let target = self.patch.new_block(BasicBlockData {
             statements: vec![assign],
             terminator: Some(Terminator {
-                kind: TerminatorKind::Goto { target: target },
+                kind: TerminatorKind::Goto { target },
                 ..*terminator
             }),
             is_cleanup: false,

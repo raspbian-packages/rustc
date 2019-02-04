@@ -15,21 +15,14 @@
 use std::borrow::{Borrow, Cow};
 use std::hash::Hash;
 
-use rustc::hir::def_id::DefId;
+use rustc::hir::{self, def_id::DefId};
 use rustc::mir;
-use rustc::ty::{self, Ty, layout::{Size, TyLayout}, query::TyCtxtAt};
+use rustc::ty::{self, layout::TyLayout, query::TyCtxtAt};
 
 use super::{
-    Allocation, AllocId, EvalResult, Scalar,
-    EvalContext, PlaceTy, OpTy, Pointer, MemoryKind,
+    Allocation, AllocId, EvalResult, Scalar, AllocationExtra,
+    EvalContext, PlaceTy, MPlaceTy, OpTy, Pointer, MemoryKind,
 };
-
-/// Classifying memory accesses
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MemoryAccess {
-    Read,
-    Write,
-}
 
 /// Whether this kind of memory is allowed to leak
 pub trait MayLeak: Copy {
@@ -81,10 +74,19 @@ pub trait Machine<'a, 'mir, 'tcx>: Sized {
 
     /// Tag tracked alongside every pointer.  This is used to implement "Stacked Borrows"
     /// <https://www.ralfj.de/blog/2018/08/07/stacked-borrows.html>.
+    /// The `default()` is used for pointers to consts, statics, vtables and functions.
     type PointerTag: ::std::fmt::Debug + Default + Copy + Eq + Hash + 'static;
 
+    /// Extra data stored in every call frame.
+    type FrameExtra;
+
+    /// Extra data stored in memory.  A reference to this is available when `AllocExtra`
+    /// gets initialized, so you can e.g. have an `Rc` here if there is global state you
+    /// need access to in the `AllocExtra` hooks.
+    type MemoryExtra: Default;
+
     /// Extra data stored in every allocation.
-    type AllocExtra: ::std::fmt::Debug + Default + Clone;
+    type AllocExtra: AllocationExtra<Self::PointerTag, Self::MemoryExtra> + 'static;
 
     /// Memory's allocation map
     type MemoryMap:
@@ -95,16 +97,12 @@ pub trait Machine<'a, 'mir, 'tcx>: Sized {
         Default +
         Clone;
 
-    /// The memory kind to use for copied statics -- or None if those are not supported.
+    /// The memory kind to use for copied statics -- or None if statics should not be mutated
+    /// and thus any such attempt will cause a `ModifiedStatic` error to be raised.
     /// Statics are copied under two circumstances: When they are mutated, and when
     /// `static_with_default_tag` or `find_foreign_static` (see below) returns an owned allocation
     /// that is added to the memory so that the work is not done twice.
     const STATIC_KIND: Option<Self::MemoryKinds>;
-
-    /// As an optimization, you can prevent the pointer tracking hooks from ever being
-    /// called.  You should only do this if you do not care about provenance tracking.
-    /// This controls the `tag_reference` and `tag_dereference` hooks.
-    const ENABLE_PTR_TRACKING_HOOKS: bool;
 
     /// Whether to enforce the validity invariant
     fn enforce_validity(ecx: &EvalContext<'a, 'mir, 'tcx, Self>) -> bool;
@@ -146,20 +144,22 @@ pub trait Machine<'a, 'mir, 'tcx>: Sized {
     /// the machine memory. (This relies on `AllocMap::get_or` being able to add the
     /// owned allocation to the map even when the map is shared.)
     fn find_foreign_static(
-        tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
         def_id: DefId,
+        tcx: TyCtxtAt<'a, 'tcx, 'tcx>,
+        memory_extra: &Self::MemoryExtra,
     ) -> EvalResult<'tcx, Cow<'tcx, Allocation<Self::PointerTag, Self::AllocExtra>>>;
 
     /// Called to turn an allocation obtained from the `tcx` into one that has
-    /// the appropriate tags on each pointer.
+    /// the right type for this machine.
     ///
     /// This should avoid copying if no work has to be done! If this returns an owned
-    /// allocation (because a copy had to be done to add the tags), machine memory will
+    /// allocation (because a copy had to be done to add tags or metadata), machine memory will
     /// cache the result. (This relies on `AllocMap::get_or` being able to add the
     /// owned allocation to the map even when the map is shared.)
-    fn static_with_default_tag(
-        alloc: &'_ Allocation
-    ) -> Cow<'_, Allocation<Self::PointerTag, Self::AllocExtra>>;
+    fn adjust_static_allocation<'b>(
+        alloc: &'b Allocation,
+        memory_extra: &Self::MemoryExtra,
+    ) -> Cow<'b, Allocation<Self::PointerTag, Self::AllocExtra>>;
 
     /// Called for all binary operations on integer(-like) types when one operand is a pointer
     /// value, and for the `Offset` operation that is inherently about pointers.
@@ -180,56 +180,52 @@ pub trait Machine<'a, 'mir, 'tcx>: Sized {
         dest: PlaceTy<'tcx, Self::PointerTag>,
     ) -> EvalResult<'tcx>;
 
-    /// Hook for performing extra checks on a memory access.
-    ///
-    /// Takes read-only access to the allocation so we can keep all the memory read
-    /// operations take `&self`.  Use a `RefCell` in `AllocExtra` if you
-    /// need to mutate.
-    #[inline]
-    fn memory_accessed(
-        _alloc: &Allocation<Self::PointerTag, Self::AllocExtra>,
-        _ptr: Pointer<Self::PointerTag>,
-        _size: Size,
-        _access: MemoryAccess,
-    ) -> EvalResult<'tcx> {
-        Ok(())
-    }
-
-    /// Hook for performing extra checks when memory gets deallocated.
-    #[inline]
-    fn memory_deallocated(
-        _alloc: &mut Allocation<Self::PointerTag, Self::AllocExtra>,
-        _ptr: Pointer<Self::PointerTag>,
-    ) -> EvalResult<'tcx> {
-        Ok(())
-    }
-
-    /// Executed when evaluating the `&` operator: Creating a new reference.
-    /// This has the chance to adjust the tag.
-    /// `borrow_kind` can be `None` in case a raw ptr is being created.
-    fn tag_reference(
+    /// Add the tag for a newly allocated pointer.
+    fn tag_new_allocation(
         ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
-        ptr: Pointer<Self::PointerTag>,
-        pointee_ty: Ty<'tcx>,
-        pointee_size: Size,
-        borrow_kind: Option<mir::BorrowKind>,
-    ) -> EvalResult<'tcx, Self::PointerTag>;
+        ptr: Pointer,
+        kind: MemoryKind<Self::MemoryKinds>,
+    ) -> EvalResult<'tcx, Pointer<Self::PointerTag>>;
 
     /// Executed when evaluating the `*` operator: Following a reference.
-    /// This has the change to adjust the tag.
-    fn tag_dereference(
-        ecx: &EvalContext<'a, 'mir, 'tcx, Self>,
-        ptr: Pointer<Self::PointerTag>,
-        ptr_ty: Ty<'tcx>,
-    ) -> EvalResult<'tcx, Self::PointerTag>;
-
-    /// Execute a validation operation
+    /// This has the chance to adjust the tag.  It should not change anything else!
+    /// `mutability` can be `None` in case a raw ptr is being dereferenced.
     #[inline]
-    fn validation_op(
+    fn tag_dereference(
+        _ecx: &EvalContext<'a, 'mir, 'tcx, Self>,
+        place: MPlaceTy<'tcx, Self::PointerTag>,
+        _mutability: Option<hir::Mutability>,
+    ) -> EvalResult<'tcx, Scalar<Self::PointerTag>> {
+        Ok(place.ptr)
+    }
+
+    /// Execute a retagging operation
+    #[inline]
+    fn retag(
         _ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
-        _op: ::rustc::mir::ValidationOp,
-        _operand: &::rustc::mir::ValidationOperand<'tcx, ::rustc::mir::Place<'tcx>>,
+        _fn_entry: bool,
+        _place: PlaceTy<'tcx, Self::PointerTag>,
     ) -> EvalResult<'tcx> {
         Ok(())
     }
+
+    /// Execute an escape-to-raw operation
+    #[inline]
+    fn escape_to_raw(
+        _ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
+        _ptr: OpTy<'tcx, Self::PointerTag>,
+    ) -> EvalResult<'tcx> {
+        Ok(())
+    }
+
+    /// Called immediately before a new stack frame got pushed
+    fn stack_push(
+        ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
+    ) -> EvalResult<'tcx, Self::FrameExtra>;
+
+    /// Called immediately after a stack frame gets popped
+    fn stack_pop(
+        ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
+        extra: Self::FrameExtra,
+    ) -> EvalResult<'tcx>;
 }

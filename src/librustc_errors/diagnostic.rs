@@ -139,6 +139,17 @@ impl Diagnostic {
         self
     }
 
+    pub fn replace_span_with(&mut self, after: Span) -> &mut Self {
+        let before = self.span.clone();
+        self.set_span(after);
+        for span_label in before.span_labels() {
+            if let Some(label) = span_label.label {
+                self.span_label(after, label);
+            }
+        }
+        self
+    }
+
     pub fn note_expected_found(&mut self,
                                label: &dyn fmt::Display,
                                expected: DiagnosticStyledString,
@@ -350,10 +361,10 @@ impl Diagnostic {
     }
 
     pub fn span_suggestions_with_applicability(&mut self, sp: Span, msg: &str,
-                                        suggestions: Vec<String>,
-                                        applicability: Applicability) -> &mut Self {
+        suggestions: impl Iterator<Item = String>, applicability: Applicability) -> &mut Self
+    {
         self.suggestions.push(CodeSuggestion {
-            substitutions: suggestions.into_iter().map(|snippet| Substitution {
+            substitutions: suggestions.map(|snippet| Substitution {
                 parts: vec![SubstitutionPart {
                     snippet,
                     span: sp,

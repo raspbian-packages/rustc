@@ -174,12 +174,12 @@ debian/dh_auto_configure.stamp: debian/config.toml
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
 	# We patched some crates so have to rm the checksums
-	find src/vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
+	find vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
 	# compile it again for rust-installer, see #43449
-	ln -rsf src/libbacktrace -t src/vendor/backtrace-sys/src/
+	ln -rsf src/libbacktrace -t vendor/backtrace-sys/src/
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
-	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > src/vendor/lzma-sys/build.rs
+	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > vendor/lzma-sys/build.rs
 	# We don't run ./configure because we use debian/config.toml directly
 	ln -sf debian/config.toml config.toml
 	touch "$@"
@@ -194,7 +194,7 @@ endif
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
 	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links debian/*.stamp
-	$(RM) -rf $(SRC_CLEAN) config.toml src/vendor/backtrace-sys/src/libbacktrace
+	$(RM) -rf $(SRC_CLEAN) config.toml vendor/backtrace-sys/src/libbacktrace
 
 override_dh_auto_build-arch:
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
@@ -324,11 +324,10 @@ override_dh_install-indep: debian/rust-src.install debian/rust-src.links
 		-o -name 'COPYING*' \
 		\) -delete
 	# Remove files that autoload remote resources, caught by lintian
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/tools/clippy/util/gh-pages/*
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/cssparser/docs/*.html
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/kuchiki/docs/*.html
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/url/docs/*.html
-	$(RM) -rf debian/rust-src/usr/src/rustc-*/src/vendor/xz2/.gitmodules
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/cssparser/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/kuchiki/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/url/docs/*.html
+	$(RM) -rf debian/rust-src/usr/src/rustc-*/vendor/xz2/.gitmodules
 
 override_dh_installchangelogs:
 	dh_installchangelogs RELEASES.md
@@ -389,11 +388,12 @@ debian/watch-beta: debian/watch-beta.in debian/rules
 	m4 -DOLDVER="$$oldver" -DNEWVER="$$newver.0" "$<" > "$@"
 
 source_orig-beta: debian/watch-beta
-	uscan $(USCAN_OPTS) --verbose --watchfile "$<"
+	uscan $(USCAN_OPTS) $(if $(USCAN_DESTDIR),--destdir=$(USCAN_DESTDIR),) --verbose --watchfile "$<"
 	set -e; $(get_beta_version); \
-	tar xf ../rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
+	bd="$(if $(USCAN_DESTDIR),$(USCAN_DESTDIR),..)"; \
+	tar xf $$bd/rustc-$$newver.0-beta.999-src.tar.xz rustc-beta-src/version; \
 	bv="$$(sed -re 's/[0-9]+.[0-9]+.[0-9]+-beta.([0-9]+) \(.*\)/\1/g' rustc-beta-src/version)"; \
-	bash -c 'shopt -s nullglob; for i in ../rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'; \
+	bash -c 'shopt -s nullglob; for i in '"$$bd"'/rustc*beta.999*; do mv $$i $${i/beta.999/beta.'"$$bv"'}; done'; \
 	rm -f rustc-beta-src/version; \
 	rmdir -p rustc-beta-src; \
-	echo "prepared rustc $$newver.0~beta.$$bv"
+	echo "prepared rustc $$newver.0~beta.$$bv in $$bd"

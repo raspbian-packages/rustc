@@ -516,12 +516,6 @@ impl Build {
     fn std_features(&self) -> String {
         let mut features = "panic-unwind".to_string();
 
-        if self.config.debug_jemalloc {
-            features.push_str(" debug-jemalloc");
-        }
-        if self.config.use_jemalloc {
-            features.push_str(" jemalloc");
-        }
         if self.config.backtrace {
             features.push_str(" backtrace");
         }
@@ -537,8 +531,8 @@ impl Build {
     /// Get the space-separated set of activated features for the compiler.
     fn rustc_features(&self) -> String {
         let mut features = String::new();
-        if self.config.use_jemalloc {
-            features.push_str(" jemalloc");
+        if self.config.jemalloc {
+            features.push_str("jemalloc");
         }
         features
     }
@@ -768,7 +762,7 @@ impl Build {
                 let sha = self.rust_sha().unwrap_or(channel::CFG_RELEASE_NUM);
                 format!("/rustc/{}", sha)
             }
-            GitRepo::Llvm => format!("/rustc/llvm"),
+            GitRepo::Llvm => String::from("/rustc/llvm"),
         };
         Some(format!("{}={}", self.src.display(), path))
     }
@@ -786,12 +780,12 @@ impl Build {
         let mut base = self.cc[&target].args().iter()
                            .map(|s| s.to_string_lossy().into_owned())
                            .filter(|s| !s.starts_with("-O") && !s.starts_with("/O"))
-                           .collect::<Vec<_>>();
+                           .collect::<Vec<String>>();
 
         // If we're compiling on macOS then we add a few unconditional flags
         // indicating that we want libc++ (more filled out than libstdc++) and
         // we want to compile for 10.7. This way we can ensure that
-        // LLVM/jemalloc/etc are all properly compiled.
+        // LLVM/etc are all properly compiled.
         if target.contains("apple-darwin") {
             base.push("-stdlib=libc++".into());
         }
@@ -806,10 +800,10 @@ impl Build {
         if let Some(map) = self.debuginfo_map(which) {
         let cc = self.cc(target);
             if cc.ends_with("clang") || cc.ends_with("gcc") {
-                base.push(format!("-fdebug-prefix-map={}", map).into());
+                base.push(format!("-fdebug-prefix-map={}", map));
             } else if cc.ends_with("clang-cl.exe") {
                 base.push("-Xclang".into());
-                base.push(format!("-fdebug-prefix-map={}", map).into());
+                base.push(format!("-fdebug-prefix-map={}", map));
             }
         }
         base
@@ -843,7 +837,8 @@ impl Build {
         } else if target != self.config.build &&
                   !target.contains("msvc") &&
                   !target.contains("emscripten") &&
-                  !target.contains("wasm32") {
+                  !target.contains("wasm32") &&
+                  !target.contains("fuchsia") {
             Some(self.cc(target))
         } else {
             None

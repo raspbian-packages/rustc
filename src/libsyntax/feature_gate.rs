@@ -349,7 +349,7 @@ declare_features! (
     (active, abi_thiscall, "1.19.0", None, None),
 
     // Allows a test to fail without failing the whole suite
-    (active, allow_fail, "1.19.0", Some(42219), None),
+    (active, allow_fail, "1.19.0", Some(46488), None),
 
     // Allows unsized tuple coercion.
     (active, unsized_tuple_coercion, "1.20.0", Some(42877), None),
@@ -376,7 +376,7 @@ declare_features! (
     (active, non_exhaustive, "1.22.0", Some(44109), None),
 
     // `crate` as visibility modifier, synonymous to `pub(crate)`
-    (active, crate_visibility_modifier, "1.23.0", Some(45388), None),
+    (active, crate_visibility_modifier, "1.23.0", Some(53120), None),
 
     // extern types
     (active, extern_types, "1.23.0", Some(43467), None),
@@ -391,13 +391,10 @@ declare_features! (
     (active, generic_associated_types, "1.23.0", Some(44265), None),
 
     // `extern` in paths
-    (active, extern_in_paths, "1.23.0", Some(44660), None),
-
-    // Use `?` as the Kleene "at most one" operator
-    (active, macro_at_most_once_rep, "1.25.0", Some(48075), None),
+    (active, extern_in_paths, "1.23.0", Some(55600), None),
 
     // Infer static outlives requirements; RFC 2093
-    (active, infer_static_outlives_requirements, "1.26.0", Some(44493), None),
+    (active, infer_static_outlives_requirements, "1.26.0", Some(54185), None),
 
     // Multiple patterns with `|` in `if let` and `while let`
     (active, if_while_or_patterns, "1.26.0", Some(48215), None),
@@ -436,9 +433,6 @@ declare_features! (
     // Allows irrefutable patterns in if-let and while-let statements (RFC 2086)
     (active, irrefutable_let_patterns, "1.27.0", Some(44495), None),
 
-    // Allows use of the :literal macro fragment specifier (RFC 1576)
-    (active, macro_literal_matcher, "1.27.0", Some(35625), None),
-
     // inconsistent bounds in where clauses
     (active, trivial_bounds, "1.28.0", Some(48214), None),
 
@@ -447,9 +441,6 @@ declare_features! (
 
     // Integer match exhaustiveness checking
     (active, exhaustive_integer_patterns, "1.30.0", Some(50907), None),
-
-    // RFC 2070: #[panic_implementation] / #[panic_handler]
-    (active, panic_implementation, "1.28.0", Some(44489), None),
 
     // #[doc(keyword = "...")]
     (active, doc_keyword, "1.28.0", Some(51315), None),
@@ -466,15 +457,9 @@ declare_features! (
     (active, test_2018_feature, "1.31.0", Some(0), Some(Edition::Edition2018)),
 
     // Support for arbitrary delimited token streams in non-macro attributes
-    (active, unrestricted_attribute_tokens, "1.30.0", Some(44690), None),
+    (active, unrestricted_attribute_tokens, "1.30.0", Some(55208), None),
 
-    // Allows `use x::y;` to resolve through `self::x`, not just `::x`
-    (active, uniform_paths, "1.30.0", Some(53130), None),
-
-    // Allows `Self` in type definitions
-    (active, self_in_typedefs, "1.30.0", Some(49303), None),
-
-    // Allows unsized rvalues at arguments and parameters
+    // Allows unsized rvalues at arguments and parameters.
     (active, unsized_locals, "1.30.0", Some(48055), None),
 
     // #![test_runner]
@@ -483,9 +468,6 @@ declare_features! (
 
     // Non-builtin attributes in inner attribute position
     (active, custom_inner_attributes, "1.30.0", Some(54726), None),
-
-    // Self struct constructor  (RFC 2302)
-    (active, self_struct_ctor, "1.30.0", Some(51994), None),
 
     // allow mixing of bind-by-move in patterns and references to
     // those identifiers in guards, *if* we are using MIR-borrowck
@@ -501,6 +483,12 @@ declare_features! (
 
     // Allows `const _: TYPE = VALUE`
     (active, underscore_const_names, "1.31.0", Some(54912), None),
+
+    // `reason = ` in lint attributes and `expect` lint attribute
+    (active, lint_reasons, "1.31.0", Some(54503), None),
+
+    // `extern crate self as foo;` puts local crate root into extern prelude under name `foo`.
+    (active, extern_crate_self, "1.31.0", Some(56409), None),
 );
 
 declare_features! (
@@ -535,6 +523,8 @@ declare_features! (
      Some("subsumed by `#![feature(proc_macro_hygiene)]`")),
     (removed, proc_macro_gen, "1.27.0", Some(54727), None,
      Some("subsumed by `#![feature(proc_macro_hygiene)]`")),
+    (removed, panic_implementation, "1.28.0", Some(44489), None,
+     Some("subsumed by `#[panic_handler]`")),
 );
 
 declare_features! (
@@ -679,18 +669,28 @@ declare_features! (
     (accepted, extern_prelude, "1.30.0", Some(44660), None),
     // Parentheses in patterns
     (accepted, pattern_parentheses, "1.31.0", Some(51087), None),
-    // Allows the definition of `const fn` functions.
+    // Allows the definition of `const fn` functions
     (accepted, min_const_fn, "1.31.0", Some(53555), None),
     // Scoped lints
     (accepted, tool_lints, "1.31.0", Some(44690), None),
     // impl<I:Iterator> Iterator for &mut Iterator
     // impl Debug for Foo<'_>
     (accepted, impl_header_lifetime_elision, "1.31.0", Some(15872), None),
-    // `extern crate foo as bar;` puts `bar` into extern prelude.
+    // `extern crate foo as bar;` puts `bar` into extern prelude
     (accepted, extern_crate_item_prelude, "1.31.0", Some(55599), None),
+    // Allows use of the :literal macro fragment specifier (RFC 1576)
+    (accepted, macro_literal_matcher, "1.31.0", Some(35625), None),
+    // Use `?` as the Kleene "at most one" operator
+    (accepted, macro_at_most_once_rep, "1.32.0", Some(48075), None),
+    // `Self` struct constructor (RFC 2302)
+    (accepted, self_struct_ctor, "1.32.0", Some(51994), None),
+    // `Self` in type definitions (RFC 2300)
+    (accepted, self_in_typedefs, "1.32.0", Some(49303), None),
+    // Allows `use x::y;` to search `x` in the current scope.
+    (accepted, uniform_paths, "1.32.0", Some(53130), None),
 );
 
-// If you change this, please modify src/doc/unstable-book as well. You must
+// If you change this, please modify `src/doc/unstable-book` as well. You must
 // move that documentation into the relevant place in the other docs, and
 // remove the chapter on the flag.
 
@@ -1122,8 +1122,8 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
     ("proc_macro_attribute", Normal, Ungated),
     ("proc_macro", Normal, Ungated),
 
-    ("rustc_derive_registrar", Normal, Gated(Stability::Unstable,
-                                             "rustc_derive_registrar",
+    ("rustc_proc_macro_decls", Normal, Gated(Stability::Unstable,
+                                             "rustc_proc_macro_decls",
                                              "used internally by rustc",
                                              cfg_fn!(rustc_attrs))),
 
@@ -1155,16 +1155,6 @@ pub const BUILTIN_ATTRIBUTES: &'static [(&'static str, AttributeType, AttributeG
                                    "infer_static_outlives_requirements",
                                    "infer 'static lifetime requirements",
                                    cfg_fn!(infer_static_outlives_requirements))),
-
-    // RFC 2070 (deprecated attribute name)
-    ("panic_implementation",
-     Normal,
-     Gated(Stability::Deprecated("https://github.com/rust-lang/rust/issues/44489\
-                                  #issuecomment-415140224",
-                                 Some("replace this attribute with `#[panic_handler]`")),
-           "panic_implementation",
-           "this attribute was renamed to `panic_handler`",
-           cfg_fn!(panic_implementation))),
 
     // RFC 2070
     ("panic_handler", Normal, Ungated),
@@ -1433,14 +1423,8 @@ pub const EXPLAIN_DEPR_CUSTOM_DERIVE: &'static str =
 pub const EXPLAIN_DERIVE_UNDERSCORE: &'static str =
     "attributes of the form `#[derive_*]` are reserved for the compiler";
 
-pub const EXPLAIN_LITERAL_MATCHER: &'static str =
-    ":literal fragment specifier is experimental and subject to change";
-
 pub const EXPLAIN_UNSIZED_TUPLE_COERCION: &'static str =
     "unsized tuple coercion is not stable enough for use and is subject to change";
-
-pub const EXPLAIN_MACRO_AT_MOST_ONCE_REP: &'static str =
-    "using the `?` macro Kleene operator for \"at most one\" repetition is unstable";
 
 struct PostExpansionVisitor<'a> {
     context: &'a Context<'a>,
@@ -1622,7 +1606,7 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
             }
 
             ast::ItemKind::Struct(..) => {
-                if let Some(attr) = attr::find_by_name(&i.attrs[..], "repr") {
+                for attr in attr::filter_by_name(&i.attrs[..], "repr") {
                     for item in attr.meta_item_list().unwrap_or_else(Vec::new) {
                         if item.check_name("simd") {
                             gate_feature_post!(&self, repr_simd, attr.span,
@@ -1632,17 +1616,11 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                             if name == "packed" {
                                 gate_feature_post!(&self, repr_packed, attr.span,
                                                    "the `#[repr(packed(n))]` attribute \
-                                                   is experimental");
+                                                    is experimental");
                             }
                         }
                     }
                 }
-            }
-
-            ast::ItemKind::TraitAlias(..) => {
-                gate_feature_post!(&self, trait_alias,
-                                   i.span,
-                                   "trait aliases are not yet fully implemented");
             }
 
             ast::ItemKind::Impl(_, polarity, defaultness, _, _, _, _) => {
@@ -1664,6 +1642,15 @@ impl<'a> Visitor<'a> for PostExpansionVisitor<'a> {
                 gate_feature_post!(&self, optin_builtin_traits,
                                    i.span,
                                    "auto traits are experimental and possibly buggy");
+            }
+
+            ast::ItemKind::TraitAlias(..) => {
+                gate_feature_post!(
+                    &self,
+                    trait_alias,
+                    i.span,
+                    "trait aliases are experimental"
+                );
             }
 
             ast::ItemKind::MacroDef(ast::MacroDef { legacy: false, .. }) => {

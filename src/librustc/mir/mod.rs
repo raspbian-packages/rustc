@@ -10,16 +10,16 @@
 
 //! MIR datatypes and passes. See the [rustc guide] for more info.
 //!
-//! [rustc guide]: https://rust-lang-nursery.github.io/rustc-guide/mir/index.html
+//! [rustc guide]: https://rust-lang.github.io/rustc-guide/mir/index.html
 
 use hir::def::CtorKind;
 use hir::def_id::DefId;
 use hir::{self, HirId, InlineAsm};
-use middle::region;
 use mir::interpret::{ConstValue, EvalErrorKind, Scalar};
 use mir::visit::MirVisitable;
 use rustc_apfloat::ieee::{Double, Single};
 use rustc_apfloat::Float;
+use rustc_data_structures::fx::FxHashSet;
 use rustc_data_structures::graph::dominators::{dominators, Dominators};
 use rustc_data_structures::graph::{self, GraphPredecessors, GraphSuccessors};
 use rustc_data_structures::indexed_vec::{Idx, IndexVec};
@@ -39,6 +39,7 @@ use syntax_pos::{Span, DUMMY_SP};
 use ty::fold::{TypeFoldable, TypeFolder, TypeVisitor};
 use ty::subst::{CanonicalUserSubsts, Subst, Substs};
 use ty::{self, AdtDef, CanonicalTy, ClosureSubsts, GeneratorSubsts, Region, Ty, TyCtxt};
+use ty::layout::VariantIdx;
 use util::ppaux;
 
 pub use mir::interpret::AssertMessage;
@@ -69,12 +70,37 @@ impl<'tcx> HasLocalDecls<'tcx> for Mir<'tcx> {
     }
 }
 
+/// The various "big phases" that MIR goes through.
+///
+/// Warning: ordering of variants is significant
+#[derive(Copy, Clone, RustcEncodable, RustcDecodable, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MirPhase {
+    Build = 0,
+    Const = 1,
+    Validated = 2,
+    Optimized = 3,
+}
+
+impl MirPhase {
+    /// Gets the index of the current MirPhase within the set of all MirPhases.
+    pub fn phase_index(&self) -> usize {
+        *self as usize
+    }
+}
+
 /// Lowered representation of a single function.
 #[derive(Clone, RustcEncodable, RustcDecodable, Debug)]
 pub struct Mir<'tcx> {
     /// List of basic blocks. References to basic block use a newtyped index type `BasicBlock`
     /// that indexes into this vector.
     basic_blocks: IndexVec<BasicBlock, BasicBlockData<'tcx>>,
+
+    /// Records how far through the "desugaring and optimization" process this particular
+    /// MIR has traversed. This is particularly useful when inlining, since in that context
+    /// we instantiate the promoted constants and add them to our promoted vector -- but those
+    /// promoted items have already been optimized, whereas ours have not. This field allows
+    /// us to see the difference and forego optimization on the inlined promoted items.
+    pub phase: MirPhase,
 
     /// List of source scopes; these are referenced by statements
     /// and used for debuginfo. Indexed by a `SourceScope`.
@@ -151,6 +177,7 @@ impl<'tcx> Mir<'tcx> {
         );
 
         Mir {
+            phase: MirPhase::Build,
             basic_blocks,
             source_scopes,
             source_scope_local_data,
@@ -278,6 +305,20 @@ impl<'tcx> Mir<'tcx> {
         })
     }
 
+    /// Returns an iterator over all user-declared mutable locals.
+    #[inline]
+    pub fn mut_vars_iter<'a>(&'a self) -> impl Iterator<Item = Local> + 'a {
+        (self.arg_count + 1..self.local_decls.len()).filter_map(move |index| {
+            let local = Local::new(index);
+            let decl = &self.local_decls[local];
+            if decl.is_user_variable.is_some() && decl.mutability == Mutability::Mut {
+                Some(local)
+            } else {
+                None
+            }
+        })
+    }
+
     /// Returns an iterator over all user-declared mutable arguments and locals.
     #[inline]
     pub fn mut_vars_and_args_iter<'a>(&'a self) -> impl Iterator<Item = Local> + 'a {
@@ -368,6 +409,7 @@ pub enum Safety {
 }
 
 impl_stable_hash_for!(struct Mir<'tcx> {
+    phase,
     basic_blocks,
     source_scopes,
     source_scope_local_data,
@@ -479,25 +521,25 @@ pub enum BorrowKind {
     /// implicit closure bindings. It is needed when the closure is
     /// borrowing or mutating a mutable referent, e.g.:
     ///
-    ///    let x: &mut isize = ...;
-    ///    let y = || *x += 5;
+    ///     let x: &mut isize = ...;
+    ///     let y = || *x += 5;
     ///
     /// If we were to try to translate this closure into a more explicit
     /// form, we'd encounter an error with the code as written:
     ///
-    ///    struct Env { x: & &mut isize }
-    ///    let x: &mut isize = ...;
-    ///    let y = (&mut Env { &x }, fn_ptr);  // Closure is pair of env and fn
-    ///    fn fn_ptr(env: &mut Env) { **env.x += 5; }
+    ///     struct Env { x: & &mut isize }
+    ///     let x: &mut isize = ...;
+    ///     let y = (&mut Env { &x }, fn_ptr);  // Closure is pair of env and fn
+    ///     fn fn_ptr(env: &mut Env) { **env.x += 5; }
     ///
     /// This is then illegal because you cannot mutate an `&mut` found
     /// in an aliasable location. To solve, you'd have to translate with
     /// an `&mut` borrow:
     ///
-    ///    struct Env { x: & &mut isize }
-    ///    let x: &mut isize = ...;
-    ///    let y = (&mut Env { &mut x }, fn_ptr); // changed from &x to &mut x
-    ///    fn fn_ptr(env: &mut Env) { **env.x += 5; }
+    ///     struct Env { x: & &mut isize }
+    ///     let x: &mut isize = ...;
+    ///     let y = (&mut Env { &mut x }, fn_ptr); // changed from &x to &mut x
+    ///     fn fn_ptr(env: &mut Env) { **env.x += 5; }
     ///
     /// Now the assignment to `**env.x` is legal, but creating a
     /// mutable pointer to `x` is not because `x` is not mutable. We
@@ -614,6 +656,13 @@ impl_stable_hash_for!(enum self::ImplicitSelfKind {
     ImmRef,
     MutRef,
     None
+});
+
+impl_stable_hash_for!(enum self::MirPhase {
+    Build,
+    Const,
+    Validated,
+    Optimized,
 });
 
 mod binding_form_impl {
@@ -1670,14 +1719,14 @@ pub struct Statement<'tcx> {
     pub kind: StatementKind<'tcx>,
 }
 
+// `Statement` is used a lot. Make sure it doesn't unintentionally get bigger.
+#[cfg(target_arch = "x86_64")]
+static_assert!(MEM_SIZE_OF_STATEMENT: mem::size_of::<Statement<'_>>() == 56);
+
 impl<'tcx> Statement<'tcx> {
     /// Changes a statement to a nop. This is both faster than deleting instructions and avoids
     /// invalidating statement indices in `Location`s.
     pub fn make_nop(&mut self) {
-        // `Statement` contributes significantly to peak memory usage. Make
-        // sure it doesn't get bigger.
-        static_assert!(STATEMENT_IS_AT_MOST_56_BYTES: mem::size_of::<Statement<'_>>() <= 56);
-
         self.kind = StatementKind::Nop
     }
 
@@ -1704,7 +1753,7 @@ pub enum StatementKind<'tcx> {
     /// Write the discriminant for a variant to the enum Place.
     SetDiscriminant {
         place: Place<'tcx>,
-        variant_index: usize,
+        variant_index: VariantIdx,
     },
 
     /// Start a live range for the storage of the local.
@@ -1717,17 +1766,27 @@ pub enum StatementKind<'tcx> {
     InlineAsm {
         asm: Box<InlineAsm>,
         outputs: Box<[Place<'tcx>]>,
-        inputs: Box<[Operand<'tcx>]>,
+        inputs: Box<[(Span, Operand<'tcx>)]>,
     },
 
-    /// Assert the given places to be valid inhabitants of their type.  These statements are
-    /// currently only interpreted by miri and only generated when "-Z mir-emit-validate" is passed.
-    /// See <https://internals.rust-lang.org/t/types-as-contracts/5562/73> for more details.
-    Validate(ValidationOp, Vec<ValidationOperand<'tcx, Place<'tcx>>>),
+    /// Retag references in the given place, ensuring they got fresh tags.  This is
+    /// part of the Stacked Borrows model. These statements are currently only interpreted
+    /// by miri and only generated when "-Z mir-emit-retag" is passed.
+    /// See <https://internals.rust-lang.org/t/stacked-borrows-an-aliasing-model-for-rust/8153/>
+    /// for more details.
+    Retag {
+        /// `fn_entry` indicates whether this is the initial retag that happens in the
+        /// function prolog.
+        fn_entry: bool,
+        place: Place<'tcx>,
+    },
 
-    /// Mark one terminating point of a region scope (i.e. static region).
-    /// (The starting point(s) arise implicitly from borrows.)
-    EndRegion(region::Scope),
+    /// Escape the given reference to a raw pointer, so that it can be accessed
+    /// without precise provenance tracking. These statements are currently only interpreted
+    /// by miri and only generated when "-Z mir-emit-retag" is passed.
+    /// See <https://internals.rust-lang.org/t/stacked-borrows-an-aliasing-model-for-rust/8153/>
+    /// for more details.
+    EscapeToRaw(Operand<'tcx>),
 
     /// Encodes a user's type ascription. These need to be preserved
     /// intact so that NLL can respect them. For example:
@@ -1776,66 +1835,15 @@ pub enum FakeReadCause {
     ForLet,
 }
 
-/// The `ValidationOp` describes what happens with each of the operands of a
-/// `Validate` statement.
-#[derive(Copy, Clone, RustcEncodable, RustcDecodable, PartialEq, Eq)]
-pub enum ValidationOp {
-    /// Recursively traverse the place following the type and validate that all type
-    /// invariants are maintained.  Furthermore, acquire exclusive/read-only access to the
-    /// memory reachable from the place.
-    Acquire,
-    /// Recursive traverse the *mutable* part of the type and relinquish all exclusive
-    /// access.
-    Release,
-    /// Recursive traverse the *mutable* part of the type and relinquish all exclusive
-    /// access *until* the given region ends.  Then, access will be recovered.
-    Suspend(region::Scope),
-}
-
-impl Debug for ValidationOp {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        use self::ValidationOp::*;
-        match *self {
-            Acquire => write!(fmt, "Acquire"),
-            Release => write!(fmt, "Release"),
-            // (reuse lifetime rendering policy from ppaux.)
-            Suspend(ref ce) => write!(fmt, "Suspend({})", ty::ReScope(*ce)),
-        }
-    }
-}
-
-// This is generic so that it can be reused by miri
-#[derive(Clone, Hash, PartialEq, Eq, RustcEncodable, RustcDecodable)]
-pub struct ValidationOperand<'tcx, T> {
-    pub place: T,
-    pub ty: Ty<'tcx>,
-    pub re: Option<region::Scope>,
-    pub mutbl: hir::Mutability,
-}
-
-impl<'tcx, T: Debug> Debug for ValidationOperand<'tcx, T> {
-    fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
-        write!(fmt, "{:?}: {:?}", self.place, self.ty)?;
-        if let Some(ce) = self.re {
-            // (reuse lifetime rendering policy from ppaux.)
-            write!(fmt, "/{}", ty::ReScope(ce))?;
-        }
-        if let hir::MutImmutable = self.mutbl {
-            write!(fmt, " (imm)")?;
-        }
-        Ok(())
-    }
-}
-
 impl<'tcx> Debug for Statement<'tcx> {
     fn fmt(&self, fmt: &mut Formatter<'_>) -> fmt::Result {
         use self::StatementKind::*;
         match self.kind {
             Assign(ref place, ref rv) => write!(fmt, "{:?} = {:?}", place, rv),
             FakeRead(ref cause, ref place) => write!(fmt, "FakeRead({:?}, {:?})", cause, place),
-            // (reuse lifetime rendering policy from ppaux.)
-            EndRegion(ref ce) => write!(fmt, "EndRegion({})", ty::ReScope(*ce)),
-            Validate(ref op, ref places) => write!(fmt, "Validate({:?}, {:?})", op, places),
+            Retag { fn_entry, ref place } =>
+                write!(fmt, "Retag({}{:?})", if fn_entry { "[fn entry] " } else { "" }, place),
+            EscapeToRaw(ref place) => write!(fmt, "EscapeToRaw({:?})", place),
             StorageLive(ref place) => write!(fmt, "StorageLive({:?})", place),
             StorageDead(ref place) => write!(fmt, "StorageDead({:?})", place),
             SetDiscriminant {
@@ -1933,7 +1941,7 @@ pub enum ProjectionElem<'tcx, V, T> {
     /// "Downcast" to a variant of an ADT. Currently, we only introduce
     /// this for ADTs with more than one variant. It may be better to
     /// just introduce it always, or always for enums.
-    Downcast(&'tcx AdtDef, usize),
+    Downcast(&'tcx AdtDef, VariantIdx),
 }
 
 /// Alias for projections as they appear in places, where the base is a place
@@ -1943,6 +1951,11 @@ pub type PlaceProjection<'tcx> = Projection<'tcx, Place<'tcx>, Local, Ty<'tcx>>;
 /// Alias for projections as they appear in places, where the base is a place
 /// and the index is a local.
 pub type PlaceElem<'tcx> = ProjectionElem<'tcx, Local, Ty<'tcx>>;
+
+// at least on 64 bit systems, `PlaceElem` should not be larger than two pointers
+static_assert!(PROJECTION_ELEM_IS_2_PTRS_LARGE:
+    mem::size_of::<PlaceElem<'_>>() <= 16
+);
 
 /// Alias for projections as they appear in `UserTypeProjection`, where we
 /// need neither the `V` parameter for `Index` nor the `T` for `Field`.
@@ -1963,7 +1976,7 @@ impl<'tcx> Place<'tcx> {
         self.elem(ProjectionElem::Deref)
     }
 
-    pub fn downcast(self, adt_def: &'tcx AdtDef, variant_index: usize) -> Place<'tcx> {
+    pub fn downcast(self, adt_def: &'tcx AdtDef, variant_index: VariantIdx) -> Place<'tcx> {
         self.elem(ProjectionElem::Downcast(adt_def, variant_index))
     }
 
@@ -2187,7 +2200,7 @@ pub enum CastKind {
     /// "Unsize" -- convert a thin-or-fat pointer to a fat pointer.
     /// codegen must figure out the details once full monomorphization
     /// is known. For example, this could be used to cast from a
-    /// `&[i32;N]` to a `&[i32]`, or a `Box<T>` to a `Box<Trait>`
+    /// `&[i32;N]` to a `&[i32]`, or a `Box<T>` to a `Box<dyn Trait>`
     /// (presuming `T: Trait`).
     Unsize,
 }
@@ -2205,7 +2218,7 @@ pub enum AggregateKind<'tcx> {
     /// active field index would identity the field `c`
     Adt(
         &'tcx AdtDef,
-        usize,
+        VariantIdx,
         &'tcx Substs<'tcx>,
         Option<UserTypeAnnotation<'tcx>>,
         Option<usize>,
@@ -2605,7 +2618,7 @@ pub fn fmt_const_val(f: &mut impl Write, const_val: &ty::Const<'_>) -> fmt::Resu
             _ => {}
         }
     }
-    // print function definitons
+    // print function definitions
     if let FnDef(did, _) = ty.sty {
         return write!(f, "{}", item_path_str(did));
     }
@@ -2713,6 +2726,36 @@ impl Location {
             block: self.block,
             statement_index: self.statement_index + 1,
         }
+    }
+
+    /// Returns `true` if `other` is earlier in the control flow graph than `self`.
+    pub fn is_predecessor_of<'tcx>(&self, other: Location, mir: &Mir<'tcx>) -> bool {
+        // If we are in the same block as the other location and are an earlier statement
+        // then we are a predecessor of `other`.
+        if self.block == other.block && self.statement_index < other.statement_index {
+            return true;
+        }
+
+        // If we're in another block, then we want to check that block is a predecessor of `other`.
+        let mut queue: Vec<BasicBlock> = mir.predecessors_for(other.block).clone();
+        let mut visited = FxHashSet::default();
+
+        while let Some(block) = queue.pop() {
+            // If we haven't visited this block before, then make sure we visit it's predecessors.
+            if visited.insert(block) {
+                queue.append(&mut mir.predecessors_for(block).clone());
+            } else {
+                continue;
+            }
+
+            // If we found the block that `self` is in, then we are a predecessor of `other` (since
+            // we found that block by looking at the predecessors of `other`).
+            if self.block == block {
+                return true;
+            }
+        }
+
+        false
     }
 
     pub fn dominates(&self, other: Location, dominators: &Dominators<BasicBlock>) -> bool {
@@ -2905,11 +2948,11 @@ pub enum ClosureOutlivesSubject<'tcx> {
 
 CloneTypeFoldableAndLiftImpls! {
     BlockTailInfo,
+    MirPhase,
     Mutability,
     SourceInfo,
     UpvarDecl,
     FakeReadCause,
-    ValidationOp,
     SourceScope,
     SourceScopeData,
     SourceScopeLocalData,
@@ -2917,6 +2960,7 @@ CloneTypeFoldableAndLiftImpls! {
 
 BraceStructTypeFoldableImpl! {
     impl<'tcx> TypeFoldable<'tcx> for Mir<'tcx> {
+        phase,
         basic_blocks,
         source_scopes,
         source_scope_local_data,
@@ -2962,12 +3006,6 @@ BraceStructTypeFoldableImpl! {
 }
 
 BraceStructTypeFoldableImpl! {
-    impl<'tcx> TypeFoldable<'tcx> for ValidationOperand<'tcx, Place<'tcx>> {
-        place, ty, re, mutbl
-    }
-}
-
-BraceStructTypeFoldableImpl! {
     impl<'tcx> TypeFoldable<'tcx> for Statement<'tcx> {
         source_info, kind
     }
@@ -2981,8 +3019,8 @@ EnumTypeFoldableImpl! {
         (StatementKind::StorageLive)(a),
         (StatementKind::StorageDead)(a),
         (StatementKind::InlineAsm) { asm, outputs, inputs },
-        (StatementKind::Validate)(a, b),
-        (StatementKind::EndRegion)(a),
+        (StatementKind::Retag) { fn_entry, place },
+        (StatementKind::EscapeToRaw)(place),
         (StatementKind::AscribeUserType)(a, v, b),
         (StatementKind::Nop),
     }
@@ -3000,7 +3038,7 @@ impl<'tcx> TypeFoldable<'tcx> for Terminator<'tcx> {
         use mir::TerminatorKind::*;
 
         let kind = match self.kind {
-            Goto { target } => Goto { target: target },
+            Goto { target } => Goto { target },
             SwitchInt {
                 ref discr,
                 switch_ty,

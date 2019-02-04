@@ -1829,10 +1829,10 @@ impl<'test> TestCx<'test> {
             rustc.args(self.split_maybe_args(&self.config.host_rustcflags));
         } else {
             rustc.args(self.split_maybe_args(&self.config.target_rustcflags));
-        }
-        if !is_rustdoc {
-            if let Some(ref linker) = self.config.linker {
-                rustc.arg(format!("-Clinker={}", linker));
+            if !is_rustdoc {
+                if let Some(ref linker) = self.config.linker {
+                    rustc.arg(format!("-Clinker={}", linker));
+                }
             }
         }
 
@@ -1870,11 +1870,9 @@ impl<'test> TestCx<'test> {
             } else {
                 self.fatal("no NodeJS binary found (--nodejs)");
             }
-        }
-
-        // If this is otherwise wasm , then run tests under nodejs with our
+        // If this is otherwise wasm, then run tests under nodejs with our
         // shim
-        if self.config.target.contains("wasm32") {
+        } else if self.config.target.contains("wasm32") {
             if let Some(ref p) = self.config.nodejs {
                 args.push(p.clone());
             } else {
@@ -2783,12 +2781,14 @@ impl<'test> TestCx<'test> {
                explicit, self.config.compare_mode, expected_errors, proc_res.status,
                self.props.error_patterns);
         if !explicit && self.config.compare_mode.is_none() {
-            if !expected_errors.is_empty() && !proc_res.status.success() {
-                // "//~ERROR comments"
-                self.check_expected_errors(expected_errors, &proc_res);
-            } else if !self.props.error_patterns.is_empty() && !proc_res.status.success() {
-                // "// error-pattern" comments
-                self.check_error_patterns(&proc_res.stderr, &proc_res);
+            if !proc_res.status.success() {
+                if !self.props.error_patterns.is_empty() {
+                    // "// error-pattern" comments
+                    self.check_error_patterns(&proc_res.stderr, &proc_res);
+                } else {
+                    // "//~ERROR comments"
+                    self.check_expected_errors(expected_errors, &proc_res);
+                }
             }
         }
 

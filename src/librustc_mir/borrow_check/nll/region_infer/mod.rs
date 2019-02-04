@@ -345,6 +345,13 @@ impl<'tcx> RegionInferenceContext<'tcx> {
                     if scc_universe.can_name(placeholder.universe) {
                         self.scc_values.add_element(scc, placeholder);
                     } else {
+                        debug!(
+                            "init_free_and_bound_regions: placeholder {:?} is \
+                             not compatible with universe {:?} of its SCC {:?}",
+                            placeholder,
+                            scc_universe,
+                            scc,
+                        );
                         self.add_incompatible_universe(scc);
                     }
                 }
@@ -471,6 +478,9 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             let mut constraints: Vec<_> = self.constraints.iter().collect();
             constraints.sort();
             constraints
+                .into_iter()
+                .map(|c| (c, self.constraint_sccs.scc(c.sup), self.constraint_sccs.scc(c.sub)))
+                .collect::<Vec<_>>()
         });
 
         // To propagate constraints, we walk the DAG induced by the
@@ -560,6 +570,8 @@ impl<'tcx> RegionInferenceContext<'tcx> {
     /// `'a` with `'b` and not `'static`. But it will have to do for
     /// now.
     fn add_incompatible_universe(&mut self, scc: ConstraintSccIndex) {
+        debug!("add_incompatible_universe(scc={:?})", scc);
+
         let fr_static = self.universal_regions.fr_static;
         self.scc_values.add_all_points(scc);
         self.scc_values.add_element(scc, fr_static);
@@ -1218,7 +1230,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         mir: &Mir<'tcx>,
         _mir_def_id: DefId,
         longer_fr: RegionVid,
-        placeholder: ty::Placeholder,
+        placeholder: ty::PlaceholderRegion,
     ) {
         debug!(
             "check_bound_universal_region(fr={:?}, placeholder={:?})",
@@ -1226,6 +1238,10 @@ impl<'tcx> RegionInferenceContext<'tcx> {
         );
 
         let longer_fr_scc = self.constraint_sccs.scc(longer_fr);
+        debug!(
+            "check_bound_universal_region: longer_fr_scc={:?}",
+            longer_fr_scc,
+        );
 
         // If we have some bound universal region `'a`, then the only
         // elements it can contain is itself -- we don't know anything
@@ -1242,6 +1258,7 @@ impl<'tcx> RegionInferenceContext<'tcx> {
             Some(v) => v,
             None => return,
         };
+        debug!("check_bound_universal_region: error_element = {:?}", error_element);
 
         // Find the region that introduced this `error_element`.
         let error_region = match error_element {
