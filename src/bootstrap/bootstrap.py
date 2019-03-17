@@ -623,6 +623,8 @@ class RustBuild(object):
             (os.pathsep + env["LIBRARY_PATH"]) \
             if "LIBRARY_PATH" in env else ""
         env["RUSTFLAGS"] = "-Cdebuginfo=2 "
+        if self.build_triple().startswith('mips'):
+            env["RUSTFLAGS"] += " -Cllvm-args=-mxgot"
 
         build_section = "target.{}".format(self.build_triple())
         target_features = []
