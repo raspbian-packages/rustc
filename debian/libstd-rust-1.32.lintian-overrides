@@ -1,0 +1,12 @@
+# "libstd" just seemed too generic
+libstd-rust-1.32 binary: package-name-doesnt-match-sonames
+
+# Rust doesn't use dev shlib symlinks nor any of the other shlib support stuff
+libstd-rust-1.32 binary: dev-pkg-without-shlib-symlink
+libstd-rust-1.32 binary: shlib-without-versioned-soname
+libstd-rust-1.32 binary: unused-shlib-entry-in-control-file
+
+# Libraries that use libc symbols (libterm, libstd, etc) *are* linked
+# to libc.  Lintian gets upset that some Rust libraries don't need
+# libc, boo hoo.
+libstd-rust-1.32 binary: library-not-linked-against-libc
