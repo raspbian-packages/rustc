@@ -42,11 +42,21 @@ cfg_if! {
                 pub l_sysid: libc::c_int,
             }
 
-            pub const F_RDLCK: libc::c_short = 0;
-            pub const F_WRLCK: libc::c_short = 1;
-            pub const F_UNLCK: libc::c_short = 2;
-            pub const F_SETLK: libc::c_int = 6;
-            pub const F_SETLKW: libc::c_int = 7;
+            cfg_if! {
+                if #[cfg(target_arch = "sparc64")] {
+                    pub const F_RDLCK: libc::c_short = 1;
+                    pub const F_WRLCK: libc::c_short = 2;
+                    pub const F_UNLCK: libc::c_short = 3;
+                    pub const F_SETLK: libc::c_int = 8;
+                    pub const F_SETLKW: libc::c_int = 9;
+                } else {
+                    pub const F_RDLCK: libc::c_short = 0;
+                    pub const F_WRLCK: libc::c_short = 1;
+                    pub const F_UNLCK: libc::c_short = 2;
+                    pub const F_SETLK: libc::c_int = 6;
+                    pub const F_SETLKW: libc::c_int = 7;
+                }
+            }
         }
 
         #[cfg(target_os = "freebsd")]
