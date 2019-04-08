@@ -1,11 +1,25 @@
-rustc (1.32.0+dfsg1-1+rpi1) buster-staging; urgency=medium
+rustc (1.32.0+dfsg1-3+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Mon, 04 Feb 2019 05:20:52 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Mon, 08 Apr 2019 01:32:43 +0000
+
+rustc (1.32.0+dfsg1-3) unstable; urgency=medium
+
+  * Conditionally-apply u-compiletest.patch based on stage0 compiler.
+  * Fix syntax error in d/rules compiletest check.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 17 Mar 2019 16:40:05 -0700
+
+rustc (1.32.0+dfsg1-2) unstable; urgency=medium
+
+  * More verbose logging during builds.
+  * Fix compiletest compile error, and check log has at least 1 pass.
+
+ -- Ximin Luo <infinity0@debian.org>  Sun, 17 Mar 2019 12:52:57 -0700
 
 rustc (1.32.0+dfsg1-1) unstable; urgency=medium
 

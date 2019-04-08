@@ -45,14 +45,41 @@ vendor/stable_deref_trait/src/lib.rs
 vendor/winapi-*/src/winnt.rs
 vendor/winapi/src/lib.rs
 
+# False-positive, audit-vendor-source automatically flags JS/C files
+src/ci/docker/scripts/qemu-bare-bones-addentropy.c
+src/dlmalloc/src/dlmalloc.c
+src/doc/book/*/ferris.js
+src/doc/book/ferris.js
+src/etc/wasm32-shim.js
+src/grammar/parser-lalr-main.c
+src/libbacktrace/*.c
+src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
+src/libcompiler_builtins/compiler-rt/lib/builtins/*.c
+src/libcompiler_builtins/compiler-rt/lib/builtins/*/*.c
+src/librustdoc/html/static/*.js
+src/test/auxiliary/rust_test_helpers.c
+src/test/run-make/wasm-*/*.js
+src/test/run-make-fulldeps/*.c
+src/test/run-make-fulldeps/*/*.c
+src/test/rustdoc-js/*.js
+src/tools/rustdoc-js/tester.js
+
 # Embedded libraries, justified in README.source
 # None atm
 
 # False-positive, misc
+src/etc/platform-intrinsics/*/*.json
+src/etc/platform-intrinsics/*.json
+src/libcompiler_builtins/compiler-rt/.arcconfig
+src/libcompiler_builtins/*.json
 src/stdsimd/.travis.yml
-vendor/num/ci/deploy.enc
-vendor/elasticlunr-rs/src/lang/*.rs
+src/test/run-make-fulldeps/target-specs/*.json
+src/test/run-make-fulldeps/libtest-json/output.json
+vendor/clap/.mention-bot
 vendor/cloudabi/cloudabi.rs
+vendor/elasticlunr-rs/src/lang/*.rs
+vendor/markup5ever/data/entities.json
+vendor/num/ci/deploy.enc
 
 # False-positive, hand-editable small image
 src/etc/installer/gfx/
@@ -94,9 +121,12 @@ vendor/cssparser/src/big-data-url.css
 vendor/elasticlunr-rs/tests/data/tr.in.txt
 vendor/flate2/tests/*.gz
 vendor/idna/tests/IdnaTest.txt
+vendor/idna/tests/punycode_tests.json
 vendor/html5ever/data/bench/*.html
 vendor/html5ever/html5lib-tests/*/*.dat
 vendor/html5ever/html5lib-tests/*/*.test
+vendor/minifier/tests/files/test.json
+vendor/pest/benches/data.json
 vendor/pretty_assertions/src/format_changeset.rs
 vendor/regex/src/testdata/basic.dat
 vendor/regex/tests/crates_regex.rs
@@ -107,7 +137,7 @@ vendor/rustc-demangle/src/lib.rs
 vendor/tar/tests/archives/*.tar
 vendor/toml/tests/*/*.toml
 vendor/toml/tests/*/*.json
-vendor/pest/benches/data.json
+vendor/url/tests/*.json
 vendor/yaml-rust/tests/specexamples.rs.inc
 
 # Compromise, ideally we'd autogenerate these

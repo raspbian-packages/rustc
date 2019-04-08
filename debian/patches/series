@@ -1,6 +1,7 @@
 # Patches for upstream
 
 # pending, or forwarded
+#u-compiletest.patch # needs to be applied conditionally, see d/rules
 u-0001-lldb_batchmode.py-try-import-_thread-for-Python-3.patch
 u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
 u-0001-librustc_codegen_llvm-Don-t-eliminate-empty-structs-.patch

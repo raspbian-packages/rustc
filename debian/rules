@@ -42,7 +42,7 @@ export LD_LIBRARY_PATH
 endif
 
 RUSTBUILD = RUST_BACKTRACE=1 ./x.py
-RUSTBUILD_FLAGS = --config debian/config.toml -vv --on-fail env
+RUSTBUILD_FLAGS = --config debian/config.toml -vvv --on-fail env
 # TODO: This should simply be "$(RUSTBUILD) test" but unfortunately this causes
 # an insane blow up in the time it takes to run tests. See upstream #37477 for
 # details. Upstream worked around it in #38984 but in Debian we can't take
@@ -173,6 +173,13 @@ debian/dh_auto_configure.stamp: debian/config.toml
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
+	# work around https://github.com/rust-lang/rust/issues/59264
+	# TODO: remove this in 1.33 and later
+	if dpkg --compare-versions $(LOCAL_RUST_VERSION) '>=' 1.32.0; then \
+	  debian/ensure-patch -N debian/patches/u-compiletest.patch; \
+	else \
+	  debian/ensure-patch -R debian/patches/u-compiletest.patch; \
+	fi
 	# We patched some crates so have to rm the checksums
 	find vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
 	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
@@ -222,7 +229,7 @@ ifneq (,$(filter $(DEB_BUILD_ARCH), powerpc powerpcspe sparc64 x32))
 endif
 FAILED_TESTS = grep "FAILED\|^command did not execute successfully" $(TEST_LOG) | grep -v '^test result: FAILED'
 override_dh_auto_test-arch:
-# ensure that rustc_llvm is actually dynamically linked to libLLVM
+	# ensure that rustc_llvm is actually dynamically linked to libLLVM
 	set -e; find build/*/stage2/lib/rustlib/* -name '*rustc_llvm*.so' | \
 	while read x; do \
 		stat -c '%s %n' "$$x"; \
@@ -232,7 +239,8 @@ override_dh_auto_test-arch:
 ifeq (, $(filter nocheck,$(DEB_BUILD_PROFILES)))
 ifeq (testsuitedisabled, $(filter nocheck,$(DEB_BUILD_OPTIONS)))
 	{ $(RUSTBUILD_TEST) --no-fail-fast $(RUSTBUILD_FLAGS) $(RUSTBUILD_TEST_FLAGS); echo $$?; } | tee -a $(TEST_LOG)
-	test -f $(TEST_LOG)
+	# test that the log has at least 1 pass, to prevent e.g. #57709
+	grep -l "^test .* \.\.\. ok$$" $(TEST_LOG)
 	echo "==== Debian rustc test report ===="; \
 	echo "Specific test failures:"; \
 	$(FAILED_TESTS); \

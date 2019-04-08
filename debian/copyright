@@ -306,6 +306,10 @@ Copyright: 2014-2017 Alex Crichton <alex@alexcrichton.com>
 License: MIT or Apache-2.0
 Comment: see https://github.com/alexcrichton/
 
+Files: src/dlmalloc/src/dlmalloc.c
+Copyright: 2000-2012 Doug Lea <dl@cs.oswego.edu>
+License: CC0-1.0
+
 Files: vendor/ammonia/*
 Copyright: 2015-2018 Michael Howell <michael@notriddle.com>
 License: MIT  or  Apache-2.0
@@ -871,6 +875,11 @@ License: BSD-2-clause
  LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN
  IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+License: CC0-1.0
+ On Debian systems, the full text of the CC0 1.0 Universal
+ License can be found in the file
+ `/usr/share/common-licenses/CC0-1.0'.
 
 License: MIT
  Permission is hereby granted, free of charge, to any
