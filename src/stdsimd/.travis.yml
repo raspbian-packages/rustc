@@ -1,0 +1,121 @@
+language: rust
+sudo: false
+rust: nightly
+
+matrix:
+  fast_finish: true
+  include:
+    - name: "i586-unknown-linux-gnu"
+      env: TARGET=i586-unknown-linux-gnu
+    - name: "i686-unknown-linux-gnu"
+      env: TARGET=i686-unknown-linux-gnu
+    - name: "x86_64-unknown-linux-gnu"
+      env: TARGET=x86_64-unknown-linux-gnu
+      install: true
+    - name: "x86_64-unknown-linux-gnu-emulated (runs all assert_instr tests)"
+      env: TARGET=x86_64-unknown-linux-gnu-emulated STDSIMD_TEST_EVERYTHING=1 RUSTFLAGS="--cfg stdsimd_intel_sde"
+      install: true
+    - name: "x86_64-linux-android - no assert_instr"
+      env: TARGET=x86_64-linux-android STDSIMD_DISABLE_ASSERT_INSTR=1
+    - name: "arm-unknown-linux-gnueabihf"
+      env: TARGET=arm-unknown-linux-gnueabihf
+    - name: "arm-linux-androideabi - no assert_instr"
+      env: TARGET=arm-linux-androideabi STDSIMD_DISABLE_ASSERT_INSTR=1
+    - name: "armv7-unknown-linux-gnueabihf - NEON"
+      env: TARGET=armv7-unknown-linux-gnueabihf RUSTFLAGS="-C target-feature=+neon"
+    - name: "aarch64-unknown-linux-gnu"
+      env: TARGET=aarch64-unknown-linux-gnu
+    - name: "mips-unknown-linux-gnu - build-only"
+      env: TARGET=mips-unknown-linux-gnu NORUN=1
+    - name: "mipsel-unknown-linux-musl - build-only"
+      env: TARGET=mipsel-unknown-linux-musl NORUN=1
+    - name: "mips64-unknown-linux-gnuabi64 - build-only"
+      env: TARGET=mips64-unknown-linux-gnuabi64 NORUN=1
+    - name: "mips64el-unknown-linux-gnuabi64 - build-only"
+      env: TARGET=mips64el-unknown-linux-gnuabi64 NORUN=1
+    - name: "aarch64-linux-android - no assert_instr"
+      env: TARGET=aarch64-linux-android STDSIMD_DISABLE_ASSERT_INSTR=1
+    - name: "powerpc-unknown-linux-gnu - no assert_instr"
+      env: TARGET=powerpc-unknown-linux-gnu STDSIMD_DISABLE_ASSERT_INSTR=1
+    - name: "powerpc64-unknown-linux-gnu - no assert_instr, no simd_test"
+      env: TARGET=powerpc64-unknown-linux-gnu STDSIMD_DISABLE_ASSERT_INSTR=1 STDSIMD_TEST_NORUN=1
+    - name: "powerpc64le-unknown-linux-gnu - no assert_instr, no simd_test"
+      env: TARGET=powerpc64le-unknown-linux-gnu STDSIMD_DISABLE_ASSERT_INSTR=1 STDSIMD_TEST_NORUN=1
+    - name: "s390x-unknown-linux-gnu - build-only"
+      env: TARGET=s390x-unknown-linux-gnu NORUN=1
+    - name: "i686-apple-darwin"
+      env: TARGET=i686-apple-darwin
+      os: osx
+      osx_image: xcode10
+      script: ci/run.sh
+    - name: "x86_64-apple-darwin"
+      env: TARGET=x86_64-apple-darwin
+      os: osx
+      osx_image: xcode10
+      install: true
+      script: ci/run.sh
+    - name: "wasm32-unknown-unknown"
+      env: TARGET=wasm32-unknown-unknown
+    - name: "nvptx64-nvidia-cuda - cross compiled, build libcore only"
+      env: TARGET=x86_64-unknown-linux-gnu CROSS_TARGET=nvptx64-nvidia-cuda-cross NORUN=1 NOSTD=1
+      install:
+        - travis_retry rustup target add $TARGET
+        - travis_retry rustup component add rust-src
+        - cargo install xargo
+        - xargo --version
+        - mkdir -p $HOME/.xargo
+    - name: "thumbv6m-none-eabi - build libcore only"
+      env: TARGET=thumbv6m-none-eabi NORUN=1 NOSTD=1
+      script: ci/run.sh
+    - name: "thumbv7m-none-eabi - build libcore only"
+      env: TARGET=thumbv7m-none-eabi NORUN=1 NOSTD=1
+      script: ci/run.sh
+    - name: "thumbv7em-none-eabi - build libcore only"
+      env: TARGET=thumbv7em-none-eabi NORUN=1 NOSTD=1
+      script: ci/run.sh
+    - name: "thumbv7em-none-eabihf - build libcore only"
+      env: TARGET=thumbv7em-none-eabihf NORUN=1 NOSTD=1
+      script: ci/run.sh
+    - name: "Documentation"
+      install: true
+      script: ci/dox.sh
+    - name: "Automatic verification: x86 and x86_64"
+      script: cargo test --manifest-path crates/stdsimd-verify/Cargo.toml
+      install: true
+    - name: "rustfmt"
+      install: rustup component add rustfmt-preview
+      script: cargo fmt --all -- --check
+      rust: stable
+    - name: "clippy"
+      install: true
+      script: |
+        if rustup component add clippy-preview; then
+            cargo clippy --all -- -D clippy::pedantic
+        fi
+    - name: "Shellcheck"
+      install: true
+      script:
+        - shellcheck --version
+        - shellcheck ci/*.sh
+  allow_failures:
+    # FIXME https://github.com/rust-lang/libc/issues/1170
+    - name: "x86_64-linux-android - no assert_instr"
+    - name: "arm-linux-androideabi - no assert_instr"
+    - name: "aarch64-linux-android - no assert_instr"
+    # clippy changes enough from time to time that it breaks relatively
+    # regularly
+    - name: "clippy"
+    # qemu seems to intermittently segfault...
+    - name: "powerpc-unknown-linux-gnu - no assert_instr"
+
+install: travis_retry rustup target add $TARGET
+script:
+  - cargo generate-lockfile
+  - ci/run-docker.sh $TARGET $CROSS_TARGET $FEATURES
+
+notifications:
+  email:
+    on_success: never
+env:
+  global:
+    secure: "jmh7FfVwtPYQN/xPrVYmX7ys70GvX9YsKYtDpp8UwtIihCr81KHi2P2a1/KZNvQN0gPO+nneKieCbNQSCEtxDG9plUoB+OhX8ov9g3ImTJbyt+oW35Vlqq9ftB+Hr/Wn42o4OSTYxRfy1gf9VMePBaJfdkuym3BB75K4s+k+akuVqJv+KAm3zz0wSqU4O/evj2EGz1ldMzqxpogrO2WJQkXyl4xaW/1E0y8IZfRy0bJPKALFUpTDp39ZiWvzjNdr8CXUW1DChJdFPNo7yswxyl/NL5e/meHqF2dzS5b0YyOhcCzlBm7eZoEwyHZWB73t7n5Tuo0uYpX/kBXPAvtDrljQjBNcpm9vJtg6sj3oG0bGAI8pJfNNpLdHLHO6CjmORGP/rzZLeRdEFVb8t7UIXG7l3NcoBpRNiwPFY4gpE5dgiRsKjNrtmNe3GahhsYwbPkc+QUeQFIDtYYRxdJVZj+KvU9jIEpRh5Zv8FZBfsfx0LcLEdtRBjJxFNGGO5NY8nP0OWNVyt4ckRbRMtVzcbcOdzcfUc74/wZYZj8SrfcbSqsfylMQbxLAHJCynvuFmoMf3udPqP3aPuO+4EjDYDIQ1kHwKK87lwqlXFHdhRepAmhRR//g3bDUxzXd96KJqbFU3MYZnn/jzIi0kl+jx3FxivT380cYLVjrD29aGc7M="

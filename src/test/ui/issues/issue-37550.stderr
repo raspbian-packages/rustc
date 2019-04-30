@@ -1,0 +1,8 @@
+error: function pointers in const fn are unstable
+  --> $DIR/issue-37550.rs:3:9
+   |
+LL |     let x = || t; //~ ERROR function pointers in const fn are unstable
+   |         ^
+
+error: aborting due to previous error
+
