@@ -68,6 +68,9 @@ unsafe fn configure_llvm(sess: &Session) {
         // during inlining. Unfortunately these may block other optimizations.
         add("-preserve-alignment-assumptions-during-inlining=false");
 
+    if sess.target.target.arch == "mips" ||
+        sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
+
         for arg in &sess.opts.cg.llvm_args {
             add(&(*arg));
         }
