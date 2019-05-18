@@ -3,8 +3,10 @@
 set -e
 
 # Find out where the pretty printer Python module is
-RUSTC_SYSROOT=`rustc --print=sysroot`
-GDB_PYTHON_MODULE_DIRECTORY="$RUSTC_SYSROOT/lib/rustlib/etc"
+#RUSTC_SYSROOT=`rustc --print=sysroot`
+#GDB_PYTHON_MODULE_DIRECTORY="$RUSTC_SYSROOT/lib/rustlib/etc"
+# We can just hardcode this on Debian, and remove the rustc dependency
+GDB_PYTHON_MODULE_DIRECTORY="/usr/share/rust-gdb"
 
 # Run GDB with the additional arguments that load the pretty printers
 # Set the environment variable `RUST_GDB` to overwrite the call to a
