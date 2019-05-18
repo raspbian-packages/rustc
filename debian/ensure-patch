@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+"-N") fwd=-N; rev=-R; verb="applied";;
+"-R") fwd=-R; rev=-N; verb="reversed";;
+*) echo >&2 "Usage: $0 <-N|-R> <patch-file>"; exit 2;;
+esac
+
+if patch --dry-run -F0 -f $rev -p1 < "$2" >/dev/null; then
+	echo >&2 "patch already $verb: $2"
+	exit 0
+fi
+patch --dry-run -F0 -f $fwd -p1 < "$2"
+patch -F0 -f $fwd -p1 < "$2"

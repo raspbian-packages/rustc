@@ -1,0 +1,30 @@
+From 9430423cab6909792fb1b3a850f1c3c8974a5111 Mon Sep 17 00:00:00 2001
+From: Josh Stone <jistone@redhat.com>
+Date: Tue, 15 Jan 2019 15:14:17 -0800
+Subject: [PATCH] [rust-gdb] relax the GDB version regex
+
+The pretty-printer script is checking `gdb.VERSION` to see if it's at
+least 8.1 for some features. With `re.match`, it will only find the
+version at the beginning of that string, but in Fedora the string is
+something like "Fedora 8.2-5.fc29". Using `re.search` instead will find
+the first location that matches anywhere, so it will find my 8.2.
+---
+ src/etc/gdb_rust_pretty_printing.py | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/etc/gdb_rust_pretty_printing.py b/src/etc/gdb_rust_pretty_printing.py
+index 08ae289d6037..b9413563fd9f 100755
+--- a/src/etc/gdb_rust_pretty_printing.py
++++ b/src/etc/gdb_rust_pretty_printing.py
+@@ -16,7 +16,7 @@ rust_enabled = 'set language rust' in gdb.execute('complete set language ru', to
+ # This fix went in 8.1, so check for that.
+ # See https://github.com/rust-lang/rust/issues/56730
+ gdb_81 = False
+-_match = re.match('([0-9]+)\\.([0-9]+)', gdb.VERSION)
++_match = re.search('([0-9]+)\\.([0-9]+)', gdb.VERSION)
+ if _match:
+     if int(_match.group(1)) > 8 or (int(_match.group(1)) == 8 and int(_match.group(2)) >= 1):
+         gdb_81 = True
+-- 
+2.20.1
+
