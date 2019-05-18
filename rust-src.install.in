@@ -1,0 +1,12 @@
+debian/patches  usr/src/rustc-RUST_LONG_VERSION/debian
+# from src/bootstrap/dist.rs:370 onwards
+COPYRIGHT       usr/src/rustc-RUST_LONG_VERSION
+LICENSE-APACHE  usr/src/rustc-RUST_LONG_VERSION
+LICENSE-MIT     usr/src/rustc-RUST_LONG_VERSION
+CONTRIBUTING.md usr/src/rustc-RUST_LONG_VERSION
+README.md       usr/src/rustc-RUST_LONG_VERSION
+RELEASES.md     usr/src/rustc-RUST_LONG_VERSION
+config.toml.example    usr/src/rustc-RUST_LONG_VERSION
+configure       usr/src/rustc-RUST_LONG_VERSION
+x.py            usr/src/rustc-RUST_LONG_VERSION
+src             usr/src/rustc-RUST_LONG_VERSION
