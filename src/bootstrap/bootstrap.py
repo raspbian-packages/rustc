@@ -81,7 +81,7 @@ def _download(path, url, probably_big, verbose, exception):
         run(["curl", option,
              "-y", "30", "-Y", "10",    # timeout if speed is < 10 bytes/sec for > 30 seconds
              "--connect-timeout", "30", # timeout if cannot connect within 30 seconds
-             "--retry", "3", "-Sf", "-o", path, url],
+             "--retry", "3", "-Sf", "-o", path, "-R", url],
             verbose=verbose,
             exception=exception)
 
