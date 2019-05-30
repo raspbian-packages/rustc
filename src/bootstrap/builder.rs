@@ -1149,10 +1149,7 @@ impl<'a> Builder<'a> {
             }
         }
 
-        if self.config.locked_deps {
-            cargo.arg("--locked");
-        }
-        if self.config.vendor || self.is_sudo {
+        if self.is_sudo {
             cargo.arg("--frozen");
         }
 
