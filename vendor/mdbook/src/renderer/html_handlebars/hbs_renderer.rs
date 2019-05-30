@@ -3,7 +3,7 @@ use config::{Config, HtmlConfig, Playpen};
 use errors::*;
 use renderer::html_handlebars::helpers;
 use renderer::{RenderContext, Renderer};
-use theme::{self, playpen_editor, Theme};
+use theme::{self, Theme};
 use utils;
 
 use std::collections::BTreeMap;
@@ -107,7 +107,7 @@ impl HtmlHandlebars {
         &self,
         destination: &Path,
         theme: &Theme,
-        html_config: &HtmlConfig,
+        _html_config: &HtmlConfig,
     ) -> Result<()> {
         use utils::fs::write_file;
 
@@ -123,62 +123,8 @@ impl HtmlHandlebars {
         write_file(destination, "css/print.css", &theme.print_css)?;
         write_file(destination, "css/variables.css", &theme.variables_css)?;
         write_file(destination, "favicon.png", &theme.favicon)?;
-        write_file(destination, "highlight.css", &theme.highlight_css)?;
         write_file(destination, "tomorrow-night.css", &theme.tomorrow_night_css)?;
         write_file(destination, "ayu-highlight.css", &theme.ayu_highlight_css)?;
-        write_file(destination, "highlight.js", &theme.highlight_js)?;
-        write_file(destination, "clipboard.min.js", &theme.clipboard_js)?;
-        write_file(
-            destination,
-            "FontAwesome/css/font-awesome.css",
-            theme::FONT_AWESOME,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/fontawesome-webfont.eot",
-            theme::FONT_AWESOME_EOT,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/fontawesome-webfont.svg",
-            theme::FONT_AWESOME_SVG,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/fontawesome-webfont.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/fontawesome-webfont.woff",
-            theme::FONT_AWESOME_WOFF,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/fontawesome-webfont.woff2",
-            theme::FONT_AWESOME_WOFF2,
-        )?;
-        write_file(
-            destination,
-            "FontAwesome/fonts/FontAwesome.ttf",
-            theme::FONT_AWESOME_TTF,
-        )?;
-
-        let playpen_config = &html_config.playpen;
-
-        // Ace is a very large dependency, so only load it when requested
-        if playpen_config.editable && playpen_config.copy_js {
-            // Load the editor
-            write_file(destination, "editor.js", playpen_editor::JS)?;
-            write_file(destination, "ace.js", playpen_editor::ACE_JS)?;
-            write_file(destination, "mode-rust.js", playpen_editor::MODE_RUST_JS)?;
-            write_file(destination, "theme-dawn.js", playpen_editor::THEME_DAWN_JS)?;
-            write_file(
-                destination,
-                "theme-tomorrow_night.js",
-                playpen_editor::THEME_TOMORROW_NIGHT_JS,
-            )?;
-        }
 
         Ok(())
     }
