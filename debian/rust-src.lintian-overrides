@@ -1,0 +1,4 @@
+# False positives that change quite often, so just override with a wildcard
+rust-src binary: executable-not-elf-or-script usr/src/rustc-*/*
+rust-src binary: privacy-breach-generic usr/src/rustc-*/*
+rust-src binary: package-contains-eslint-config-file usr/src/rustc-*/src/librustdoc/html/static/.eslintrc.js
