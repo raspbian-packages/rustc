@@ -1,0 +1,36 @@
+--- a/vendor/flate2/Cargo.toml
++++ b/vendor/flate2/Cargo.toml
+@@ -36,15 +36,6 @@
+ version = "1.0"
+ optional = true
+ 
+-[dependencies.miniz-sys]
+-version = "0.1.11"
+-optional = true
+-
+-[dependencies.miniz_oxide_c_api]
+-version = "0.2"
+-features = ["no_c_export"]
+-optional = true
+-
+ [dependencies.tokio-io]
+ version = "0.1"
+ optional = true
+@@ -59,13 +50,12 @@
+ version = "0.1"
+ 
+ [features]
+-default = ["miniz-sys"]
+-rust_backend = ["miniz_oxide_c_api"]
++default = ["zlib"]
++miniz-sys = ["zlib"]
++miniz_oxide_c_api = ["zlib"]
++rust_backend = ["zlib"]
+ tokio = ["tokio-io", "futures"]
+ zlib = ["libz-sys"]
+-[target."cfg(all(target_arch = \"wasm32\", not(target_os = \"emscripten\")))".dependencies.miniz_oxide_c_api]
+-version = "0.2"
+-features = ["no_c_export"]
+ [badges.appveyor]
+ repository = "alexcrichton/flate2-rs"
+ 

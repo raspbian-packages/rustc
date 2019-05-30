@@ -1,0 +1,41 @@
+# Patches for upstream
+
+# Fedora patches, thanks to them
+u-0001-Limit-internalization-in-LLVM-8-ThinLTO.patch
+
+# pending, or forwarded
+u-reproducible-build.patch
+u-prefer-local-css.patch
+u-make-tests-work-without-rpath.patch
+u-mips-fixes.diff
+
+# not forwarded, or forwarded but unlikely to be merged
+u-reproducible-dl-stage0.patch
+
+gcc-4.8-aarch64-ice.diff
+
+# Debian-specific patches, not suitable for upstream
+# Patches needed by debian/prune-unused-deps
+d-0000-ignore-removed-submodules.patch
+d-0001-disable-miniz.patch
+d-0002-pkg-config-no-special-snowflake.patch
+d-0003-mdbook-strip-embedded-libs.patch
+d-0004-mdbook-2-1-compat.patch
+# Other patches needed by the full Debian build
+d-ignore-error-detail-diff.patch
+d-disable-cargo-vendor.patch
+d-rust-gdb-paths
+d-rust-lldb-paths
+d-add-soname.patch
+d-dont-download-stage0.patch
+d-read-beta-version-from-file.patch
+d-ignore-avx-44056.patch
+d-i686-baseline.patch
+d-no-jemalloc.patch
+
+# Porter fixes under discussion, not suitable for upstreaming
+# as-is but a proper fix is being discussed
+d-fix-mips64el-bootstrap.patch
+
+# Work around for some porterboxes, keep this commented
+#d-host-duplicates.patch

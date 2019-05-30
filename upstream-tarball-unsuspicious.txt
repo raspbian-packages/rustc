@@ -1,0 +1,174 @@
+## In this file we list false-positives of the check-orig-suspicious.sh script
+# so that they can be ignored. You should manually audit all of the files here
+# to confirm that they adhere to Debian Policy and the DFSG. In particular, if
+# you are blindly adding files here just to get the build to work, you are
+# probably Doing It Wrong. Ask in #debian-rust or the mailing list for pointers.
+
+# False-positive, very small so suspicious-source thinks "octet-stream"
+src/test/run-pass/raw-str.rs
+
+# False-positive, "verylongtext" but OK
+CONTRIBUTING.md
+src/doc/book/first-edition/src/the-stack-and-the-heap.md
+src/doc/book/*/tools/docx-to-md.xsl
+src/doc/embedded-book/src/*/*.md
+src/doc/rustc/src/lints/groups.md
+src/doc/rustc-guide/.travis.yml
+src/doc/rustc-guide/src/*.md
+src/doc/rustc-guide/src/*/*.md
+src/doc/*/CODE_OF_CONDUCT.md
+src/doc/unstable-book/src/language-features/unsized-locals.md
+src/etc/third-party/README.txt
+src/librustc_codegen_ssa/README.md
+src/libstd/sys/cloudabi/abi/cloudabi.rs
+src/libstd/os/raw/*.md
+vendor/*/.travis.yml
+vendor/*/Cargo.toml
+vendor/*/CHANGELOG.md
+vendor/*/CODE_OF_CONDUCT.md
+vendor/*/CONTRIBUTORS.md
+vendor/*/README.md
+vendor/*/README.tpl
+vendor/*/LICENSE
+vendor/*/*/LICENSE
+vendor/*/*/*/LICENSE
+vendor/ammonia/src/lib.rs
+vendor/clap/.github/CONTRIBUTING.md
+# ^ author likes to omit line breaks in their comments
+vendor/failure/book/src/bail-and-ensure.md
+# ^ same with this one
+vendor/handlebars/src/lib.rs
+vendor/maplit/README.rst
+vendor/lazy_static/src/lib.rs
+vendor/pulldown-cmark/tests/footnotes.rs
+vendor/pulldown-cmark/specs/footnotes.txt
+vendor/pulldown-cmark-*/tests/footnotes.rs
+vendor/pulldown-cmark-*/specs/footnotes.txt
+vendor/stable_deref_trait/src/lib.rs
+vendor/winapi-*/src/winnt.rs
+vendor/winapi/src/lib.rs
+
+# False-positive, audit-vendor-source automatically flags JS/C files
+# The below ones are OK since they're actually part of rust's own source code
+# and are not "embedded libraries".
+src/ci/docker/scripts/qemu-bare-bones-addentropy.c
+src/doc/book/*/ferris.js
+src/doc/book/ferris.js
+src/etc/wasm32-shim.js
+src/grammar/parser-lalr-main.c
+src/librustdoc/html/static/*.js
+src/librustdoc/html/static/.eslintrc.js
+src/test/auxiliary/rust_test_helpers.c
+src/test/run-make/wasm-*/*.js
+src/test/run-make-fulldeps/*.c
+src/test/run-make-fulldeps/*/*.c
+src/test/rustdoc-js/*.js
+src/test/rustdoc-js-std/*.js
+src/tools/rustdoc-js/tester.js
+src/tools/rustdoc-js-std/tester.js
+
+# Embedded libraries, justified in README.source
+vendor/backtrace-sys/src/libbacktrace/configure
+vendor/backtrace-sys/src/libbacktrace/config/libtool.m4
+vendor/backtrace-sys/src/libbacktrace/*.c
+vendor/compiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*/*.c
+vendor/compiler_builtins/compiler-rt/utils/generate_*.awk
+vendor/dlmalloc/src/dlmalloc.c
+vendor/mdbook/src/theme/book.js
+vendor/mdbook/src/theme/searcher/searcher.js
+vendor/walkdir/compare/nftw.c
+vendor/walkdir-*/compare/nftw.c
+
+# False-positive, misc
+src/stdsimd/.travis.yml
+src/stdsimd/crates/core_arch/foo.wasm
+src/test/run-make-fulldeps/target-specs/*.json
+src/test/run-make-fulldeps/libtest-json/output.json
+vendor/clap/.mention-bot
+vendor/cloudabi/cloudabi.rs
+vendor/elasticlunr-rs/src/lang/*.rs
+vendor/markup5ever/data/entities.json
+vendor/num/ci/deploy.enc
+
+# False-positive, hand-editable small image
+src/etc/installer/gfx/
+src/doc/embedded-book/src/assets/*.svg
+src/doc/embedded-book/src/assets/f3.jpg
+src/doc/embedded-book/src/assets/nrf52-memory-map.png
+src/doc/embedded-book/src/assets/nrf52-spi-frequency-register.png
+src/doc/embedded-book/src/assets/verify.jpeg
+src/doc/nomicon/src/img/safeandunsafe.svg
+src/doc/book/second-edition/src/img/*.png
+src/doc/book/second-edition/src/img/*.svg
+src/doc/book/src/img/ferris/*.svg
+src/doc/book/src/img/*.png
+src/doc/book/src/img/*.svg
+src/doc/book/2018-edition/src/img/ferris/*.svg
+src/doc/book/2018-edition/src/img/*.svg
+src/doc/book/2018-edition/src/img/*.png
+src/doc/book/tools/docx-to-md.xsl
+src/librustdoc/html/static/*.svg
+src/librustdoc/html/static/rust-logo.png
+src/librustdoc/html/static/favicon.ico
+vendor/difference/assets/*.png
+vendor/fortanix-sgx-abi/images/enclave-execution-lifecycle.png
+vendor/heck/no_step_on_snek.png
+vendor/mdbook/src/theme/favicon.png
+vendor/num/doc/favicon.ico
+vendor/num/doc/rust-logo-128x128-blk-v2.png
+vendor/pest/pest-logo.svg
+vendor/pretty_assertions/examples/*.png
+vendor/termion/logo.svg
+
+# Example code
+vendor/html5ever/examples/capi/tokenize.c
+
+# Test data
+src/stdsimd/crates/stdsimd-verify/arm-intrinsics.html
+src/stdsimd/crates/stdsimd-verify/x86-intel.xml
+src/stdsimd/crates/std_detect/src/detect/test_data/*.auxv
+src/test/compile-fail/not-utf8.bin
+src/test/*/*.rs
+src/test/*/issues/*.rs
+src/test/*/*/issues/*.rs
+src/test/*/*.stderr
+src/test/*/*/*.stderr
+src/test/*/*/*/*.stderr
+src/tools/*/tests/*/*.stderr
+vendor/cssparser/src/css-parsing-tests/*.json
+vendor/cssparser/src/big-data-url.css
+vendor/elasticlunr-rs/tests/data/tr.in.txt
+vendor/flate2/tests/*.gz
+vendor/idna/tests/IdnaTest.txt
+vendor/idna/tests/punycode_tests.json
+vendor/html5ever/data/bench/*.html
+vendor/html5ever/html5lib-tests/*/*.dat
+vendor/html5ever/html5lib-tests/*/*.test
+vendor/libz-sys/src/smoke.c
+vendor/minifier/tests/files/test.json
+vendor/pest/benches/data.json
+vendor/pretty_assertions/src/format_changeset.rs
+vendor/regex/src/testdata/basic.dat
+vendor/regex/tests/crates_regex.rs
+vendor/regex/tests/fowler.rs
+vendor/regex-0*/src/testdata/basic.dat
+vendor/regex-0*/tests/fowler.rs
+vendor/rustc-demangle/src/lib.rs
+vendor/sha-1/tests/data/*.output.bin
+vendor/tar/tests/archives/*.tar
+vendor/toml/tests/*/*.toml
+vendor/toml/tests/*/*.json
+vendor/url/tests/*.json
+vendor/yaml-rust/tests/specexamples.rs.inc
+
+# Compromise, ideally we'd autogenerate these
+# Should already by documented in debian/copyright
+src/librustdoc/html/static/normalize.css
+vendor/pest_meta/src/grammar.rs
+vendor/unicode-normalization/src/tables.rs
+vendor/unicode-segmentation/src/tables.rs
+
+# Compromise, ideally we'd package these in their own package
+src/librustdoc/html/static/*.woff

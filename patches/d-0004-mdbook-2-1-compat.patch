@@ -1,0 +1,140 @@
+--- a/src/tools/rustbook/src/main.rs
++++ b/src/tools/rustbook/src/main.rs
+@@ -6,9 +6,6 @@
+ 
+ use clap::{App, ArgMatches, SubCommand, AppSettings};
+ 
+-use mdbook_1::{MDBook as MDBook1};
+-use mdbook_1::errors::{Result as Result1};
+-
+ use mdbook_2::{MDBook as MDBook2};
+ use mdbook_2::errors::{Result as Result2};
+ 
+@@ -36,18 +33,11 @@
+     match matches.subcommand() {
+         ("build", Some(sub_matches)) => {
+             match sub_matches.value_of("mdbook-vers") {
+-                None | Some("1") => {
+-                    if let Err(e) = build_1(sub_matches) {
+-                        eprintln!("Error: {}", e);
+-
+-                        for cause in e.iter().skip(1) {
+-                            eprintln!("\tCaused By: {}", cause);
+-                        }
+-
+-                        ::std::process::exit(101);
++                None | Some("1") | Some("2") => {
++                    match sub_matches.value_of("mdbook-vers") {
++                      Some("1") => env::set_var("DEB_MDBOOK_1_COMPAT", "1"),
++                      _ => (),
+                     }
+-                }
+-                Some("2") => {
+                     if let Err(e) = build_2(sub_matches) {
+                         eprintln!("Error: {}", e);
+ 
+@@ -68,23 +58,6 @@
+ }
+ 
+ // Build command implementation
+-pub fn build_1(args: &ArgMatches) -> Result1<()> {
+-    let book_dir = get_book_dir(args);
+-    let mut book = MDBook1::load(&book_dir)?;
+-
+-    // Set this to allow us to catch bugs in advance.
+-    book.config.build.create_missing = false;
+-
+-    if let Some(dest_dir) = args.value_of("dest-dir") {
+-        book.config.build.build_dir = PathBuf::from(dest_dir);
+-    }
+-
+-    book.build()?;
+-
+-    Ok(())
+-}
+-
+-// Build command implementation
+ pub fn build_2(args: &ArgMatches) -> Result2<()> {
+     let book_dir = get_book_dir(args);
+     let mut book = MDBook2::load(&book_dir)?;
+--- a/src/tools/rustbook/Cargo.toml
++++ b/src/tools/rustbook/Cargo.toml
+@@ -13,9 +13,3 @@
+ version = "0.2.3"
+ default-features = false
+ features = ["search"]
+-
+-[dependencies.mdbook_1]
+-package = "mdbook"
+-version = "0.1.7"
+-default-features = false
+-features = ["search"]
+--- a/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
++++ b/vendor/mdbook/src/renderer/html_handlebars/hbs_renderer.rs
+@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
+ use std::collections::HashMap;
+ use std::fs;
+ use std::path::{Path, PathBuf};
++use std::env;
+ 
+ use handlebars::Handlebars;
+ use regex::{Captures, Regex};
+@@ -63,7 +64,7 @@ impl HtmlHandlebars {
+             }
+ 
+             ctx.data.insert("path".to_owned(), json!(path));
+-            ctx.data.insert("content".to_owned(), json!(content));
++            ctx.data.insert("content".to_owned(), json!(if env::var("DEB_MDBOOK_1_COMPAT") == Ok("1".to_string()) { fixed_content } else { content }));
+             ctx.data.insert("chapter_title".to_owned(), json!(ch.name));
+             ctx.data.insert("title".to_owned(), json!(title));
+             ctx.data.insert(
+--- a/vendor/mdbook/src/utils/mod.rs
++++ b/vendor/mdbook/src/utils/mod.rs
+@@ -4,6 +4,8 @@ pub mod fs;
+ mod string;
+ use errors::Error;
+ use regex::Regex;
++use std::path::Path;
++use std::env;
+ 
+ use pulldown_cmark::{
+     html, Event, Options, Parser, Tag, OPTION_ENABLE_FOOTNOTES, OPTION_ENABLE_TABLES,
+@@ -70,11 +72,13 @@ fn adjust_links<'a>(event: Event<'a>, with_base: &str) -> Event<'a> {
+     lazy_static! {
+         static ref HTTP_LINK: Regex = Regex::new("^https?://").unwrap();
+         static ref MD_LINK: Regex = Regex::new(r"(?P<link>.*)\.md(?P<anchor>#.*)?").unwrap();
++        static ref HTML_LINK: Regex = Regex::new(r"(?P<link>.*)\.html(?P<anchor>#.*)?").unwrap();
+     }
+ 
+     match event {
+         Event::Start(Tag::Link(dest, title)) => {
+             if !HTTP_LINK.is_match(&dest) {
++                let old_dest = &dest;
+                 let dest = if !with_base.is_empty() {
+                     format!("{}/{}", with_base, dest)
+                 } else {
+@@ -90,6 +94,24 @@ fn adjust_links<'a>(event: Event<'a>, with_base: &str) -> Event<'a> {
+ 
+                     return Event::Start(Tag::Link(Cow::from(html_link), title));
+                 }
++                // compatibility for mdbook 1
++                if env::var("DEB_MDBOOK_1_COMPAT") == Ok("1".to_string()) {
++                if let Some(caps) = HTML_LINK.captures(&old_dest) {
++                    let base = Path::new(with_base);
++                    let mut path = Vec::new();
++                    for _ in base.components() {
++                        path.push("../");
++                    }
++                    path.extend(&[&caps["link"], ".html"]);
++                    let mut html_link = path.concat();
++
++                    if let Some(anchor) = caps.name("anchor") {
++                        html_link.push_str(anchor.as_str().replace("#a--", "#--").as_str());
++                    }
++
++                    return Event::Start(Tag::Link(Cow::from(html_link), title));
++                }
++                }
+             }
+ 
+             Event::Start(Tag::Link(dest, title))

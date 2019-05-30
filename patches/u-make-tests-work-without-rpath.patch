@@ -1,0 +1,12 @@
+Author: Chris Coulson <chris.coulson@canonical.com>
+Forwarded: TODO
+--- a/src/test/run-make-fulldeps/sysroot-crates-are-unstable/Makefile
++++ b/src/test/run-make-fulldeps/sysroot-crates-are-unstable/Makefile
+@@ -1,2 +1,6 @@
++include ../tools.mk
++
++RUSTC := $(RUSTC_ORIGINAL)
++
+ all:
+-	python2.7 test.py
++	$(HOST_RPATH_ENV) python2.7 test.py
