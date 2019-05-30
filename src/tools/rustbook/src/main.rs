@@ -6,9 +6,6 @@ use std::path::{Path, PathBuf};
 
 use clap::{App, ArgMatches, SubCommand, AppSettings};
 
-use mdbook_1::{MDBook as MDBook1};
-use mdbook_1::errors::{Result as Result1};
-
 use mdbook_2::{MDBook as MDBook2};
 use mdbook_2::errors::{Result as Result2};
 
@@ -36,18 +33,11 @@ fn main() {
     match matches.subcommand() {
         ("build", Some(sub_matches)) => {
             match sub_matches.value_of("mdbook-vers") {
-                None | Some("1") => {
-                    if let Err(e) = build_1(sub_matches) {
-                        eprintln!("Error: {}", e);
-
-                        for cause in e.iter().skip(1) {
-                            eprintln!("\tCaused By: {}", cause);
-                        }
-
-                        ::std::process::exit(101);
+                None | Some("1") | Some("2") => {
+                    match sub_matches.value_of("mdbook-vers") {
+                      Some("1") => env::set_var("DEB_MDBOOK_1_COMPAT", "1"),
+                      _ => (),
                     }
-                }
-                Some("2") => {
                     if let Err(e) = build_2(sub_matches) {
                         eprintln!("Error: {}", e);
 
@@ -65,23 +55,6 @@ fn main() {
         },
         (_, _) => unreachable!(),
     };
-}
-
-// Build command implementation
-pub fn build_1(args: &ArgMatches) -> Result1<()> {
-    let book_dir = get_book_dir(args);
-    let mut book = MDBook1::load(&book_dir)?;
-
-    // Set this to allow us to catch bugs in advance.
-    book.config.build.create_missing = false;
-
-    if let Some(dest_dir) = args.value_of("dest-dir") {
-        book.config.build.build_dir = PathBuf::from(dest_dir);
-    }
-
-    book.build()?;
-
-    Ok(())
 }
 
 // Build command implementation

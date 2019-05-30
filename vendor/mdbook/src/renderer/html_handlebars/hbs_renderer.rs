@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::env;
 
 use handlebars::Handlebars;
 use regex::{Captures, Regex};
@@ -63,7 +64,7 @@ impl HtmlHandlebars {
             }
 
             ctx.data.insert("path".to_owned(), json!(path));
-            ctx.data.insert("content".to_owned(), json!(content));
+            ctx.data.insert("content".to_owned(), json!(if env::var("DEB_MDBOOK_1_COMPAT") == Ok("1".to_string()) { fixed_content } else { content }));
             ctx.data.insert("chapter_title".to_owned(), json!(ch.name));
             ctx.data.insert("title".to_owned(), json!(title));
             ctx.data.insert(

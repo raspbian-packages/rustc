@@ -4,6 +4,8 @@ pub mod fs;
 mod string;
 use errors::Error;
 use regex::Regex;
+use std::path::Path;
+use std::env;
 
 use pulldown_cmark::{
     html, Event, Options, Parser, Tag, OPTION_ENABLE_FOOTNOTES, OPTION_ENABLE_TABLES,
@@ -70,11 +72,13 @@ fn adjust_links<'a>(event: Event<'a>, with_base: &str) -> Event<'a> {
     lazy_static! {
         static ref HTTP_LINK: Regex = Regex::new("^https?://").unwrap();
         static ref MD_LINK: Regex = Regex::new(r"(?P<link>.*)\.md(?P<anchor>#.*)?").unwrap();
+        static ref HTML_LINK: Regex = Regex::new(r"(?P<link>.*)\.html(?P<anchor>#.*)?").unwrap();
     }
 
     match event {
         Event::Start(Tag::Link(dest, title)) => {
             if !HTTP_LINK.is_match(&dest) {
+                let old_dest = &dest;
                 let dest = if !with_base.is_empty() {
                     format!("{}/{}", with_base, dest)
                 } else {
@@ -89,6 +93,24 @@ fn adjust_links<'a>(event: Event<'a>, with_base: &str) -> Event<'a> {
                     }
 
                     return Event::Start(Tag::Link(Cow::from(html_link), title));
+                }
+                // compatibility for mdbook 1
+                if env::var("DEB_MDBOOK_1_COMPAT") == Ok("1".to_string()) {
+                if let Some(caps) = HTML_LINK.captures(&old_dest) {
+                    let base = Path::new(with_base);
+                    let mut path = Vec::new();
+                    for _ in base.components() {
+                        path.push("../");
+                    }
+                    path.extend(&[&caps["link"], ".html"]);
+                    let mut html_link = path.concat();
+
+                    if let Some(anchor) = caps.name("anchor") {
+                        html_link.push_str(anchor.as_str().replace("#a--", "#--").as_str());
+                    }
+
+                    return Event::Start(Tag::Link(Cow::from(html_link), title));
+                }
                 }
             }
 
