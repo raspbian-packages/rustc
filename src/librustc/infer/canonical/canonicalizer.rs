@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! This module contains the "canonicalizer" itself.
 //!
 //! For an overview of what canonicalization is and how it fits into
@@ -201,7 +191,16 @@ impl CanonicalizeRegionMode for CanonicalizeQueryResponse {
                 // response should be executing in a fully
                 // canonicalized environment, so there shouldn't be
                 // any other region names it can come up.
-                bug!("unexpected region in query response: `{:?}`", r)
+                //
+                // rust-lang/rust#57464: `impl Trait` can leak local
+                // scopes (in manner violating typeck). Therefore, use
+                // `delay_span_bug` to allow type error over an ICE.
+                ty::tls::with_context(|c| {
+                    c.tcx.sess.delay_span_bug(
+                        syntax_pos::DUMMY_SP,
+                        &format!("unexpected region in query response: `{:?}`", r));
+                });
+                r
             }
         }
     }
@@ -340,9 +339,13 @@ impl<'cx, 'gcx, 'tcx> TypeFolder<'gcx, 'tcx> for Canonicalizer<'cx, 'gcx, 'tcx> 
     fn fold_ty(&mut self, t: Ty<'tcx>) -> Ty<'tcx> {
         match t.sty {
             ty::Infer(ty::TyVar(vid)) => {
+                debug!("canonical: type var found with vid {:?}", vid);
                 match self.infcx.unwrap().probe_ty_var(vid) {
                     // `t` could be a float / int variable: canonicalize that instead
-                    Ok(t) => self.fold_ty(t),
+                    Ok(t) => {
+                        debug!("(resolved to {:?})", t);
+                        self.fold_ty(t)
+                    }
 
                     // `TyVar(vid)` is unresolved, track its universe index in the canonicalized
                     // result
@@ -458,7 +461,12 @@ impl<'cx, 'gcx, 'tcx> Canonicalizer<'cx, 'gcx, 'tcx> {
 
         // Fast path: nothing that needs to be canonicalized.
         if !value.has_type_flags(needs_canonical_flags) {
-            let out_value = gcx.lift(value).unwrap();
+            let out_value = gcx.lift(value).unwrap_or_else(|| {
+                bug!(
+                    "failed to lift `{:?}` (nothing to canonicalize)",
+                    value
+                )
+            });
             let canon_value = Canonical {
                 max_universe: ty::UniverseIndex::ROOT,
                 variables: List::empty(),

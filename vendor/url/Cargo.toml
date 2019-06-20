@@ -12,7 +12,7 @@
 
 [package]
 name = "url"
-version = "1.7.1"
+version = "1.7.2"
 authors = ["The rust-url developers"]
 description = "URL library for Rust, based on the WHATWG URL Standard"
 documentation = "https://docs.rs/url"

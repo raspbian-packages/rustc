@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Tidy check to enforce rules about platform-specific code in std
 //!
 //! This is intended to maintain existing standards of code
@@ -26,7 +16,6 @@
 //! exceptions:
 //!
 //! - core may not have platform-specific code
-//! - libcompiler_builtins may have platform-specific code
 //! - libpanic_abort may have platform-specific code
 //! - libpanic_unwind may have platform-specific code
 //! - libunwind may have platform-specific code
@@ -50,8 +39,6 @@ use std::iter::Iterator;
 // Paths that may contain platform-specific code
 const EXCEPTION_PATHS: &[&str] = &[
     // std crates
-    "src/libcompiler_builtins",
-    "src/liblibc",
     "src/libpanic_abort",
     "src/libpanic_unwind",
     "src/libunwind",
@@ -61,7 +48,7 @@ const EXCEPTION_PATHS: &[&str] = &[
     "src/rtstartup", // Not sure what to do about this. magic stuff for mingw
 
     // temporary exceptions
-    "src/libstd/lib.rs", // FIXME(#44217)
+    "src/libstd/lib.rs",
     "src/libstd/path.rs",
     "src/libstd/f32.rs",
     "src/libstd/f64.rs",

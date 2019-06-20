@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 // Not in interpret to make sure we do not use private implementation details
 
 use std::fmt;
@@ -45,6 +35,16 @@ const STEPS_UNTIL_DETECTOR_ENABLED: isize = 1_000_000;
 /// Should be a power of two for performance reasons.
 const DETECTOR_SNAPSHOT_PERIOD: isize = 256;
 
+/// Warning: do not use this function if you expect to start interpreting the given `Mir`.
+/// The `EvalContext` is only meant to be used to query values from constants and statics.
+///
+/// This function is used during const propagation. We cannot use `mk_eval_cx`, because copy
+/// propagation happens *during* the computation of the MIR of the current function. So if we
+/// tried to call the `optimized_mir` query, we'd get a cycle error because we are (transitively)
+/// inside the `optimized_mir` query of the `Instance` given.
+///
+/// Since we are looking at the MIR of the function in an abstract manner, we don't have a
+/// `ParamEnv` available to us. This function creates a `ParamEnv` for the given instance.
 pub fn mk_borrowck_eval_cx<'a, 'mir, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     instance: Instance<'tcx>,
@@ -53,9 +53,22 @@ pub fn mk_borrowck_eval_cx<'a, 'mir, 'tcx>(
 ) -> EvalResult<'tcx, CompileTimeEvalContext<'a, 'mir, 'tcx>> {
     debug!("mk_borrowck_eval_cx: {:?}", instance);
     let param_env = tcx.param_env(instance.def_id());
+    mk_eval_cx_inner(tcx, instance, mir, span, param_env)
+}
+
+/// This is just a helper function to reduce code duplication between `mk_borrowck_eval_cx` and
+/// `mk_eval_cx`. Do not call this function directly.
+fn mk_eval_cx_inner<'a, 'mir, 'tcx>(
+    tcx: TyCtxt<'a, 'tcx, 'tcx>,
+    instance: Instance<'tcx>,
+    mir: &'mir mir::Mir<'tcx>,
+    span: Span,
+    param_env: ty::ParamEnv<'tcx>,
+) -> EvalResult<'tcx, CompileTimeEvalContext<'a, 'mir, 'tcx>> {
     let mut ecx = EvalContext::new(tcx.at(span), param_env, CompileTimeInterpreter::new());
-    // insert a stack frame so any queries have the correct substs
-    // cannot use `push_stack_frame`; if we do `const_prop` explodes
+    // Insert a stack frame so any queries have the correct substs.
+    // We also avoid all the extra work performed by push_stack_frame,
+    // like initializing local variables
     ecx.stack.push(interpret::Frame {
         block: mir::START_BLOCK,
         locals: IndexVec::new(),
@@ -70,24 +83,23 @@ pub fn mk_borrowck_eval_cx<'a, 'mir, 'tcx>(
     Ok(ecx)
 }
 
-pub fn mk_eval_cx<'a, 'tcx>(
+/// Warning: do not use this function if you expect to start interpreting the given `Mir`.
+/// The `EvalContext` is only meant to be used to do field and index projections into constants for
+/// `simd_shuffle` and const patterns in match arms.
+///
+/// The function containing the `match` that is currently being analyzed may have generic bounds
+/// that inform us about the generic bounds of the constant. E.g. using an associated constant
+/// of a function's generic parameter will require knowledge about the bounds on the generic
+/// parameter. These bounds are passed to `mk_eval_cx` via the `ParamEnv` argument.
+fn mk_eval_cx<'a, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     instance: Instance<'tcx>,
     param_env: ty::ParamEnv<'tcx>,
 ) -> EvalResult<'tcx, CompileTimeEvalContext<'a, 'tcx, 'tcx>> {
     debug!("mk_eval_cx: {:?}, {:?}", instance, param_env);
     let span = tcx.def_span(instance.def_id());
-    let mut ecx = EvalContext::new(tcx.at(span), param_env, CompileTimeInterpreter::new());
-    let mir = ecx.load_mir(instance.def)?;
-    // insert a stack frame so any queries have the correct substs
-    ecx.push_stack_frame(
-        instance,
-        mir.span,
-        mir,
-        None,
-        StackPopCleanup::Goto(None), // never pop
-    )?;
-    Ok(ecx)
+    let mir = tcx.optimized_mir(instance.def.def_id());
+    mk_eval_cx_inner(tcx, instance, mir, span, param_env)
 }
 
 pub(crate) fn eval_promoted<'a, 'mir, 'tcx>(
@@ -105,7 +117,7 @@ pub fn op_to_const<'tcx>(
     ecx: &CompileTimeEvalContext<'_, '_, 'tcx>,
     op: OpTy<'tcx>,
     may_normalize: bool,
-) -> EvalResult<'tcx, &'tcx ty::Const<'tcx>> {
+) -> EvalResult<'tcx, ty::Const<'tcx>> {
     // We do not normalize just any data.  Only scalar layout and fat pointers.
     let normalize = may_normalize
         && match op.layout.abi {
@@ -144,14 +156,16 @@ pub fn op_to_const<'tcx>(
         Ok(Immediate::ScalarPair(a, b)) =>
             ConstValue::ScalarPair(a.not_undef()?, b.not_undef()?),
     };
-    Ok(ty::Const::from_const_value(ecx.tcx.tcx, val, op.layout.ty))
+    Ok(ty::Const { val, ty: op.layout.ty })
 }
-pub fn const_to_op<'tcx>(
+
+pub fn lazy_const_to_op<'tcx>(
     ecx: &CompileTimeEvalContext<'_, '_, 'tcx>,
-    cnst: &ty::Const<'tcx>,
+    cnst: ty::LazyConst<'tcx>,
+    ty: ty::Ty<'tcx>,
 ) -> EvalResult<'tcx, OpTy<'tcx>> {
-    let op = ecx.const_value_to_op(cnst.val)?;
-    Ok(OpTy { op, layout: ecx.layout_of(cnst.ty)? })
+    let op = ecx.const_value_to_op(cnst)?;
+    Ok(OpTy { op, layout: ecx.layout_of(ty)? })
 }
 
 fn eval_body_and_ecx<'a, 'mir, 'tcx>(
@@ -187,7 +201,7 @@ fn eval_body_using_ecx<'mir, 'tcx>(
     }
     let layout = ecx.layout_of(mir.return_ty().subst(tcx, cid.instance.substs))?;
     assert!(!layout.is_unsized());
-    let ret = ecx.allocate(layout, MemoryKind::Stack)?;
+    let ret = ecx.allocate(layout, MemoryKind::Stack);
 
     let name = ty::tls::with(|tcx| tcx.item_path_str(cid.instance.def_id()));
     let prom = cid.promoted.map_or(String::new(), |p| format!("::promoted[{:?}]", p));
@@ -490,8 +504,8 @@ impl<'a, 'mir, 'tcx> interpret::Machine<'a, 'mir, 'tcx>
         _ecx: &mut EvalContext<'a, 'mir, 'tcx, Self>,
         ptr: Pointer,
         _kind: MemoryKind<Self::MemoryKinds>,
-    ) -> EvalResult<'tcx, Pointer> {
-        Ok(ptr)
+    ) -> Pointer {
+        ptr
     }
 
     #[inline(always)]
@@ -518,13 +532,13 @@ pub fn const_field<'a, 'tcx>(
     instance: ty::Instance<'tcx>,
     variant: Option<VariantIdx>,
     field: mir::Field,
-    value: &'tcx ty::Const<'tcx>,
+    value: ty::Const<'tcx>,
 ) -> ::rustc::mir::interpret::ConstEvalResult<'tcx> {
     trace!("const_field: {:?}, {:?}, {:?}", instance, field, value);
     let ecx = mk_eval_cx(tcx, instance, param_env).unwrap();
     let result = (|| {
         // get the operand again
-        let op = const_to_op(&ecx, value)?;
+        let op = lazy_const_to_op(&ecx, ty::LazyConst::Evaluated(value), value.ty)?;
         // downcast
         let down = match variant {
             None => op,
@@ -547,11 +561,11 @@ pub fn const_variant_index<'a, 'tcx>(
     tcx: TyCtxt<'a, 'tcx, 'tcx>,
     param_env: ty::ParamEnv<'tcx>,
     instance: ty::Instance<'tcx>,
-    val: &'tcx ty::Const<'tcx>,
+    val: ty::Const<'tcx>,
 ) -> EvalResult<'tcx, VariantIdx> {
     trace!("const_variant_index: {:?}, {:?}", instance, val);
     let ecx = mk_eval_cx(tcx, instance, param_env).unwrap();
-    let op = const_to_op(&ecx, val)?;
+    let op = lazy_const_to_op(&ecx, ty::LazyConst::Evaluated(val), val.ty)?;
     Ok(ecx.read_discriminant(op)?.1)
 }
 
@@ -664,7 +678,7 @@ pub fn const_eval_raw_provider<'a, 'tcx>(
     let cid = key.value;
     let def_id = cid.instance.def.def_id();
 
-    if let Some(id) = tcx.hir.as_local_node_id(def_id) {
+    if let Some(id) = tcx.hir().as_local_node_id(def_id) {
         let tables = tcx.typeck_tables_of(def_id);
 
         // Do match-check before building MIR
@@ -672,7 +686,7 @@ pub fn const_eval_raw_provider<'a, 'tcx>(
             return Err(ErrorHandled::Reported)
         }
 
-        if let hir::BodyOwnerKind::Const = tcx.hir.body_owner_kind(id) {
+        if let hir::BodyOwnerKind::Const = tcx.hir().body_owner_kind(id) {
             tcx.mir_const_qualif(def_id);
         }
 
@@ -692,12 +706,16 @@ pub fn const_eval_raw_provider<'a, 'tcx>(
         let err = error_to_const_error(&ecx, error);
         // errors in statics are always emitted as fatal errors
         if tcx.is_static(def_id).is_some() {
-            let err = err.report_as_error(ecx.tcx, "could not evaluate static initializer");
-            // check that a static never produces `TooGeneric`
+            let reported_err = err.report_as_error(ecx.tcx,
+                                                   "could not evaluate static initializer");
+            // Ensure that if the above error was either `TooGeneric` or `Reported`
+            // an error must be reported.
             if tcx.sess.err_count() == 0 {
-                span_bug!(ecx.tcx.span, "static eval failure didn't emit an error: {:#?}", err);
+                tcx.sess.delay_span_bug(err.span,
+                                        &format!("static eval failure did not emit an error: {:#?}",
+                                                 reported_err));
             }
-            err
+            reported_err
         } else if def_id.is_local() {
             // constant defined in this crate, we can figure out a lint level!
             match tcx.describe_def(def_id) {
@@ -708,7 +726,7 @@ pub fn const_eval_raw_provider<'a, 'tcx>(
                 // because any code that existed before validation could not have failed validation
                 // thus preventing such a hard error from being a backwards compatibility hazard
                 Some(Def::Const(_)) | Some(Def::AssociatedConst(_)) => {
-                    let node_id = tcx.hir.as_local_node_id(def_id).unwrap();
+                    let node_id = tcx.hir().as_local_node_id(def_id).unwrap();
                     err.report_as_lint(
                         tcx.at(tcx.def_span(def_id)),
                         "any use of this value will cause an error",
@@ -728,7 +746,7 @@ pub fn const_eval_raw_provider<'a, 'tcx>(
                         err.report_as_lint(
                             tcx.at(span),
                             "reaching this expression at runtime will panic or abort",
-                            tcx.hir.as_local_node_id(def_id).unwrap(),
+                            tcx.hir().as_local_node_id(def_id).unwrap(),
                         )
                     }
                 // anything else (array lengths, enum initializers, constant patterns) are reported

@@ -1,26 +1,18 @@
 #![allow(bad_style)]
-#![cfg_attr(
-    feature = "cargo-clippy",
-    allow(
-        shadow_reuse,
-        cast_lossless,
-        match_same_arms,
-        nonminimal_bool,
-        print_stdout,
-        use_debug,
-        eq_op,
-        useless_format
-    )
+#![allow(
+    clippy::shadow_reuse,
+    clippy::cast_lossless,
+    clippy::match_same_arms,
+    clippy::nonminimal_bool,
+    clippy::print_stdout,
+    clippy::use_debug,
+    clippy::eq_op,
+    clippy::useless_format
 )]
-
-#[macro_use]
-extern crate serde_derive;
-extern crate serde_xml_rs;
-extern crate stdsimd_verify;
 
 use std::collections::{BTreeMap, HashMap};
 
-use stdsimd_verify::x86_functions;
+use serde::Deserialize;
 
 const PRINT_INSTRUCTION_VIOLATIONS: bool = false;
 const PRINT_MISSING_LISTS: bool = false;
@@ -45,7 +37,9 @@ static I8: Type = Type::PrimSigned(8);
 static U16: Type = Type::PrimUnsigned(16);
 static U32: Type = Type::PrimUnsigned(32);
 static U64: Type = Type::PrimUnsigned(64);
+static U128: Type = Type::PrimUnsigned(128);
 static U8: Type = Type::PrimUnsigned(8);
+static ORDERING: Type = Type::Ordering;
 
 static M64: Type = Type::M64;
 static M128: Type = Type::M128;
@@ -54,9 +48,14 @@ static M128D: Type = Type::M128D;
 static M256: Type = Type::M256;
 static M256I: Type = Type::M256I;
 static M256D: Type = Type::M256D;
+static M512: Type = Type::M512;
+static M512I: Type = Type::M512I;
+static M512D: Type = Type::M512D;
+static MMASK16: Type = Type::MMASK16;
 
 static TUPLE: Type = Type::Tuple;
 static CPUID: Type = Type::CpuidResult;
+static NEVER: Type = Type::Never;
 
 #[derive(Debug)]
 enum Type {
@@ -71,11 +70,17 @@ enum Type {
     M256,
     M256D,
     M256I,
+    M512,
+    M512D,
+    M512I,
+    MMASK16,
     Tuple,
     CpuidResult,
+    Never,
+    Ordering,
 }
 
-x86_functions!(static FUNCTIONS);
+stdsimd_verify::x86_functions!(static FUNCTIONS);
 
 #[derive(Deserialize)]
 struct Data {
@@ -123,8 +128,7 @@ fn verify_all_signatures() {
     let xml = include_bytes!("../x86-intel.xml");
 
     let xml = &xml[..];
-    let data: Data =
-        serde_xml_rs::deserialize(xml).expect("failed to deserialize xml");
+    let data: Data = serde_xml_rs::deserialize(xml).expect("failed to deserialize xml");
     let mut map = HashMap::new();
     for intrinsic in &data.intrinsics {
         map.entry(&intrinsic.name[..])
@@ -135,14 +139,22 @@ fn verify_all_signatures() {
     let mut all_valid = true;
     'outer: for rust in FUNCTIONS {
         match rust.name {
-            // These aren't defined by Intel but they're defined by what
-            // appears to be all other compilers. For more
-            // information see rust-lang-nursery/stdsimd#307, and
-            // otherwise these signatures have all been manually
-            // verified.
-            "__readeflags" | "__writeeflags" | "__cpuid_count" | "__cpuid"
-            | "__get_cpuid_max" => continue,
-
+            // These aren't defined by Intel but they're defined by what appears
+            // to be all other compilers. For more information see
+            // rust-lang-nursery/stdsimd#307, and otherwise these signatures
+            // have all been manually verified.
+            "__readeflags" |
+            "__writeeflags" |
+            "__cpuid_count" |
+            "__cpuid" |
+            "__get_cpuid_max" |
+            // Not listed with intel, but manually verified
+            "cmpxchg16b" |
+            // The UD2 intrinsic is not defined by Intel, but it was agreed on
+            // in the RFC Issue 2512:
+            // https://github.com/rust-lang/rfcs/issues/2512
+            "ud2"
+                => continue,
             _ => {}
         }
 
@@ -228,8 +240,12 @@ fn matches(rust: &Function, intel: &Intrinsic) -> Result<(), String> {
     // ensuring that we've actually enabled the right instruction
     // set for this intrinsic.
     match rust.name {
-        "_bswap" => {}
-        "_bswap64" => {}
+        "_bswap" | "_bswap64" => {}
+
+        // These don't actually have a target feature unlike their brethren with
+        // the `x` inside the name which requires adx
+        "_addcarry_u32" | "_addcarry_u64" | "_subborrow_u32" | "_subborrow_u64" => {}
+
         _ => {
             if intel.cpuid.is_empty() {
                 bail!("missing cpuid for {}", rust.name);
@@ -285,10 +301,7 @@ fn matches(rust: &Function, intel: &Intrinsic) -> Result<(), String> {
         // some extra assertions on our end.
         } else if !intel.instruction.is_empty() {
             for instr in rust.instrs {
-                let asserting = intel
-                    .instruction
-                    .iter()
-                    .any(|a| a.name.starts_with(instr));
+                let asserting = intel.instruction.iter().any(|a| a.name.starts_with(instr));
                 if !asserting {
                     println!(
                         "intel failed to list `{}` as an instruction for `{}`",
@@ -321,34 +334,32 @@ fn matches(rust: &Function, intel: &Intrinsic) -> Result<(), String> {
         if rust.arguments.len() != intel.parameters.len() {
             bail!("wrong number of arguments on {}", rust.name)
         }
-        for (i, (a, b)) in
-            intel.parameters.iter().zip(rust.arguments).enumerate()
-        {
+        for (i, (a, b)) in intel.parameters.iter().zip(rust.arguments).enumerate() {
             let is_const = rust.required_const.contains(&i);
             equate(b, &a.type_, &intel.name, is_const)?;
         }
     }
 
-    let any_i64 =
-        rust.arguments
-            .iter()
-            .cloned()
-            .chain(rust.ret)
-            .any(|arg| match *arg {
-                Type::PrimSigned(64) | Type::PrimUnsigned(64) => true,
-                _ => false,
-            });
+    let any_i64 = rust
+        .arguments
+        .iter()
+        .cloned()
+        .chain(rust.ret)
+        .any(|arg| match *arg {
+            Type::PrimSigned(64) | Type::PrimUnsigned(64) => true,
+            _ => false,
+        });
     let any_i64_exempt = match rust.name {
         // These intrinsics have all been manually verified against Clang's
         // headers to be available on x86, and the u64 arguments seem
         // spurious I guess?
-        "_xsave" | "_xrstor" | "_xsetbv" | "_xgetbv" | "_xsaveopt"
-        | "_xsavec" | "_xsaves" | "_xrstors" => true,
+        "_xsave" | "_xrstor" | "_xsetbv" | "_xgetbv" | "_xsaveopt" | "_xsavec" | "_xsaves"
+        | "_xrstors" => true,
 
         // Apparently all of clang/msvc/gcc accept these intrinsics on
         // 32-bit, so let's do the same
-        "_mm_set_epi64x" | "_mm_set1_epi64x" | "_mm256_set_epi64x"
-        | "_mm256_setr_epi64x" | "_mm256_set1_epi64x" => true,
+        "_mm_set_epi64x" | "_mm_set1_epi64x" | "_mm256_set_epi64x" | "_mm256_setr_epi64x"
+        | "_mm256_set1_epi64x" => true,
 
         // These return a 64-bit argument but they're assembled from other
         // 32-bit registers, so these work on 32-bit just fine. See #308 for
@@ -367,9 +378,7 @@ fn matches(rust: &Function, intel: &Intrinsic) -> Result<(), String> {
     Ok(())
 }
 
-fn equate(
-    t: &Type, intel: &str, intrinsic: &str, is_const: bool,
-) -> Result<(), String> {
+fn equate(t: &Type, intel: &str, intrinsic: &str, is_const: bool) -> Result<(), String> {
     let intel = intel.replace(" *", "*");
     let intel = intel.replace(" const*", "*");
     let require_const = || {
@@ -422,11 +431,19 @@ fn equate(
         | (&Type::M256, "__m256")
         | (&Type::Ptr(&Type::M256), "__m256*") => {}
 
+        (&Type::M512I, "__m512i")
+        | (&Type::Ptr(&Type::M512I), "__m512i*")
+        | (&Type::M512D, "__m512d")
+        | (&Type::Ptr(&Type::M512D), "__m512d*")
+        | (&Type::M512, "__m512")
+        | (&Type::Ptr(&Type::M512), "__m512*") => {}
+
+        (&Type::MMASK16, "__mmask16") => {}
+
         // This is a macro (?) in C which seems to mutate its arguments, but
         // that means that we're taking pointers to arguments in rust
         // as we're not exposing it as a macro.
-        (&Type::Ptr(&Type::M128), "__m128")
-            if intrinsic == "_MM_TRANSPOSE4_PS" => {}
+        (&Type::Ptr(&Type::M128), "__m128") if intrinsic == "_MM_TRANSPOSE4_PS" => {}
 
         _ => bail!(
             "failed to equate: `{}` and {:?} for {}",

@@ -1,6 +1,4 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -15,6 +13,7 @@
 //! - [`EntropyRng`], [`OsRng`] and [`JitterRng`] as entropy sources
 //! - [`mock::StepRng`] as a simple counter for tests
 //! - [`adapter::ReadRng`] to read from a file/stream
+//! - [`adapter::ReseedingRng`] to reseed a PRNG on clone / process fork etc.
 //!
 //! # Background — Random number generators (RNGs)
 //!
@@ -49,9 +48,6 @@
 //!
 //! - [`SmallRng`] is a PRNG chosen for low memory usage, high performance and
 //!   good statistical quality.
-//!   The current algorithm (plain Xorshift) unfortunately performs
-//!   poorly in statistical quality test suites (TestU01 and PractRand) and will
-//!   be replaced in the next major release.
 //! - [`StdRng`] is a CSPRNG chosen for good performance and trust of security
 //!   (based on reviews, maturity and usage). The current algorithm is HC-128,
 //!   which is one of the recommendations by ECRYPT's eSTREAM project.
@@ -161,12 +157,13 @@
 //! [`thread_rng`]: ../fn.thread_rng.html
 //! [`mock::StepRng`]: mock/struct.StepRng.html
 //! [`adapter::ReadRng`]: adapter/struct.ReadRng.html
-//! [`ChaChaRng`]: ../prng/chacha/struct.ChaChaRng.html
+//! [`adapter::ReseedingRng`]: adapter/struct.ReseedingRng.html
+//! [`ChaChaRng`]: ../../rand_chacha/struct.ChaChaRng.html
 
 pub mod adapter;
 
 #[cfg(feature="std")] mod entropy;
-#[doc(hidden)] pub mod jitter;
+mod jitter;
 pub mod mock;   // Public so we don't export `StepRng` directly, making it a bit
                 // more clear it is intended for testing.
 mod small;
@@ -195,7 +192,8 @@ pub use self::std::StdRng;
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen"),
 )))]
 mod os;
 
@@ -213,6 +211,7 @@ mod os;
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen"),
 )))]
 pub use self::os::OsRng;

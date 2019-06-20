@@ -100,23 +100,15 @@ no guarantees can be made about them in regard to SemVer stability.
 
 */
 
-// NOTE: see build.rs for where these cfg values are set.
-#![cfg_attr(lazy_static_spin_impl, feature(const_fn))]
-
-#![doc(html_root_url = "https://docs.rs/lazy_static/1.1.0")]
+#![doc(html_root_url = "https://docs.rs/lazy_static/1.2.0")]
 #![no_std]
 
-#[cfg(lazy_static_heap_impl)]
-#[path="heap_lazy.rs"]
-#[doc(hidden)]
-pub mod lazy;
-
-#[cfg(lazy_static_inline_impl)]
+#[cfg(not(feature = "spin_no_std"))]
 #[path="inline_lazy.rs"]
 #[doc(hidden)]
 pub mod lazy;
 
-#[cfg(lazy_static_spin_impl)]
+#[cfg(feature = "spin_no_std")]
 #[path="core_lazy.rs"]
 #[doc(hidden)]
 pub mod lazy;
@@ -137,19 +129,16 @@ macro_rules! __lazy_static_internal {
     (@TAIL, $N:ident : $T:ty = $e:expr) => {
         impl $crate::__Deref for $N {
             type Target = $T;
-            #[allow(unsafe_code)]
             fn deref(&self) -> &$T {
-                unsafe {
-                    #[inline(always)]
-                    fn __static_ref_initialize() -> $T { $e }
+                #[inline(always)]
+                fn __static_ref_initialize() -> $T { $e }
 
-                    #[inline(always)]
-                    unsafe fn __stability() -> &'static $T {
-                        __lazy_static_create!(LAZY, $T);
-                        LAZY.get(__static_ref_initialize)
-                    }
-                    __stability()
+                #[inline(always)]
+                fn __stability() -> &'static $T {
+                    __lazy_static_create!(LAZY, $T);
+                    LAZY.get(__static_ref_initialize)
                 }
+                __stability()
             }
         }
         impl $crate::LazyStatic for $N {

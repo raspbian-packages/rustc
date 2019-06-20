@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Implementation of the various distribution aspects of the compiler.
 //!
 //! This module is responsible for creating tarballs of the standard library,
@@ -19,20 +9,20 @@
 //! pieces of `rustup.rs`!
 
 use std::env;
-use std::fs::{self, File};
-use std::io::{Read, Write};
+use std::fs;
+use std::io::Write;
 use std::path::{PathBuf, Path};
 use std::process::{Command, Stdio};
 
 use build_helper::output;
 
-use {Compiler, Mode, LLVM_TOOLS};
-use channel;
-use util::{libdir, is_dylib, exe};
-use builder::{Builder, RunConfig, ShouldRun, Step};
-use compile;
-use tool::{self, Tool};
-use cache::{INTERNER, Interned};
+use crate::{Compiler, Mode, LLVM_TOOLS};
+use crate::channel;
+use crate::util::{libdir, is_dylib, exe};
+use crate::builder::{Builder, RunConfig, ShouldRun, Step};
+use crate::compile;
+use crate::tool::{self, Tool};
+use crate::cache::{INTERNER, Interned};
 use time;
 
 pub fn pkgname(builder: &Builder, component: &str) -> String {
@@ -42,6 +32,8 @@ pub fn pkgname(builder: &Builder, component: &str) -> String {
         format!("{}-{}", component, builder.rls_package_vers())
     } else if component == "clippy" {
         format!("{}-{}", component, builder.clippy_package_vers())
+    } else if component == "miri" {
+        format!("{}-{}", component, builder.miri_package_vers())
     } else if component == "rustfmt" {
         format!("{}-{}", component, builder.rustfmt_package_vers())
     } else if component == "llvm-tools" {
@@ -234,7 +226,7 @@ fn make_win_dist(
         let trim_chars: &[_] = &[' ', '='];
         let value =
             line[(idx + 1)..]
-                .trim_left_matches(trim_chars)
+                .trim_start_matches(trim_chars)
                 .split(';')
                 .map(PathBuf::from);
 
@@ -353,7 +345,7 @@ impl Step for Mingw {
     /// Build the `rust-mingw` installer component.
     ///
     /// This contains all the bits and pieces to run the MinGW Windows targets
-    /// without any extra installed software (e.g. we bundle gcc, libraries, etc).
+    /// without any extra installed software (e.g., we bundle gcc, libraries, etc).
     fn run(self, builder: &Builder) -> Option<PathBuf> {
         let host = self.host;
 
@@ -681,10 +673,18 @@ impl Step for Std {
         let mut src = builder.sysroot_libdir(compiler, target).to_path_buf();
         src.pop(); // Remove the trailing /lib folder from the sysroot_libdir
         builder.cp_filtered(&src, &dst, &|path| {
-            let name = path.file_name().and_then(|s| s.to_str());
-            name != Some(builder.config.rust_codegen_backends_dir.as_str()) &&
-                name != Some("bin")
-
+            if let Some(name) = path.file_name().and_then(|s| s.to_str()) {
+                if name == builder.config.rust_codegen_backends_dir.as_str() {
+                    return false
+                }
+                if name == "bin" {
+                    return false
+                }
+                if name.contains("LLVM") {
+                    return false
+                }
+            }
+            true
         });
 
         let mut cmd = rust_installer(builder);
@@ -857,12 +857,8 @@ impl Step for Src {
         // (essentially libstd and all of its path dependencies)
         let std_src_dirs = [
             "src/build_helper",
-            "src/dlmalloc",
             "src/liballoc",
-            "src/libbacktrace",
-            "src/libcompiler_builtins",
             "src/libcore",
-            "src/liblibc",
             "src/libpanic_abort",
             "src/libpanic_unwind",
             "src/librustc_asan",
@@ -871,20 +867,15 @@ impl Step for Src {
             "src/librustc_tsan",
             "src/libstd",
             "src/libunwind",
-            "src/rustc/compiler_builtins_shim",
-            "src/rustc/libc_shim",
-            "src/rustc/dlmalloc_shim",
             "src/libtest",
             "src/libterm",
             "src/libprofiler_builtins",
             "src/stdsimd",
             "src/libproc_macro",
-        ];
-        let std_src_dirs_exclude = [
-            "src/libcompiler_builtins/compiler-rt/test",
+            "src/tools/rustc-std-workspace-core",
         ];
 
-        copy_src_dirs(builder, &std_src_dirs[..], &std_src_dirs_exclude[..], &dst_src);
+        copy_src_dirs(builder, &std_src_dirs[..], &[], &dst_src);
         for file in src_files.iter() {
             builder.copy(&builder.src.join(file), &dst_src.join(file));
         }
@@ -908,7 +899,7 @@ impl Step for Src {
     }
 }
 
-const CARGO_VENDOR_VERSION: &str = "0.1.19";
+const CARGO_VENDOR_VERSION: &str = "0.1.22";
 
 #[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct PlainSourceTarball;
@@ -1290,6 +1281,90 @@ impl Step for Clippy {
 }
 
 #[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
+pub struct Miri {
+    pub stage: u32,
+    pub target: Interned<String>,
+}
+
+impl Step for Miri {
+    type Output = Option<PathBuf>;
+    const ONLY_HOSTS: bool = true;
+
+    fn should_run(run: ShouldRun) -> ShouldRun {
+        run.path("miri")
+    }
+
+    fn make_run(run: RunConfig) {
+        run.builder.ensure(Miri {
+            stage: run.builder.top_stage,
+            target: run.target,
+        });
+    }
+
+    fn run(self, builder: &Builder) -> Option<PathBuf> {
+        let stage = self.stage;
+        let target = self.target;
+        assert!(builder.config.extended);
+
+        builder.info(&format!("Dist miri stage{} ({})", stage, target));
+        let src = builder.src.join("src/tools/miri");
+        let release_num = builder.release_num("miri");
+        let name = pkgname(builder, "miri");
+        let version = builder.miri_info.version(builder, &release_num);
+
+        let tmp = tmpdir(builder);
+        let image = tmp.join("miri-image");
+        drop(fs::remove_dir_all(&image));
+        builder.create_dir(&image);
+
+        // Prepare the image directory
+        // We expect miri to build, because we've exited this step above if tool
+        // state for miri isn't testing.
+        let miri = builder.ensure(tool::Miri {
+            compiler: builder.compiler(stage, builder.config.build),
+            target, extra_features: Vec::new()
+        }).or_else(|| { missing_tool("miri", builder.build.config.missing_tools); None })?;
+        let cargomiri = builder.ensure(tool::CargoMiri {
+            compiler: builder.compiler(stage, builder.config.build),
+            target, extra_features: Vec::new()
+        }).or_else(|| { missing_tool("cargo miri", builder.build.config.missing_tools); None })?;
+
+        builder.install(&miri, &image.join("bin"), 0o755);
+        builder.install(&cargomiri, &image.join("bin"), 0o755);
+        let doc = image.join("share/doc/miri");
+        builder.install(&src.join("README.md"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-APACHE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-MIT"), &doc, 0o644);
+
+        // Prepare the overlay
+        let overlay = tmp.join("miri-overlay");
+        drop(fs::remove_dir_all(&overlay));
+        t!(fs::create_dir_all(&overlay));
+        builder.install(&src.join("README.md"), &overlay, 0o644);
+        builder.install(&src.join("LICENSE-APACHE"), &doc, 0o644);
+        builder.install(&src.join("LICENSE-MIT"), &doc, 0o644);
+        builder.create(&overlay.join("version"), &version);
+
+        // Generate the installer tarball
+        let mut cmd = rust_installer(builder);
+        cmd.arg("generate")
+           .arg("--product-name=Rust")
+           .arg("--rel-manifest-dir=rustlib")
+           .arg("--success-message=miri-ready-to-serve.")
+           .arg("--image-dir").arg(&image)
+           .arg("--work-dir").arg(&tmpdir(builder))
+           .arg("--output-dir").arg(&distdir(builder))
+           .arg("--non-installed-overlay").arg(&overlay)
+           .arg(format!("--package-name={}-{}", name, target))
+           .arg("--legacy-manifest-dirs=rustlib,cargo")
+           .arg("--component-name=miri-preview");
+
+        builder.run(&mut cmd);
+        Some(distdir(builder).join(format!("{}-{}.tar.gz", name, target)))
+    }
+}
+
+#[derive(Debug, PartialOrd, Ord, Copy, Clone, Hash, PartialEq, Eq)]
 pub struct Rustfmt {
     pub stage: u32,
     pub target: Interned<String>,
@@ -1410,6 +1485,7 @@ impl Step for Extended {
         let rls_installer = builder.ensure(Rls { stage, target });
         let llvm_tools_installer = builder.ensure(LlvmTools { stage, target });
         let clippy_installer = builder.ensure(Clippy { stage, target });
+        let miri_installer = builder.ensure(Miri { stage, target });
         let lldb_installer = builder.ensure(Lldb { target });
         let mingw_installer = builder.ensure(Mingw { host: target });
         let analysis_installer = builder.ensure(Analysis {
@@ -1448,6 +1524,7 @@ impl Step for Extended {
         tarballs.push(cargo_installer);
         tarballs.extend(rls_installer.clone());
         tarballs.extend(clippy_installer.clone());
+        tarballs.extend(miri_installer.clone());
         tarballs.extend(rustfmt_installer.clone());
         tarballs.extend(llvm_tools_installer);
         tarballs.extend(lldb_installer);
@@ -1513,20 +1590,22 @@ impl Step for Extended {
         }
 
         let xform = |p: &Path| {
-            let mut contents = String::new();
-            t!(t!(File::open(p)).read_to_string(&mut contents));
+            let mut contents = t!(fs::read_to_string(p));
             if rls_installer.is_none() {
                 contents = filter(&contents, "rls");
             }
             if clippy_installer.is_none() {
                 contents = filter(&contents, "clippy");
             }
+            if miri_installer.is_none() {
+                contents = filter(&contents, "miri");
+            }
             if rustfmt_installer.is_none() {
                 contents = filter(&contents, "rustfmt");
             }
             let ret = tmp.join(p.file_name().unwrap());
-            t!(t!(File::create(&ret)).write_all(contents.as_bytes()));
-            return ret
+            t!(fs::write(&ret, &contents));
+            ret
         };
 
         if target.contains("apple-darwin") {
@@ -1561,6 +1640,9 @@ impl Step for Extended {
             if clippy_installer.is_some() {
                 prepare("clippy");
             }
+            if miri_installer.is_some() {
+                prepare("miri");
+            }
 
             // create an 'uninstall' package
             builder.install(&etc.join("pkg/postinstall"), &pkg.join("uninstall"), 0o755);
@@ -1591,6 +1673,8 @@ impl Step for Extended {
                     "rls-preview".to_string()
                 } else if name == "clippy" {
                     "clippy-preview".to_string()
+                } else if name == "miri" {
+                    "miri-preview".to_string()
                 } else {
                     name.to_string()
                 };
@@ -1609,6 +1693,9 @@ impl Step for Extended {
             }
             if clippy_installer.is_some() {
                 prepare("clippy");
+            }
+            if miri_installer.is_some() {
+                prepare("miri");
             }
             if target.contains("windows-gnu") {
                 prepare("rust-mingw");
@@ -1702,6 +1789,18 @@ impl Step for Extended {
                                 .arg("-out").arg(exe.join("ClippyGroup.wxs"))
                                 .arg("-t").arg(etc.join("msi/remove-duplicates.xsl")));
             }
+            if miri_installer.is_some() {
+                builder.run(Command::new(&heat)
+                                .current_dir(&exe)
+                                .arg("dir")
+                                .arg("miri")
+                                .args(&heat_flags)
+                                .arg("-cg").arg("MiriGroup")
+                                .arg("-dr").arg("Miri")
+                                .arg("-var").arg("var.MiriDir")
+                                .arg("-out").arg(exe.join("MiriGroup.wxs"))
+                                .arg("-t").arg(etc.join("msi/remove-duplicates.xsl")));
+            }
             builder.run(Command::new(&heat)
                             .current_dir(&exe)
                             .arg("dir")
@@ -1747,6 +1846,9 @@ impl Step for Extended {
                 if clippy_installer.is_some() {
                     cmd.arg("-dClippyDir=clippy");
                 }
+                if miri_installer.is_some() {
+                    cmd.arg("-dMiriDir=miri");
+                }
                 if target.contains("windows-gnu") {
                     cmd.arg("-dGccDir=rust-mingw");
                 }
@@ -1764,6 +1866,9 @@ impl Step for Extended {
             }
             if clippy_installer.is_some() {
                 candle("ClippyGroup.wxs".as_ref());
+            }
+            if miri_installer.is_some() {
+                candle("MiriGroup.wxs".as_ref());
             }
             candle("AnalysisGroup.wxs".as_ref());
 
@@ -1796,6 +1901,9 @@ impl Step for Extended {
             }
             if clippy_installer.is_some() {
                 cmd.arg("ClippyGroup.wixobj");
+            }
+            if miri_installer.is_some() {
+                cmd.arg("MiriGroup.wixobj");
             }
 
             if target.contains("windows-gnu") {
@@ -1871,8 +1979,7 @@ impl Step for HashSign {
         let file = builder.config.dist_gpg_password_file.as_ref().unwrap_or_else(|| {
             panic!("\n\nfailed to specify `dist.gpg-password-file` in `config.toml`\n\n")
         });
-        let mut pass = String::new();
-        t!(t!(File::open(&file)).read_to_string(&mut pass));
+        let pass = t!(fs::read_to_string(&file));
 
         let today = output(Command::new("date").arg("+%Y-%m-%d"));
 
@@ -1880,13 +1987,14 @@ impl Step for HashSign {
         cmd.arg(distdir(builder));
         cmd.arg(today.trim());
         cmd.arg(builder.rust_package_vers());
+        cmd.arg(addr);
         cmd.arg(builder.package_vers(&builder.release_num("cargo")));
         cmd.arg(builder.package_vers(&builder.release_num("rls")));
         cmd.arg(builder.package_vers(&builder.release_num("clippy")));
+        cmd.arg(builder.package_vers(&builder.release_num("miri")));
         cmd.arg(builder.package_vers(&builder.release_num("rustfmt")));
         cmd.arg(builder.llvm_tools_package_vers());
         cmd.arg(builder.lldb_package_vers());
-        cmd.arg(addr);
 
         builder.create_dir(&distdir(builder));
 
@@ -1901,13 +2009,13 @@ impl Step for HashSign {
 // LLVM tools are linked dynamically.
 // Note: This function does no yet support Windows but we also don't support
 //       linking LLVM tools dynamically on Windows yet.
-fn maybe_install_llvm_dylib(builder: &Builder,
-                            target: Interned<String>,
-                            image: &Path) {
+pub fn maybe_install_llvm_dylib(builder: &Builder,
+                                target: Interned<String>,
+                                sysroot: &Path) {
     let src_libdir = builder
         .llvm_out(target)
         .join("lib");
-    let dst_libdir = image.join("lib/rustlib").join(&*target).join("lib");
+    let dst_libdir = sysroot.join("lib/rustlib").join(&*target).join("lib");
     t!(fs::create_dir_all(&dst_libdir));
 
     if target.contains("apple-darwin") {

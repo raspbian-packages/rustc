@@ -10,13 +10,15 @@ Build-Depends: debhelper (>= 9),
                dpkg-dev (>= 1.17.14),
                python:native,
                cargo:native (>= 0.31.0)      <!pkg.rustc.dlstage0>,
-               rustc:native (>= 1.31.0+dfsg) <!pkg.rustc.dlstage0>,
-               rustc:native (<= 1.32.0++)    <!pkg.rustc.dlstage0>,
+               rustc:native (>= 1.32.0+dfsg) <!pkg.rustc.dlstage0>,
+               rustc:native (<= 1.33.0++)    <!pkg.rustc.dlstage0>,
                llvm-7-dev:native,
                llvm-7-tools:native,
                libllvm7 (>= 1:7.0.1-3),
                autotools-dev,
                cmake (>= 3.0) | cmake3,
+# needed by some vendor crates
+               pkg-config,
 # this is sometimes needed by rustc_llvm
                zlib1g-dev:native,
                zlib1g-dev,
@@ -47,7 +49,7 @@ Multi-Arch: allowed
 Pre-Depends: ${misc:Pre-Depends}
 Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-dev (= ${binary:Version}),
  gcc, libc-dev, binutils (>= 2.26)
-Recommends: cargo (>= 0.33.0~~), cargo (<< 0.34.0~~), rust-gdb | rust-lldb
+Recommends: cargo (>= 0.34.0~~), cargo (<< 0.35.0~~), rust-gdb | rust-lldb
 Suggests: rust-doc, rust-src
 Replaces: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
 Breaks: libstd-rust-dev (<< 1.25.0+dfsg1-2~~)
@@ -64,7 +66,7 @@ Description: Rust systems programming language
  generic programming and meta-programming, in both static and dynamic
  styles.
 
-Package: libstd-rust-1.32
+Package: libstd-rust-1.33
 Section: libs
 Architecture: any
 Multi-Arch: same
@@ -89,7 +91,7 @@ Package: libstd-rust-dev
 Section: libdevel
 Architecture: any
 Multi-Arch: same
-Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.32 (= ${binary:Version})
+Depends: ${shlibs:Depends}, ${misc:Depends}, libstd-rust-1.33 (= ${binary:Version})
 Description: Rust standard libraries - development files
  Rust is a curly-brace, block-structured expression language.  It
  visually resembles the C language family, but differs significantly

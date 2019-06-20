@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use dep_graph::SerializedDepNodeIndex;
 use dep_graph::DepNode;
 use hir::def_id::{CrateNum, DefId, DefIndex};
@@ -78,8 +68,53 @@ impl<'tcx, M: QueryAccessors<'tcx, Key=DefId>> QueryDescription<'tcx> for M {
             format!("processing `{}`", tcx.item_path_str(def_id)).into()
         } else {
             let name = unsafe { ::std::intrinsics::type_name::<M>() };
-            format!("processing `{}` applied to `{:?}`", name, def_id).into()
+            format!("processing {:?} with query `{}`", def_id, name).into()
         }
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::check_mod_attrs<'tcx> {
+    fn describe(
+        tcx: TyCtxt<'_, '_, '_>,
+        key: DefId,
+    ) -> Cow<'static, str> {
+        format!("checking attributes in {}", key.describe_as_module(tcx)).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::check_mod_unstable_api_usage<'tcx> {
+    fn describe(
+        tcx: TyCtxt<'_, '_, '_>,
+        key: DefId,
+    ) -> Cow<'static, str> {
+        format!("checking for unstable API usage in {}", key.describe_as_module(tcx)).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::check_mod_loops<'tcx> {
+    fn describe(
+        tcx: TyCtxt<'_, '_, '_>,
+        key: DefId,
+    ) -> Cow<'static, str> {
+        format!("checking loops in {}", key.describe_as_module(tcx)).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::check_mod_item_types<'tcx> {
+    fn describe(
+        tcx: TyCtxt<'_, '_, '_>,
+        key: DefId,
+    ) -> Cow<'static, str> {
+        format!("checking item types in {}", key.describe_as_module(tcx)).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::collect_mod_item_types<'tcx> {
+    fn describe(
+        tcx: TyCtxt<'_, '_, '_>,
+        key: DefId,
+    ) -> Cow<'static, str> {
+        format!("collecting item types in {}", key.describe_as_module(tcx)).into()
     }
 }
 
@@ -113,6 +148,15 @@ impl<'tcx> QueryDescription<'tcx> for queries::normalize_ty_after_erasing_region
 impl<'tcx> QueryDescription<'tcx> for queries::evaluate_obligation<'tcx> {
     fn describe(_tcx: TyCtxt<'_, '_, '_>, goal: CanonicalPredicateGoal<'tcx>) -> Cow<'static, str> {
         format!("evaluating trait selection obligation `{}`", goal.value.value).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::evaluate_goal<'tcx> {
+    fn describe(
+        _tcx: TyCtxt<'_, '_, '_>,
+        goal: traits::ChalkCanonicalGoal<'tcx>
+    ) -> Cow<'static, str> {
+        format!("evaluating trait selection obligation `{}`", goal.value.goal).into()
     }
 }
 
@@ -227,9 +271,9 @@ impl<'tcx> QueryDescription<'tcx> for queries::erase_regions_ty<'tcx> {
 
 impl<'tcx> QueryDescription<'tcx> for queries::type_param_predicates<'tcx> {
     fn describe(tcx: TyCtxt<'_, '_, '_>, (_, def_id): (DefId, DefId)) -> Cow<'static, str> {
-        let id = tcx.hir.as_local_node_id(def_id).unwrap();
+        let id = tcx.hir().as_local_node_id(def_id).unwrap();
         format!("computing the bounds for type parameter `{}`",
-                tcx.hir.ty_param_name(id)).into()
+                tcx.hir().ty_param_name(id)).into()
     }
 }
 
@@ -824,6 +868,12 @@ impl<'tcx> QueryDescription<'tcx> for queries::optimized_mir<'tcx> {
 impl<'tcx> QueryDescription<'tcx> for queries::substitute_normalize_and_test_predicates<'tcx> {
     fn describe(tcx: TyCtxt<'_, '_, '_>, key: (DefId, &'tcx Substs<'tcx>)) -> Cow<'static, str> {
         format!("testing substituted normalized predicates:`{}`", tcx.item_path_str(key.0)).into()
+    }
+}
+
+impl<'tcx> QueryDescription<'tcx> for queries::method_autoderef_steps<'tcx> {
+    fn describe(_tcx: TyCtxt<'_, '_, '_>, goal: CanonicalTyGoal<'tcx>) -> Cow<'static, str> {
+        format!("computing autoderef types for `{:?}`", goal).into()
     }
 }
 

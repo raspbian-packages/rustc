@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Client-side types.
 
 use super::*;
@@ -262,7 +252,7 @@ enum BridgeState<'a> {
     Connected(Bridge<'a>),
 
     /// Access to the bridge is being exclusively acquired
-    /// (e.g. during `BridgeState::with`).
+    /// (e.g., during `BridgeState::with`).
     InUse,
 }
 
@@ -283,7 +273,7 @@ impl BridgeState<'_> {
     /// The state will be restored after `f` exits, even
     /// by panic, including modifications made to it by `f`.
     ///
-    /// NB: while `f` is running, the thread-local state
+    /// N.B., while `f` is running, the thread-local state
     /// is `BridgeState::InUse`.
     fn with<R>(f: impl FnOnce(&mut BridgeState) -> R) -> R {
         BRIDGE_STATE.with(|state| {
@@ -333,7 +323,7 @@ impl Bridge<'_> {
 /// which may be using a different `proc_macro` from the one
 /// used by the server, but can be interacted with compatibly.
 ///
-/// NB: `F` must have FFI-friendly memory layout (e.g. a pointer).
+/// N.B., `F` must have FFI-friendly memory layout (e.g., a pointer).
 /// The call ABI of function pointers used for `F` doesn't
 /// need to match between server and client, since it's only
 /// passed between them and (eventually) called by the client.

@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Static files bundled with documentation output.
 //!
 //! All the static files are included here for centralized access in case anything other than the
@@ -22,6 +12,9 @@ pub static RUSTDOC_CSS: &'static str = include_str!("static/rustdoc.css");
 
 /// The file contents of `settings.css`, responsible for the items on the settings page.
 pub static SETTINGS_CSS: &'static str = include_str!("static/settings.css");
+
+/// The file contents of the `noscript.css` file, used in case JS isn't supported or is disabled.
+pub static NOSCRIPT_CSS: &'static str = include_str!("static/noscript.css");
 
 /// The file contents of `normalize.css`, included to even out standard elements between browser
 /// implementations.
@@ -44,6 +37,9 @@ pub static BRUSH_SVG: &'static [u8] = include_bytes!("static/brush.svg");
 
 /// The file contents of `wheel.svg`, the icon used for the settings button.
 pub static WHEEL_SVG: &'static [u8] = include_bytes!("static/wheel.svg");
+
+/// The file contents of `down-arrow.svg`, the icon used for the crate choice combobox.
+pub static DOWN_ARROW_SVG: &'static [u8] = include_bytes!("static/down-arrow.svg");
 
 /// The contents of `COPYRIGHT.txt`, the license listing for files distributed with documentation
 /// output.
@@ -77,22 +73,17 @@ pub mod fira_sans {
     pub static LICENSE: &'static [u8] = include_bytes!("static/FiraSans-LICENSE.txt");
 }
 
-/// Files related to the Heuristica font.
-pub mod heuristica {
-    /// The file `Heuristica-Italic.woff`, the Italic variant of the Heuristica font.
-    pub static ITALIC: &'static [u8] = include_bytes!("static/Heuristica-Italic.woff");
-
-    /// The file `Heuristica-LICENSE.txt`, the license text for the Heuristica font.
-    pub static LICENSE: &'static [u8] = include_bytes!("static/Heuristica-LICENSE.txt");
-}
-
 /// Files related to the Source Serif Pro font.
 pub mod source_serif_pro {
-    /// The file `SourceSerifPro-Regular.woff`, the Regular variant of the Source Serif Pro font.
-    pub static REGULAR: &'static [u8] = include_bytes!("static/SourceSerifPro-Regular.woff");
+    /// The file `SourceSerifPro-Regular.ttf.woff`, the Regular variant of the Source Serif Pro
+    /// font.
+    pub static REGULAR: &'static [u8] = include_bytes!("static/SourceSerifPro-Regular.ttf.woff");
 
-    /// The file `SourceSerifPro-Bold.woff`, the Bold variant of the Source Serif Pro font.
-    pub static BOLD: &'static [u8] = include_bytes!("static/SourceSerifPro-Bold.woff");
+    /// The file `SourceSerifPro-Bold.ttf.woff`, the Bold variant of the Source Serif Pro font.
+    pub static BOLD: &'static [u8] = include_bytes!("static/SourceSerifPro-Bold.ttf.woff");
+
+    /// The file `SourceSerifPro-It.ttf.woff`, the Italic variant of the Source Serif Pro font.
+    pub static ITALIC: &'static [u8] = include_bytes!("static/SourceSerifPro-It.ttf.woff");
 
     /// The file `SourceSerifPro-LICENSE.txt`, the license text for the Source Serif Pro font.
     pub static LICENSE: &'static [u8] = include_bytes!("static/SourceSerifPro-LICENSE.txt");

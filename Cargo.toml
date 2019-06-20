@@ -18,7 +18,6 @@ members = [
   "src/tools/rustdoc-themes",
 ]
 exclude = [
-  "src/tools/rls/test_data",
   "build",
   # HACK(eddyb) This hardcodes the fact that our CI uses `/checkout/obj`.
   "obj",
@@ -41,6 +40,11 @@ debug = false
 debug-assertions = false
 
 [patch.crates-io]
+
 # See comments in `src/tools/rustc-workspace-hack/README.md` for what's going on
 # here
 rustc-workspace-hack = { path = 'src/tools/rustc-workspace-hack' }
+
+# See comments in `tools/rustc-std-workspace-core/README.md` for what's going on
+# here
+rustc-std-workspace-core = { path = 'src/tools/rustc-std-workspace-core' }

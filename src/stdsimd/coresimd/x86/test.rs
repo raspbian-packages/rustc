@@ -120,9 +120,7 @@ mod x86_polyfill {
     }
 
     #[target_feature(enable = "avx2")]
-    pub unsafe fn _mm256_insert_epi64(
-        a: __m256i, val: i64, idx: i32,
-    ) -> __m256i {
+    pub unsafe fn _mm256_insert_epi64(a: __m256i, val: i64, idx: i32) -> __m256i {
         union A {
             a: __m256i,
             b: [i64; 4],
@@ -137,3 +135,11 @@ mod x86_polyfill {
     pub use coresimd::x86_64::{_mm256_insert_epi64, _mm_insert_epi64};
 }
 pub use self::x86_polyfill::*;
+
+pub unsafe fn assert_eq_m512i(a: __m512i, b: __m512i) {
+    union A {
+        a: __m512i,
+        b: [i32; 16],
+    }
+    assert_eq!(A { a }.b, A { a: b }.b)
+}

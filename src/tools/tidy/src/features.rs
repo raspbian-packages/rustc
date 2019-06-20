@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Tidy check to ensure that unstable features are all in order
 //!
 //! This check will ensure properties like:
@@ -20,7 +10,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::prelude::*;
 use std::path::Path;
 
@@ -61,12 +51,9 @@ pub fn check(path: &Path, bad: &mut bool, quiet: bool) {
 
     let mut contents = String::new();
 
-    super::walk_many(&[&path.join("test/ui-fulldeps"),
-                       &path.join("test/ui"),
-                       &path.join("test/compile-fail"),
-                       &path.join("test/compile-fail-fulldeps"),
-                       &path.join("test/parse-fail"),
-                       &path.join("test/ui"),],
+    super::walk_many(&[&path.join("test/ui"),
+                       &path.join("test/ui-fulldeps"),
+                       &path.join("test/compile-fail")],
                      &mut |path| super::filter_dirs(path),
                      &mut |file| {
         let filename = file.file_name().unwrap().to_string_lossy();
@@ -183,9 +170,7 @@ fn test_filen_gate(filen_underscore: &str, features: &mut Features) -> bool {
 }
 
 pub fn collect_lang_features(base_src_path: &Path, bad: &mut bool) -> Features {
-    let mut contents = String::new();
-    let path = base_src_path.join("libsyntax/feature_gate.rs");
-    t!(t!(File::open(path)).read_to_string(&mut contents));
+    let contents = t!(fs::read_to_string(base_src_path.join("libsyntax/feature_gate.rs")));
 
     // we allow rustc-internal features to omit a tracking issue.
     // these features must be marked with `// rustc internal` in its own group.
@@ -203,7 +188,7 @@ pub fn collect_lang_features(base_src_path: &Path, bad: &mut bool) -> Features {
             }
 
             let mut parts = line.split(',');
-            let level = match parts.next().map(|l| l.trim().trim_left_matches('(')) {
+            let level = match parts.next().map(|l| l.trim().trim_start_matches('(')) {
                 Some("active") => Status::Unstable,
                 Some("removed") => Status::Removed,
                 Some("accepted") => Status::Stable,
@@ -351,12 +336,11 @@ fn map_lib_features(base_src_path: &Path,
                     level: Status::Unstable,
                     since: "None".to_owned(),
                     has_gate_test: false,
-                    // Whether there is a common tracking issue
-                    // for these feature gates remains an open question
-                    // https://github.com/rust-lang/rust/issues/24111#issuecomment-340283184
-                    // But we take 24111 otherwise they will be shown as
-                    // "internal to the compiler" which they are not.
-                    tracking_issue: Some(24111),
+                    // FIXME(#57563): #57563 is now used as a common tracking issue,
+                    // although we would like to have specific tracking
+                    // issues for each `rustc_const_unstable` in the
+                    // future.
+                    tracking_issue: Some(57563),
                 };
                 mf(Ok((feature_name, feature)), file, i + 1);
                 continue;

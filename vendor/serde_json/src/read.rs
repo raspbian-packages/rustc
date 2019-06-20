@@ -27,9 +27,9 @@ use raw::{BorrowedRawDeserializer, OwnedRawDeserializer};
 /// `serde_json`.
 pub trait Read<'de>: private::Sealed {
     #[doc(hidden)]
-    fn next(&mut self) -> io::Result<Option<u8>>;
+    fn next(&mut self) -> Result<Option<u8>>;
     #[doc(hidden)]
-    fn peek(&mut self) -> io::Result<Option<u8>>;
+    fn peek(&mut self) -> Result<Option<u8>>;
 
     /// Only valid after a call to peek(). Discards the peeked byte.
     #[doc(hidden)]
@@ -234,7 +234,7 @@ where
     R: io::Read,
 {
     #[inline]
-    fn next(&mut self) -> io::Result<Option<u8>> {
+    fn next(&mut self) -> Result<Option<u8>> {
         match self.ch.take() {
             Some(ch) => {
                 #[cfg(feature = "raw_value")]
@@ -246,7 +246,7 @@ where
                 Ok(Some(ch))
             }
             None => match self.iter.next() {
-                Some(Err(err)) => Err(err),
+                Some(Err(err)) => Err(Error::io(err)),
                 Some(Ok(ch)) => {
                     #[cfg(feature = "raw_value")]
                     {
@@ -262,11 +262,11 @@ where
     }
 
     #[inline]
-    fn peek(&mut self) -> io::Result<Option<u8>> {
+    fn peek(&mut self) -> Result<Option<u8>> {
         match self.ch {
             Some(ch) => Ok(Some(ch)),
             None => match self.iter.next() {
-                Some(Err(err)) => Err(err),
+                Some(Err(err)) => Err(Error::io(err)),
                 Some(Ok(ch)) => {
                     self.ch = Some(ch);
                     Ok(self.ch)
@@ -369,7 +369,9 @@ where
     {
         let raw = self.raw_buffer.take().unwrap();
         let raw = String::from_utf8(raw).unwrap();
-        visitor.visit_map(OwnedRawDeserializer { raw_value: Some(raw) })
+        visitor.visit_map(OwnedRawDeserializer {
+            raw_value: Some(raw),
+        })
     }
 }
 
@@ -455,10 +457,10 @@ impl<'a> SliceRead<'a> {
                     start = self.index;
                 }
                 _ => {
+                    self.index += 1;
                     if validate {
                         return error(self, ErrorCode::ControlCharacterWhileParsingString);
                     }
-                    self.index += 1;
                 }
             }
         }
@@ -469,7 +471,7 @@ impl<'a> private::Sealed for SliceRead<'a> {}
 
 impl<'a> Read<'a> for SliceRead<'a> {
     #[inline]
-    fn next(&mut self) -> io::Result<Option<u8>> {
+    fn next(&mut self) -> Result<Option<u8>> {
         // `Ok(self.slice.get(self.index).map(|ch| { self.index += 1; *ch }))`
         // is about 10% slower.
         Ok(if self.index < self.slice.len() {
@@ -482,7 +484,7 @@ impl<'a> Read<'a> for SliceRead<'a> {
     }
 
     #[inline]
-    fn peek(&mut self) -> io::Result<Option<u8>> {
+    fn peek(&mut self) -> Result<Option<u8>> {
         // `Ok(self.slice.get(self.index).map(|ch| *ch))` is about 10% slower
         // for some reason.
         Ok(if self.index < self.slice.len() {
@@ -548,17 +550,20 @@ impl<'a> Read<'a> for SliceRead<'a> {
 
     fn decode_hex_escape(&mut self) -> Result<u16> {
         if self.index + 4 > self.slice.len() {
+            self.index = self.slice.len();
             return error(self, ErrorCode::EofWhileParsingString);
         }
+
         let mut n = 0;
         for _ in 0..4 {
-            match decode_hex_val(self.slice[self.index]) {
+            let ch = decode_hex_val(self.slice[self.index]);
+            self.index += 1;
+            match ch {
                 None => return error(self, ErrorCode::InvalidEscape),
                 Some(val) => {
                     n = (n << 4) + val;
                 }
             }
-            self.index += 1;
         }
         Ok(n)
     }
@@ -575,7 +580,9 @@ impl<'a> Read<'a> for SliceRead<'a> {
     {
         let raw = &self.slice[self.raw_buffering_start_index..self.index];
         let raw = str::from_utf8(raw).unwrap();
-        visitor.visit_map(BorrowedRawDeserializer { raw_value: Some(raw) })
+        visitor.visit_map(BorrowedRawDeserializer {
+            raw_value: Some(raw),
+        })
     }
 }
 
@@ -604,12 +611,12 @@ impl<'a> private::Sealed for StrRead<'a> {}
 
 impl<'a> Read<'a> for StrRead<'a> {
     #[inline]
-    fn next(&mut self) -> io::Result<Option<u8>> {
+    fn next(&mut self) -> Result<Option<u8>> {
         self.delegate.next()
     }
 
     #[inline]
-    fn peek(&mut self) -> io::Result<Option<u8>> {
+    fn peek(&mut self) -> Result<Option<u8>> {
         self.delegate.peek()
     }
 
@@ -664,7 +671,9 @@ impl<'a> Read<'a> for StrRead<'a> {
         V: Visitor<'a>,
     {
         let raw = &self.data[self.delegate.raw_buffering_start_index..self.delegate.index];
-        visitor.visit_map(BorrowedRawDeserializer { raw_value: Some(raw) })
+        visitor.visit_map(BorrowedRawDeserializer {
+            raw_value: Some(raw),
+        })
     }
 }
 
@@ -699,7 +708,7 @@ static ESCAPE: [bool; 256] = [
 ];
 
 fn next_or_eof<'de, R: ?Sized + Read<'de>>(read: &mut R) -> Result<u8> {
-    match try!(read.next().map_err(Error::io)) {
+    match try!(read.next()) {
         Some(b) => Ok(b),
         None => error(read, ErrorCode::EofWhileParsingString),
     }

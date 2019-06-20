@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use {ast, attr};
 use syntax_pos::{Span, DUMMY_SP};
 use edition::Edition;
@@ -77,9 +67,9 @@ impl<'a> ParserAnyMacro<'a> {
             e
         }));
 
-        // We allow semicolons at the end of expressions -- e.g. the semicolon in
+        // We allow semicolons at the end of expressions -- e.g., the semicolon in
         // `macro_rules! m { () => { panic!(); } }` isn't parsed by `.parse_expr()`,
-        // but `m!()` is allowed in expression positions (c.f. issue #34706).
+        // but `m!()` is allowed in expression positions (cf. issue #34706).
         if kind == AstFragmentKind::Expr && parser.token == token::Semi {
             parser.bump();
         }
@@ -212,7 +202,7 @@ fn generic_extension<'cx>(cx: &'cx mut ExtCtxt,
     let best_fail_msg = parse_failure_msg(best_fail_tok.expect("ran no matchers"));
     let span = best_fail_spot.substitute_dummy(sp);
     let mut err = cx.struct_span_err(span, &best_fail_msg);
-    err.span_label(span, best_fail_text.unwrap_or(best_fail_msg));
+    err.span_label(span, best_fail_text.unwrap_or(&best_fail_msg));
     if let Some(sp) = def_span {
         if cx.source_map().span_to_filename(sp).is_real() && !sp.is_dummy() {
             err.span_label(cx.source_map().def_span(sp), "when calling this macro");
@@ -482,15 +472,15 @@ fn check_matcher(sess: &ParseSess,
     err == sess.span_diagnostic.err_count()
 }
 
-// The FirstSets for a matcher is a mapping from subsequences in the
+// `The FirstSets` for a matcher is a mapping from subsequences in the
 // matcher to the FIRST set for that subsequence.
 //
 // This mapping is partially precomputed via a backwards scan over the
 // token trees of the matcher, which provides a mapping from each
-// repetition sequence to its FIRST set.
+// repetition sequence to its *first* set.
 //
-// (Hypothetically sequences should be uniquely identifiable via their
-// spans, though perhaps that is false e.g. for macro-generated macros
+// (Hypothetically, sequences should be uniquely identifiable via their
+// spans, though perhaps that is false, e.g., for macro-generated macros
 // that do not try to inject artificial span information. My plan is
 // to try to catch such cases ahead of time and not include them in
 // the precomputed mapping.)

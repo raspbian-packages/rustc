@@ -27,6 +27,9 @@ pub enum Algorithm {
 }
 
 impl Algorithm {
+    /// Optimized variants that ought to be equivalent to "naive"
+    pub const OPTIMIZED: &'static [Algorithm] = &[Algorithm::DatafrogOpt];
+
     pub fn variants() -> [&'static str; 4] {
         ["Naive", "DatafrogOpt", "LocationInsensitive", "Compare"]
     }
@@ -49,16 +52,16 @@ impl ::std::str::FromStr for Algorithm {
 
 #[derive(Clone, Debug)]
 pub struct Output<Region: Atom, Loan: Atom, Point: Atom> {
-    pub borrow_live_at: FxHashMap<Point, Vec<Loan>>,
+    pub errors: FxHashMap<Point, Vec<Loan>>,
 
     pub dump_enabled: bool,
 
     // these are just for debugging
+    pub borrow_live_at: FxHashMap<Point, Vec<Loan>>,
     pub restricts: FxHashMap<Point, BTreeMap<Region, BTreeSet<Loan>>>,
     pub restricts_anywhere: FxHashMap<Region, BTreeSet<Loan>>,
     pub region_live_at: FxHashMap<Point, Vec<Region>>,
     pub invalidates: FxHashMap<Point, Vec<Loan>>,
-    pub errors: FxHashMap<Point, Vec<Loan>>,
     pub subset: FxHashMap<Point, BTreeMap<Region, BTreeSet<Region>>>,
     pub subset_anywhere: FxHashMap<Region, BTreeSet<Region>>,
 }
@@ -69,10 +72,10 @@ fn compare_errors<Loan: Atom, Point: Atom>(
     all_naive_errors: &FxHashMap<Point, Vec<Loan>>,
     all_opt_errors: &FxHashMap<Point, Vec<Loan>>,
 ) -> bool {
-    let mut points: Vec<_> = all_naive_errors.keys().collect();
-    points.extend(all_opt_errors.keys());
+    let points = all_naive_errors.keys().chain(all_opt_errors.keys());
+
     let mut differ = false;
-    for point in points.iter() {
+    for point in points {
         let mut naive_errors = all_naive_errors.get(&point).cloned().unwrap_or(Vec::new());
         naive_errors.sort();
         let mut opt_errors = all_opt_errors.get(&point).cloned().unwrap_or(Vec::new());

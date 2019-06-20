@@ -1,18 +1,7 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Check license of third-party deps by inspecting vendor
 
 use std::collections::{BTreeSet, HashSet, HashMap};
-use std::fs::File;
-use std::io::Read;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -53,6 +42,8 @@ const EXCEPTIONS: &[&str] = &[
     "ryu",                // Apache-2.0, rls/cargo/... (b/c of serde)
     "bytesize",           // Apache-2.0, cargo
     "im-rc",              // MPL-2.0+, cargo
+    "adler32",            // BSD-3-Clause AND Zlib, cargo dep that isn't used
+    "fortanix-sgx-abi",   // MPL-2.0+, libstd but only for sgx target
 ];
 
 /// Which crates to check against the whitelist?
@@ -63,12 +54,14 @@ const WHITELIST_CRATES: &[CrateVersion] = &[
 
 /// Whitelist of crates rustc is allowed to depend on. Avoid adding to the list if possible.
 const WHITELIST: &[Crate] = &[
+    Crate("adler32"),
     Crate("aho-corasick"),
     Crate("arrayvec"),
     Crate("atty"),
     Crate("backtrace"),
     Crate("backtrace-sys"),
     Crate("bitflags"),
+    Crate("build_const"),
     Crate("byteorder"),
     Crate("cc"),
     Crate("cfg-if"),
@@ -76,6 +69,9 @@ const WHITELIST: &[Crate] = &[
     Crate("chalk-macros"),
     Crate("cloudabi"),
     Crate("cmake"),
+    Crate("compiler_builtins"),
+    Crate("crc"),
+    Crate("crc32fast"),
     Crate("crossbeam-deque"),
     Crate("crossbeam-epoch"),
     Crate("crossbeam-utils"),
@@ -101,6 +97,8 @@ const WHITELIST: &[Crate] = &[
     Crate("memmap"),
     Crate("memoffset"),
     Crate("miniz-sys"),
+    Crate("miniz_oxide"),
+    Crate("miniz_oxide_c_api"),
     Crate("nodrop"),
     Crate("num_cpus"),
     Crate("owning_ref"),
@@ -108,9 +106,16 @@ const WHITELIST: &[Crate] = &[
     Crate("parking_lot_core"),
     Crate("pkg-config"),
     Crate("polonius-engine"),
+    Crate("proc-macro2"),
     Crate("quick-error"),
+    Crate("quote"),
     Crate("rand"),
+    Crate("rand_chacha"),
     Crate("rand_core"),
+    Crate("rand_hc"),
+    Crate("rand_isaac"),
+    Crate("rand_pcg"),
+    Crate("rand_xorshift"),
     Crate("redox_syscall"),
     Crate("redox_termios"),
     Crate("regex"),
@@ -120,10 +125,16 @@ const WHITELIST: &[Crate] = &[
     Crate("rustc-hash"),
     Crate("rustc-rayon"),
     Crate("rustc-rayon-core"),
+    Crate("rustc_version"),
     Crate("scoped-tls"),
     Crate("scopeguard"),
+    Crate("semver"),
+    Crate("semver-parser"),
+    Crate("serde"),
+    Crate("serde_derive"),
     Crate("smallvec"),
     Crate("stable_deref_trait"),
+    Crate("syn"),
     Crate("tempfile"),
     Crate("termcolor"),
     Crate("terminon"),
@@ -131,11 +142,12 @@ const WHITELIST: &[Crate] = &[
     Crate("thread_local"),
     Crate("ucd-util"),
     Crate("unicode-width"),
+    Crate("unicode-xid"),
     Crate("unreachable"),
     Crate("utf8-ranges"),
+    Crate("vcpkg"),
     Crate("version_check"),
     Crate("void"),
-    Crate("vcpkg"),
     Crate("winapi"),
     Crate("winapi-build"),
     Crate("winapi-i686-pc-windows-gnu"),
@@ -262,8 +274,7 @@ fn check_license(path: &Path) -> bool {
     if !path.exists() {
         panic!("{} does not exist", path.display());
     }
-    let mut contents = String::new();
-    t!(t!(File::open(path)).read_to_string(&mut contents));
+    let contents = t!(fs::read_to_string(&path));
 
     let mut found_license = false;
     for line in contents.lines() {

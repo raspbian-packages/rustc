@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! See README.md
 
 use self::CombineMapType::*;
@@ -27,7 +17,7 @@ use ty::{Region, RegionVid};
 use std::collections::BTreeMap;
 use std::{cmp, fmt, mem, u32};
 
-mod taint;
+mod leak_check;
 
 #[derive(Default)]
 pub struct RegionConstraintCollector<'tcx> {
@@ -60,7 +50,7 @@ pub struct RegionConstraintCollector<'tcx> {
     /// which can never be rolled back.
     undo_log: Vec<UndoLog<'tcx>>,
 
-    /// The number of open snapshots, i.e. those that haven't been committed or
+    /// The number of open snapshots, i.e., those that haven't been committed or
     /// rolled back.
     num_open_snapshots: usize,
 
@@ -138,6 +128,16 @@ pub enum Constraint<'tcx> {
     /// directly affect inference, but instead is checked after
     /// inference is complete.
     RegSubReg(Region<'tcx>, Region<'tcx>),
+}
+
+impl Constraint<'_> {
+    pub fn involves_placeholders(&self) -> bool {
+        match self {
+            Constraint::VarSubVar(_, _) => false,
+            Constraint::VarSubReg(_, r) | Constraint::RegSubVar(r, _) => r.is_placeholder(),
+            Constraint::RegSubReg(r, s) => r.is_placeholder() || s.is_placeholder(),
+        }
+    }
 }
 
 /// VerifyGenericBound(T, _, R, RS): The parameter type `T` (or
@@ -336,6 +336,8 @@ impl TaintDirections {
     }
 }
 
+pub struct ConstraintInfo {}
+
 impl<'tcx> RegionConstraintCollector<'tcx> {
     pub fn new() -> Self {
         Self::default()
@@ -497,7 +499,8 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
     ) -> RegionVid {
         let vid = self.var_infos.push(RegionVariableInfo { origin, universe });
 
-        let u_vid = self.unification_table
+        let u_vid = self
+            .unification_table
             .new_key(unify_key::RegionVidKey { min_vid: vid });
         assert_eq!(vid, u_vid);
         if self.in_snapshot() {
@@ -529,7 +532,8 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
 
         assert!(self.in_snapshot());
 
-        let constraints_to_kill: Vec<usize> = self.undo_log
+        let constraints_to_kill: Vec<usize> = self
+            .undo_log
             .iter()
             .enumerate()
             .rev()
@@ -607,7 +611,7 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
 
         // never overwrite an existing (constraint, origin) - only insert one if it isn't
         // present in the map yet. This prevents origins from outside the snapshot being
-        // replaced with "less informative" origins e.g. during calls to `can_eq`
+        // replaced with "less informative" origins e.g., during calls to `can_eq`
         let in_snapshot = self.in_snapshot();
         let undo_log = &mut self.undo_log;
         self.data.constraints.entry(constraint).or_insert_with(|| {
@@ -812,7 +816,7 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
         new_r
     }
 
-    fn universe(&self, region: Region<'tcx>) -> ty::UniverseIndex {
+    pub fn universe(&self, region: Region<'tcx>) -> ty::UniverseIndex {
         match *region {
             ty::ReScope(..)
             | ty::ReStatic
@@ -832,37 +836,18 @@ impl<'tcx> RegionConstraintCollector<'tcx> {
             .filter_map(|&elt| match elt {
                 AddVar(vid) => Some(vid),
                 _ => None,
-            })
-            .collect()
+            }).collect()
     }
 
-    /// Computes all regions that have been related to `r0` since the
-    /// mark `mark` was made---`r0` itself will be the first
-    /// entry. The `directions` parameter controls what kind of
-    /// relations are considered. For example, one can say that only
-    /// "incoming" edges to `r0` are desired, in which case one will
-    /// get the set of regions `{r|r <= r0}`. This is used when
-    /// checking whether placeholder regions are being improperly
-    /// related to other regions.
-    pub fn tainted(
-        &self,
-        tcx: TyCtxt<'_, '_, 'tcx>,
-        mark: &RegionSnapshot,
-        r0: Region<'tcx>,
-        directions: TaintDirections,
-    ) -> FxHashSet<ty::Region<'tcx>> {
-        debug!(
-            "tainted(mark={:?}, r0={:?}, directions={:?})",
-            mark, r0, directions
-        );
-
-        // `result_set` acts as a worklist: we explore all outgoing
-        // edges and add any new regions we find to result_set.  This
-        // is not a terribly efficient implementation.
-        let mut taint_set = taint::TaintSet::new(directions, r0);
-        taint_set.fixed_point(tcx, &self.undo_log[mark.length..], &self.data.verifys);
-        debug!("tainted: result={:?}", taint_set);
-        return taint_set.into_set();
+    /// See [`RegionInference::region_constraints_added_in_snapshot`]
+    pub fn region_constraints_added_in_snapshot(&self, mark: &RegionSnapshot) -> Option<bool> {
+        self.undo_log[mark.length..]
+            .iter()
+            .map(|&elt| match elt {
+                AddConstraint(constraint) => Some(constraint.involves_placeholders()),
+                _ => None,
+            }).max()
+            .unwrap_or(None)
     }
 }
 

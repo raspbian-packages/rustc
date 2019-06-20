@@ -32,7 +32,7 @@ pub fn check_for(x: Feature) -> bool {
 /// [wiki_cpuid]: https://en.wikipedia.org/wiki/CPUID
 /// [intel64_ref]: http://www.intel.de/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-instruction-set-reference-manual-325383.pdf
 /// [amd64_ref]: http://support.amd.com/TechDocs/24594.pdf
-#[cfg_attr(feature = "cargo-clippy", allow(similar_names))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::similar_names))]
 fn detect_features() -> cache::Initializer {
     let mut value = cache::Initializer::default();
 
@@ -116,6 +116,7 @@ fn detect_features() -> cache::Initializer {
 
         enable(proc_info_ecx, 0, Feature::sse3);
         enable(proc_info_ecx, 9, Feature::ssse3);
+        enable(proc_info_ecx, 13, Feature::cmpxchg16b);
         enable(proc_info_ecx, 19, Feature::sse4_1);
         enable(proc_info_ecx, 20, Feature::sse4_2);
         enable(proc_info_ecx, 23, Feature::popcnt);
@@ -123,6 +124,7 @@ fn detect_features() -> cache::Initializer {
         enable(proc_info_ecx, 1, Feature::pclmulqdq);
         enable(proc_info_ecx, 30, Feature::rdrand);
         enable(extended_features_ebx, 18, Feature::rdseed);
+        enable(extended_features_ebx, 19, Feature::adx);
         enable(proc_info_edx, 4, Feature::tsc);
         enable(proc_info_edx, 23, Feature::mmx);
         enable(proc_info_edx, 24, Feature::fxsr);
@@ -288,6 +290,8 @@ mod tests {
         println!("xsaveopt: {:?}", is_x86_feature_detected!("xsaveopt"));
         println!("xsaves: {:?}", is_x86_feature_detected!("xsaves"));
         println!("xsavec: {:?}", is_x86_feature_detected!("xsavec"));
+        println!("cmpxchg16b: {:?}", is_x86_feature_detected!("cmpxchg16b"));
+        println!("adx: {:?}", is_x86_feature_detected!("adx"));
     }
 
     #[test]
@@ -343,6 +347,14 @@ mod tests {
         assert_eq!(
             is_x86_feature_detected!("xsaves"),
             information.xsaves_xrstors_and_ia32_xss()
+        );
+        assert_eq!(
+            is_x86_feature_detected!("cmpxchg16b"),
+            information.cmpxchg16b(),
+        );
+        assert_eq!(
+            is_x86_feature_detected!("adx"),
+            information.adx(),
         );
     }
 }

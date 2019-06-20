@@ -15,15 +15,21 @@ extern crate quote;
 extern crate syn;
 
 use proc_macro2::TokenStream;
+use quote::ToTokens;
 
 #[proc_macro_attribute]
 pub fn assert_instr(
-    attr: proc_macro::TokenStream, item: proc_macro::TokenStream,
+    attr: proc_macro::TokenStream,
+    item: proc_macro::TokenStream,
 ) -> proc_macro::TokenStream {
-    let invoc = syn::parse::<Invoc>(attr)
-        .expect("expected #[assert_instr(instr, a = b, ...)]");
-    let item =
-        syn::parse::<syn::Item>(item).expect("must be attached to an item");
+    let invoc = match syn::parse::<Invoc>(attr) {
+        Ok(s) => s,
+        Err(e) => return e.to_compile_error().into(),
+    };
+    let item = match syn::parse::<syn::Item>(item) {
+        Ok(s) => s,
+        Err(e) => return e.to_compile_error().into(),
+    };
     let func = match item {
         syn::Item::Fn(ref f) => f,
         _ => panic!("must be attached to a function"),
@@ -35,17 +41,14 @@ pub fn assert_instr(
     // Disable assert_instr for x86 targets compiled with avx enabled, which
     // causes LLVM to generate different intrinsics that the ones we are
     // testing for.
-    let disable_assert_instr =
-        std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
+    let disable_assert_instr = std::env::var("STDSIMD_DISABLE_ASSERT_INSTR").is_ok();
 
-    use quote::ToTokens;
     let instr_str = instr
         .replace('.', "_")
+        .replace('/', "_")
+        .replace(':', "_")
         .replace(|c: char| c.is_whitespace(), "");
-    let assert_name = syn::Ident::new(
-        &format!("assert_{}_{}", name, instr_str),
-        name.span(),
-    );
+    let assert_name = syn::Ident::new(&format!("assert_{}_{}", name, instr_str), name.span());
     let shim_name = syn::Ident::new(&format!("{}_shim", name), name.span());
     let mut inputs = Vec::new();
     let mut input_vals = Vec::new();
@@ -62,15 +65,12 @@ pub fn assert_instr(
             syn::Pat::Ident(ref i) => &i.ident,
             _ => panic!("must have bare arguments"),
         };
-        match invoc.args.iter().find(|a| *ident == a.0) {
-            Some(&(_, ref tts)) => {
-                input_vals.push(quote! { #tts });
-            }
-            None => {
-                inputs.push(capture);
-                input_vals.push(quote! { #ident });
-            }
-        };
+        if let Some(&(_, ref tts)) = invoc.args.iter().find(|a| *ident == a.0) {
+            input_vals.push(quote! { #tts });
+        } else {
+            inputs.push(capture);
+            input_vals.push(quote! { #ident });
+        }
     }
 
     let attrs = func
@@ -85,7 +85,8 @@ pub fn assert_instr(
                 .ident
                 .to_string()
                 .starts_with("target")
-        }).collect::<Vec<_>>();
+        })
+        .collect::<Vec<_>>();
     let attrs = Append(&attrs);
 
     // Use an ABI on Windows that passes SIMD values in registers, like what
@@ -132,15 +133,14 @@ pub fn assert_instr(
                                    stringify!(#shim_name),
                                    #instr);
         }
-    }.into();
+    };
     // why? necessary now to get tests to work?
-    let tts: TokenStream =
-        tts.to_string().parse().expect("cannot parse tokenstream");
+    let tts: TokenStream = tts.to_string().parse().expect("cannot parse tokenstream");
 
     let tts: TokenStream = quote! {
         #item
         #tts
-    }.into();
+    };
     tts.into()
 }
 
@@ -151,20 +151,46 @@ struct Invoc {
 
 impl syn::parse::Parse for Invoc {
     fn parse(input: syn::parse::ParseStream) -> syn::parse::Result<Self> {
-        use syn::Token;
+        use syn::{ext::IdentExt, Token};
 
-        let instr = match input.parse::<syn::Ident>() {
-            Ok(s) => s.to_string(),
-            Err(_) => input.parse::<syn::LitStr>()?.value(),
-        };
+        let mut instr = String::new();
+        while !input.is_empty() {
+            if input.parse::<Token![,]>().is_ok() {
+                break;
+            }
+            if let Ok(ident) = syn::Ident::parse_any(input) {
+                instr.push_str(&ident.to_string());
+                continue;
+            }
+            if input.parse::<Token![.]>().is_ok() {
+                instr.push_str(".");
+                continue;
+            }
+            if let Ok(s) = input.parse::<syn::LitStr>() {
+                instr.push_str(&s.value());
+                continue;
+            }
+            println!("{:?}", input.cursor().token_stream());
+            return Err(input.error("expected an instruction"));
+        }
+        if instr.len() == 0 {
+            return Err(input.error("expected an instruction before comma"));
+        }
         let mut args = Vec::new();
-        while input.parse::<Token![,]>().is_ok() {
+        while !input.is_empty() {
             let name = input.parse::<syn::Ident>()?;
             input.parse::<Token![=]>()?;
             let expr = input.parse::<syn::Expr>()?;
             args.push((name, expr));
+
+            if input.parse::<Token![,]>().is_err() {
+                if !input.is_empty() {
+                    return Err(input.error("extra tokens at end"));
+                }
+                break;
+            }
         }
-        Ok(Invoc { instr, args })
+        Ok(Self { instr, args })
     }
 }
 

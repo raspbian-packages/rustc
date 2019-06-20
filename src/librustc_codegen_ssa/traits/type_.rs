@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use super::misc::MiscMethods;
 use super::Backend;
 use super::HasCodegen;
@@ -32,7 +22,7 @@ pub trait BaseTypeMethods<'tcx>: Backend<'tcx> {
     fn type_i64(&self) -> Self::Type;
     fn type_i128(&self) -> Self::Type;
 
-    // Creates an integer type with the given number of bits, e.g. i24
+    // Creates an integer type with the given number of bits, e.g., i24
     fn type_ix(&self, num_bits: u64) -> Self::Type;
     fn type_isize(&self) -> Self::Type;
 

@@ -1,37 +1,22 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Functionality for ordering and comparison.
 //!
-//! This module defines both [`PartialOrd`] and [`PartialEq`] traits which are used
-//! by the compiler to implement comparison operators. Rust programs may
-//! implement [`PartialOrd`] to overload the `<`, `<=`, `>`, and `>=` operators,
-//! and may implement [`PartialEq`] to overload the `==` and `!=` operators.
+//! This module contains various tools for ordering and comparing values. In
+//! summary:
 //!
-//! [`PartialOrd`]: trait.PartialOrd.html
-//! [`PartialEq`]: trait.PartialEq.html
+//! * [`Eq`] and [`PartialEq`] are traits that allow you to define total and
+//!   partial equality between values, respectively. Implementing them overloads
+//!   the `==` and `!=` operators.
+//! * [`Ord`] and [`PartialOrd`] are traits that allow you to define total and
+//!   partial orderings between values, respectively. Implementing them overloads
+//!   the `<`, `<=`, `>`, and `>=` operators.
+//! * [`Ordering`][cmp::Ordering] is an enum returned by the
+//!   main functions of [`Ord`] and [`PartialOrd`], and describes an ordering.
+//! * [`Reverse`][cmp::Reverse] is a struct that allows you to easily reverse
+//!   an ordering.
+//! * [`max`][cmp::max] and [`min`][cmp::min] are functions that build off of
+//!   [`Ord`] and allow you to find the maximum or minimum of two values.
 //!
-//! # Examples
-//!
-//! ```
-//! let x: u32 = 0;
-//! let y: u32 = 1;
-//!
-//! // these two lines are equivalent
-//! assert_eq!(x < y, true);
-//! assert_eq!(x.lt(&y), true);
-//!
-//! // these two lines are also equivalent
-//! assert_eq!(x == y, false);
-//! assert_eq!(x.eq(&y), false);
-//! ```
+//! For more details, see the respective documentation of each item in the list.
 
 #![stable(feature = "rust1", since = "1.0.0")]
 
@@ -482,9 +467,11 @@ impl<T: Ord> Ord for Reverse<T> {
 /// Then you must define an implementation for `cmp()`. You may find it useful to use
 /// `cmp()` on your type's fields.
 ///
-/// Implementations of `PartialEq`, `PartialOrd`, and `Ord` *must* agree with each other. It's
-/// easy to accidentally make them disagree by deriving some of the traits and manually
-/// implementing others.
+/// Implementations of `PartialEq`, `PartialOrd`, and `Ord` *must*
+/// agree with each other. That is, `a.cmp(b) == Ordering::Equal` if
+/// and only if `a == b` and `Some(a.cmp(b)) == a.partial_cmp(b)` for
+/// all `a` and `b`. It's easy to accidentally make them disagree by
+/// deriving some of the traits and manually implementing others.
 ///
 /// Here's an example where you want to sort people by height only, disregarding `id`
 /// and `name`:

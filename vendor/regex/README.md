@@ -210,7 +210,7 @@ recommended for general use.
 
 ### Minimum Rust version policy
 
-This crate's minimum supported `rustc` version is `1.20.0`.
+This crate's minimum supported `rustc` version is `1.24.1`.
 
 The current **tentative** policy is that the minimum Rust version required
 to use this crate can be increased in minor version updates. For example, if
@@ -232,3 +232,7 @@ This project is licensed under either of
    http://opensource.org/licenses/MIT)
 
 at your option.
+
+The data in `regex-syntax/src/unicode_tables/` is licensed under the Unicode
+License Agreement
+([LICENSE-UNICODE](http://www.unicode.org/copyright.html#License)).

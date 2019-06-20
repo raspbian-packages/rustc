@@ -1,9 +1,8 @@
 // This is a part of Chrono.
 // See README.md and LICENSE.txt for details.
 
-//! # Chrono 0.4.0
+//! # Chrono: Date and Time for Rust
 //!
-//! Date and time handling for Rust.
 //! It aims to be a feature-complete superset of
 //! the [time](https://github.com/rust-lang-deprecated/time) library.
 //! In particular,
@@ -32,20 +31,13 @@
 //! chrono = "0.4"
 //! ```
 //!
-//! Or, if you want [Serde](https://github.com/serde-rs/serde) or
-//! [rustc-serialize](https://github.com/rust-lang-nursery/rustc-serialize) support,
-//! include the features like this:
+//! Or, if you want [Serde](https://github.com/serde-rs/serde) include the
+//! feature like this:
 //!
 //! ```toml
 //! [dependencies]
-//! chrono = { version = "0.4", features = ["serde", "rustc-serialize"] }
+//! chrono = { version = "0.4", features = ["serde"] }
 //! ```
-//!
-//! > Note that Chrono's support for rustc-serialize is now considered deprecated.
-//! Starting from 0.4.0 there is no further guarantee that
-//! the features available in Serde will be also available to rustc-serialize,
-//! and the support can be removed in any future major version.
-//! **Rustc-serialize users are strongly recommended to migrate to Serde.**
 //!
 //! Then put this in your crate root:
 //!
@@ -65,7 +57,7 @@
 //! ### Duration
 //!
 //! Chrono currently uses
-//! the [`time::Duration`](https://doc.rust-lang.org/time/time/struct.Duration.html) type
+//! the [`time::Duration`](https://docs.rs/time/0.1.40/time/struct.Duration.html) type
 //! from the `time` crate to represent the magnitude of a time span.
 //! Since this has the same name to the newer, standard type for duration,
 //! the reference will refer this type as `OldDuration`.
@@ -74,12 +66,12 @@
 //! months.
 //!
 //! Chrono does not yet natively support
-//! the standard [`Duration`](https://doc.rust-lang.org/std/time/struct.Duration.html) type,
+//! the standard [`Duration`](https://docs.rs/time/0.1.40/time/struct.Duration.html) type,
 //! but it will be supported in the future.
 //! Meanwhile you can convert between two types with
-//! [`Duration::from_std`](https://doc.rust-lang.org/time/time/struct.Duration.html#method.from_std)
+//! [`Duration::from_std`](https://docs.rs/time/0.1.40/time/struct.Duration.html#method.from_std)
 //! and
-//! [`Duration::to_std`](https://doc.rust-lang.org/time/time/struct.Duration.html#method.to_std)
+//! [`Duration::to_std`](https://docs.rs/time/0.1.40/time/struct.Duration.html#method.to_std)
 //! methods.
 //!
 //! ### Date and Time
@@ -207,10 +199,13 @@
 //! # }
 //! ```
 //!
+//! ### Formatting and Parsing
+//!
 //! Formatting is done via the [`format`](./struct.DateTime.html#method.format) method,
 //! which format is equivalent to the familiar `strftime` format.
-//! (See the [`format::strftime` module documentation](./format/strftime/index.html#specifiers)
-//! for full syntax.)
+//!
+//! See [`format::strftime`](./format/strftime/index.html#specifiers)
+//! documentation for full syntax and list of specifiers.
 //!
 //! The default `to_string` method and `{:?}` specifier also give a reasonable representation.
 //! Chrono also provides [`to_rfc2822`](./struct.DateTime.html#method.to_rfc2822) and
@@ -229,6 +224,10 @@
 //! assert_eq!(dt.to_rfc2822(), "Fri, 28 Nov 2014 12:00:09 +0000");
 //! assert_eq!(dt.to_rfc3339(), "2014-11-28T12:00:09+00:00");
 //! assert_eq!(format!("{:?}", dt), "2014-11-28T12:00:09Z");
+//!
+//! // Note that milli/nanoseconds are only printed if they are non-zero
+//! let dt_nano = Utc.ymd(2014, 11, 28).and_hms_nano(12, 0, 9, 1);
+//! assert_eq!(format!("{:?}", dt_nano), "2014-11-28T12:00:09.000000001Z");
 //! ```
 //!
 //! Parsing can be done with three methods:
@@ -288,14 +287,17 @@
 //! assert!(Utc.datetime_from_str("Sat Nov 28 12:00:09 2014", "%a %b %e %T %Y").is_err());
 //! ```
 //!
+//! Again : See [`format::strftime`](./format/strftime/index.html#specifiers)
+//! documentation for full syntax and list of specifiers.
+//!
 //! ### Conversion from and to EPOCH timestamps
 //!
-//! Use [`Utc.timestamp(seconds, nanoseconds)`](./offset/trait.TimeZone.html#method.timestamp) 
-//! to construct a [`DateTime<Utc>`](./struct.DateTime.html) from a UNIX timestamp 
+//! Use [`Utc.timestamp(seconds, nanoseconds)`](./offset/trait.TimeZone.html#method.timestamp)
+//! to construct a [`DateTime<Utc>`](./struct.DateTime.html) from a UNIX timestamp
 //! (seconds, nanoseconds that passed since January 1st 1970).
 //!
 //! Use [`DateTime.timestamp`](./struct.DateTime.html#method.timestamp) to get the timestamp (in seconds)
-//! from a [`DateTime`](./struct.DateTime.html). Additionally, you can use 
+//! from a [`DateTime`](./struct.DateTime.html). Additionally, you can use
 //! [`DateTime.timestamp_subsec_nanos`](./struct.DateTime.html#method.timestamp_subsec_nanos)
 //! to get the number of additional number of nanoseconds.
 //!
@@ -381,7 +383,7 @@
 //! Advanced time zone handling is not yet supported.
 //! For now you can try the [Chrono-tz](https://github.com/chronotope/chrono-tz/) crate instead.
 
-#![doc(html_root_url = "https://docs.rs/chrono/0.4.0/")]
+#![doc(html_root_url = "https://docs.rs/chrono/latest/")]
 
 #![cfg_attr(bench, feature(test))] // lib stability features as per RFC #507
 #![deny(missing_docs)]
@@ -394,7 +396,14 @@
 //
 // Similarly, redundant_field_names lints on not using the
 // field-init-shorthand, which was stabilized in rust 1.17.
-#![cfg_attr(feature = "cargo-clippy", allow(const_static_lifetime, redundant_field_names))]
+//
+// Changing trivially_copy_pass_by_ref would require an incompatible version
+// bump.
+#![cfg_attr(feature = "cargo-clippy", allow(
+    const_static_lifetime,
+    redundant_field_names,
+    trivially_copy_pass_by_ref,
+))]
 
 #[cfg(feature="clock")]
 extern crate time as oldtime;
@@ -871,7 +880,16 @@ pub trait Datelike: Sized {
     /// Returns `None` when the resulting value would be invalid.
     fn with_ordinal0(&self, ordinal0: u32) -> Option<Self>;
 
-    /// Returns the number of days since January 1, 1 (Day 1) in the proleptic Gregorian calendar.
+    /// Returns the number of days since January 1, Year 1 (aka Day 1) in the
+    /// proleptic Gregorian calendar.
+    ///
+    /// # Example:
+    ///
+    /// ~~~
+    /// use chrono::{NaiveDate, Datelike};
+    /// assert_eq!(NaiveDate::from_ymd(1970, 1, 1).num_days_from_ce(), 719163);
+    /// assert_eq!(NaiveDate::from_ymd(0, 1, 1).num_days_from_ce(), -365);
+    /// ~~~
     fn num_days_from_ce(&self) -> i32 {
         // we know this wouldn't overflow since year is limited to 1/2^13 of i32's full range.
         let mut year = self.year() - 1;

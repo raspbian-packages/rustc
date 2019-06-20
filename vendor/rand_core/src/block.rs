@@ -1,6 +1,4 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -287,6 +285,10 @@ impl<R: BlockRngCore + SeedableRng> SeedableRng for BlockRng<R> {
         Self::new(R::from_seed(seed))
     }
 
+    fn seed_from_u64(seed: u64) -> Self {
+        Self::new(R::seed_from_u64(seed))
+    }
+
     fn from_rng<S: RngCore>(rng: S) -> Result<Self, Error> {
         Ok(Self::new(R::from_rng(rng)?))
     }
@@ -492,6 +494,10 @@ impl<R: BlockRngCore + SeedableRng> SeedableRng for BlockRng64<R> {
 
     fn from_seed(seed: Self::Seed) -> Self {
         Self::new(R::from_seed(seed))
+    }
+
+    fn seed_from_u64(seed: u64) -> Self {
+        Self::new(R::seed_from_u64(seed))
     }
 
     fn from_rng<S: RngCore>(rng: S) -> Result<Self, Error> {

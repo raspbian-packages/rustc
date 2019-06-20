@@ -1,13 +1,3 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use llvm::{AtomicRmwBinOp, AtomicOrdering, SynchronizationScope, AsmDialect};
 use llvm::{self, False, BasicBlock};
 use rustc_codegen_ssa::common::{IntPredicate, TypeKind, RealPredicate};
@@ -1024,17 +1014,11 @@ impl BuilderMethods<'a, 'tcx> for Builder<'a, 'll, 'tcx> {
 
     fn minnum(&mut self, lhs: &'ll Value, rhs: &'ll Value) -> &'ll Value {
         self.count_insn("minnum");
-        unsafe {
-            let instr = llvm::LLVMRustBuildMinNum(self.llbuilder, lhs, rhs);
-            instr.expect("LLVMRustBuildMinNum is not available in LLVM version < 6.0")
-        }
+        unsafe { llvm::LLVMRustBuildMinNum(self.llbuilder, lhs, rhs) }
     }
     fn maxnum(&mut self, lhs: &'ll Value, rhs: &'ll Value) -> &'ll Value {
         self.count_insn("maxnum");
-        unsafe {
-            let instr = llvm::LLVMRustBuildMaxNum(self.llbuilder, lhs, rhs);
-            instr.expect("LLVMRustBuildMaxNum is not available in LLVM version < 6.0")
-        }
+        unsafe { llvm::LLVMRustBuildMaxNum(self.llbuilder, lhs, rhs) }
     }
 
     fn select(

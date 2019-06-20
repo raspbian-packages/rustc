@@ -255,12 +255,19 @@ impl NaiveDateTime {
     ///
     /// let dt = NaiveDate::from_ymd(2001, 9, 9).and_hms(1, 46, 40);
     /// assert_eq!(dt.timestamp(), 1_000_000_000);
+    ///
+    /// let dt = NaiveDate::from_ymd(1969, 12, 31).and_hms(23, 59, 59);
+    /// assert_eq!(dt.timestamp(), -1);
+    ///
+    /// let dt = NaiveDate::from_ymd(-1, 1, 1).and_hms(0, 0, 0);
+    /// assert_eq!(dt.timestamp(), -62198755200);
     /// ~~~~
     #[inline]
     pub fn timestamp(&self) -> i64 {
-        let ndays = i64::from(self.date.num_days_from_ce());
-        let nseconds = i64::from(self.time.num_seconds_from_midnight());
-        (ndays - 719_163) * 86_400 + nseconds
+        const UNIX_EPOCH_DAY: i64 = 719_163;
+        let gregorian_day = i64::from(self.date.num_days_from_ce());
+        let seconds_from_midnight = i64::from(self.time.num_seconds_from_midnight());
+        (gregorian_day - UNIX_EPOCH_DAY) * 86_400 + seconds_from_midnight
     }
 
     /// Returns the number of non-leap *milliseconds* since midnight on January 1, 1970.
@@ -283,6 +290,9 @@ impl NaiveDateTime {
     ///
     /// let dt = NaiveDate::from_ymd(2001, 9, 9).and_hms_milli(1, 46, 40, 555);
     /// assert_eq!(dt.timestamp_millis(), 1_000_000_000_555);
+    ///
+    /// let dt = NaiveDate::from_ymd(1969, 12, 31).and_hms_milli(23, 59, 59, 100);
+    /// assert_eq!(dt.timestamp_millis(), -900);
     /// ~~~~
     #[inline]
     pub fn timestamp_millis(&self) -> i64 {
@@ -1692,6 +1702,296 @@ pub mod serde {
         }
     }
 
+    /// Used to serialize/deserialize from nanosecond-precision timestamps
+    ///
+    /// # Example:
+    ///
+    /// ```rust
+    /// # // We mark this ignored so that we can test on 1.13 (which does not
+    /// # // support custom derive), and run tests with --ignored on beta and
+    /// # // nightly to actually trigger these.
+    /// #
+    /// # #[macro_use] extern crate serde_derive;
+    /// # extern crate serde_json;
+    /// # extern crate serde;
+    /// # extern crate chrono;
+    /// # use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc};
+    /// use chrono::naive::serde::ts_nanoseconds;
+    /// #[derive(Deserialize, Serialize)]
+    /// struct S {
+    ///     #[serde(with = "ts_nanoseconds")]
+    ///     time: NaiveDateTime
+    /// }
+    ///
+    /// # fn example() -> Result<S, serde_json::Error> {
+    /// let time = NaiveDate::from_ymd(2018, 5, 17).and_hms_nano(02, 04, 59, 918355733);
+    /// let my_s = S {
+    ///     time: time.clone(),
+    /// };
+    ///
+    /// let as_string = serde_json::to_string(&my_s)?;
+    /// assert_eq!(as_string, r#"{"time":1526522699918355733}"#);
+    /// let my_s: S = serde_json::from_str(&as_string)?;
+    /// assert_eq!(my_s.time, time);
+    /// # Ok(my_s)
+    /// # }
+    /// # fn main() { example().unwrap(); }
+    /// ```
+    pub mod ts_nanoseconds {
+        use std::fmt;
+        use serdelib::{ser, de};
+
+        use NaiveDateTime;
+
+        /// Serialize a UTC datetime into an integer number of nanoseconds since the epoch
+        ///
+        /// Intended for use with `serde`s `serialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # #[macro_use] extern crate serde;
+        /// # extern crate chrono;
+        /// # use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc};
+        /// # use serde::Serialize;
+        /// use chrono::naive::serde::ts_nanoseconds::serialize as to_nano_ts;
+        /// #[derive(Serialize)]
+        /// struct S {
+        ///     #[serde(serialize_with = "to_nano_ts")]
+        ///     time: NaiveDateTime
+        /// }
+        ///
+        /// # fn example() -> Result<String, serde_json::Error> {
+        /// let my_s = S {
+        ///     time: NaiveDate::from_ymd(2018, 5, 17).and_hms_nano(02, 04, 59, 918355733),
+        /// };
+        /// let as_string = serde_json::to_string(&my_s)?;
+        /// assert_eq!(as_string, r#"{"time":1526522699918355733}"#);
+        /// # Ok(as_string)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn serialize<S>(dt: &NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+            where S: ser::Serializer
+        {
+            serializer.serialize_i64(dt.timestamp_nanos())
+        }
+
+        /// Deserialize a `DateTime` from a nanoseconds timestamp
+        ///
+        /// Intended for use with `serde`s `deserialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # extern crate serde;
+        /// # extern crate chrono;
+        /// # use chrono::{NaiveDateTime, Utc};
+        /// # use serde::Deserialize;
+        /// use chrono::naive::serde::ts_nanoseconds::deserialize as from_nano_ts;
+        /// #[derive(Deserialize)]
+        /// struct S {
+        ///     #[serde(deserialize_with = "from_nano_ts")]
+        ///     time: NaiveDateTime
+        /// }
+        ///
+        /// # fn example() -> Result<S, serde_json::Error> {
+        /// let my_s: S = serde_json::from_str(r#"{ "time": 1526522699918355733 }"#)?;
+        /// # Ok(my_s)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn deserialize<'de, D>(d: D) -> Result<NaiveDateTime, D::Error>
+            where D: de::Deserializer<'de>
+        {
+            Ok(try!(d.deserialize_i64(NaiveDateTimeFromNanoSecondsVisitor)))
+        }
+
+        struct NaiveDateTimeFromNanoSecondsVisitor;
+
+        impl<'de> de::Visitor<'de> for NaiveDateTimeFromNanoSecondsVisitor {
+            type Value = NaiveDateTime;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result
+            {
+                formatter.write_str("a unix timestamp")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<NaiveDateTime, E>
+                where E: de::Error
+            {
+                NaiveDateTime::from_timestamp_opt(value / 1_000_000_000,
+                                                 (value % 1_000_000_000) as u32)
+                    .ok_or_else(|| E::custom(format!("value is not a legal timestamp: {}", value)))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<NaiveDateTime, E>
+                where E: de::Error
+            {
+                NaiveDateTime::from_timestamp_opt(value as i64 / 1_000_000_000,
+                                                 (value as i64 % 1_000_000_000) as u32)
+                    .ok_or_else(|| E::custom(format!("value is not a legal timestamp: {}", value)))
+            }
+        }
+    }
+
+    /// Used to serialize/deserialize from millisecond-precision timestamps
+    ///
+    /// # Example:
+    ///
+    /// ```rust
+    /// # // We mark this ignored so that we can test on 1.13 (which does not
+    /// # // support custom derive), and run tests with --ignored on beta and
+    /// # // nightly to actually trigger these.
+    /// #
+    /// # #[macro_use] extern crate serde_derive;
+    /// # extern crate serde_json;
+    /// # extern crate serde;
+    /// # extern crate chrono;
+    /// # use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc};
+    /// use chrono::naive::serde::ts_milliseconds;
+    /// #[derive(Deserialize, Serialize)]
+    /// struct S {
+    ///     #[serde(with = "ts_milliseconds")]
+    ///     time: NaiveDateTime
+    /// }
+    ///
+    /// # fn example() -> Result<S, serde_json::Error> {
+    /// let time = NaiveDate::from_ymd(2018, 5, 17).and_hms_milli(02, 04, 59, 918);
+    /// let my_s = S {
+    ///     time: time.clone(),
+    /// };
+    ///
+    /// let as_string = serde_json::to_string(&my_s)?;
+    /// assert_eq!(as_string, r#"{"time":1526522699918}"#);
+    /// let my_s: S = serde_json::from_str(&as_string)?;
+    /// assert_eq!(my_s.time, time);
+    /// # Ok(my_s)
+    /// # }
+    /// # fn main() { example().unwrap(); }
+    /// ```
+    pub mod ts_milliseconds {
+        use std::fmt;
+        use serdelib::{ser, de};
+
+        use NaiveDateTime;
+
+        /// Serialize a UTC datetime into an integer number of milliseconds since the epoch
+        ///
+        /// Intended for use with `serde`s `serialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # #[macro_use] extern crate serde;
+        /// # extern crate chrono;
+        /// # use chrono::{TimeZone, NaiveDate, NaiveDateTime, Utc};
+        /// # use serde::Serialize;
+        /// use chrono::naive::serde::ts_milliseconds::serialize as to_milli_ts;
+        /// #[derive(Serialize)]
+        /// struct S {
+        ///     #[serde(serialize_with = "to_milli_ts")]
+        ///     time: NaiveDateTime
+        /// }
+        ///
+        /// # fn example() -> Result<String, serde_json::Error> {
+        /// let my_s = S {
+        ///     time: NaiveDate::from_ymd(2018, 5, 17).and_hms_milli(02, 04, 59, 918),
+        /// };
+        /// let as_string = serde_json::to_string(&my_s)?;
+        /// assert_eq!(as_string, r#"{"time":1526522699918}"#);
+        /// # Ok(as_string)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn serialize<S>(dt: &NaiveDateTime, serializer: S) -> Result<S::Ok, S::Error>
+            where S: ser::Serializer
+        {
+            serializer.serialize_i64(dt.timestamp_millis())
+        }
+
+        /// Deserialize a `DateTime` from a milliseconds timestamp
+        ///
+        /// Intended for use with `serde`s `deserialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # extern crate serde;
+        /// # extern crate chrono;
+        /// # use chrono::{NaiveDateTime, Utc};
+        /// # use serde::Deserialize;
+        /// use chrono::naive::serde::ts_milliseconds::deserialize as from_milli_ts;
+        /// #[derive(Deserialize)]
+        /// struct S {
+        ///     #[serde(deserialize_with = "from_milli_ts")]
+        ///     time: NaiveDateTime
+        /// }
+        ///
+        /// # fn example() -> Result<S, serde_json::Error> {
+        /// let my_s: S = serde_json::from_str(r#"{ "time": 1526522699918 }"#)?;
+        /// # Ok(my_s)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn deserialize<'de, D>(d: D) -> Result<NaiveDateTime, D::Error>
+            where D: de::Deserializer<'de>
+        {
+            Ok(try!(d.deserialize_i64(NaiveDateTimeFromMilliSecondsVisitor)))
+        }
+
+        struct NaiveDateTimeFromMilliSecondsVisitor;
+
+        impl<'de> de::Visitor<'de> for NaiveDateTimeFromMilliSecondsVisitor {
+            type Value = NaiveDateTime;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result
+            {
+                formatter.write_str("a unix timestamp")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<NaiveDateTime, E>
+                where E: de::Error
+            {
+                NaiveDateTime::from_timestamp_opt(value / 1000,
+                                                ((value % 1000) * 1_000_000) as u32)
+                    .ok_or_else(|| E::custom(format!("value is not a legal timestamp: {}", value)))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<NaiveDateTime, E>
+                where E: de::Error
+            {
+                NaiveDateTime::from_timestamp_opt((value / 1000) as i64,
+                                                 ((value % 1000) * 1_000_000) as u32)
+                    .ok_or_else(|| E::custom(format!("value is not a legal timestamp: {}", value)))
+            }
+        }
+    }
+
     /// Used to serialize/deserialize from second-precision timestamps
     ///
     /// # Example:
@@ -1733,42 +2033,6 @@ pub mod serde {
 
         use NaiveDateTime;
 
-        /// Deserialize a `DateTime` from a seconds timestamp
-        ///
-        /// Intended for use with `serde`s `deserialize_with` attribute.
-        ///
-        /// # Example:
-        ///
-        /// ```rust
-        /// # // We mark this ignored so that we can test on 1.13 (which does not
-        /// # // support custom derive), and run tests with --ignored on beta and
-        /// # // nightly to actually trigger these.
-        /// #
-        /// # #[macro_use] extern crate serde_derive;
-        /// # #[macro_use] extern crate serde_json;
-        /// # extern crate serde;
-        /// # extern crate chrono;
-        /// # use chrono::{NaiveDateTime, Utc};
-        /// # use serde::Deserialize;
-        /// use chrono::naive::serde::ts_seconds::deserialize as from_ts;
-        /// #[derive(Deserialize)]
-        /// struct S {
-        ///     #[serde(deserialize_with = "from_ts")]
-        ///     time: NaiveDateTime
-        /// }
-        ///
-        /// # fn example() -> Result<S, serde_json::Error> {
-        /// let my_s: S = serde_json::from_str(r#"{ "time": 1431684000 }"#)?;
-        /// # Ok(my_s)
-        /// # }
-        /// # fn main() { example().unwrap(); }
-        /// ```
-        pub fn deserialize<'de, D>(d: D) -> Result<NaiveDateTime, D::Error>
-            where D: de::Deserializer<'de>
-        {
-            Ok(try!(d.deserialize_i64(NaiveDateTimeFromSecondsVisitor)))
-        }
-
         /// Serialize a UTC datetime into an integer number of seconds since the epoch
         ///
         /// Intended for use with `serde`s `serialize_with` attribute.
@@ -1809,6 +2073,42 @@ pub mod serde {
             serializer.serialize_i64(dt.timestamp())
         }
 
+        /// Deserialize a `DateTime` from a seconds timestamp
+        ///
+        /// Intended for use with `serde`s `deserialize_with` attribute.
+        ///
+        /// # Example:
+        ///
+        /// ```rust
+        /// # // We mark this ignored so that we can test on 1.13 (which does not
+        /// # // support custom derive), and run tests with --ignored on beta and
+        /// # // nightly to actually trigger these.
+        /// #
+        /// # #[macro_use] extern crate serde_derive;
+        /// # #[macro_use] extern crate serde_json;
+        /// # extern crate serde;
+        /// # extern crate chrono;
+        /// # use chrono::{NaiveDateTime, Utc};
+        /// # use serde::Deserialize;
+        /// use chrono::naive::serde::ts_seconds::deserialize as from_ts;
+        /// #[derive(Deserialize)]
+        /// struct S {
+        ///     #[serde(deserialize_with = "from_ts")]
+        ///     time: NaiveDateTime
+        /// }
+        ///
+        /// # fn example() -> Result<S, serde_json::Error> {
+        /// let my_s: S = serde_json::from_str(r#"{ "time": 1431684000 }"#)?;
+        /// # Ok(my_s)
+        /// # }
+        /// # fn main() { example().unwrap(); }
+        /// ```
+        pub fn deserialize<'de, D>(d: D) -> Result<NaiveDateTime, D::Error>
+            where D: de::Deserializer<'de>
+        {
+            Ok(try!(d.deserialize_i64(NaiveDateTimeFromSecondsVisitor)))
+        }
+
         struct NaiveDateTimeFromSecondsVisitor;
 
         impl<'de> de::Visitor<'de> for NaiveDateTimeFromSecondsVisitor {
@@ -1816,7 +2116,7 @@ pub mod serde {
 
             fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result
             {
-                write!(formatter, "a unix timestamp")
+                formatter.write_str("a unix timestamp")
             }
 
             fn visit_i64<E>(self, value: i64) -> Result<NaiveDateTime, E>
@@ -1833,7 +2133,6 @@ pub mod serde {
                     .ok_or_else(|| E::custom(format!("value is not a legal timestamp: {}", value)))
             }
         }
-
     }
 
     #[cfg(test)] extern crate serde_json;

@@ -1,16 +1,6 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use check::FnCtxt;
 use rustc::infer::InferOk;
-use rustc::traits::ObligationCause;
+use rustc::traits::{ObligationCause, ObligationCauseCode};
 
 use syntax::ast;
 use syntax::util::parser::PREC_POSTFIX;
@@ -76,6 +66,25 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
         }
     }
 
+    pub fn demand_eqtype_pat(
+        &self,
+        cause_span: Span,
+        expected: Ty<'tcx>,
+        actual: Ty<'tcx>,
+        match_expr_span: Option<Span>,
+    ) {
+        let cause = if let Some(span) = match_expr_span {
+            self.cause(
+                cause_span,
+                ObligationCauseCode::MatchExpressionArmPattern { span, ty: expected },
+            )
+        } else {
+            self.misc(cause_span)
+        };
+        self.demand_eqtype_with_origin(&cause, expected, actual).map(|mut err| err.emit());
+    }
+
+
     pub fn demand_coerce(&self,
                          expr: &hir::Expr,
                          checked_ty: Ty<'tcx>,
@@ -91,7 +100,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
     // Checks that the type of `expr` can be coerced to `expected`.
     //
-    // NB: This code relies on `self.diverges` to be accurate. In
+    // N.B., this code relies on `self.diverges` to be accurate. In
     // particular, assignments to `!` will be permitted if the
     // diverges flag is currently "always".
     pub fn demand_coerce_diag(&self,
@@ -123,7 +132,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                         let sole_field_ty = sole_field.ty(self.tcx, substs);
                         if self.can_coerce(expr_ty, sole_field_ty) {
                             let variant_path = self.tcx.item_path_str(variant.did);
-                            Some(variant_path.trim_left_matches("std::prelude::v1::").to_string())
+                            // FIXME #56861: DRYer prelude filtering
+                            Some(variant_path.trim_start_matches("std::prelude::v1::").to_string())
                         } else {
                             None
                         }
@@ -203,17 +213,17 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
     fn can_use_as_ref(&self, expr: &hir::Expr) -> Option<(Span, &'static str, String)> {
         if let hir::ExprKind::Path(hir::QPath::Resolved(_, ref path)) = expr.node {
             if let hir::def::Def::Local(id) = path.def {
-                let parent = self.tcx.hir.get_parent_node(id);
+                let parent = self.tcx.hir().get_parent_node(id);
                 if let Some(Node::Expr(hir::Expr {
                     id,
                     node: hir::ExprKind::Closure(_, decl, ..),
                     ..
-                })) = self.tcx.hir.find(parent) {
-                    let parent = self.tcx.hir.get_parent_node(*id);
+                })) = self.tcx.hir().find(parent) {
+                    let parent = self.tcx.hir().get_parent_node(*id);
                     if let (Some(Node::Expr(hir::Expr {
                         node: hir::ExprKind::MethodCall(path, span, expr),
                         ..
-                    })), 1) = (self.tcx.hir.find(parent), decl.inputs.len()) {
+                    })), 1) = (self.tcx.hir().find(parent), decl.inputs.len()) {
                         let self_ty = self.tables.borrow().node_id_to_type(expr[0].hir_id);
                         let self_ty = format!("{:?}", self_ty);
                         let name = path.ident.as_str();
@@ -344,7 +354,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 // we may want to suggest adding a `*`, or removing
                 // a `&`.
                 //
-                // (But, also check check the `expn_info()` to see if this is
+                // (But, also check the `expn_info()` to see if this is
                 // a macro; if so, it's hard to extract the text and make a good
                 // suggestion, so don't bother.)
                 if self.infcx.can_sub(self.param_env, checked, &expected).is_ok() &&
@@ -362,9 +372,9 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
 
                         // Maybe add `*`? Only if `T: Copy`.
                         _ => {
-                            if !self.infcx.type_moves_by_default(self.param_env,
-                                                                checked,
-                                                                sp) {
+                            if self.infcx.type_is_copy_modulo_regions(self.param_env,
+                                                                      checked,
+                                                                      sp) {
                                 // do not suggest if the span comes from a macro (#52783)
                                 if let (Ok(code),
                                         true) = (cm.span_to_snippet(sp), sp == expr.span) {
@@ -450,8 +460,8 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                       checked_ty: Ty<'tcx>,
                       expected_ty: Ty<'tcx>)
                       -> bool {
-        let parent_id = self.tcx.hir.get_parent_node(expr.id);
-        if let Some(parent) = self.tcx.hir.find(parent_id) {
+        let parent_id = self.tcx.hir().get_parent_node(expr.id);
+        if let Some(parent) = self.tcx.hir().find(parent_id) {
             // Shouldn't suggest `.into()` on `const`s.
             if let Node::Item(Item { node: ItemKind::Const(_, _), .. }) = parent {
                 // FIXME(estebank): modify once we decide to suggest `as` casts
@@ -519,7 +529,7 @@ impl<'a, 'gcx, 'tcx> FnCtxt<'a, 'gcx, 'tcx> {
                 let suffix_suggestion = format!(
                     "{}{}{}{}",
                     if needs_paren { "(" } else { "" },
-                    src.trim_right_matches(&checked_ty.to_string()),
+                    src.trim_end_matches(&checked_ty.to_string()),
                     expected_ty,
                     if needs_paren { ")" } else { "" },
                 );

@@ -1,8 +1,8 @@
-use std::hash::Hash;
 use std::fmt::Debug;
+use std::hash::Hash;
 
 /// The "facts" which are the basis of the NLL borrow analysis.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct AllFacts<R: Atom, L: Atom, P: Atom> {
     /// `borrow_region(R, B, P)` -- the region R may refer to data
     /// from borrow B starting at the point P (this is usually the
@@ -42,6 +42,8 @@ impl<R: Atom, L: Atom, P: Atom> Default for AllFacts<R, L, P> {
     }
 }
 
-pub trait Atom: From<usize> + Into<usize> + Copy + Clone + Debug + Eq + Ord + Hash + 'static {
+pub trait Atom:
+    From<usize> + Into<usize> + Copy + Clone + Debug + Eq + Ord + Hash + 'static
+{
     fn index(self) -> usize;
 }

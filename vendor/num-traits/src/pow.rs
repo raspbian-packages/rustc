@@ -1,6 +1,6 @@
-use core::ops::Mul;
 use core::num::Wrapping;
-use {One, CheckedMul};
+use core::ops::Mul;
+use {CheckedMul, One};
 
 /// Binary operator for raising a value to a power.
 pub trait Pow<RHS> {
@@ -173,6 +173,8 @@ mod float_impls {
 
 /// Raises a value to the power of exp, using exponentiation by squaring.
 ///
+/// Note that `0⁰` (`pow(0, 0)`) returnes `1`. Mathematically this is undefined.
+///
 /// # Example
 ///
 /// ```rust
@@ -180,16 +182,21 @@ mod float_impls {
 ///
 /// assert_eq!(pow(2i8, 4), 16);
 /// assert_eq!(pow(6u8, 3), 216);
+/// assert_eq!(pow(0u8, 0), 1); // Be aware if this case affects you
 /// ```
 #[inline]
 pub fn pow<T: Clone + One + Mul<T, Output = T>>(mut base: T, mut exp: usize) -> T {
-    if exp == 0 { return T::one() }
+    if exp == 0 {
+        return T::one();
+    }
 
     while exp & 1 == 0 {
         base = base.clone() * base;
         exp >>= 1;
     }
-    if exp == 1 { return base }
+    if exp == 1 {
+        return base;
+    }
 
     let mut acc = base.clone();
     while exp > 1 {
@@ -204,6 +211,8 @@ pub fn pow<T: Clone + One + Mul<T, Output = T>>(mut base: T, mut exp: usize) -> 
 
 /// Raises a value to the power of exp, returning `None` if an overflow occurred.
 ///
+/// Note that `0⁰` (`checked_pow(0, 0)`) returnes `Some(1)`. Mathematically this is undefined.
+///
 /// Otherwise same as the `pow` function.
 ///
 /// # Example
@@ -214,22 +223,31 @@ pub fn pow<T: Clone + One + Mul<T, Output = T>>(mut base: T, mut exp: usize) -> 
 /// assert_eq!(checked_pow(2i8, 4), Some(16));
 /// assert_eq!(checked_pow(7i8, 8), None);
 /// assert_eq!(checked_pow(7u32, 8), Some(5_764_801));
+/// assert_eq!(checked_pow(0u32, 0), Some(1)); // Be aware if this case affect you
 /// ```
 #[inline]
 pub fn checked_pow<T: Clone + One + CheckedMul>(mut base: T, mut exp: usize) -> Option<T> {
-    if exp == 0 { return Some(T::one()) }
+    if exp == 0 {
+        return Some(T::one());
+    }
 
     macro_rules! optry {
-        ( $ expr : expr ) => {
-            if let Some(val) = $expr { val } else { return None }
-        }
+        ($expr:expr) => {
+            if let Some(val) = $expr {
+                val
+            } else {
+                return None;
+            }
+        };
     }
 
     while exp & 1 == 0 {
         base = optry!(base.checked_mul(&base));
         exp >>= 1;
     }
-    if exp == 1 { return Some(base) }
+    if exp == 1 {
+        return Some(base);
+    }
 
     let mut acc = base.clone();
     while exp > 1 {

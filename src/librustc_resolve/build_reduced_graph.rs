@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Reduced graph building
 //!
 //! Here we build the "reduced graph": the graph of the module tree without
@@ -52,6 +42,7 @@ impl<'a> ToNameBinding<'a> for (Module<'a>, ty::Visibility, Span, Mark) {
     fn to_name_binding(self, arenas: &'a ResolverArenas<'a>) -> &'a NameBinding<'a> {
         arenas.alloc_name_binding(NameBinding {
             kind: NameBindingKind::Module(self.0),
+            ambiguity: None,
             vis: self.1,
             span: self.2,
             expansion: self.3,
@@ -63,6 +54,7 @@ impl<'a> ToNameBinding<'a> for (Def, ty::Visibility, Span, Mark) {
     fn to_name_binding(self, arenas: &'a ResolverArenas<'a>) -> &'a NameBinding<'a> {
         arenas.alloc_name_binding(NameBinding {
             kind: NameBindingKind::Def(self.0, false),
+            ambiguity: None,
             vis: self.1,
             span: self.2,
             expansion: self.3,
@@ -76,6 +68,7 @@ impl<'a> ToNameBinding<'a> for (Def, ty::Visibility, Span, Mark, IsMacroExport) 
     fn to_name_binding(self, arenas: &'a ResolverArenas<'a>) -> &'a NameBinding<'a> {
         arenas.alloc_name_binding(NameBinding {
             kind: NameBindingKind::Def(self.0, true),
+            ambiguity: None,
             vis: self.1,
             span: self.2,
             expansion: self.3,
@@ -83,7 +76,7 @@ impl<'a> ToNameBinding<'a> for (Def, ty::Visibility, Span, Mark, IsMacroExport) 
     }
 }
 
-impl<'a, 'cl> Resolver<'a, 'cl> {
+impl<'a> Resolver<'a> {
     /// Defines `name` in namespace `ns` of module `parent` to be `def` if it is not yet defined;
     /// otherwise, reports an error.
     pub fn define<T>(&mut self, parent: Module<'a>, ident: Ident, ns: Namespace, def: T)
@@ -145,7 +138,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             }
             _ => None,
         }.map(|ctxt| Segment::from_ident(Ident::new(
-            keywords::CrateRoot.name(), use_tree.prefix.span.shrink_to_lo().with_ctxt(ctxt)
+            keywords::PathRoot.name(), use_tree.prefix.span.shrink_to_lo().with_ctxt(ctxt)
         )));
 
         let prefix = crate_root.into_iter().chain(prefix_iter).collect::<Vec<_>>();
@@ -153,18 +146,18 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
 
         let empty_for_self = |prefix: &[Segment]| {
             prefix.is_empty() ||
-            prefix.len() == 1 && prefix[0].ident.name == keywords::CrateRoot.name()
+            prefix.len() == 1 && prefix[0].ident.name == keywords::PathRoot.name()
         };
         match use_tree.kind {
             ast::UseTreeKind::Simple(rename, ..) => {
-                let mut ident = use_tree.ident();
+                let mut ident = use_tree.ident().gensym_if_underscore();
                 let mut module_path = prefix;
                 let mut source = module_path.pop().unwrap();
                 let mut type_ns_only = false;
 
                 if nested {
                     // Correctly handle `self`
-                    if source.ident.name == keywords::SelfValue.name() {
+                    if source.ident.name == keywords::SelfLower.name() {
                         type_ns_only = true;
 
                         if empty_for_self(&module_path) {
@@ -185,7 +178,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     }
                 } else {
                     // Disallow `self`
-                    if source.ident.name == keywords::SelfValue.name() {
+                    if source.ident.name == keywords::SelfLower.name() {
                         resolve_error(self,
                                       use_tree.span,
                                       ResolutionError::SelfImportsOnlyAllowedWithin);
@@ -205,7 +198,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                             // `crate_name` should not be interpreted as relative.
                             module_path.push(Segment {
                                 ident: Ident {
-                                    name: keywords::CrateRoot.name(),
+                                    name: keywords::PathRoot.name(),
                                     span: source.ident.span,
                                 },
                                 id: Some(self.session.next_node_id()),
@@ -275,7 +268,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                 // Ensure there is at most one `self` in the list
                 let self_spans = items.iter().filter_map(|&(ref use_tree, _)| {
                     if let ast::UseTreeKind::Simple(..) = use_tree.kind {
-                        if use_tree.ident().name == keywords::SelfValue.name() {
+                        if use_tree.ident().name == keywords::SelfLower.name() {
                             return Some(use_tree.span);
                         }
                     }
@@ -310,7 +303,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                     let new_span = prefix[prefix.len() - 1].ident.span;
                     let tree = ast::UseTree {
                         prefix: ast::Path::from_ident(
-                            Ident::new(keywords::SelfValue.name(), new_span)
+                            Ident::new(keywords::SelfLower.name(), new_span)
                         ),
                         kind: ast::UseTreeKind::Simple(
                             Some(Ident::new(keywords::Underscore.name().gensymed(), new_span)),
@@ -323,7 +316,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                         // This particular use tree
                         &tree, id, &prefix, true,
                         // The whole `use` item
-                        parent_scope.clone(), item, ty::Visibility::Invisible, root_span,
+                        parent_scope, item, ty::Visibility::Invisible, root_span,
                     );
                 }
             }
@@ -334,7 +327,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
     fn build_reduced_graph_for_item(&mut self, item: &Item, parent_scope: ParentScope<'a>) {
         let parent = parent_scope.module;
         let expansion = parent_scope.expansion;
-        let ident = item.ident;
+        let ident = item.ident.gensym_if_underscore();
         let sp = item.span;
         let vis = self.resolve_visibility(&item.vis);
 
@@ -349,13 +342,13 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
             }
 
             ItemKind::ExternCrate(orig_name) => {
-                let module = if orig_name.is_none() && ident.name == keywords::SelfValue.name() {
+                let module = if orig_name.is_none() && ident.name == keywords::SelfLower.name() {
                     self.session
                         .struct_span_err(item.span, "`extern crate self;` requires renaming")
                         .span_suggestion(item.span, "try", "extern crate self as name;".into())
                         .emit();
                     return;
-                } else if orig_name == Some(keywords::SelfValue.name()) {
+                } else if orig_name == Some(keywords::SelfLower.name()) {
                     if !self.session.features_untracked().extern_crate_self {
                         emit_feature_err(&self.session.parse_sess, "extern_crate_self", item.span,
                                          GateIssue::Language, "`extern crate self` is unstable");
@@ -628,7 +621,11 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
 
     /// Builds the reduced graph for a single item in an external crate.
     fn build_reduced_graph_for_external_crate_def(&mut self, parent: Module<'a>, child: Export) {
-        let Export { ident, def, vis, span, .. } = child;
+        let Export { ident, def, vis, span } = child;
+        // FIXME: We shouldn't create the gensym here, it should come from metadata,
+        // but metadata cannot encode gensyms currently, so we create it here.
+        // This is only a guess, two equivalent idents may incorrectly get different gensyms here.
+        let ident = ident.gensym_if_underscore();
         let def_id = def.def_id();
         let expansion = Mark::root(); // FIXME(jseyfried) intercrate hygiene
         match def {
@@ -788,7 +785,7 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
                         "an `extern crate` loading macros must be at the crate root");
                 }
                 if let ItemKind::ExternCrate(Some(orig_name)) = item.node {
-                    if orig_name == keywords::SelfValue.name() {
+                    if orig_name == keywords::SelfLower.name() {
                         self.session.span_err(attr.span,
                             "`macro_use` is not supported on `extern crate self`");
                     }
@@ -884,13 +881,13 @@ impl<'a, 'cl> Resolver<'a, 'cl> {
     }
 }
 
-pub struct BuildReducedGraphVisitor<'a, 'b: 'a, 'c: 'b> {
-    pub resolver: &'a mut Resolver<'b, 'c>,
+pub struct BuildReducedGraphVisitor<'a, 'b: 'a> {
+    pub resolver: &'a mut Resolver<'b>,
     pub current_legacy_scope: LegacyScope<'b>,
     pub expansion: Mark,
 }
 
-impl<'a, 'b, 'cl> BuildReducedGraphVisitor<'a, 'b, 'cl> {
+impl<'a, 'b> BuildReducedGraphVisitor<'a, 'b> {
     fn visit_invoc(&mut self, id: ast::NodeId) -> &'b InvocationData<'b> {
         let mark = id.placeholder_to_mark();
         self.resolver.current_module.unresolved_invocations.borrow_mut().insert(mark);
@@ -913,7 +910,7 @@ macro_rules! method {
     }
 }
 
-impl<'a, 'b, 'cl> Visitor<'a> for BuildReducedGraphVisitor<'a, 'b, 'cl> {
+impl<'a, 'b> Visitor<'a> for BuildReducedGraphVisitor<'a, 'b> {
     method!(visit_impl_item: ast::ImplItem, ast::ImplItemKind::Macro, walk_impl_item);
     method!(visit_expr:      ast::Expr,     ast::ExprKind::Mac,       walk_expr);
     method!(visit_pat:       ast::Pat,      ast::PatKind::Mac,        walk_pat);

@@ -89,9 +89,10 @@ pub mod arch {
     ///
     /// See the [module documentation](../index.html) for more details.
     #[cfg(any(target_arch = "wasm32", dox))]
-    #[doc(cfg(target_arch = "mips"))]
-    #[unstable(feature = "stdsimd", issue = "27731")]
+    #[doc(cfg(target_arch = "wasm32"))]
+    #[stable(feature = "simd_wasm32", since = "1.33.0")]
     pub mod wasm32 {
+        #[stable(feature = "simd_wasm32", since = "1.33.0")]
         pub use coresimd::wasm32::*;
     }
 

@@ -1,24 +1,14 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use ast::{self, Ident};
 use syntax_pos::{self, BytePos, CharPos, Pos, Span, NO_EXPANSION};
 use source_map::{SourceMap, FilePathMapping};
 use errors::{Applicability, FatalError, Diagnostic, DiagnosticBuilder};
 use parse::{token, ParseSess};
-use str::char_at;
 use symbol::{Symbol, keywords};
 use core::unicode::property::Pattern_White_Space;
 
 use std::borrow::Cow;
 use std::char;
+use std::iter;
 use std::mem::replace;
 use rustc_data_structures::sync::Lrc;
 
@@ -309,7 +299,7 @@ impl<'a> StringReader<'a> {
 
     /// Report a lexical error with a given span.
     fn err_span(&self, sp: Span, m: &str) {
-        self.sess.span_diagnostic.span_err(sp, m)
+        self.sess.span_diagnostic.struct_span_err(sp, m).emit();
     }
 
 
@@ -459,45 +449,42 @@ impl<'a> StringReader<'a> {
 
     /// Converts CRLF to LF in the given string, raising an error on bare CR.
     fn translate_crlf<'b>(&self, start: BytePos, s: &'b str, errmsg: &'b str) -> Cow<'b, str> {
-        let mut i = 0;
-        while i < s.len() {
-            let ch = char_at(s, i);
-            let next = i + ch.len_utf8();
+        let mut chars = s.char_indices().peekable();
+        while let Some((i, ch)) = chars.next() {
             if ch == '\r' {
-                if next < s.len() && char_at(s, next) == '\n' {
-                    return translate_crlf_(self, start, s, errmsg, i).into();
+                if let Some((lf_idx, '\n')) = chars.peek() {
+                    return translate_crlf_(self, start, s, *lf_idx, chars, errmsg).into();
                 }
                 let pos = start + BytePos(i as u32);
-                let end_pos = start + BytePos(next as u32);
+                let end_pos = start + BytePos((i + ch.len_utf8()) as u32);
                 self.err_span_(pos, end_pos, errmsg);
             }
-            i = next;
         }
         return s.into();
 
         fn translate_crlf_(rdr: &StringReader,
                            start: BytePos,
                            s: &str,
-                           errmsg: &str,
-                           mut i: usize)
+                           mut j: usize,
+                           mut chars: iter::Peekable<impl Iterator<Item = (usize, char)>>,
+                           errmsg: &str)
                            -> String {
             let mut buf = String::with_capacity(s.len());
-            let mut j = 0;
-            while i < s.len() {
-                let ch = char_at(s, i);
-                let next = i + ch.len_utf8();
+            // Skip first CR
+            buf.push_str(&s[.. j - 1]);
+            while let Some((i, ch)) = chars.next() {
                 if ch == '\r' {
                     if j < i {
                         buf.push_str(&s[j..i]);
                     }
+                    let next = i + ch.len_utf8();
                     j = next;
-                    if next >= s.len() || char_at(s, next) != '\n' {
+                    if chars.peek().map(|(_, ch)| *ch) != Some('\n') {
                         let pos = start + BytePos(i as u32);
                         let end_pos = start + BytePos(next as u32);
                         rdr.err_span_(pos, end_pos, errmsg);
                     }
                 }
-                i = next;
             }
             if j < s.len() {
                 buf.push_str(&s[j..]);
@@ -958,12 +945,36 @@ impl<'a> StringReader<'a> {
                                     self.scan_unicode_escape(delim) && !ascii_only
                                 } else {
                                     let span = self.mk_sp(start, self.pos);
-                                    self.sess.span_diagnostic
-                                        .struct_span_err(span, "incorrect unicode escape sequence")
-                                        .span_help(span,
-                                                   "format of unicode escape sequences is \
-                                                    `\\u{…}`")
-                                        .emit();
+                                    let mut suggestion = "\\u{".to_owned();
+                                    let mut err = self.sess.span_diagnostic.struct_span_err(
+                                        span,
+                                        "incorrect unicode escape sequence",
+                                    );
+                                    let mut i = 0;
+                                    while let (Some(ch), true) = (self.ch, i < 6) {
+                                        if ch.is_digit(16) {
+                                            suggestion.push(ch);
+                                            self.bump();
+                                            i += 1;
+                                        } else {
+                                            break;
+                                        }
+                                    }
+                                    if i != 0 {
+                                        suggestion.push('}');
+                                        err.span_suggestion_with_applicability(
+                                            self.mk_sp(start, self.pos),
+                                            "format of unicode escape sequences uses braces",
+                                            suggestion,
+                                            Applicability::MaybeIncorrect,
+                                        );
+                                    } else {
+                                        err.span_help(
+                                            span,
+                                            "format of unicode escape sequences is `\\u{...}`",
+                                        );
+                                    }
+                                    err.emit();
                                     false
                                 };
                                 if ascii_only {
@@ -1130,7 +1141,7 @@ impl<'a> StringReader<'a> {
                     "expected at least one digit in exponent"
                 );
                 if let Some(ch) = self.ch {
-                    // check for e.g. Unicode minus '−' (Issue #49746)
+                    // check for e.g., Unicode minus '−' (Issue #49746)
                     if unicode_chars::check_for_substitution(self, ch, &mut err) {
                         self.bump();
                         self.scan_digits(10, 10);
@@ -1858,6 +1869,11 @@ fn ident_continue(c: Option<char>) -> bool {
     (c > '\x7f' && c.is_xid_continue())
 }
 
+#[inline]
+fn char_at(s: &str, byte: usize) -> char {
+    s[byte..].chars().next().unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1898,7 +1914,7 @@ mod tests {
                  sess: &'a ParseSess,
                  teststr: String)
                  -> StringReader<'a> {
-        let sf = sm.new_source_file(PathBuf::from("zebra.rs").into(), teststr);
+        let sf = sm.new_source_file(PathBuf::from(teststr.clone()).into(), teststr);
         StringReader::new(sess, sf, None)
     }
 

@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Contains information about "passes", used to modify crate information during the documentation
 //! process.
 
@@ -361,8 +351,8 @@ impl fold::DocFolder for ImportStripper {
     }
 }
 
-pub fn look_for_tests<'a, 'tcx: 'a, 'rcx: 'a, 'cstore: 'rcx>(
-    cx: &'a DocContext<'a, 'tcx, 'rcx, 'cstore>,
+pub fn look_for_tests<'a, 'tcx: 'a, 'rcx: 'a>(
+    cx: &'a DocContext<'a, 'tcx, 'rcx>,
     dox: &str,
     item: &Item,
     check_missing_code: bool,

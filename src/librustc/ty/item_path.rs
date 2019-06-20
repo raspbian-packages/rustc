@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use hir::map::DefPathData;
 use hir::def_id::{CrateNum, DefId, CRATE_DEF_INDEX, LOCAL_CRATE};
 use ty::{self, DefIdTree, Ty, TyCtxt};
@@ -83,7 +73,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
     /// Returns a string identifying this local node-id.
     pub fn node_path_str(self, id: ast::NodeId) -> String {
-        self.item_path_str(self.hir.local_def_id(id))
+        self.item_path_str(self.hir().local_def_id(id))
     }
 
     /// Returns a string identifying this def-id. This string is
@@ -317,7 +307,7 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
 
             // Unclear if there is any value in distinguishing these.
             // Probably eventually (and maybe we would even want
-            // finer-grained distinctions, e.g. between enum/struct).
+            // finer-grained distinctions, e.g., between enum/struct).
             data @ DefPathData::Misc |
             data @ DefPathData::TypeNs(..) |
             data @ DefPathData::Trait(..) |
@@ -464,8 +454,8 @@ impl<'a, 'gcx, 'tcx> TyCtxt<'a, 'gcx, 'tcx> {
         // only occur very early in the compiler pipeline.
         let parent_def_id = self.parent_def_id(impl_def_id).unwrap();
         self.push_item_path(buffer, parent_def_id, pushed_prelude_crate);
-        let node_id = self.hir.as_local_node_id(impl_def_id).unwrap();
-        let item = self.hir.expect_item(node_id);
+        let node_id = self.hir().as_local_node_id(impl_def_id).unwrap();
+        let item = self.hir().expect_item(node_id);
         let span_str = self.sess.source_map().span_to_string(item.span);
         buffer.push(&format!("<impl at {}>", span_str));
     }
@@ -489,7 +479,7 @@ pub fn characteristic_def_id_of_type(ty: Ty<'_>) -> Option<DefId> {
     match ty.sty {
         ty::Adt(adt_def, _) => Some(adt_def.did),
 
-        ty::Dynamic(data, ..) => Some(data.principal().def_id()),
+        ty::Dynamic(data, ..) => data.principal_def_id(),
 
         ty::Array(subty, _) |
         ty::Slice(subty) => characteristic_def_id_of_type(subty),

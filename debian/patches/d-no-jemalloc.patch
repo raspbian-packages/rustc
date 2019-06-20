@@ -1,20 +1,16 @@
---- a/src/librustc_driver/Cargo.toml
-+++ b/src/librustc_driver/Cargo.toml
-@@ -38,8 +38,3 @@
- smallvec = { version = "0.6.5", features = ["union"] }
- syntax_ext = { path = "../libsyntax_ext" }
- syntax_pos = { path = "../libsyntax_pos" }
+Index: rustc/src/rustc/Cargo.toml
+===================================================================
+--- rustc.orig/src/rustc/Cargo.toml
++++ rustc/src/rustc/Cargo.toml
+@@ -15,11 +15,3 @@ rustc_driver = { path = "../librustc_dri
+ # Make sure rustc_codegen_ssa ends up in the sysroot, because this
+ # crate is intended to be used by codegen backends, which may not be in-tree.
+ rustc_codegen_ssa = { path = "../librustc_codegen_ssa" }
 -
 -[dependencies.jemalloc-sys]
 -version = '0.1.8'
 -optional = true
 -features = ['unprefixed_malloc_on_supported_platforms']
---- a/src/rustc/Cargo.toml
-+++ b/src/rustc/Cargo.toml
-@@ -14,6 +14,3 @@
- # Make sure rustc_codegen_ssa ends up in the sysroot, because this
- # crate is intended to be used by codegen backends, which may not be in-tree.
- rustc_codegen_ssa = { path = "../librustc_codegen_ssa" }
 -
 -[features]
--jemalloc = ['rustc_driver/jemalloc-sys']
+-jemalloc = ['jemalloc-sys']

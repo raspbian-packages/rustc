@@ -49,10 +49,19 @@ extern "platform-intrinsic" {
     pub fn simd_reduce_any<T>(x: T) -> bool;
 
     pub fn simd_select<M, T>(m: M, a: T, b: T) -> T;
+    #[cfg(not(stage0))]
+    pub fn simd_select_bitmask<M, T>(m: M, a: T, b: T) -> T;
 
     pub fn simd_fmin<T>(a: T, b: T) -> T;
     pub fn simd_fmax<T>(a: T, b: T) -> T;
 
     pub fn simd_fsqrt<T>(a: T) -> T;
     pub fn simd_fma<T>(a: T, b: T, c: T) -> T;
+}
+
+// incorrect, but compiles until the bootstrap compiler is updated
+#[cfg(stage0)]
+pub fn simd_select_bitmask<M, T>(m: M, a: T, b: T) -> T {
+    drop((m, b));
+    a
 }

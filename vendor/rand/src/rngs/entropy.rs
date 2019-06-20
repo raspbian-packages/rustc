@@ -1,6 +1,4 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -24,7 +22,7 @@ use rngs;
 ///
 /// If no secure source of entropy is available `EntropyRng` will panic on use;
 /// i.e. it should never output predictable data.
-/// 
+///
 /// This is either a little slow ([`OsRng`] requires a system call) or extremely
 /// slow ([`JitterRng`] must use significant CPU time to generate sufficient
 /// jitter); for better performance it is common to seed a local PRNG from
@@ -207,7 +205,8 @@ impl EntropySource for NoSource {
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen"),
 )))]
 #[derive(Clone, Debug)]
 pub struct Os(rngs::OsRng);
@@ -226,7 +225,8 @@ pub struct Os(rngs::OsRng);
               target_os = "redox",
               target_os = "fuchsia",
               windows,
-              all(target_arch = "wasm32", feature = "stdweb")
+              all(target_arch = "wasm32", feature = "stdweb"),
+              all(target_arch = "wasm32", feature = "wasm-bindgen"),
 )))]
 impl EntropySource for Os {
     fn new_and_fill(dest: &mut [u8]) -> Result<Self, Error> {
@@ -254,7 +254,8 @@ impl EntropySource for Os {
                   target_os = "redox",
                   target_os = "fuchsia",
                   windows,
-                  all(target_arch = "wasm32", feature = "stdweb")
+                  all(target_arch = "wasm32", feature = "stdweb"),
+                  all(target_arch = "wasm32", feature = "wasm-bindgen"),
 ))))]
 type Os = NoSource;
 

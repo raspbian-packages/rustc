@@ -35,24 +35,20 @@ pub const _MM_FROUND_NO_EXC: i32 = 0x08;
 pub const _MM_FROUND_NINT: i32 = 0x00;
 /// round down and do not suppress exceptions
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub const _MM_FROUND_FLOOR: i32 =
-    (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_NEG_INF);
+pub const _MM_FROUND_FLOOR: i32 = (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_NEG_INF);
 /// round up and do not suppress exceptions
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub const _MM_FROUND_CEIL: i32 =
-    (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_POS_INF);
+pub const _MM_FROUND_CEIL: i32 = (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_POS_INF);
 /// truncate and do not suppress exceptions
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub const _MM_FROUND_TRUNC: i32 = (_MM_FROUND_RAISE_EXC | _MM_FROUND_TO_ZERO);
 /// use MXCSR.RC and do not suppress exceptions; see
 /// `vendor::_MM_SET_ROUNDING_MODE`
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub const _MM_FROUND_RINT: i32 =
-    (_MM_FROUND_RAISE_EXC | _MM_FROUND_CUR_DIRECTION);
+pub const _MM_FROUND_RINT: i32 = (_MM_FROUND_RAISE_EXC | _MM_FROUND_CUR_DIRECTION);
 /// use MXCSR.RC and suppress exceptions; see `vendor::_MM_SET_ROUNDING_MODE`
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub const _MM_FROUND_NEARBYINT: i32 =
-    (_MM_FROUND_NO_EXC | _MM_FROUND_CUR_DIRECTION);
+pub const _MM_FROUND_NEARBYINT: i32 = (_MM_FROUND_NO_EXC | _MM_FROUND_CUR_DIRECTION);
 
 /// Blend packed 8-bit integers from `a` and `b` using `mask`
 ///
@@ -65,9 +61,7 @@ pub const _MM_FROUND_NEARBYINT: i32 =
 #[target_feature(enable = "sse4.1")]
 #[cfg_attr(test, assert_instr(pblendvb))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_blendv_epi8(
-    a: __m128i, b: __m128i, mask: __m128i,
-) -> __m128i {
+pub unsafe fn _mm_blendv_epi8(a: __m128i, b: __m128i, mask: __m128i) -> __m128i {
     mem::transmute(pblendvb(a.as_i8x16(), b.as_i8x16(), mask.as_i8x16()))
 }
 
@@ -166,8 +160,10 @@ pub unsafe fn _mm_blend_ps(a: __m128, b: __m128, imm4: i32) -> __m128 {
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_extract_ps)
 #[inline]
 #[target_feature(enable = "sse4.1")]
-// TODO: Add test for Windows
-#[cfg_attr(test, assert_instr(extractps, imm8 = 0))]
+#[cfg_attr(
+    all(test, not(target_os = "windows")),
+    assert_instr(extractps, imm8 = 0)
+)]
 #[rustc_args_required_const(1)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_ps(a: __m128, imm8: i32) -> i32 {
@@ -195,8 +191,10 @@ pub unsafe fn _mm_extract_epi8(a: __m128i, imm8: i32) -> i32 {
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_extract_epi32)
 #[inline]
 #[target_feature(enable = "sse4.1")]
-// TODO: Add test for Windows
-#[cfg_attr(test, assert_instr(extractps, imm8 = 1))]
+#[cfg_attr(
+    all(test, not(target_os = "windows")),
+    assert_instr(extractps, imm8 = 1)
+)]
 #[rustc_args_required_const(1)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_extract_epi32(a: __m128i, imm8: i32) -> i32 {
@@ -998,14 +996,14 @@ pub unsafe fn _mm_mullo_epi32(a: __m128i, b: __m128i) -> __m128i {
 /// * `a` - A 128-bit vector of type `__m128i`.
 /// * `b` - A 128-bit vector of type `__m128i`.
 /// * `imm8` - An 8-bit immediate operand specifying how the absolute
-///            differences are to be calculated
+///   differences are to be calculated
 ///     * Bit `[2]` specify the offset for operand `a`
 ///     * Bits `[1:0]` specify the offset for operand `b`
 ///
 /// Returns:
 ///
-/// * A `__m128i` vector containing the sums of the sets of
-///   absolute differences between both operands.
+/// * A `__m128i` vector containing the sums of the sets of   absolute
+///   differences between both operands.
 ///
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_mpsadbw_epu8)
 #[inline]
@@ -1031,7 +1029,7 @@ pub unsafe fn _mm_mpsadbw_epu8(a: __m128i, b: __m128i, imm8: i32) -> __m128i {
 ///
 /// * `a` - A 128-bit integer vector containing the bits to be tested.
 /// * `mask` - A 128-bit integer vector selecting which bits to test in
-///            operand `a`.
+///   operand `a`.
 ///
 /// Returns:
 ///
@@ -1054,7 +1052,7 @@ pub unsafe fn _mm_testz_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `a` - A 128-bit integer vector containing the bits to be tested.
 /// * `mask` - A 128-bit integer vector selecting which bits to test in
-///            operand `a`.
+///   operand `a`.
 ///
 /// Returns:
 ///
@@ -1077,7 +1075,7 @@ pub unsafe fn _mm_testc_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `a` - A 128-bit integer vector containing the bits to be tested.
 /// * `mask` - A 128-bit integer vector selecting which bits to test in
-///            operand `a`.
+///   operand `a`.
 ///
 /// Returns:
 ///
@@ -1100,7 +1098,7 @@ pub unsafe fn _mm_testnzc_si128(a: __m128i, mask: __m128i) -> i32 {
 ///
 /// * `a` - A 128-bit integer vector containing the bits to be tested.
 /// * `mask` - A 128-bit integer vector selecting which bits to test in
-///            operand `a`.
+///   operand `a`.
 ///
 /// Returns:
 ///
@@ -1145,7 +1143,7 @@ pub unsafe fn _mm_test_all_ones(a: __m128i) -> i32 {
 ///
 /// * `a` - A 128-bit integer vector containing the bits to be tested.
 /// * `mask` - A 128-bit integer vector selecting which bits to test in
-///            operand `a`.
+///   operand `a`.
 ///
 /// Returns:
 ///
@@ -1229,21 +1227,21 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_blendv_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm_setr_epi8(
             16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let mask = _mm_setr_epi8(
             0, -1, 0, -1, 0, -1, 0, -1,
             0, -1, 0, -1, 0, -1, 0, -1,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm_setr_epi8(
             0, 17, 2, 19, 4, 21, 6, 23, 8, 25, 10, 27, 12, 29, 14, 31,
         );
@@ -1308,7 +1306,7 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_extract_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             -1, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15
@@ -1359,18 +1357,18 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_max_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             1, 4, 5, 8, 9, 12, 13, 16,
             17, 20, 21, 24, 25, 28, 29, 32,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm_setr_epi8(
             2, 3, 6, 7, 10, 11, 14, 15,
             18, 19, 22, 23, 26, 27, 30, 31,
         );
         let r = _mm_max_epi8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm_setr_epi8(
             2, 4, 6, 8, 10, 12, 14, 16,
             18, 20, 22, 24, 26, 28, 30, 32,
@@ -1407,18 +1405,18 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi8_1() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             1, 4, 5, 8, 9, 12, 13, 16,
             17, 20, 21, 24, 25, 28, 29, 32,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm_setr_epi8(
             2, 3, 6, 7, 10, 11, 14, 15,
             18, 19, 22, 23, 26, 27, 30, 31,
         );
         let r = _mm_min_epi8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm_setr_epi8(
             1, 3, 5, 7, 9, 11, 13, 15,
             17, 19, 21, 23, 25, 27, 29, 31,
@@ -1428,18 +1426,18 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_min_epi8_2() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             1, -4, -5, 8, -9, -12, 13, -16,
             17, 20, 21, 24, 25, 28, 29, 32,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm_setr_epi8(
             2, -3, -6, 7, -10, -11, 14, -15,
             18, 19, 22, 23, 26, 27, 30, 31,
         );
         let r = _mm_min_epi8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm_setr_epi8(
             1, -4, -6, 7, -10, -12, 13, -16,
             17, 19, 21, 23, 25, 27, 29, 31,
@@ -1771,10 +1769,7 @@ mod tests {
             assert_eq_m128i(r, e);
         }
         {
-            let a = _mm_setr_epi32(
-                15, 2, /* ignored */
-                1234567, 4, /* ignored */
-            );
+            let a = _mm_setr_epi32(15, 2 /* ignored */, 1234567, 4 /* ignored */);
             let b = _mm_setr_epi32(
                 -20, -256, /* ignored */
                 666666, 666666, /* ignored */
@@ -1816,7 +1811,7 @@ mod tests {
 
     #[simd_test(enable = "sse4.1")]
     unsafe fn test_mm_mpsadbw_epu8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,

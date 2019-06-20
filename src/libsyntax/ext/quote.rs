@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use ast::{self, Arg, Arm, Block, Expr, Item, Pat, Stmt, Ty};
 use source_map::respan;
 use syntax_pos::{Span, DUMMY_SP};
@@ -36,7 +26,7 @@ pub mod rt {
     use symbol::Symbol;
     use ThinVec;
 
-    use tokenstream::{self, DelimSpan, TokenTree, TokenStream};
+    use tokenstream::{DelimSpan, TokenTree, TokenStream};
 
     pub use parse::new_parser_from_tts;
     pub use syntax_pos::{BytePos, Span, DUMMY_SP, FileName};
@@ -243,12 +233,12 @@ pub mod rt {
                     self.span, token::Token::from_ast_ident(segment.ident)
                 ).into());
             }
-            inner.push(self.tokens.clone());
+            self.tokens.clone().append_to_tree_and_joint_vec(&mut inner);
 
             let delim_span = DelimSpan::from_single(self.span);
-            r.push(TokenTree::Delimited(delim_span, tokenstream::Delimited {
-                delim: token::Bracket, tts: TokenStream::concat(inner).into()
-            }));
+            r.push(TokenTree::Delimited(
+                delim_span, token::Bracket, TokenStream::new(inner).into()
+            ));
             r
         }
     }
@@ -262,10 +252,9 @@ pub mod rt {
 
     impl ToTokens for () {
         fn to_tokens(&self, _cx: &ExtCtxt) -> Vec<TokenTree> {
-            vec![TokenTree::Delimited(DelimSpan::dummy(), tokenstream::Delimited {
-                delim: token::Paren,
-                tts: TokenStream::empty().into(),
-            })]
+            vec![
+                TokenTree::Delimited(DelimSpan::dummy(), token::Paren, TokenStream::empty().into())
+            ]
         }
     }
 
@@ -353,27 +342,27 @@ pub mod rt {
     impl<'a> ExtParseUtils for ExtCtxt<'a> {
         fn parse_item(&self, s: String) -> P<ast::Item> {
             panictry!(parse::parse_item_from_source_str(
-                FileName::QuoteExpansion,
+                FileName::quote_expansion_source_code(&s),
                 s,
                 self.parse_sess())).expect("parse error")
         }
 
         fn parse_stmt(&self, s: String) -> ast::Stmt {
             panictry!(parse::parse_stmt_from_source_str(
-                FileName::QuoteExpansion,
+                FileName::quote_expansion_source_code(&s),
                 s,
                 self.parse_sess())).expect("parse error")
         }
 
         fn parse_expr(&self, s: String) -> P<ast::Expr> {
             panictry!(parse::parse_expr_from_source_str(
-                FileName::QuoteExpansion,
+                FileName::quote_expansion_source_code(&s),
                 s,
                 self.parse_sess()))
         }
 
         fn parse_tts(&self, s: String) -> Vec<TokenTree> {
-            let source_name = FileName::QuoteExpansion;
+            let source_name = FileName::quote_expansion_source_code(&s);
             parse::parse_stream_from_source_str(source_name, s, self.parse_sess(), None)
                 .into_trees().collect()
         }
@@ -382,8 +371,6 @@ pub mod rt {
 
 // Replaces `Token::OpenDelim .. Token::CloseDelim` with `TokenTree::Delimited(..)`.
 pub fn unflatten(tts: Vec<TokenTree>) -> Vec<TokenTree> {
-    use tokenstream::Delimited;
-
     let mut results = Vec::new();
     let mut result = Vec::new();
     let mut open_span = DUMMY_SP;
@@ -395,10 +382,11 @@ pub fn unflatten(tts: Vec<TokenTree>) -> Vec<TokenTree> {
             }
             TokenTree::Token(span, token::CloseDelim(delim)) => {
                 let delim_span = DelimSpan::from_pair(open_span, span);
-                let tree = TokenTree::Delimited(delim_span, Delimited {
+                let tree = TokenTree::Delimited(
+                    delim_span,
                     delim,
-                    tts: result.into_iter().map(TokenStream::from).collect::<TokenStream>().into(),
-                });
+                    result.into_iter().map(TokenStream::from).collect::<TokenStream>().into(),
+                );
                 result = results.pop().unwrap();
                 result.push(tree);
             }
@@ -758,10 +746,10 @@ fn statements_mk_tt(cx: &ExtCtxt, tt: &TokenTree, quoted: bool) -> Vec<ast::Stmt
                                     vec![e_tok]);
             vec![cx.stmt_expr(e_push)]
         },
-        TokenTree::Delimited(span, ref delimed) => {
-            let mut stmts = statements_mk_tt(cx, &delimed.open_tt(span.open), false);
-            stmts.extend(statements_mk_tts(cx, delimed.stream()));
-            stmts.extend(statements_mk_tt(cx, &delimed.close_tt(span.close), false));
+        TokenTree::Delimited(span, delim, ref tts) => {
+            let mut stmts = statements_mk_tt(cx, &TokenTree::open_tt(span.open, delim), false);
+            stmts.extend(statements_mk_tts(cx, tts.stream()));
+            stmts.extend(statements_mk_tt(cx, &TokenTree::close_tt(span.close, delim), false));
             stmts
         }
     }

@@ -11,12 +11,19 @@
 # will likely look very different (and much more reasonable)
 
 [package]
+edition = "2018"
 name = "datafrog"
-version = "0.1.0"
+version = "2.0.1"
 authors = ["Frank McSherry <fmcsherry@me.com>", "The Rust Project Developers", "Datafrog Developers"]
 description = "Lightweight Datalog engine intended to be embedded in other Rust programs"
 readme = "README.md"
 keywords = ["datalog", "analysis"]
 license = "Apache-2.0/MIT"
+repository = "https://github.com/rust-lang-nursery/datafrog"
+[dev-dependencies.proptest]
+version = "0.8.7"
+[badges.is-it-maintained-issue-resolution]
+repository = "https://github.com/rust-lang-nursery/datafrog"
 
-[dependencies]
+[badges.is-it-maintained-open-issues]
+repository = "https://github.com/rust-lang-nursery/datafrog"

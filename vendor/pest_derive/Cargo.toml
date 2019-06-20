@@ -12,7 +12,7 @@
 
 [package]
 name = "pest_derive"
-version = "1.0.7"
+version = "1.0.8"
 authors = ["Dragoș Tiselice <dragostiselice@gmail.com>"]
 description = "pest's derive macro"
 documentation = "https://docs.rs/pest"
@@ -26,13 +26,13 @@ repository = "https://github.com/pest-parser/pest"
 name = "pest_derive"
 proc-macro = true
 [dependencies.pest]
-version = "^1.0"
+version = "1.0"
 
 [dependencies.quote]
-version = "^0.3"
+version = "0.3.15"
 
 [dependencies.syn]
-version = "^0.11"
+version = "0.11"
 [badges.codecov]
 repository = "pest-parser/pest"
 

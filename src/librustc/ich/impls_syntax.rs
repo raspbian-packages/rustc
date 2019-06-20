@@ -1,13 +1,3 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! This module contains `HashStable` implementations for various data types
 //! from libsyntax in no particular order.
 
@@ -134,14 +124,10 @@ impl_stable_hash_for!(struct ::syntax::attr::Stability {
     const_stability
 });
 
-impl<'a> HashStable<StableHashingContext<'a>>
-for ::syntax::edition::Edition {
-    fn hash_stable<W: StableHasherResult>(&self,
-                                          hcx: &mut StableHashingContext<'a>,
-                                          hasher: &mut StableHasher<W>) {
-        mem::discriminant(self).hash_stable(hcx, hasher);
-    }
-}
+impl_stable_hash_for!(enum ::syntax::edition::Edition {
+    Edition2015,
+    Edition2018,
+});
 
 impl<'a> HashStable<StableHashingContext<'a>>
 for ::syntax::attr::StabilityLevel {
@@ -269,10 +255,10 @@ for tokenstream::TokenTree {
                 span.hash_stable(hcx, hasher);
                 hash_token(token, hcx, hasher);
             }
-            tokenstream::TokenTree::Delimited(span, ref delimited) => {
+            tokenstream::TokenTree::Delimited(span, delim, ref tts) => {
                 span.hash_stable(hcx, hasher);
-                std_hash::Hash::hash(&delimited.delim, hasher);
-                for sub_tt in delimited.stream().trees() {
+                std_hash::Hash::hash(&delim, hasher);
+                for sub_tt in tts.stream().trees() {
                     sub_tt.hash_stable(hcx, hasher);
                 }
             }
@@ -417,13 +403,14 @@ impl_stable_hash_for!(enum ::syntax_pos::hygiene::CompilerDesugaringKind {
 impl_stable_hash_for!(enum ::syntax_pos::FileName {
     Real(pb),
     Macros(s),
-    QuoteExpansion,
-    Anon,
-    MacroExpansion,
-    ProcMacroSourceCode,
-    CliCrateAttr,
-    CfgSpec,
-    Custom(s)
+    QuoteExpansion(s),
+    Anon(s),
+    MacroExpansion(s),
+    ProcMacroSourceCode(s),
+    CliCrateAttr(s),
+    CfgSpec(s),
+    Custom(s),
+    DocTest(pb, line),
 });
 
 impl<'a> HashStable<StableHashingContext<'a>> for SourceFile {

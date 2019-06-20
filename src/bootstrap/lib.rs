@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Implementation of rustbuild, the Rust build system.
 //!
 //! This module, and its descendants, are the implementation of the Rust build
@@ -38,7 +28,7 @@
 //! However, compiletest itself tries to avoid running tests when the artifacts
 //! that are involved (mainly the compiler) haven't changed.
 //!
-//! When you execute `x.py build`, the steps which are executed are:
+//! When you execute `x.py build`, the steps executed are:
 //!
 //! * First, the python script is run. This will automatically download the
 //!   stage0 rustc and cargo according to `src/stage0.txt`, or use the cached
@@ -159,7 +149,7 @@ use std::os::windows::fs::symlink_file;
 use build_helper::{run_silent, run_suppressed, try_run_silent, try_run_suppressed, output, mtime};
 use filetime::FileTime;
 
-use util::{exe, libdir, OutputFolder, CiEnv};
+use crate::util::{exe, libdir, OutputFolder, CiEnv};
 
 mod cc_detect;
 mod channel;
@@ -188,7 +178,7 @@ mod job;
 mod job {
     use libc;
 
-    pub unsafe fn setup(build: &mut ::Build) {
+    pub unsafe fn setup(build: &mut crate::Build) {
         if build.config.low_priority {
             libc::setpriority(libc::PRIO_PGRP as _, 0, 10);
         }
@@ -197,14 +187,14 @@ mod job {
 
 #[cfg(any(target_os = "haiku", not(any(unix, windows))))]
 mod job {
-    pub unsafe fn setup(_build: &mut ::Build) {
+    pub unsafe fn setup(_build: &mut crate::Build) {
     }
 }
 
-pub use config::Config;
-use flags::Subcommand;
-use cache::{Interned, INTERNER};
-use toolstate::ToolState;
+pub use crate::config::Config;
+use crate::flags::Subcommand;
+use crate::cache::{Interned, INTERNER};
+use crate::toolstate::ToolState;
 
 const LLVM_TOOLS: &[&str] = &[
     "llvm-nm", // used to inspect binaries; it shows symbol names, their sizes and visibility
@@ -263,6 +253,7 @@ pub struct Build {
     cargo_info: channel::GitInfo,
     rls_info: channel::GitInfo,
     clippy_info: channel::GitInfo,
+    miri_info: channel::GitInfo,
     rustfmt_info: channel::GitInfo,
     local_rebuild: bool,
     fail_fast: bool,
@@ -384,6 +375,7 @@ impl Build {
         let cargo_info = channel::GitInfo::new(&config, &src.join("src/tools/cargo"));
         let rls_info = channel::GitInfo::new(&config, &src.join("src/tools/rls"));
         let clippy_info = channel::GitInfo::new(&config, &src.join("src/tools/clippy"));
+        let miri_info = channel::GitInfo::new(&config, &src.join("src/tools/miri"));
         let rustfmt_info = channel::GitInfo::new(&config, &src.join("src/tools/rustfmt"));
 
         let mut build = Build {
@@ -406,6 +398,7 @@ impl Build {
             cargo_info,
             rls_info,
             clippy_info,
+            miri_info,
             rustfmt_info,
             cc: HashMap::new(),
             cxx: HashMap::new(),
@@ -430,7 +423,7 @@ impl Build {
             Command::new(&build.initial_rustc).arg("--version").arg("--verbose"));
         let local_release = local_version_verbose
             .lines().filter(|x| x.starts_with("release:"))
-            .next().unwrap().trim_left_matches("release:").trim();
+            .next().unwrap().trim_start_matches("release:").trim();
         let my_version = channel::CFG_RELEASE_NUM;
         if local_release.split('.').take(2).eq(my_version.split('.').take(2)) {
             build.verbose(&format!("auto-detected local-rebuild {}", local_release));
@@ -998,6 +991,11 @@ impl Build {
         self.package_vers(&self.release_num("clippy"))
     }
 
+    /// Returns the value of `package_vers` above for miri
+    fn miri_package_vers(&self) -> String {
+        self.package_vers(&self.release_num("miri"))
+    }
+
     /// Returns the value of `package_vers` above for rustfmt
     fn rustfmt_package_vers(&self) -> String {
         self.package_vers(&self.release_num("rustfmt"))
@@ -1039,9 +1037,8 @@ impl Build {
 
     /// Returns the `a.b.c` version that the given package is at.
     fn release_num(&self, package: &str) -> String {
-        let mut toml = String::new();
         let toml_file_name = self.src.join(&format!("src/tools/{}/Cargo.toml", package));
-        t!(t!(File::open(toml_file_name)).read_to_string(&mut toml));
+        let toml = t!(fs::read_to_string(&toml_file_name));
         for line in toml.lines() {
             let prefix = "version = \"";
             let suffix = "\"";
@@ -1107,10 +1104,10 @@ impl Build {
             let krate = &self.crates[&krate];
             if krate.is_local(self) {
                 ret.push(krate);
-                for dep in &krate.deps {
-                    if visited.insert(dep) && dep != "build_helper" {
-                        list.push(*dep);
-                    }
+            }
+            for dep in &krate.deps {
+                if visited.insert(dep) && dep != "build_helper" {
+                    list.push(*dep);
                 }
             }
         }
@@ -1123,8 +1120,7 @@ impl Build {
         }
 
         let mut paths = Vec::new();
-        let mut contents = Vec::new();
-        t!(t!(File::open(stamp)).read_to_end(&mut contents));
+        let contents = t!(fs::read(stamp));
         // This is the method we use for extracting paths from the stamp file passed to us. See
         // run_cargo for more information (in compile.rs).
         for part in contents.split(|b| *b == 0) {

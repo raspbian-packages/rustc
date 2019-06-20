@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![feature(box_syntax, plugin, plugin_registrar, rustc_private)]
 #![crate_type = "dylib"]
 
@@ -56,9 +46,9 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for MissingWhitelistedAttrPass {
                 span: source_map::Span,
                 id: ast::NodeId) {
 
-        let item = match cx.tcx.hir.get(id) {
+        let item = match cx.tcx.hir().get(id) {
             Node::Item(item) => item,
-            _ => cx.tcx.hir.expect_item(cx.tcx.hir.get_parent(id)),
+            _ => cx.tcx.hir().expect_item(cx.tcx.hir().get_parent(id)),
         };
 
         if !attr::contains_name(&item.attrs, "whitelisted_attr") {

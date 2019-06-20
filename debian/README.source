@@ -13,12 +13,9 @@ for package maintainers" section further below.
 Embedded libraries
 ==================
 
-This source package embeds several external libraries (foeked and managed
-by rust upstream as git submodules).
-In early stages, many more libraries were forked/emebedded but we are steadily
-progressing in splitting them out.
-
-Here below the remaining ones, with the technical reasons.
+The upstream source package embeds many external libraries. We make a great
+effort to remove them and use system versions where possible, but there are a
+few more remaining:
 
  * compiler-rt from https://github.com/rust-lang/compiler-rt
    -> system-wide compiler-rt fails during linkage
@@ -27,10 +24,11 @@ Here below the remaining ones, with the technical reasons.
     - https://github.com/rust-lang/rust/issues/15054
     - https://github.com/rust-lang/rust/issues/15708
 
-As a summary, we plan to:
- * work with upstream to fix compiler-rt linkage soon.
+ * vendor/backtrace-sys, vendor/dlmalloc, vendor/walkdir
 
- -- Sylvestre Ledru <sylvestre@debian.org>  Sat, 06 May 2017 13:26:08 +0200
+   These are small C libraries designed to be statically linked; their upstream
+   does not support building them as a shared library and they are too small to
+   justify their own Debian package.
 
 
 Building from source
@@ -139,11 +137,13 @@ Maintaining this package
 Import of a new upstream version
 --------------------------------
 
+$ apt install equivs python3-magic
 $ sudo mk-build-deps -irt 'aptitude -R'
 $ uscan --verbose                       # or debian/rules source_orig-beta, for beta
 $ ver=UPDATE-ME                         # whatever it is, probably X.YY.Z or X.YY.Z~beta.N
-$ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
-# ^ If this fails, you probably need to refresh patches or edit debian/prune-unused-deps
+$ tar xf ../rustc-${ver/\~/-}-src.tar.xz && ( cd rustc-${ver/*~*/beta}-src/ && pwd && ../debian/prune-unused-deps ) && rm -rf rustc-${ver/*~*/beta}-src/
+# ^ If this fails, you probably need to refresh patches (QUILT_PATCHES=../debian/patches/ quilt push -a --fuzz=0)
+# or edit debian/prune-unused-deps
 $ git commit -m "Update Files-Excluded for new upstream version ${ver/\~/-}" debian/copyright
 $ uscan --verbose                       # yes, again, to pick up the new Files-Excluded stuff
                                         # or debian/rules source_orig-beta, for beta
@@ -229,12 +229,9 @@ Useful links
 The Fedora rust team is more active than the Debian one. Here are their links:
 
 Source code
-https://src.fedoraproject.org/cgit/rpms/rust.git/tree/
+https://src.fedoraproject.org/rpms/rust/tree/
 
 Binary packages and test logs
 https://kojipkgs.fedoraproject.org//packages/rust/
 If the same test fails both on Fedora and Debian it's a good indication that
 we're not Doing It Wrong and can file a valid bug upstream.
-
-Package metadata
-https://admin.fedoraproject.org/pkgdb/package/rpms/rust/

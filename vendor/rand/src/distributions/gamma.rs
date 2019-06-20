@@ -1,6 +1,5 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
+// Copyright 2013 The Rust Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -305,10 +304,49 @@ impl Distribution<f64> for StudentT {
     }
 }
 
+/// The Beta distribution with shape parameters `alpha` and `beta`.
+///
+/// # Example
+///
+/// ```
+/// use rand::distributions::{Distribution, Beta};
+///
+/// let beta = Beta::new(2.0, 5.0);
+/// let v = beta.sample(&mut rand::thread_rng());
+/// println!("{} is from a Beta(2, 5) distribution", v);
+/// ```
+#[derive(Clone, Copy, Debug)]
+pub struct Beta {
+    gamma_a: Gamma,
+    gamma_b: Gamma,
+}
+
+impl Beta {
+    /// Construct an object representing the `Beta(alpha, beta)`
+    /// distribution.
+    ///
+    /// Panics if `shape <= 0` or `scale <= 0`.
+    pub fn new(alpha: f64, beta: f64) -> Beta {
+        assert!((alpha > 0.) & (beta > 0.));
+        Beta {
+            gamma_a: Gamma::new(alpha, 1.),
+            gamma_b: Gamma::new(beta, 1.),
+        }
+    }
+}
+
+impl Distribution<f64> for Beta {
+    fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> f64 {
+        let x = self.gamma_a.sample(rng);
+        let y = self.gamma_b.sample(rng);
+        x / (x + y)
+    }
+}
+
 #[cfg(test)]
 mod test {
     use distributions::Distribution;
-    use super::{ChiSquared, StudentT, FisherF};
+    use super::{Beta, ChiSquared, StudentT, FisherF};
 
     #[test]
     fn test_chi_squared_one() {
@@ -356,5 +394,20 @@ mod test {
         for _ in 0..1000 {
             t.sample(&mut rng);
         }
+    }
+
+    #[test]
+    fn test_beta() {
+        let beta = Beta::new(1.0, 2.0);
+        let mut rng = ::test::rng(201);
+        for _ in 0..1000 {
+            beta.sample(&mut rng);
+        }
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_beta_invalid_dof() {
+        Beta::new(0., 0.);
     }
 }

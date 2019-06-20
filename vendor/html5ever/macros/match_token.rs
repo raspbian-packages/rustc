@@ -99,13 +99,15 @@ matching, by enforcing the following restrictions on its input:
     is common in the HTML5 syntax.
 */
 
-use quote::{ToTokens, Tokens};
+use quote::ToTokens;
 use std::collections::HashSet;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::Path;
 use syn;
 use syn::fold::Fold;
+use syn::parse::{Parse, ParseStream, Result};
+use syn::ext::IdentExt;
 use proc_macro2::TokenStream;
 
 pub fn expand(from: &Path, to: &Path) {
@@ -114,14 +116,14 @@ pub fn expand(from: &Path, to: &Path) {
     let ast = syn::parse_file(&source).expect("Parsing rules.rs module");
     let mut m = MatchTokenParser {};
     let ast = m.fold_file(ast);
-    let code = ast.into_tokens().to_string().replace("{ ", "{\n").replace(" }", "\n}");
+    let code = ast.into_token_stream().to_string().replace("{ ", "{\n").replace(" }", "\n}");
     File::create(to).unwrap().write_all(code.as_bytes()).unwrap();
 }
 
 struct MatchTokenParser {}
 
 struct MatchToken {
-    expr: syn::Expr,
+    ident: syn::Ident,
     arms: Vec<MatchTokenArm>,
 }
 
@@ -154,82 +156,89 @@ pub struct Tag {
     name: Option<syn::Ident>,
 }
 
-impl syn::synom::Synom for Tag {
-    named!(parse -> Self, do_parse!(
-        punct!(<) >>
-        closing: option!(punct!(/)) >>
-        name: alt!(
-            syn!(syn::Ident) => { |i| Some(i) }
-            |
-            punct!(_) => { |_| None }
-        ) >>
-        punct!(>) >>
-        (
-            Tag {
-                kind: if closing.is_some() { TagKind::EndTag } else { TagKind::StartTag },
-                name: name
-            }
-        )
-    ));
+impl Parse for Tag {
+    fn parse(input: ParseStream) -> Result<Self> {
+        input.parse::<Token![<]>()?;
+        let closing: Option<Token![/]> = input.parse()?;
+        let name = match input.call(syn::Ident::parse_any)? {
+            ref wildcard if wildcard == "_" => None,
+            other => Some(other),
+        };
+        input.parse::<Token![>]>()?;
+        Ok(Tag {
+            kind: if closing.is_some() { TagKind::EndTag } else { TagKind::StartTag },
+            name: name
+        })
+    }
 }
 
-impl syn::synom::Synom for LHS {
-    named!(parse -> Self, do_parse!(
-        pats: alt!(
-            syn!(syn::Pat) => { |p| LHS::Pattern(p) }
-            |
-            many0!(syn!(Tag)) => { |t| LHS::Tags(t) }
-        ) >>
-        (
-            pats
-        )
-    ));
+impl Parse for LHS {
+    fn parse(input: ParseStream) -> Result<Self> {
+        if input.peek(Token![<]) {
+            let mut tags = Vec::new();
+            while !input.peek(Token![=>]) {
+                tags.push(input.parse()?);
+            }
+            Ok(LHS::Tags(tags))
+        } else {
+            let p: syn::Pat = input.parse()?;
+            Ok(LHS::Pattern(p))
+        }
+    }
 }
 
-impl syn::synom::Synom for MatchTokenArm {
-    named!(parse -> Self, do_parse!(
-        binding: option!(
-            do_parse!(
-                name: syn!(syn::Ident) >>
-                punct!(@) >>
-                (
-                    name
-                )
-            )
-        ) >>
-        lhs: syn!(LHS) >>
-        punct!(=>) >>
-        rhs: do_parse!(
-                expr: alt!(
-                    expr_nosemi => { |e| RHS::Expression(e) }
-                    |
-                    syn!(syn::Expr) => { |e| RHS::Expression(e) }
-                    |
-                    keyword!(else) => { |_| RHS::Else }
-                ) >>
-                option!(punct!(,)) >>
-                (expr)
-        ) >>
-        (
-            MatchTokenArm {
-               binding,
-               lhs,
-               rhs,
-            }
-        )
-    ));
+impl Parse for MatchTokenArm {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let binding = if input.peek2(Token![@]) {
+            let binding = input.parse::<syn::Ident>()?;
+            input.parse::<Token![@]>()?;
+            Some(binding)
+        } else {
+            None
+        };
+        let lhs = input.parse::<LHS>()?;
+        input.parse::<Token![=>]>()?;
+        let rhs = if input.peek(syn::token::Brace) {
+            let block = input.parse::<syn::Block>().unwrap();
+            let block = syn::ExprBlock {
+                attrs: vec![],
+                label: None,
+                block,
+            };
+            input.parse::<Option<Token![,]>>()?;
+            RHS::Expression(syn::Expr::Block(block))
+        } else if input.peek(Token![else]) {
+            input.parse::<Token![else]>()?;
+            input.parse::<Token![,]>()?;
+            RHS::Else
+        } else {
+            let expr = input.parse::<syn::Expr>().unwrap();
+            input.parse::<Option<Token![,]>>()?;
+            RHS::Expression(expr)
+        };
+
+        Ok(MatchTokenArm {
+           binding,
+           lhs,
+           rhs,
+        })
+    }
 }
 
-impl syn::synom::Synom for MatchToken {
-    named!(parse -> Self, do_parse!(
-        expr: syn!(syn::Expr) >>
-        arms: braces!(many0!(MatchTokenArm::parse)) >> (
-            MatchToken {
-                expr,
-                arms: arms.1
-            }
-        )
-    ));
+impl Parse for MatchToken {
+    fn parse(input: ParseStream) -> Result<Self> {
+        let ident = input.parse::<syn::Ident>()?;
+        let content;
+        braced!(content in input);
+        let mut arms = vec![];
+        while !content.is_empty() {
+            arms.push(content.parse()?);
+        }
+        Ok(MatchToken {
+            ident,
+            arms,
+        })
+    }
 }
 
 pub fn expand_match_token(body: &TokenStream) -> syn::Expr {
@@ -238,9 +247,9 @@ pub fn expand_match_token(body: &TokenStream) -> syn::Expr {
     syn::parse2(ast.into()).unwrap()
 }
 
-fn expand_match_token_macro(match_token: MatchToken) -> Tokens {
+fn expand_match_token_macro(match_token: MatchToken) -> TokenStream {
     let mut arms = match_token.arms;
-    let to_be_matched = match_token.expr;
+    let to_be_matched = match_token.ident;
     // Handle the last arm specially at the end.
     let last_arm = arms.pop().unwrap();
 
@@ -249,11 +258,11 @@ fn expand_match_token_macro(match_token: MatchToken) -> Tokens {
 
     // Case arms for wildcard matching.  We collect these and
     // emit them later.
-    let mut wildcards_patterns: Vec<Tokens> = Vec::new();
+    let mut wildcards_patterns: Vec<TokenStream> = Vec::new();
     let mut wildcards_expressions: Vec<syn::Expr> = Vec::new();
 
     // Tags excluded (by an 'else' RHS) from wildcard matching.
-    let mut wild_excluded_patterns: Vec<Tokens> = Vec::new();
+    let mut wild_excluded_patterns: Vec<TokenStream> = Vec::new();
 
     let mut arms_code = Vec::new();
 
@@ -284,7 +293,7 @@ fn expand_match_token_macro(match_token: MatchToken) -> Tokens {
                     if tag.name.is_none() {
                         panic!("'else' may not appear with a wildcard tag");
                     }
-                    wild_excluded_patterns.push(make_tag_pattern(&Tokens::new(), tag));
+                    wild_excluded_patterns.push(make_tag_pattern(&TokenStream::new(), tag));
                 }
             }
 
@@ -422,7 +431,7 @@ impl Fold for MatchTokenParser {
     }
 }
 
-fn make_tag_pattern(binding: &Tokens, tag: Tag) -> Tokens {
+fn make_tag_pattern(binding: &TokenStream, tag: Tag) -> TokenStream {
     let kind = match tag.kind {
         TagKind::StartTag => quote!(::tokenizer::StartTag),
         TagKind::EndTag => quote!(::tokenizer::EndTag),
@@ -437,28 +446,4 @@ fn make_tag_pattern(binding: &Tokens, tag: Tag) -> Tokens {
         ::tree_builder::types::TagToken(#binding ::tokenizer::Tag { kind: #kind, #name_field .. })
     }
 }
-
-named!(expr_nosemi -> syn::Expr, map!(alt!(
-    syn!(syn::ExprIf) => { syn::Expr::If }
-    |
-    syn!(syn::ExprIfLet) => { syn::Expr::IfLet }
-    |
-    syn!(syn::ExprWhile) => { syn::Expr::While }
-    |
-    syn!(syn::ExprWhileLet) => { syn::Expr::WhileLet }
-    |
-    syn!(syn::ExprForLoop) => { syn::Expr::ForLoop }
-    |
-    syn!(syn::ExprLoop) => { syn::Expr::Loop }
-    |
-    syn!(syn::ExprMatch) => { syn::Expr::Match }
-    |
-    syn!(syn::ExprCatch) => { syn::Expr::Catch }
-    |
-    syn!(syn::ExprYield) => { syn::Expr::Yield }
-    |
-    syn!(syn::ExprUnsafe) => { syn::Expr::Unsafe }
-    |
-    syn!(syn::ExprBlock) => { syn::Expr::Block }
-), syn::Expr::from));
 

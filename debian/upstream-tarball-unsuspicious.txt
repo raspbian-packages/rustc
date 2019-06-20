@@ -1,3 +1,9 @@
+## In this file we list false-positives of the check-orig-suspicious.sh script
+# so that they can be ignored. You should manually audit all of the files here
+# to confirm that they adhere to Debian Policy and the DFSG. In particular, if
+# you are blindly adding files here just to get the build to work, you are
+# probably Doing It Wrong. Ask in #debian-rust or the mailing list for pointers.
+
 # False-positive, very small so suspicious-source thinks "octet-stream"
 src/test/run-pass/raw-str.rs
 
@@ -12,13 +18,9 @@ src/doc/rustc-guide/src/*/*.md
 src/doc/*/CODE_OF_CONDUCT.md
 src/doc/unstable-book/src/language-features/unsized-locals.md
 src/etc/third-party/README.txt
-src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/runtime.c
-src/libbacktrace/configure
-src/libbacktrace/config/libtool.m4
 src/librustc_codegen_ssa/README.md
 src/libstd/sys/cloudabi/abi/cloudabi.rs
 src/libstd/os/raw/*.md
-src/rustc/*/Cargo.toml
 vendor/*/.travis.yml
 vendor/*/Cargo.toml
 vendor/*/CHANGELOG.md
@@ -46,17 +48,15 @@ vendor/winapi-*/src/winnt.rs
 vendor/winapi/src/lib.rs
 
 # False-positive, audit-vendor-source automatically flags JS/C files
+# The below ones are OK since they're actually part of rust's own source code
+# and are not "embedded libraries".
 src/ci/docker/scripts/qemu-bare-bones-addentropy.c
-src/dlmalloc/src/dlmalloc.c
 src/doc/book/*/ferris.js
 src/doc/book/ferris.js
 src/etc/wasm32-shim.js
 src/grammar/parser-lalr-main.c
-src/libbacktrace/*.c
-src/libcompiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
-src/libcompiler_builtins/compiler-rt/lib/builtins/*.c
-src/libcompiler_builtins/compiler-rt/lib/builtins/*/*.c
 src/librustdoc/html/static/*.js
+src/librustdoc/html/static/.eslintrc.js
 src/test/auxiliary/rust_test_helpers.c
 src/test/run-make/wasm-*/*.js
 src/test/run-make-fulldeps/*.c
@@ -65,14 +65,22 @@ src/test/rustdoc-js/*.js
 src/tools/rustdoc-js/tester.js
 
 # Embedded libraries, justified in README.source
-# None atm
+vendor/backtrace-sys/src/libbacktrace/configure
+vendor/backtrace-sys/src/libbacktrace/config/libtool.m4
+vendor/backtrace-sys/src/libbacktrace/*.c
+vendor/compiler_builtins/compiler-rt/lib/BlocksRuntime/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*.c
+vendor/compiler_builtins/compiler-rt/lib/builtins/*/*.c
+vendor/compiler_builtins/compiler-rt/utils/generate_*.awk
+vendor/dlmalloc/src/dlmalloc.c
+vendor/mdbook/src/theme/book.js
+vendor/mdbook/src/theme/searcher/searcher.js
+vendor/walkdir/compare/nftw.c
+vendor/walkdir-*/compare/nftw.c
 
 # False-positive, misc
-src/etc/platform-intrinsics/*/*.json
-src/etc/platform-intrinsics/*.json
-src/libcompiler_builtins/compiler-rt/.arcconfig
-src/libcompiler_builtins/*.json
 src/stdsimd/.travis.yml
+src/stdsimd/ci/cross/nvptx64-nvidia-cuda.json
 src/test/run-make-fulldeps/target-specs/*.json
 src/test/run-make-fulldeps/libtest-json/output.json
 vendor/clap/.mention-bot
@@ -95,6 +103,8 @@ src/doc/book/2018-edition/src/img/*.png
 src/doc/book/tools/docx-to-md.xsl
 src/librustdoc/html/static/*.svg
 vendor/difference/assets/*.png
+vendor/fortanix-sgx-abi/images/enclave-execution-lifecycle.png
+vendor/heck/no_step_on_snek.png
 vendor/mdbook/src/theme/favicon.png
 vendor/num/doc/favicon.ico
 vendor/num/doc/rust-logo-128x128-blk-v2.png
@@ -106,6 +116,7 @@ vendor/termion/logo.svg
 vendor/html5ever/examples/capi/tokenize.c
 
 # Test data
+src/stdsimd/crates/stdsimd-verify/arm-intrinsics.html
 src/stdsimd/crates/stdsimd-verify/x86-intel.xml
 src/stdsimd/stdsimd/arch/detect/test_data
 src/test/compile-fail/not-utf8.bin
@@ -125,6 +136,7 @@ vendor/idna/tests/punycode_tests.json
 vendor/html5ever/data/bench/*.html
 vendor/html5ever/html5lib-tests/*/*.dat
 vendor/html5ever/html5lib-tests/*/*.test
+vendor/libz-sys/src/smoke.c
 vendor/minifier/tests/files/test.json
 vendor/pest/benches/data.json
 vendor/pretty_assertions/src/format_changeset.rs
@@ -144,13 +156,7 @@ vendor/yaml-rust/tests/specexamples.rs.inc
 # Should already by documented in debian/copyright
 src/librustdoc/html/static/normalize.css
 vendor/unicode-normalization/src/tables.rs
+vendor/unicode-segmentation/src/tables.rs
 
 # Compromise, ideally we'd package these in their own package
 src/librustdoc/html/static/*.woff
-
-# C and JS files not part of an external library
-vendor/mdbook/src/theme/book.js
-vendor/mdbook/src/theme/searcher/searcher.js
-vendor/miniz-sys/miniz.c
-vendor/walkdir/compare/nftw.c
-vendor/walkdir-*/compare/nftw.c

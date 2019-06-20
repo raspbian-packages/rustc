@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! "Object safety" refers to the ability for a trait to be converted
 //! to an object. In general, traits may only be converted to an
 //! object if all of their methods meet certain criteria. In particular,
@@ -36,7 +26,7 @@ pub enum ObjectSafetyViolation {
     SizedSelf,
 
     /// Supertrait reference references `Self` an in illegal location
-    /// (e.g. `trait Foo : Bar<Self>`)
+    /// (e.g., `trait Foo : Bar<Self>`)
     SupertraitSelf,
 
     /// Method has something illegal
@@ -81,7 +71,7 @@ pub enum MethodViolationCode {
     /// e.g., `fn foo(&self, x: Self)` or `fn foo(&self) -> Self`
     ReferencesSelf,
 
-    /// e.g. `fn foo(&self) where Self: Clone`
+    /// e.g., `fn foo(&self) where Self: Clone`
     WhereClauseReferencesSelf(Span),
 
     /// e.g., `fn foo<A>()`
@@ -364,31 +354,44 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
                     }
                 };
 
-                // e.g. Rc<()>
+                // e.g., Rc<()>
                 let unit_receiver_ty = self.receiver_for_self_ty(
                     receiver_ty, self.mk_unit(), method.def_id
                 );
 
                 match abi_of_ty(unit_receiver_ty) {
                     &Abi::Scalar(..) => (),
-                    abi => bug!("Receiver when Self = () should have a Scalar ABI, found {:?}", abi)
+                    abi => {
+                        self.sess.delay_span_bug(
+                            self.def_span(method.def_id),
+                            &format!(
+                                "Receiver when Self = () should have a Scalar ABI, found {:?}",
+                                abi
+                            ),
+                        );
+                    }
                 }
 
                 let trait_object_ty = self.object_ty_for_trait(
                     trait_def_id, self.mk_region(ty::ReStatic)
                 );
 
-                // e.g. Rc<dyn Trait>
+                // e.g., Rc<dyn Trait>
                 let trait_object_receiver = self.receiver_for_self_ty(
                     receiver_ty, trait_object_ty, method.def_id
                 );
 
                 match abi_of_ty(trait_object_receiver) {
                     &Abi::ScalarPair(..) => (),
-                    abi => bug!(
-                        "Receiver when Self = {} should have a ScalarPair ABI, found {:?}",
-                        trait_object_ty, abi
-                    )
+                    abi => {
+                        self.sess.delay_span_bug(
+                            self.def_span(method.def_id),
+                            &format!(
+                                "Receiver when Self = {} should have a ScalarPair ABI, found {:?}",
+                                trait_object_ty, abi
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -397,7 +400,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
     }
 
     /// performs a type substitution to produce the version of receiver_ty when `Self = self_ty`
-    /// e.g. for receiver_ty = `Rc<Self>` and self_ty = `Foo`, returns `Rc<Foo>`
+    /// e.g., for receiver_ty = `Rc<Self>` and self_ty = `Foo`, returns `Rc<Foo>`
     fn receiver_for_self_ty(
         self, receiver_ty: Ty<'tcx>, self_ty: Ty<'tcx>, method_def_id: DefId
     ) -> Ty<'tcx> {
@@ -485,7 +488,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
     ///
     /// The only case where the receiver is not dispatchable, but is still a valid receiver
     /// type (just not object-safe), is when there is more than one level of pointer indirection.
-    /// e.g. `self: &&Self`, `self: &Rc<Self>`, `self: Box<Box<Self>>`. In these cases, there
+    /// e.g., `self: &&Self`, `self: &Rc<Self>`, `self: Box<Box<Self>>`. In these cases, there
     /// is no way, or at least no inexpensive way, to coerce the receiver from the version where
     /// `Self = dyn Trait` to the version where `Self = T`, where `T` is the unknown erased type
     /// contained by the trait object, because the object that needs to be coerced is behind
@@ -593,7 +596,7 @@ impl<'a, 'tcx> TyCtxt<'a, 'tcx, 'tcx> {
 
         self.infer_ctxt().enter(|ref infcx| {
             // the receiver is dispatchable iff the obligation holds
-            infcx.predicate_must_hold(&obligation)
+            infcx.predicate_must_hold_modulo_regions(&obligation)
         })
     }
 

@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use back::wasm;
 use super::archive::{ArchiveBuilder, ArchiveConfig};
 use super::bytecode::RLIB_BYTECODE_EXTENSION;
@@ -212,12 +202,7 @@ fn link_binary_output(sess: &Session,
 }
 
 fn archive_search_paths(sess: &Session) -> Vec<PathBuf> {
-    let mut search = Vec::new();
-    sess.target_filesearch(PathKind::Native).for_each_lib_search_path(|path, _| {
-        search.push(path.to_path_buf());
-    });
-
-    search
+    sess.target_filesearch(PathKind::Native).search_path_dirs()
 }
 
 fn archive_config<'a>(sess: &'a Session,
@@ -462,6 +447,21 @@ fn print_native_static_libs(sess: &Session, all_native_libs: &[NativeLibrary]) {
     }
 }
 
+fn get_file_path(sess: &Session, name: &str) -> PathBuf {
+    let fs = sess.target_filesearch(PathKind::Native);
+    let file_path = fs.get_lib_path().join(name);
+    if file_path.exists() {
+        return file_path
+    }
+    for search_path in fs.search_paths() {
+        let file_path = search_path.dir.join(name);
+        if file_path.exists() {
+            return file_path
+        }
+    }
+    PathBuf::from(name)
+}
+
 // Create a dynamic library or executable
 //
 // This will invoke the system linker/cc to create the resulting file. This
@@ -477,7 +477,6 @@ fn link_natively(sess: &Session,
     // The invocations of cc share some flags across platforms
     let (pname, mut cmd) = get_linker(sess, &linker, flavor);
 
-    let root = sess.target_filesearch(PathKind::Native).get_lib_path();
     if let Some(args) = sess.target.target.options.pre_link_args.get(&flavor) {
         cmd.args(args);
     }
@@ -505,12 +504,12 @@ fn link_natively(sess: &Session,
         &sess.target.target.options.pre_link_objects_dll
     };
     for obj in pre_link_objects {
-        cmd.arg(root.join(obj));
+        cmd.arg(get_file_path(sess, obj));
     }
 
     if crate_type == config::CrateType::Executable && sess.crt_static() {
         for obj in &sess.target.target.options.pre_link_objects_exe_crt {
-            cmd.arg(root.join(obj));
+            cmd.arg(get_file_path(sess, obj));
         }
     }
 
@@ -534,11 +533,11 @@ fn link_natively(sess: &Session,
         cmd.args(args);
     }
     for obj in &sess.target.target.options.post_link_objects {
-        cmd.arg(root.join(obj));
+        cmd.arg(get_file_path(sess, obj));
     }
     if sess.crt_static() {
         for obj in &sess.target.target.options.post_link_objects_crt {
-            cmd.arg(root.join(obj));
+            cmd.arg(get_file_path(sess, obj));
         }
     }
     if let Some(args) = sess.target.target.options.post_link_args.get(&flavor) {
@@ -994,7 +993,7 @@ fn link_args(cmd: &mut dyn Linker,
     //
     // The rationale behind this ordering is that those items lower down in the
     // list can't depend on items higher up in the list. For example nothing can
-    // depend on what we just generated (e.g. that'd be a circular dependency).
+    // depend on what we just generated (e.g., that'd be a circular dependency).
     // Upstream rust libraries are not allowed to depend on our local native
     // libraries as that would violate the structure of the DAG, in that
     // scenario they are required to link to them as well in a shared fashion.
@@ -1003,7 +1002,7 @@ fn link_args(cmd: &mut dyn Linker,
     // well, but they also can't depend on what we just started to add to the
     // link line. And finally upstream native libraries can't depend on anything
     // in this DAG so far because they're only dylibs and dylibs can only depend
-    // on other dylibs (e.g. other native deps).
+    // on other dylibs (e.g., other native deps).
     add_local_native_libraries(cmd, sess, codegen_results);
     add_upstream_rust_crates(cmd, sess, codegen_results, crate_type, tmpdir);
     add_upstream_native_libraries(cmd, sess, codegen_results, crate_type);
@@ -1024,11 +1023,10 @@ fn link_args(cmd: &mut dyn Linker,
     // where extern libraries might live, based on the
     // addl_lib_search_paths
     if sess.opts.cg.rpath {
-        let sysroot = sess.sysroot();
         let target_triple = sess.opts.target_triple.triple();
         let mut get_install_prefix_lib_path = || {
             let install_prefix = option_env!("CFG_PREFIX").expect("CFG_PREFIX");
-            let tlib = filesearch::relative_target_lib_path(sysroot, target_triple);
+            let tlib = filesearch::relative_target_lib_path(&sess.sysroot, target_triple);
             let mut path = PathBuf::from(install_prefix);
             path.push(&tlib);
 
@@ -1075,12 +1073,13 @@ fn link_args(cmd: &mut dyn Linker,
 fn add_local_native_libraries(cmd: &mut dyn Linker,
                               sess: &Session,
                               codegen_results: &CodegenResults) {
-    sess.target_filesearch(PathKind::All).for_each_lib_search_path(|path, k| {
-        match k {
-            PathKind::Framework => { cmd.framework_path(path); }
-            _ => { cmd.include_path(&fix_windows_verbatim_for_gcc(path)); }
+    let filesearch = sess.target_filesearch(PathKind::All);
+    for search_path in filesearch.search_paths() {
+        match search_path.kind {
+            PathKind::Framework => { cmd.framework_path(&search_path.dir); }
+            _ => { cmd.include_path(&fix_windows_verbatim_for_gcc(&search_path.dir)); }
         }
-    });
+    }
 
     let relevant_libs = codegen_results.crate_info.used_libraries.iter().filter(|l| {
         relevant_lib(sess, l)
@@ -1212,7 +1211,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
     // compiler-builtins are always placed last to ensure that they're
     // linked correctly.
     // We must always link the `compiler_builtins` crate statically. Even if it
-    // was already "included" in a dylib (e.g. `libstd` when `-C prefer-dynamic`
+    // was already "included" in a dylib (e.g., `libstd` when `-C prefer-dynamic`
     // is used)
     if let Some(cnum) = compiler_builtins {
         add_static_crate(cmd, sess, codegen_results, tmpdir, crate_type, cnum);
@@ -1392,7 +1391,7 @@ fn add_upstream_rust_crates(cmd: &mut dyn Linker,
             // because a `dylib` can be reused as an intermediate artifact.
             //
             // Note, though, that we don't want to include the whole of a
-            // compiler-builtins crate (e.g. compiler-rt) because it'll get
+            // compiler-builtins crate (e.g., compiler-rt) because it'll get
             // repeatedly linked anyway.
             if crate_type == config::CrateType::Dylib &&
                 codegen_results.crate_info.compiler_builtins != Some(cnum) {

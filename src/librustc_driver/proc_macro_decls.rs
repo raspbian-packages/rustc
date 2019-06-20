@@ -1,25 +1,25 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use rustc::hir::itemlikevisit::ItemLikeVisitor;
-use rustc::hir::map::Map;
+use rustc::hir::def_id::{CrateNum, DefId, LOCAL_CRATE};
 use rustc::hir;
+use rustc::ty::TyCtxt;
+use rustc::ty::query::Providers;
 use syntax::ast;
 use syntax::attr;
 
-pub fn find(hir_map: &Map) -> Option<ast::NodeId> {
-    let krate = hir_map.krate();
+pub fn find<'tcx>(tcx: TyCtxt<'_, 'tcx, 'tcx>) -> Option<DefId> {
+    tcx.proc_macro_decls_static(LOCAL_CRATE)
+}
+
+fn proc_macro_decls_static<'tcx>(
+    tcx: TyCtxt<'_, 'tcx, 'tcx>,
+    cnum: CrateNum,
+) -> Option<DefId> {
+    assert_eq!(cnum, LOCAL_CRATE);
 
     let mut finder = Finder { decls: None };
-    krate.visit_all_item_likes(&mut finder);
-    finder.decls
+    tcx.hir().krate().visit_all_item_likes(&mut finder);
+
+    finder.decls.map(|id| tcx.hir().local_def_id(id))
 }
 
 struct Finder {
@@ -40,3 +40,9 @@ impl<'v> ItemLikeVisitor<'v> for Finder {
     }
 }
 
+pub(crate) fn provide(providers: &mut Providers<'_>) {
+    *providers = Providers {
+        proc_macro_decls_static,
+        ..*providers
+    };
+}

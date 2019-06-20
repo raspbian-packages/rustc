@@ -1,13 +1,3 @@
-// Copyright 2013-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Markdown formatting for rustdoc
 //!
 //! This module implements markdown formatting through the pulldown-cmark
@@ -806,6 +796,10 @@ impl<'a> fmt::Display for MarkdownSummaryLine<'a> {
 }
 
 pub fn plain_summary_line(md: &str) -> String {
+    plain_summary_line_full(md, false)
+}
+
+pub fn plain_summary_line_full(md: &str, limit_length: bool) -> String {
     struct ParserWrapper<'a> {
         inner: Parser<'a>,
         is_in: isize,
@@ -852,7 +846,21 @@ pub fn plain_summary_line(md: &str) -> String {
             s.push_str(&t);
         }
     }
-    s
+    if limit_length && s.chars().count() > 60 {
+        let mut len = 0;
+        let mut ret = s.split_whitespace()
+                       .take_while(|p| {
+                           // + 1 for the added character after the word.
+                           len += p.chars().count() + 1;
+                           len < 60
+                       })
+                       .collect::<Vec<_>>()
+                       .join(" ");
+        ret.push('…');
+        ret
+    } else {
+        s
+    }
 }
 
 pub fn markdown_links(md: &str) -> Vec<(String, Option<Range<usize>>)> {

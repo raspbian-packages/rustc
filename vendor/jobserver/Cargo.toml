@@ -12,7 +12,7 @@
 
 [package]
 name = "jobserver"
-version = "0.1.11"
+version = "0.1.12"
 authors = ["Alex Crichton <alex@alexcrichton.com>"]
 description = "An implementation of the GNU make jobserver for Rust\n"
 homepage = "https://github.com/alexcrichton/jobserver-rs"
@@ -57,8 +57,8 @@ version = "0.3"
 version = "0.1"
 
 [dev-dependencies.tokio-process]
-version = "0.1"
+version = "0.2"
 [target."cfg(unix)".dependencies.libc]
 version = "0.2"
 [target."cfg(windows)".dependencies.rand]
-version = "0.4"
+version = "0.6"

@@ -1,11 +1,39 @@
-rustc (1.32.0+dfsg1-3+rpi1) buster-staging; urgency=medium
+rustc (1.33.0+dfsg1-2+rpi1) buster-staging; urgency=medium
 
   [changes brought forward from 1.15.1+dfsg1-1~exp3+rpi1 by Peter Michael Green <plugwash@raspbian.org> at Wed, 15 Mar 2017 10:16:18 +0000]
   * Build for armv6.
   [changes introduced in 1.18.0+dfsg1-4+rpi1 by Peter Michael Green]
   * Disable testsuite.
 
- -- Raspbian forward porter <root@raspbian.org>  Mon, 08 Apr 2019 01:32:43 +0000
+ -- Raspbian forward porter <root@raspbian.org>  Thu, 20 Jun 2019 09:49:06 +0000
+
+rustc (1.33.0+dfsg1-2) unstable; urgency=medium
+
+  * Add Fedora patches.
+  * Bump i386 allowed test failures to 12.
+
+ -- Ximin Luo <infinity0@debian.org>  Sat, 18 May 2019 12:18:25 -0700
+
+rustc (1.33.0+dfsg1-1) unstable; urgency=medium
+
+  * Upload to unstable.
+  * Fix build on mips, flags needed whitespace massaging.
+  * Drop obsolete patches.
+
+ -- Ximin Luo <infinity0@debian.org>  Fri, 17 May 2019 21:04:20 -0700
+
+rustc (1.33.0+dfsg1-1~exp1) experimental; urgency=medium
+
+  * New upstream release.
+
+  [ Hiroaki Nakamura ]
+  * Delete obsolete patch.
+
+  [ Sylvestre Ledru ]
+  * Update compiler-rt patch.
+  * Improve build-related docs a bit.
+
+ -- Ximin Luo <infinity0@debian.org>  Mon, 29 Apr 2019 19:50:48 -0700
 
 rustc (1.32.0+dfsg1-3) unstable; urgency=medium
 

@@ -1,13 +1,3 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Helper functions corresponding to lifetime errors due to
 //! anonymous regions.
 
@@ -60,7 +50,7 @@ impl<'a, 'gcx, 'tcx> NiceRegionError<'a, 'gcx, 'tcx> {
             _ => return None, // not a free region
         };
 
-        let hir = &self.tcx.hir;
+        let hir = &self.tcx.hir();
         if let Some(node_id) = hir.as_local_node_id(id) {
             if let Some(body_id) = hir.maybe_body_owned_by(node_id) {
                 let body = hir.body(body_id);

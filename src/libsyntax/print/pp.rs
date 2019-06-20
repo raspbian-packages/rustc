@@ -1,13 +1,3 @@
-// Copyright 2012 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! This pretty-printer is a direct reimplementation of Philip Karlton's
 //! Mesa pretty-printer, as described in appendix A of
 //!
@@ -109,7 +99,7 @@
 //! The buffered tokens go through a ring-buffer, 'tokens'. The 'left' and
 //! 'right' indices denote the active portion of the ring buffer as well as
 //! describing hypothetical points-in-the-infinite-stream at most 3N tokens
-//! apart (i.e. "not wrapped to ring-buffer boundaries"). The paper will switch
+//! apart (i.e., "not wrapped to ring-buffer boundaries"). The paper will switch
 //! between using 'left' and 'right' terms to denote the wrapped-to-ring-buffer
 //! and point-in-infinite-stream senses freely.
 //!

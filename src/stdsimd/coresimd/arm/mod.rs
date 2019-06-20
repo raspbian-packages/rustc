@@ -7,6 +7,10 @@
 //! [arm_dat]: https://developer.arm.com/technologies/neon/intrinsics
 #![allow(non_camel_case_types)]
 
+mod armclang;
+
+pub use self::armclang::*;
+
 #[cfg(any(target_feature = "mclass", dox))]
 mod cmsis;
 #[cfg(any(target_feature = "mclass", dox))]
@@ -20,15 +24,9 @@ mod v7;
 #[cfg(any(target_arch = "aarch64", target_feature = "v7"))]
 pub use self::v7::*;
 
-#[cfg(any(
-    all(target_feature = "v7", not(target_feature = "mclass")),
-    dox
-))]
+#[cfg(any(all(target_feature = "v7", not(target_feature = "mclass")), dox))]
 mod dsp;
-#[cfg(any(
-    all(target_feature = "v7", not(target_feature = "mclass")),
-    dox
-))]
+#[cfg(any(all(target_feature = "v7", not(target_feature = "mclass")), dox))]
 pub use self::dsp::*;
 
 // NEON is supported on AArch64, and on ARM when built with the v7 and neon
@@ -45,3 +43,14 @@ mod neon;
     dox
 ))]
 pub use self::neon::*;
+
+#[cfg(test)]
+use stdsimd_test::assert_instr;
+
+/// Generates the trap instruction `UDF`
+#[cfg(target_arch = "arm")]
+#[cfg_attr(test, assert_instr(udf))]
+#[inline]
+pub unsafe fn udf() -> ! {
+    ::intrinsics::abort()
+}

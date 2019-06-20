@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Inlining pass for MIR functions
 
 use rustc::hir;
@@ -83,8 +73,8 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
         let param_env = self.tcx.param_env(self.source.def_id);
 
         // Only do inlining into fn bodies.
-        let id = self.tcx.hir.as_local_node_id(self.source.def_id).unwrap();
-        let body_owner_kind = self.tcx.hir.body_owner_kind(id);
+        let id = self.tcx.hir().as_local_node_id(self.source.def_id).unwrap();
+        let body_owner_kind = self.tcx.hir().body_owner_kind(id);
 
         if let (hir::BodyOwnerKind::Fn, None) = (body_owner_kind, self.source.promoted) {
 
@@ -575,10 +565,10 @@ impl<'a, 'tcx> Inliner<'a, 'tcx> {
             // The `tmp0`, `tmp1`, and `tmp2` in our example abonve.
             let tuple_tmp_args =
                 tuple_tys.iter().enumerate().map(|(i, ty)| {
-                    // This is e.g. `tuple_tmp.0` in our example above.
+                    // This is e.g., `tuple_tmp.0` in our example above.
                     let tuple_field = Operand::Move(tuple.clone().field(Field::new(i), ty));
 
-                    // Spill to a local to make e.g. `tmp0`.
+                    // Spill to a local to make e.g., `tmp0`.
                     self.create_temp_if_necessary(tuple_field, callsite, caller_mir)
                 });
 
@@ -707,12 +697,19 @@ impl<'a, 'tcx> MutVisitor<'tcx> for Integrator<'a, 'tcx> {
         self.in_cleanup_block = false;
     }
 
-    fn visit_retag(&mut self, fn_entry: &mut bool, place: &mut Place<'tcx>, loc: Location) {
-        self.super_retag(fn_entry, place, loc);
+    fn visit_retag(
+        &mut self,
+        kind: &mut RetagKind,
+        place: &mut Place<'tcx>,
+        loc: Location,
+    ) {
+        self.super_retag(kind, place, loc);
 
         // We have to patch all inlined retags to be aware that they are no longer
         // happening on function entry.
-        *fn_entry = false;
+        if *kind == RetagKind::FnEntry {
+            *kind = RetagKind::Default;
+        }
     }
 
     fn visit_terminator_kind(&mut self, block: BasicBlock,

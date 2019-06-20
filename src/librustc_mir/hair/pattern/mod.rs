@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Code to validate patterns/matches
 
 mod _match;
@@ -22,9 +12,10 @@ use hair::util::UserAnnotatedTyHelpers;
 use hair::constant::*;
 
 use rustc::mir::{fmt_const_val, Field, BorrowKind, Mutability};
-use rustc::mir::{ProjectionElem, UserTypeAnnotation, UserTypeProjection, UserTypeProjections};
+use rustc::mir::{ProjectionElem, UserTypeProjection};
 use rustc::mir::interpret::{Scalar, GlobalId, ConstValue, sign_extend};
-use rustc::ty::{self, Region, TyCtxt, AdtDef, Ty};
+use rustc::ty::{self, Region, TyCtxt, AdtDef, Ty, Lift};
+use rustc::ty::{CanonicalUserTypeAnnotation, CanonicalUserTypeAnnotations, UserTypeAnnotation};
 use rustc::ty::subst::{Substs, Kind};
 use rustc::ty::layout::VariantIdx;
 use rustc::hir::{self, PatKind, RangeEnd};
@@ -48,9 +39,9 @@ pub enum PatternError {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub enum BindingMode<'tcx> {
+pub enum BindingMode {
     ByValue,
-    ByRef(Region<'tcx>, BorrowKind),
+    ByRef(BorrowKind),
 }
 
 #[derive(Clone, Debug)]
@@ -68,113 +59,29 @@ pub struct Pattern<'tcx> {
 
 
 #[derive(Clone, Debug)]
-pub(crate) struct PatternTypeProjections<'tcx> {
-    contents: Vec<(PatternTypeProjection<'tcx>, Span)>,
+pub struct PatternTypeProjection<'tcx> {
+    pub base: CanonicalUserTypeAnnotation<'tcx>,
+    pub projs: Vec<ProjectionElem<'tcx, (), ()>>,
 }
-
-impl<'tcx> PatternTypeProjections<'tcx> {
-    pub(crate) fn user_ty(self) -> UserTypeProjections<'tcx> {
-        UserTypeProjections::from_projections(
-            self.contents.into_iter().map(|(pat_ty_proj, span)| (pat_ty_proj.user_ty(), span)))
-    }
-
-    pub(crate) fn none() -> Self {
-        PatternTypeProjections { contents: vec![] }
-    }
-
-    pub(crate) fn ref_binding(&self) -> Self {
-        // FIXME(#47184): ignore for now
-        PatternTypeProjections { contents: vec![] }
-    }
-
-    fn map_projs(&self,
-                 mut f: impl FnMut(&PatternTypeProjection<'tcx>) -> PatternTypeProjection<'tcx>)
-                 -> Self
-    {
-        PatternTypeProjections {
-            contents: self.contents
-                .iter()
-                .map(|(proj, span)| (f(proj), *span))
-                .collect(), }
-    }
-
-    pub(crate) fn index(&self) -> Self { self.map_projs(|pat_ty_proj| pat_ty_proj.index()) }
-
-    pub(crate) fn subslice(&self, from: u32, to: u32) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.subslice(from, to))
-    }
-
-    pub(crate) fn deref(&self) -> Self { self.map_projs(|pat_ty_proj| pat_ty_proj.deref()) }
-
-    pub(crate) fn leaf(&self, field: Field) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.leaf(field))
-    }
-
-    pub(crate) fn variant(&self,
-                          adt_def: &'tcx AdtDef,
-                          variant_index: VariantIdx,
-                          field: Field) -> Self {
-        self.map_projs(|pat_ty_proj| pat_ty_proj.variant(adt_def, variant_index, field))
-    }
-
-    pub(crate) fn add_user_type(&self, user_ty: &PatternTypeProjection<'tcx>, sp: Span) -> Self {
-        let mut new = self.clone();
-        new.contents.push((user_ty.clone(), sp));
-        new
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct PatternTypeProjection<'tcx>(UserTypeProjection<'tcx>);
 
 impl<'tcx> PatternTypeProjection<'tcx> {
-    pub(crate) fn index(&self) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Index(()));
-        new
+    pub(crate) fn from_user_type(user_annotation: CanonicalUserTypeAnnotation<'tcx>) -> Self {
+        Self {
+            base: user_annotation,
+            projs: Vec::new(),
+        }
     }
 
-    pub(crate) fn subslice(&self, from: u32, to: u32) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Subslice { from, to });
-        new
+    pub(crate) fn user_ty(
+        self,
+        annotations: &mut CanonicalUserTypeAnnotations<'tcx>,
+        span: Span,
+    ) -> UserTypeProjection<'tcx> {
+        UserTypeProjection {
+            base: annotations.push((span, self.base)),
+            projs: self.projs
+        }
     }
-
-    pub(crate) fn deref(&self) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Deref);
-        new
-    }
-
-    pub(crate) fn leaf(&self, field: Field) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Field(field, ()));
-        new
-    }
-
-    pub(crate) fn variant(&self,
-                          adt_def: &'tcx AdtDef,
-                          variant_index: VariantIdx,
-                          field: Field) -> Self {
-        let mut new = self.clone();
-        new.0.projs.push(ProjectionElem::Downcast(adt_def, variant_index));
-        new.0.projs.push(ProjectionElem::Field(field, ()));
-        new
-    }
-
-    pub(crate) fn from_canonical_ty(c_ty: ty::CanonicalTy<'tcx>) -> Self {
-        Self::from_user_type(UserTypeAnnotation::Ty(c_ty))
-    }
-
-    pub(crate) fn from_user_type(u_ty: UserTypeAnnotation<'tcx>) -> Self {
-        Self::from_user_type_proj(UserTypeProjection { base: u_ty, projs: vec![], })
-    }
-
-    pub(crate) fn from_user_type_proj(u_ty: UserTypeProjection<'tcx>) -> Self {
-        PatternTypeProjection(u_ty)
-    }
-
-    pub(crate) fn user_ty(self) -> UserTypeProjection<'tcx> { self.0 }
 }
 
 #[derive(Clone, Debug)]
@@ -184,6 +91,25 @@ pub enum PatternKind<'tcx> {
     AscribeUserType {
         user_ty: PatternTypeProjection<'tcx>,
         subpattern: Pattern<'tcx>,
+        /// Variance to use when relating the type `user_ty` to the **type of the value being
+        /// matched**. Typically, this is `Variance::Covariant`, since the value being matched must
+        /// have a type that is some subtype of the ascribed type.
+        ///
+        /// Note that this variance does not apply for any bindings within subpatterns. The type
+        /// assigned to those bindings must be exactly equal to the `user_ty` given here.
+        ///
+        /// The only place where this field is not `Covariant` is when matching constants, where
+        /// we currently use `Contravariant` -- this is because the constant type just needs to
+        /// be "comparable" to the type of the input value. So, for example:
+        ///
+        /// ```text
+        /// match x { "foo" => .. }
+        /// ```
+        ///
+        /// requires that `&'static str <: T_x`, where `T_x` is the type of `x`. Really, we should
+        /// probably be checking for a `PartialEq` impl instead, but this preserves the behavior
+        /// of the old type-check for now. See #57280 for details.
+        variance: ty::Variance,
         user_ty_span: Span,
     },
 
@@ -191,7 +117,7 @@ pub enum PatternKind<'tcx> {
     Binding {
         mutability: Mutability,
         name: ast::Name,
-        mode: BindingMode<'tcx>,
+        mode: BindingMode,
         var: ast::NodeId,
         ty: Ty<'tcx>,
         subpattern: Option<Pattern<'tcx>>,
@@ -216,19 +142,14 @@ pub enum PatternKind<'tcx> {
     },
 
     Constant {
-        value: &'tcx ty::Const<'tcx>,
+        value: ty::Const<'tcx>,
     },
 
-    Range {
-        lo: &'tcx ty::Const<'tcx>,
-        hi: &'tcx ty::Const<'tcx>,
-        ty: Ty<'tcx>,
-        end: RangeEnd,
-    },
+    Range(PatternRange<'tcx>),
 
     /// matches against a slice, checking the length and extracting elements.
     /// irrefutable when there is a slice pattern and both `prefix` and `suffix` are empty.
-    /// e.g. `&[ref xs..]`.
+    /// e.g., `&[ref xs..]`.
     Slice {
         prefix: Vec<Pattern<'tcx>>,
         slice: Option<Pattern<'tcx>>,
@@ -243,6 +164,25 @@ pub enum PatternKind<'tcx> {
     },
 }
 
+impl<'tcx> PatternKind<'tcx> {
+    /// If this is a `PatternKind::AscribeUserType` then return the subpattern kind, otherwise
+    /// return this pattern kind.
+    fn with_user_type_ascription_subpattern(self) -> Self {
+        match self {
+            PatternKind::AscribeUserType { subpattern: Pattern { box kind, ..  }, ..  } => kind,
+            kind => kind,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PatternRange<'tcx> {
+    pub lo: ty::Const<'tcx>,
+    pub hi: ty::Const<'tcx>,
+    pub ty: Ty<'tcx>,
+    pub end: RangeEnd,
+}
+
 impl<'tcx> fmt::Display for Pattern<'tcx> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self.kind {
@@ -252,7 +192,7 @@ impl<'tcx> fmt::Display for Pattern<'tcx> {
             PatternKind::Binding { mutability, name, mode, ref subpattern, .. } => {
                 let is_mut = match mode {
                     BindingMode::ByValue => mutability == Mutability::Mut,
-                    BindingMode::ByRef(_, bk) => {
+                    BindingMode::ByRef(bk) => {
                         write!(f, "ref ")?;
                         match bk { BorrowKind::Mut { .. } => true, _ => false }
                     }
@@ -287,7 +227,7 @@ impl<'tcx> fmt::Display for Pattern<'tcx> {
                 let mut start_or_continue = || if first { first = false; "" } else { ", " };
 
                 if let Some(variant) = variant {
-                    write!(f, "{}", variant.name)?;
+                    write!(f, "{}", variant.ident)?;
 
                     // Only for Adt we can have `S {...}`,
                     // which we handle separately here.
@@ -354,7 +294,7 @@ impl<'tcx> fmt::Display for Pattern<'tcx> {
             PatternKind::Constant { value } => {
                 fmt_const_val(f, value)
             }
-            PatternKind::Range { lo, hi, ty: _, end } => {
+            PatternKind::Range(PatternRange { lo, hi, ty: _, end }) => {
                 fmt_const_val(f, lo)?;
                 match end {
                     RangeEnd::Included => write!(f, "..=")?,
@@ -471,9 +411,15 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
             PatKind::Lit(ref value) => self.lower_lit(value),
 
             PatKind::Range(ref lo_expr, ref hi_expr, end) => {
-                match (self.lower_lit(lo_expr), self.lower_lit(hi_expr)) {
-                    (PatternKind::Constant { value: lo },
-                     PatternKind::Constant { value: hi }) => {
+                match (
+                    // Look for `PatternKind::Constant` patterns inside of any
+                    // `PatternKind::AscribeUserType` patterns. Type ascriptions can be safely
+                    // ignored for the purposes of lowering a range correctly - these are checked
+                    // elsewhere for well-formedness.
+                    self.lower_lit(lo_expr).with_user_type_ascription_subpattern(),
+                    self.lower_lit(hi_expr).with_user_type_ascription_subpattern(),
+                ) {
+                    (PatternKind::Constant { value: lo }, PatternKind::Constant { value: hi }) => {
                         use std::cmp::Ordering;
                         let cmp = compare_const_vals(
                             self.tcx,
@@ -483,7 +429,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         );
                         match (end, cmp) {
                             (RangeEnd::Excluded, Some(Ordering::Less)) =>
-                                PatternKind::Range { lo, hi, ty, end },
+                                PatternKind::Range(PatternRange { lo, hi, ty, end }),
                             (RangeEnd::Excluded, _) => {
                                 span_err!(
                                     self.tcx.sess,
@@ -497,7 +443,7 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                                 PatternKind::Constant { value: lo }
                             }
                             (RangeEnd::Included, Some(Ordering::Less)) => {
-                                PatternKind::Range { lo, hi, ty, end }
+                                PatternKind::Range(PatternRange { lo, hi, ty, end })
                             }
                             (RangeEnd::Included, _) => {
                                 let mut err = struct_span_err!(
@@ -522,7 +468,15 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                             }
                         }
                     }
-                    _ => PatternKind::Wild
+                    ref pats => {
+                        self.tcx.sess.delay_span_bug(
+                            pat.span,
+                            &format!("found bad range pattern `{:?}` outside of error recovery",
+                                     pats),
+                        );
+
+                        PatternKind::Wild
+                    }
                 }
             }
 
@@ -583,12 +537,9 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
 
             PatKind::Binding(_, id, ident, ref sub) => {
                 let var_ty = self.tables.node_id_to_type(pat.hir_id);
-                let region = match var_ty.sty {
-                    ty::Ref(r, _, _) => Some(r),
-                    ty::Error => { // Avoid ICE
-                        return Pattern { span: pat.span, ty, kind: Box::new(PatternKind::Wild) };
-                    }
-                    _ => None,
+                if let ty::Error = var_ty.sty {
+                    // Avoid ICE
+                    return Pattern { span: pat.span, ty, kind: Box::new(PatternKind::Wild) };
                 };
                 let bm = *self.tables.pat_binding_modes().get(pat.hir_id)
                                                          .expect("missing binding mode");
@@ -599,10 +550,10 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         (Mutability::Not, BindingMode::ByValue),
                     ty::BindByReference(hir::MutMutable) =>
                         (Mutability::Not, BindingMode::ByRef(
-                            region.unwrap(), BorrowKind::Mut { allow_two_phase_borrow: false })),
+                            BorrowKind::Mut { allow_two_phase_borrow: false })),
                     ty::BindByReference(hir::MutImmutable) =>
                         (Mutability::Not, BindingMode::ByRef(
-                            region.unwrap(), BorrowKind::Shared)),
+                            BorrowKind::Shared)),
                 };
 
                 // A ref x pattern is the same node used for x, and as such it has
@@ -795,19 +746,16 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
         };
 
         if let Some(user_ty) = self.user_substs_applied_to_ty_of_hir_id(hir_id) {
-            let subpattern = Pattern {
-                span,
-                ty,
-                kind: Box::new(kind),
-            };
-
-            debug!("pattern user_ty = {:?} for pattern at {:?}", user_ty, span);
-
-            let pat_ty = PatternTypeProjection::from_user_type(user_ty);
+            debug!("lower_variant_or_leaf: kind={:?} user_ty={:?} span={:?}", kind, user_ty, span);
             kind = PatternKind::AscribeUserType {
-                subpattern,
-                user_ty: pat_ty,
+                subpattern: Pattern {
+                    span,
+                    ty,
+                    kind: Box::new(kind),
+                },
+                user_ty: PatternTypeProjection::from_user_type(user_ty),
                 user_ty_span: span,
+                variance: ty::Variance::Covariant,
             };
         }
 
@@ -844,7 +792,31 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                         };
                         match self.tcx.at(span).const_eval(self.param_env.and(cid)) {
                             Ok(value) => {
-                                return self.const_to_pat(instance, value, id, span)
+                                let pattern = self.const_to_pat(instance, value, id, span);
+                                if !is_associated_const {
+                                    return pattern;
+                                }
+
+                                let user_provided_types = self.tables().user_provided_types();
+                                return if let Some(u_ty) = user_provided_types.get(id) {
+                                    let user_ty = PatternTypeProjection::from_user_type(*u_ty);
+                                    Pattern {
+                                        span,
+                                        kind: Box::new(
+                                            PatternKind::AscribeUserType {
+                                                subpattern: pattern,
+                                                /// Note that use `Contravariant` here. See the
+                                                /// `variance` field documentation for details.
+                                                variance: ty::Variance::Contravariant,
+                                                user_ty,
+                                                user_ty_span: span,
+                                            }
+                                        ),
+                                        ty: value.ty,
+                                    }
+                                } else {
+                                    pattern
+                                }
                             },
                             Err(_) => {
                                 self.tcx.sess.span_err(
@@ -930,11 +902,11 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
     fn const_to_pat(
         &self,
         instance: ty::Instance<'tcx>,
-        cv: &'tcx ty::Const<'tcx>,
+        cv: ty::Const<'tcx>,
         id: hir::HirId,
         span: Span,
     ) -> Pattern<'tcx> {
-        debug!("const_to_pat: cv={:#?}", cv);
+        debug!("const_to_pat: cv={:#?} id={:?}", cv, id);
         let adt_subpattern = |i, variant_opt| {
             let field = Field::new(i);
             let val = const_field(
@@ -952,9 +924,10 @@ impl<'a, 'tcx> PatternContext<'a, 'tcx> {
                 }
             }).collect::<Vec<_>>()
         };
+        debug!("const_to_pat: cv.ty={:?} span={:?}", cv.ty, span);
         let kind = match cv.ty.sty {
             ty::Float(_) => {
-                let id = self.tcx.hir.hir_to_node_id(id);
+                let id = self.tcx.hir().hir_to_node_id(id);
                 self.tcx.lint_node(
                     ::rustc::lint::builtin::ILLEGAL_FLOATING_POINT_LITERAL_PATTERN,
                     id,
@@ -1090,8 +1063,8 @@ macro_rules! CloneImpls {
 }
 
 CloneImpls!{ <'tcx>
-    Span, Field, Mutability, ast::Name, ast::NodeId, usize, &'tcx ty::Const<'tcx>,
-    Region<'tcx>, Ty<'tcx>, BindingMode<'tcx>, &'tcx AdtDef,
+    Span, Field, Mutability, ast::Name, ast::NodeId, usize, ty::Const<'tcx>,
+    Region<'tcx>, Ty<'tcx>, BindingMode, &'tcx AdtDef,
     &'tcx Substs<'tcx>, &'tcx Kind<'tcx>, UserTypeAnnotation<'tcx>,
     UserTypeProjection<'tcx>, PatternTypeProjection<'tcx>
 }
@@ -1129,11 +1102,13 @@ impl<'tcx> PatternFoldable<'tcx> for PatternKind<'tcx> {
             PatternKind::Wild => PatternKind::Wild,
             PatternKind::AscribeUserType {
                 ref subpattern,
+                variance,
                 ref user_ty,
                 user_ty_span,
             } => PatternKind::AscribeUserType {
                 subpattern: subpattern.fold_with(folder),
                 user_ty: user_ty.fold_with(folder),
+                variance,
                 user_ty_span,
             },
             PatternKind::Binding {
@@ -1177,17 +1152,17 @@ impl<'tcx> PatternFoldable<'tcx> for PatternKind<'tcx> {
             } => PatternKind::Constant {
                 value: value.fold_with(folder)
             },
-            PatternKind::Range {
+            PatternKind::Range(PatternRange {
                 lo,
                 hi,
                 ty,
                 end,
-            } => PatternKind::Range {
+            }) => PatternKind::Range(PatternRange {
                 lo: lo.fold_with(folder),
                 hi: hi.fold_with(folder),
                 ty: ty.fold_with(folder),
                 end,
-            },
+            }),
             PatternKind::Slice {
                 ref prefix,
                 ref slice,
@@ -1210,10 +1185,10 @@ impl<'tcx> PatternFoldable<'tcx> for PatternKind<'tcx> {
     }
 }
 
-pub fn compare_const_vals<'a, 'tcx>(
-    tcx: TyCtxt<'a, 'tcx, 'tcx>,
-    a: &'tcx ty::Const<'tcx>,
-    b: &'tcx ty::Const<'tcx>,
+pub fn compare_const_vals<'a, 'gcx, 'tcx>(
+    tcx: TyCtxt<'a, 'gcx, 'tcx>,
+    a: ty::Const<'tcx>,
+    b: ty::Const<'tcx>,
     ty: ty::ParamEnvAnd<'tcx, Ty<'tcx>>,
 ) -> Option<Ordering> {
     trace!("compare_const_vals: {:?}, {:?}", a, b);
@@ -1232,6 +1207,9 @@ pub fn compare_const_vals<'a, 'tcx>(
     if a.ty != b.ty || a.ty != ty.value {
         return fallback();
     }
+
+    let tcx = tcx.global_tcx();
+    let (a, b, ty) = (a, b, ty).lift_to_tcx(tcx).unwrap();
 
     // FIXME: This should use assert_bits(ty) instead of use_bits
     // but triggers possibly bugs due to mismatching of arrays and slices
@@ -1259,34 +1237,32 @@ pub fn compare_const_vals<'a, 'tcx>(
         }
     }
 
-    if let ty::Ref(_, rty, _) = ty.value.sty {
-        if let ty::Str = rty.sty {
-            match (a.val, b.val) {
-                (
-                    ConstValue::ScalarPair(
-                        Scalar::Ptr(ptr_a),
-                        len_a,
-                    ),
-                    ConstValue::ScalarPair(
-                        Scalar::Ptr(ptr_b),
-                        len_b,
-                    ),
-                ) if ptr_a.offset.bytes() == 0 && ptr_b.offset.bytes() == 0 => {
-                    if let Ok(len_a) = len_a.to_bits(tcx.data_layout.pointer_size) {
-                        if let Ok(len_b) = len_b.to_bits(tcx.data_layout.pointer_size) {
-                            if len_a == len_b {
-                                let map = tcx.alloc_map.lock();
-                                let alloc_a = map.unwrap_memory(ptr_a.alloc_id);
-                                let alloc_b = map.unwrap_memory(ptr_b.alloc_id);
-                                if alloc_a.bytes.len() as u128 == len_a {
-                                    return from_bool(alloc_a == alloc_b);
-                                }
+    if let ty::Str = ty.value.sty {
+        match (a.val, b.val) {
+            (
+                ConstValue::ScalarPair(
+                    Scalar::Ptr(ptr_a),
+                    len_a,
+                ),
+                ConstValue::ScalarPair(
+                    Scalar::Ptr(ptr_b),
+                    len_b,
+                ),
+            ) if ptr_a.offset.bytes() == 0 && ptr_b.offset.bytes() == 0 => {
+                if let Ok(len_a) = len_a.to_bits(tcx.data_layout.pointer_size) {
+                    if let Ok(len_b) = len_b.to_bits(tcx.data_layout.pointer_size) {
+                        if len_a == len_b {
+                            let map = tcx.alloc_map.lock();
+                            let alloc_a = map.unwrap_memory(ptr_a.alloc_id);
+                            let alloc_b = map.unwrap_memory(ptr_b.alloc_id);
+                            if alloc_a.bytes.len() as u128 == len_a {
+                                return from_bool(alloc_a == alloc_b);
                             }
                         }
                     }
                 }
-                _ => (),
             }
+            _ => (),
         }
     }
 

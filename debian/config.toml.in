@@ -24,15 +24,18 @@ prefix = "/usr"
 
 [target.DEB_BUILD_RUST_TYPE]
 llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+linker = "DEB_BUILD_GNU_TYPE-gcc"
 
 ifelse(DEB_BUILD_RUST_TYPE,DEB_HOST_RUST_TYPE,,
 [target.DEB_HOST_RUST_TYPE]
 llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+linker = "DEB_HOST_GNU_TYPE-gcc"
 
 )dnl
 ifelse(DEB_BUILD_RUST_TYPE,DEB_TARGET_RUST_TYPE,,DEB_HOST_RUST_TYPE,DEB_TARGET_RUST_TYPE,,
 [target.DEB_TARGET_RUST_TYPE]
 llvm-config = "LLVM_DESTDIR/usr/lib/llvm-LLVM_VERSION/bin/llvm-config"
+linker = "DEB_TARGET_GNU_TYPE-gcc"
 
 )dnl
 [llvm]

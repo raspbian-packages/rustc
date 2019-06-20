@@ -1,12 +1,14 @@
 # Patches for upstream
 
+# Fedora patches, thanks to them
+u-0001-Backport-deprecation-fixes-from-commit-b7f030e.patch
+u-0001-rust-gdb-relax-the-GDB-version-regex.patch
+# above can be dropped after 1.33
+
 # pending, or forwarded
 #u-compiletest.patch # needs to be applied conditionally, see d/rules
-u-0001-lldb_batchmode.py-try-import-_thread-for-Python-3.patch
 u-0001-Fix-new-renamed_and_removed_lints-warning-247.patch
-u-0001-librustc_codegen_llvm-Don-t-eliminate-empty-structs-.patch
 u-reproducible-build.patch
-u-fixtestignores-ppc64el.patch
 u-prefer-local-css.patch
 u-make-tests-work-without-rpath.patch
 u-mips-fixes.diff
@@ -15,24 +17,28 @@ u-mips-fixes.diff
 u-reproducible-dl-stage0.patch
 
 gcc-4.8-aarch64-ice.diff
-# Porter fixes under discussion, not suitable for upstreaming
-# as-is but a proper fix is being discussed
-d-fix-mips64el-bootstrap.patch
-d-sparc64-fix-fnctls.patch
 
 # Debian-specific patches, not suitable for upstream
+# Patches needed by debian/prune-unused-deps
+d-0000-ignore-removed-submodules.patch
+d-0001-disable-miniz.patch
+d-0002-pkg-config-no-special-snowflake.patch
+# Other patches needed by the full Debian build
 d-ignore-error-detail-diff.patch
 d-disable-cargo-vendor.patch
 d-rust-gdb-paths
 d-rust-lldb-paths
 d-add-soname.patch
 d-dont-download-stage0.patch
-d-ignore-removed-submodules.patch
 d-read-beta-version-from-file.patch
 d-ignore-avx-44056.patch
 d-i686-baseline.patch
 d-no-jemalloc.patch
-
 d-no-web-dependencies-in-doc.patch
+
+# Porter fixes under discussion, not suitable for upstreaming
+# as-is but a proper fix is being discussed
+d-fix-mips64el-bootstrap.patch
+
 # Work around for some porterboxes, keep this commented
 #d-host-duplicates.patch

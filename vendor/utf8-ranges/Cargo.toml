@@ -12,8 +12,9 @@
 
 [package]
 name = "utf8-ranges"
-version = "1.0.1"
+version = "1.0.2"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
+exclude = ["/ci/*", "/.travis.yml", "/Makefile", "/ctags.rust", "/session.vim"]
 description = "Convert ranges of Unicode codepoints to UTF-8 byte ranges."
 homepage = "https://github.com/BurntSushi/utf8-ranges"
 documentation = "https://docs.rs/utf8-ranges"

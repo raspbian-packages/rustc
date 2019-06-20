@@ -79,8 +79,10 @@
 #![allow(trivial_numeric_casts)]
 #![cfg_attr(test, deny(warnings))]
 
+extern crate crc32fast;
 #[cfg(feature = "tokio")]
 extern crate futures;
+#[cfg(not(all(target_arch = "wasm32", not(target_os = "emscripten"))))]
 extern crate libc;
 #[cfg(test)]
 extern crate quickcheck;
@@ -89,6 +91,22 @@ extern crate rand;
 #[cfg(feature = "tokio")]
 #[macro_use]
 extern crate tokio_io;
+
+// These must currently agree with here --
+// https://github.com/Frommi/miniz_oxide/blob/e6c214efd253491ac072c2c9adba87ef5b4cd5cb/src/lib.rs#L14-L19
+//
+// Eventually we'll want to actually move these into `libc` itself for wasm, or
+// otherwise not use the capi crate for miniz_oxide but rather use the
+// underlying types.
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+mod libc {
+    #![allow(non_camel_case_types)]
+    pub type c_ulong = u64;
+    pub type off_t = i64;
+    pub type c_int = i32;
+    pub type c_uint = u32;
+    pub type size_t = usize;
+}
 
 pub use gz::GzBuilder;
 pub use gz::GzHeader;

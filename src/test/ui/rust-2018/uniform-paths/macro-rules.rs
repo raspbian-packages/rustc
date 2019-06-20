@@ -1,6 +1,6 @@
 // edition:2018
 
-#![feature(underscore_imports, decl_macro)]
+#![feature(decl_macro)]
 
 mod m1 {
     // Non-exported legacy macros are treated as `pub(crate)`.

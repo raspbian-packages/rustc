@@ -1,17 +1,6 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![allow(non_upper_case_globals)]
 
 use attributes;
-use intrinsics::{self, Intrinsic};
 use llvm;
 use llvm_util;
 use abi::{Abi, FnType, LlvmType, PassMode};
@@ -668,142 +657,7 @@ impl IntrinsicCallMethods<'tcx> for Builder<'a, 'll, 'tcx> {
                 return;
             }
 
-            _ => {
-                let intr = match Intrinsic::find(&name) {
-                    Some(intr) => intr,
-                    None => bug!("unknown intrinsic '{}'", name),
-                };
-                fn one<T>(x: Vec<T>) -> T {
-                    assert_eq!(x.len(), 1);
-                    x.into_iter().next().unwrap()
-                }
-                fn ty_to_type<'ll>(
-                    cx: &CodegenCx<'ll, '_>,
-                     t: &intrinsics::Type
-                 ) -> Vec<&'ll Type> {
-                    use intrinsics::Type::*;
-                    match *t {
-                        Void => vec![cx.type_void()],
-                        Integer(_signed, _width, llvm_width) => {
-                            vec![cx.type_ix( llvm_width as u64)]
-                        }
-                        Float(x) => {
-                            match x {
-                                32 => vec![cx.type_f32()],
-                                64 => vec![cx.type_f64()],
-                                _ => bug!()
-                            }
-                        }
-                        Pointer(ref t, ref llvm_elem, _const) => {
-                            let t = llvm_elem.as_ref().unwrap_or(t);
-                            let elem = one(ty_to_type(cx, t));
-                            vec![cx.type_ptr_to(elem)]
-                        }
-                        Vector(ref t, ref llvm_elem, length) => {
-                            let t = llvm_elem.as_ref().unwrap_or(t);
-                            let elem = one(ty_to_type(cx, t));
-                            vec![cx.type_vector(elem, length as u64)]
-                        }
-                        Aggregate(false, ref contents) => {
-                            let elems = contents.iter()
-                                                .map(|t| one(ty_to_type(cx, t)))
-                                                .collect::<Vec<_>>();
-                            vec![cx.type_struct( &elems, false)]
-                        }
-                        Aggregate(true, ref contents) => {
-                            contents.iter()
-                                    .flat_map(|t| ty_to_type(cx, t))
-                                    .collect()
-                        }
-                    }
-                }
-
-                // This allows an argument list like `foo, (bar, baz),
-                // qux` to be converted into `foo, bar, baz, qux`, integer
-                // arguments to be truncated as needed and pointers to be
-                // cast.
-                fn modify_as_needed<'ll, 'tcx>(
-                    bx: &mut Builder<'_, 'll, 'tcx>,
-                    t: &intrinsics::Type,
-                    arg: &OperandRef<'tcx, &'ll Value>,
-                ) -> Vec<&'ll Value> {
-                    match *t {
-                        intrinsics::Type::Aggregate(true, ref contents) => {
-                            // We found a tuple that needs squishing! So
-                            // run over the tuple and load each field.
-                            //
-                            // This assumes the type is "simple", i.e. no
-                            // destructors, and the contents are SIMD
-                            // etc.
-                            assert!(!bx.type_needs_drop(arg.layout.ty));
-                            let (ptr, align) = match arg.val {
-                                OperandValue::Ref(ptr, None, align) => (ptr, align),
-                                _ => bug!()
-                            };
-                            let arg = PlaceRef::new_sized(ptr, arg.layout, align);
-                            (0..contents.len()).map(|i| {
-                                let field = arg.project_field(bx, i);
-                                bx.load_operand(field).immediate()
-                            }).collect()
-                        }
-                        intrinsics::Type::Pointer(_, Some(ref llvm_elem), _) => {
-                            let llvm_elem = one(ty_to_type(bx, llvm_elem));
-                            vec![bx.pointercast(arg.immediate(), bx.type_ptr_to(llvm_elem))]
-                        }
-                        intrinsics::Type::Vector(_, Some(ref llvm_elem), length) => {
-                            let llvm_elem = one(ty_to_type(bx, llvm_elem));
-                            vec![
-                                bx.bitcast(arg.immediate(),
-                                bx.type_vector(llvm_elem, length as u64))
-                            ]
-                        }
-                        intrinsics::Type::Integer(_, width, llvm_width) if width != llvm_width => {
-                            // the LLVM intrinsic uses a smaller integer
-                            // size than the C intrinsic's signature, so
-                            // we have to trim it down here.
-                            vec![bx.trunc(arg.immediate(), bx.type_ix(llvm_width as u64))]
-                        }
-                        _ => vec![arg.immediate()],
-                    }
-                }
-
-
-                let inputs = intr.inputs.iter()
-                                        .flat_map(|t| ty_to_type(self, t))
-                                        .collect::<Vec<_>>();
-
-                let outputs = one(ty_to_type(self, &intr.output));
-
-                let llargs: Vec<_> = intr.inputs.iter().zip(args).flat_map(|(t, arg)| {
-                    modify_as_needed(self, t, arg)
-                }).collect();
-                assert_eq!(inputs.len(), llargs.len());
-
-                let val = match intr.definition {
-                    intrinsics::IntrinsicDef::Named(name) => {
-                        let f = self.declare_cfn(
-                            name,
-                            self.type_func(&inputs, outputs),
-                        );
-                        self.call(f, &llargs, None)
-                    }
-                };
-
-                match *intr.output {
-                    intrinsics::Type::Aggregate(flatten, ref elems) => {
-                        // the output is a tuple so we need to munge it properly
-                        assert!(!flatten);
-
-                        for i in 0..elems.len() {
-                            let dest = result.project_field(self, i);
-                            let val = self.extract_value(val, i as u64);
-                            self.store(val, dest.llval, dest.align);
-                        }
-                        return;
-                    }
-                    _ => val,
-                }
-            }
+            _ => bug!("unknown intrinsic '{}'", name),
         };
 
         if !fn_ty.ret.is_ignore() {
@@ -997,7 +851,7 @@ fn codegen_msvc_try(
 }
 
 // Definition of the standard "try" function for Rust using the GNU-like model
-// of exceptions (e.g. the normal semantics of LLVM's landingpad and invoke
+// of exceptions (e.g., the normal semantics of LLVM's landingpad and invoke
 // instructions).
 //
 // This codegen is a little surprising because we always call a shim
@@ -1081,7 +935,7 @@ fn gen_fn<'ll, 'tcx>(
         Abi::Rust
     ));
     let llfn = cx.define_internal_fn(name, rust_fn_sig);
-    attributes::from_fn_attrs(cx, llfn, None);
+    attributes::from_fn_attrs(cx, llfn, None, rust_fn_sig);
     let bx = Builder::new_block(cx, llfn, "entry-block");
     codegen(bx);
     llfn
@@ -1171,7 +1025,28 @@ fn generic_simd_intrinsic(
     );
     let arg_tys = sig.inputs();
 
-    // every intrinsic takes a SIMD vector as its first argument
+    if name == "simd_select_bitmask" {
+        let in_ty = arg_tys[0];
+        let m_len = match in_ty.sty {
+            // Note that this `.unwrap()` crashes for isize/usize, that's sort
+            // of intentional as there's not currently a use case for that.
+            ty::Int(i) => i.bit_width().unwrap(),
+            ty::Uint(i) => i.bit_width().unwrap(),
+            _ => return_error!("`{}` is not an integral type", in_ty),
+        };
+        require_simd!(arg_tys[1], "argument");
+        let v_len = arg_tys[1].simd_size(tcx);
+        require!(m_len == v_len,
+                 "mismatched lengths: mask length `{}` != other vector length `{}`",
+                 m_len, v_len
+        );
+        let i1 = bx.type_i1();
+        let i1xn = bx.type_vector(i1, m_len as u64);
+        let m_i1s = bx.bitcast(args[0].immediate(), i1xn);
+        return Ok(bx.select(m_i1s, args[1].immediate(), args[2].immediate()));
+    }
+
+    // every intrinsic below takes a SIMD vector as its first argument
     require_simd!(arg_tys[0], "input");
     let in_ty = arg_tys[0];
     let in_elem = arg_tys[0].simd_type(tcx);
@@ -1275,6 +1150,7 @@ fn generic_simd_intrinsic(
     if name == "simd_select" {
         let m_elem_ty = in_elem;
         let m_len = in_len;
+        require_simd!(arg_tys[1], "argument");
         let v_len = arg_tys[1].simd_size(tcx);
         require!(m_len == v_len,
                  "mismatched lengths: mask length `{}` != other vector length `{}`",

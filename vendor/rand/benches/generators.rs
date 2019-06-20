@@ -1,7 +1,20 @@
+// Copyright 2018 Developers of the Rand project.
+//
+// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
+// https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
+// <LICENSE-MIT or https://opensource.org/licenses/MIT>, at your
+// option. This file may not be copied, modified, or distributed
+// except according to those terms.
+
 #![feature(test)]
 
 extern crate test;
 extern crate rand;
+extern crate rand_isaac;
+extern crate rand_chacha;
+extern crate rand_hc;
+extern crate rand_pcg;
+extern crate rand_xorshift;
 
 const RAND_BENCH_N: u64 = 1000;
 const BYTES_LEN: usize = 1024;
@@ -10,10 +23,13 @@ use std::mem::size_of;
 use test::{black_box, Bencher};
 
 use rand::prelude::*;
-use rand::prng::{XorShiftRng, Hc128Rng, IsaacRng, Isaac64Rng, ChaChaRng};
-use rand::prng::hc128::Hc128Core;
 use rand::rngs::adapter::ReseedingRng;
 use rand::rngs::{OsRng, JitterRng, EntropyRng};
+use rand_isaac::{IsaacRng, Isaac64Rng};
+use rand_chacha::ChaChaRng;
+use rand_hc::{Hc128Rng, Hc128Core};
+use rand_pcg::{Lcg64Xsh32, Mcg128Xsl64};
+use rand_xorshift::XorShiftRng;
 
 macro_rules! gen_bytes {
     ($fnn:ident, $gen:expr) => {
@@ -33,6 +49,8 @@ macro_rules! gen_bytes {
 }
 
 gen_bytes!(gen_bytes_xorshift, XorShiftRng::from_entropy());
+gen_bytes!(gen_bytes_lcg64_xsh32, Lcg64Xsh32::from_entropy());
+gen_bytes!(gen_bytes_mcg128_xsh64, Mcg128Xsl64::from_entropy());
 gen_bytes!(gen_bytes_chacha20, ChaChaRng::from_entropy());
 gen_bytes!(gen_bytes_hc128, Hc128Rng::from_entropy());
 gen_bytes!(gen_bytes_isaac, IsaacRng::from_entropy());
@@ -59,6 +77,8 @@ macro_rules! gen_uint {
 }
 
 gen_uint!(gen_u32_xorshift, u32, XorShiftRng::from_entropy());
+gen_uint!(gen_u32_lcg64_xsh32, u32, Lcg64Xsh32::from_entropy());
+gen_uint!(gen_u32_mcg128_xsh64, u32, Mcg128Xsl64::from_entropy());
 gen_uint!(gen_u32_chacha20, u32, ChaChaRng::from_entropy());
 gen_uint!(gen_u32_hc128, u32, Hc128Rng::from_entropy());
 gen_uint!(gen_u32_isaac, u32, IsaacRng::from_entropy());
@@ -68,6 +88,8 @@ gen_uint!(gen_u32_small, u32, SmallRng::from_entropy());
 gen_uint!(gen_u32_os, u32, OsRng::new().unwrap());
 
 gen_uint!(gen_u64_xorshift, u64, XorShiftRng::from_entropy());
+gen_uint!(gen_u64_lcg64_xsh32, u64, Lcg64Xsh32::from_entropy());
+gen_uint!(gen_u64_mcg128_xsh64, u64, Mcg128Xsl64::from_entropy());
 gen_uint!(gen_u64_chacha20, u64, ChaChaRng::from_entropy());
 gen_uint!(gen_u64_hc128, u64, Hc128Rng::from_entropy());
 gen_uint!(gen_u64_isaac, u64, IsaacRng::from_entropy());
@@ -101,6 +123,8 @@ macro_rules! init_gen {
 }
 
 init_gen!(init_xorshift, XorShiftRng);
+init_gen!(init_lcg64_xsh32, Lcg64Xsh32);
+init_gen!(init_mcg128_xsh64, Mcg128Xsl64);
 init_gen!(init_hc128, Hc128Rng);
 init_gen!(init_isaac, IsaacRng);
 init_gen!(init_isaac64, Isaac64Rng);

@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #[doc(primitive = "bool")]
 #[doc(alias = "true")]
 #[doc(alias = "false")]
@@ -312,7 +302,7 @@ mod prim_never { }
 /// ```text
 /// error: character literal may only contain one codepoint: 'é'
 /// let c = 'é';
-///         ^^^^
+///         ^^^
 /// ```
 ///
 /// Another implication of the 4-byte fixed size of a `char` is that
@@ -426,7 +416,7 @@ mod prim_unit { }
 /// ## 3. Get it from C.
 ///
 /// ```
-/// # #![feature(libc)]
+/// # #![feature(rustc_private)]
 /// extern crate libc;
 ///
 /// use std::mem;
@@ -462,7 +452,7 @@ mod prim_pointer { }
 ///
 /// There are two syntactic forms for creating an array:
 ///
-/// * A list with each element, i.e. `[x, y, z]`.
+/// * A list with each element, i.e., `[x, y, z]`.
 /// * A repeat expression `[x; N]`, which produces an array with `N` copies of `x`.
 ///   The type of `x` must be [`Copy`][copy].
 ///
@@ -560,7 +550,6 @@ mod prim_array { }
 #[doc(alias = "[")]
 #[doc(alias = "]")]
 #[doc(alias = "[]")]
-//
 /// A dynamically-sized view into a contiguous sequence, `[T]`.
 ///
 /// *[See also the `std::slice` module](slice/index.html).*
@@ -582,11 +571,11 @@ mod prim_array { }
 /// points to:
 ///
 /// ```
-/// let x = &mut [1, 2, 3];
+/// let mut x = [1, 2, 3];
+/// let x = &mut x[..]; // Take a full slice of `x`.
 /// x[1] = 7;
 /// assert_eq!(x, &[1, 7, 3]);
 /// ```
-///
 #[stable(feature = "rust1", since = "1.0.0")]
 mod prim_slice { }
 
@@ -933,7 +922,7 @@ mod prim_usize { }
 /// For more information on how to use references, see [the book's section on "References and
 /// Borrowing"][book-refs].
 ///
-/// [book-refs]: ../book/second-edition/ch04-02-references-and-borrowing.html
+/// [book-refs]: ../book/ch04-02-references-and-borrowing.html
 ///
 /// # Trait implementations
 ///

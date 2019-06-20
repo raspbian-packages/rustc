@@ -1,6 +1,5 @@
 // edition:2018
 
-#![feature(underscore_imports)]
 #![allow(non_camel_case_types)]
 
 mod T {

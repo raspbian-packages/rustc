@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![allow(non_camel_case_types)]
 
 use rustc_data_structures::sync::Lock;
@@ -28,7 +18,7 @@ use lazy_static;
 use session::Session;
 
 // The name of the associated type for `Fn` return types
-pub const FN_OUTPUT_NAME: &'static str = "Output";
+pub const FN_OUTPUT_NAME: &str = "Output";
 
 // Useful type to use with `Result<>` indicate that an error has already
 // been reported to the user, so no need to continue checking.
@@ -342,7 +332,7 @@ pub trait MemoizationMap {
     /// If `key` is present in the map, return the value,
     /// otherwise invoke `op` and store the value in the map.
     ///
-    /// NB: if the receiver is a `DepTrackingMap`, special care is
+    /// N.B., if the receiver is a `DepTrackingMap`, special care is
     /// needed in the `op` to ensure that the correct edges are
     /// added into the dep graph. See the `DepTrackingMap` impl for
     /// more details!

@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! The `ObligationForest` is a utility data structure used in trait
 //! matching to track the set of outstanding obligations (those not
 //! yet resolved to success or error). It also tracks the "backtrace"
@@ -531,7 +521,7 @@ impl<O: ForestObligation> ObligationForest<O> {
     /// indices. Cannot be used during a transaction.
     ///
     /// Beforehand, all nodes must be marked as `Done` and no cycles
-    /// on these nodes may be present. This is done by e.g. `process_cycles`.
+    /// on these nodes may be present. This is done by e.g., `process_cycles`.
     #[inline(never)]
     fn compress(&mut self, do_completed: DoCompleted) -> Option<Vec<O>> {
         let nodes_len = self.nodes.len();

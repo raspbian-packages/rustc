@@ -1,6 +1,5 @@
-// Copyright 2013-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
+// Copyright 2013-2015 The Rust Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -56,12 +55,10 @@ use rand_core::{CryptoRng, RngCore, Error, impls};
 /// The three Emscripten targets `asmjs-unknown-emscripten`,
 /// `wasm32-unknown-emscripten` and `wasm32-experimental-emscripten` use
 /// Emscripten's emulation of `/dev/random` on web browsers and Node.js.
-/// Unfortunately it falls back to the insecure `Math.random()` if a browser
-/// doesn't support [`Crypto.getRandomValues`][12].
 ///
 /// The bare Wasm target `wasm32-unknown-unknown` tries to call the javascript
-/// methods directly, using `stdweb` in combination with `cargo-web`.
-/// `wasm-bindgen` is not yet supported.
+/// methods directly, using either `stdweb` in combination with `cargo-web` or
+/// `wasm-bindgen` depending on what features are activated for this crate.
 ///
 /// ## Early boot
 ///
@@ -408,27 +405,32 @@ mod imp {
     const NR_GETRANDOM: libc::c_long = 349;
     #[cfg(target_arch = "powerpc")]
     const NR_GETRANDOM: libc::c_long = 359;
+    #[cfg(target_arch = "powerpc64")]
+    const NR_GETRANDOM: libc::c_long = 359;
     #[cfg(target_arch = "mips")] // old ABI
     const NR_GETRANDOM: libc::c_long = 4353;
     #[cfg(target_arch = "mips64")]
     const NR_GETRANDOM: libc::c_long = 5313;
+    #[cfg(target_arch = "sparc")]
+    const NR_GETRANDOM: libc::c_long = 347;
+    #[cfg(target_arch = "sparc64")]
+    const NR_GETRANDOM: libc::c_long = 347;
     #[cfg(not(any(target_arch = "x86_64", target_arch = "x86",
                   target_arch = "arm", target_arch = "aarch64",
                   target_arch = "s390x", target_arch = "powerpc",
-                  target_arch = "mips", target_arch = "mips64")))]
+                  target_arch = "powerpc64", target_arch = "mips",
+                  target_arch = "mips64", target_arch = "sparc",
+                  target_arch = "sparc64")))]
     const NR_GETRANDOM: libc::c_long = 0;
 
     fn getrandom(buf: &mut [u8], blocking: bool) -> libc::c_long {
-        extern "C" {
-            fn syscall(number: libc::c_long, ...) -> libc::c_long;
-        }
         const GRND_NONBLOCK: libc::c_uint = 0x0001;
 
         if NR_GETRANDOM == 0 { return -1 };
 
         unsafe {
-            syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(),
-                    if blocking { 0 } else { GRND_NONBLOCK })
+            libc::syscall(NR_GETRANDOM, buf.as_mut_ptr(), buf.len(),
+                          if blocking { 0 } else { GRND_NONBLOCK })
         }
     }
 
@@ -963,7 +965,7 @@ mod imp {
 #[cfg(windows)]
 mod imp {
     extern crate winapi;
-    
+
     use {Error, ErrorKind};
     use super::OsRngImpl;
 
@@ -1102,11 +1104,98 @@ mod imp {
     }
 }
 
+#[cfg(all(target_arch = "wasm32",
+          not(target_os = "emscripten"),
+          not(feature = "stdweb"),
+          feature = "wasm-bindgen"))]
+mod imp {
+    use __wbg_shims::*;
+
+    use {Error, ErrorKind};
+    use super::OsRngImpl;
+
+    #[derive(Clone, Debug)]
+    pub enum OsRng {
+        Node(NodeCrypto),
+        Browser(BrowserCrypto),
+    }
+
+    impl OsRngImpl for OsRng {
+        fn new() -> Result<OsRng, Error> {
+            // First up we need to detect if we're running in node.js or a
+            // browser. To do this we get ahold of the `this` object (in a bit
+            // of a roundabout fashion).
+            //
+            // Once we have `this` we look at its `self` property, which is
+            // only defined on the web (either a main window or web worker).
+            let this = Function::new("return this").call(&JsValue::undefined());
+            assert!(this != JsValue::undefined());
+            let this = This::from(this);
+            let is_browser = this.self_() != JsValue::undefined();
+
+            if !is_browser {
+                return Ok(OsRng::Node(node_require("crypto")))
+            }
+
+            // If `self` is defined then we're in a browser somehow (main window
+            // or web worker). Here we want to try to use
+            // `crypto.getRandomValues`, but if `crypto` isn't defined we assume
+            // we're in an older web browser and the OS RNG isn't available.
+            let crypto = this.crypto();
+            if crypto.is_undefined() {
+                let msg = "self.crypto is undefined";
+                return Err(Error::new(ErrorKind::Unavailable, msg))
+            }
+
+            // Test if `crypto.getRandomValues` is undefined as well
+            let crypto: BrowserCrypto = crypto.into();
+            if crypto.get_random_values_fn().is_undefined() {
+                let msg = "crypto.getRandomValues is undefined";
+                return Err(Error::new(ErrorKind::Unavailable, msg))
+            }
+
+            // Ok! `self.crypto.getRandomValues` is a defined value, so let's
+            // assume we can do browser crypto.
+            Ok(OsRng::Browser(crypto))
+        }
+
+        fn fill_chunk(&mut self, dest: &mut [u8]) -> Result<(), Error> {
+            match *self {
+                OsRng::Node(ref n) => n.random_fill_sync(dest),
+                OsRng::Browser(ref n) => n.get_random_values(dest),
+            }
+            Ok(())
+        }
+
+        fn max_chunk_size(&self) -> usize {
+            match *self {
+                OsRng::Node(_) => usize::max_value(),
+                OsRng::Browser(_) => {
+                    // see https://developer.mozilla.org/en-US/docs/Web/API/Crypto/getRandomValues
+                    //
+                    // where it says:
+                    //
+                    // > A QuotaExceededError DOMException is thrown if the
+                    // > requested length is greater than 65536 bytes.
+                    65536
+                }
+            }
+        }
+
+        fn method_str(&self) -> &'static str {
+            match *self {
+                OsRng::Node(_) => "crypto.randomFillSync",
+                OsRng::Browser(_) => "crypto.getRandomValues",
+            }
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod test {
     use RngCore;
-    use OsRng;
+    use super::OsRng;
 
     #[test]
     fn test_os_rng() {

@@ -12,8 +12,9 @@
 
 [package]
 name = "walkdir"
-version = "2.2.5"
+version = "2.2.7"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
+exclude = ["/ci/*", "/.travis.yml", "/Makefile", "/appveyor.yml", "/ctags.rust", "/session.vim"]
 description = "Recursively walk a directory."
 homepage = "https://github.com/BurntSushi/walkdir"
 documentation = "https://docs.rs/walkdir/"

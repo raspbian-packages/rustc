@@ -1,12 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
 #![allow(non_camel_case_types, non_snake_case)]
 
 use rustc::ty::{self, Ty, TyCtxt};
@@ -158,7 +149,7 @@ pub fn langcall(tcx: TyCtxt,
 }
 
 // To avoid UB from LLVM, these two functions mask RHS with an
-// appropriate mask unconditionally (i.e. the fallback behavior for
+// appropriate mask unconditionally (i.e., the fallback behavior for
 // all shifts). For 32- and 64-bit types, this matches the semantics
 // of Java. (See related discussion on #1877 and #10183.)
 

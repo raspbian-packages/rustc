@@ -12,7 +12,7 @@
 
 [package]
 name = "chrono"
-version = "0.4.4"
+version = "0.4.6"
 authors = ["Kang Seonghoon <public+rust@mearie.org>", "Brandon W Maister <quodlibetor@gmail.com>"]
 description = "Date and time library for Rust"
 homepage = "https://github.com/chronotope/chrono"
@@ -23,6 +23,9 @@ categories = ["date-and-time"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/chronotope/chrono"
 [package.metadata.docs.rs]
+all-features = true
+
+[package.metadata.playground]
 all-features = true
 
 [lib]
@@ -36,7 +39,7 @@ version = "0.2"
 default-features = false
 
 [dependencies.rustc-serialize]
-version = "0.3"
+version = "0.3.20"
 optional = true
 
 [dependencies.serde]
@@ -44,7 +47,7 @@ version = "1"
 optional = true
 
 [dependencies.time]
-version = "^0.1.36"
+version = "0.1.39"
 optional = true
 [dev-dependencies.bincode]
 version = "0.8.0"

@@ -226,6 +226,14 @@ macro_rules! is_x86_feature_detected {
         cfg!(target_feature = "xsavec") || $crate::arch::detect::check_for(
             $crate::arch::detect::Feature::xsavec)
     };
+    ("cmpxchg16b") => {
+        cfg!(target_feature = "cmpxchg16b") || $crate::arch::detect::check_for(
+            $crate::arch::detect::Feature::cmpxchg16b)
+    };
+    ("adx") => {
+        cfg!(target_feature = "adx") || $crate::arch::detect::check_for(
+            $crate::arch::detect::Feature::adx)
+    };
     ($t:tt) => {
         compile_error!(concat!("unknown target feature: ", $t))
     };
@@ -316,4 +324,8 @@ pub enum Feature {
     xsaves,
     /// XSAVEC (Save Processor Extended States Compacted)
     xsavec,
+    /// CMPXCH16B, a 16-byte compare-and-swap instruction
+    cmpxchg16b,
+    /// ADX, Intel ADX (Multi-Precision Add-Carry Instruction Extensions)
+    adx,
 }

@@ -1,11 +1,3 @@
-// Copyright 2017 Serde Developers
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use proc_macro2::{Span, TokenStream};
 use syn::spanned::Spanned;
 use syn::{self, Ident, Index, Member};
@@ -17,9 +9,12 @@ use internals::{attr, Ctxt, Derive};
 use pretend;
 use try;
 
-pub fn expand_derive_serialize(input: &syn::DeriveInput) -> Result<TokenStream, String> {
+pub fn expand_derive_serialize(input: &syn::DeriveInput) -> Result<TokenStream, Vec<syn::Error>> {
     let ctxt = Ctxt::new();
-    let cont = Container::from_ast(&ctxt, input, Derive::Serialize);
+    let cont = match Container::from_ast(&ctxt, input, Derive::Serialize) {
+        Some(cont) => cont,
+        None => return Err(ctxt.check().unwrap_err()),
+    };
     precondition(&ctxt, &cont);
     try!(ctxt.check());
 
@@ -27,7 +22,10 @@ pub fn expand_derive_serialize(input: &syn::DeriveInput) -> Result<TokenStream, 
     let params = Parameters::new(&cont);
     let (impl_generics, ty_generics, where_clause) = params.generics.split_for_impl();
     let suffix = ident.to_string().trim_left_matches("r#").to_owned();
-    let dummy_const = Ident::new(&format!("_IMPL_SERIALIZE_FOR_{}", suffix), Span::call_site());
+    let dummy_const = Ident::new(
+        &format!("_IMPL_SERIALIZE_FOR_{}", suffix),
+        Span::call_site(),
+    );
     let body = Stmts(serialize_body(&cont, &params));
 
     let impl_block = if let Some(remote) = cont.attrs.remote() {
@@ -77,10 +75,10 @@ fn precondition(cx: &Ctxt, cont: &Container) {
     match cont.attrs.identifier() {
         attr::Identifier::No => {}
         attr::Identifier::Field => {
-            cx.error("field identifiers cannot be serialized");
+            cx.error_spanned_by(cont.original, "field identifiers cannot be serialized");
         }
         attr::Identifier::Variant => {
-            cx.error("variant identifiers cannot be serialized");
+            cx.error_spanned_by(cont.original, "variant identifiers cannot be serialized");
         }
     }
 }
@@ -205,7 +203,10 @@ fn serialize_transparent(cont: &Container, params: &Parameters) -> Fragment {
 
     let path = match transparent_field.attrs.serialize_with() {
         Some(path) => quote!(#path),
-        None => quote!(_serde::Serialize::serialize),
+        None => {
+            let span = transparent_field.original.span();
+            quote_spanned!(span=> _serde::Serialize::serialize)
+        },
     };
 
     quote_block! {
@@ -285,7 +286,8 @@ fn serialize_tuple_struct(
                 let field_expr = get_member(params, field, &Member::Unnamed(index));
                 quote!(if #path(#field_expr) { 0 } else { 1 })
             }
-        }).fold(quote!(0), |sum, expr| quote!(#sum + #expr));
+        })
+        .fold(quote!(0), |sum, expr| quote!(#sum + #expr));
 
     quote_block! {
         let #let_mut __serde_state = try!(_serde::Serializer::serialize_tuple_struct(__serializer, #type_name, #len));
@@ -328,7 +330,8 @@ fn serialize_struct_as_struct(
                 let field_expr = get_member(params, field, &field.member);
                 quote!(if #path(#field_expr) { 0 } else { 1 })
             }
-        }).fold(quote!(0), |sum, expr| quote!(#sum + #expr));
+        })
+        .fold(quote!(0), |sum, expr| quote!(#sum + #expr));
 
     quote_block! {
         let #let_mut __serde_state = try!(_serde::Serializer::serialize_struct(__serializer, #type_name, #len));
@@ -362,7 +365,8 @@ fn serialize_struct_as_map(
                     let field_expr = get_member(params, field, &field.member);
                     quote!(if #path(#field_expr) { 0 } else { 1 })
                 }
-            }).fold(quote!(0), |sum, expr| quote!(#sum + #expr));
+            })
+            .fold(quote!(0), |sum, expr| quote!(#sum + #expr));
         quote!(_serde::export::Some(#len))
     };
 
@@ -383,7 +387,8 @@ fn serialize_enum(params: &Parameters, variants: &[Variant], cattrs: &attr::Cont
         .enumerate()
         .map(|(variant_index, variant)| {
             serialize_variant(params, variant, variant_index as u32, cattrs)
-        }).collect();
+        })
+        .collect();
 
     quote_expr! {
         match *#self_var {
@@ -506,8 +511,10 @@ fn serialize_externally_tagged_variant(
                 field_expr = wrap_serialize_field_with(params, field.ty, path, &field_expr);
             }
 
+            let span = field.original.span();
+            let func = quote_spanned!(span=> _serde::Serializer::serialize_newtype_variant);
             quote_expr! {
-                _serde::Serializer::serialize_newtype_variant(
+                #func(
                     __serializer,
                     #type_name,
                     #variant_index,
@@ -580,8 +587,10 @@ fn serialize_internally_tagged_variant(
                 field_expr = wrap_serialize_field_with(params, field.ty, path, &field_expr);
             }
 
+            let span = field.original.span();
+            let func = quote_spanned!(span=> _serde::private::ser::serialize_tagged_newtype);
             quote_expr! {
-                _serde::private::ser::serialize_tagged_newtype(
+                #func(
                     __serializer,
                     #enum_ident_str,
                     #variant_ident_str,
@@ -638,12 +647,14 @@ fn serialize_adjacently_tagged_variant(
                     field_expr = wrap_serialize_field_with(params, field.ty, path, &field_expr);
                 }
 
+                let span = field.original.span();
+                let func = quote_spanned!(span=> _serde::ser::SerializeStruct::serialize_field);
                 return quote_block! {
                     let mut __struct = try!(_serde::Serializer::serialize_struct(
                         __serializer, #type_name, 2));
                     try!(_serde::ser::SerializeStruct::serialize_field(
                         &mut __struct, #tag, #variant_name));
-                    try!(_serde::ser::SerializeStruct::serialize_field(
+                    try!(#func(
                         &mut __struct, #content, #field_expr));
                     _serde::ser::SerializeStruct::end(__struct)
                 };
@@ -739,8 +750,10 @@ fn serialize_untagged_variant(
                 field_expr = wrap_serialize_field_with(params, field.ty, path, &field_expr);
             }
 
+            let span = field.original.span();
+            let func = quote_spanned!(span=> _serde::Serialize::serialize);
             quote_expr! {
-                _serde::Serialize::serialize(#field_expr, __serializer)
+                #func(#field_expr, __serializer)
             }
         }
         Style::Tuple => serialize_tuple_variant(TupleVariant::Untagged, params, &variant.fields),
@@ -787,7 +800,8 @@ fn serialize_tuple_variant(
                 let field_expr = Ident::new(&format!("__field{}", i), Span::call_site());
                 quote!(if #path(#field_expr) { 0 } else { 1 })
             }
-        }).fold(quote!(0), |sum, expr| quote!(#sum + #expr));
+        })
+        .fold(quote!(0), |sum, expr| quote!(#sum + #expr));
 
     match context {
         TupleVariant::ExternallyTagged {
@@ -864,7 +878,8 @@ fn serialize_struct_variant<'a>(
                 Some(path) => quote!(if #path(#member) { 0 } else { 1 }),
                 None => quote!(1),
             }
-        }).fold(quote!(0), |sum, expr| quote!(#sum + #expr));
+        })
+        .fold(quote!(0), |sum, expr| quote!(#sum + #expr));
 
     match context {
         StructVariant::ExternallyTagged {
@@ -1043,7 +1058,8 @@ fn serialize_tuple_struct_visitor(
                 None => ser,
                 Some(skip) => quote!(if !#skip { #ser }),
             }
-        }).collect()
+        })
+        .collect()
 }
 
 fn serialize_struct_visitor(
@@ -1077,8 +1093,9 @@ fn serialize_struct_visitor(
 
             let span = field.original.span();
             let ser = if field.attrs.flatten() {
+                let func = quote_spanned!(span=> _serde::Serialize::serialize);
                 quote! {
-                    try!(_serde::Serialize::serialize(&#field_expr, _serde::private::ser::FlatMapSerializer(&mut __serde_state)));
+                    try!(#func(&#field_expr, _serde::private::ser::FlatMapSerializer(&mut __serde_state)));
                 }
             } else {
                 let func = struct_trait.serialize_field(span);
@@ -1137,7 +1154,8 @@ fn wrap_serialize_variant_with(
                 }
             };
             quote!(#id)
-        }).collect();
+        })
+        .collect();
     wrap_serialize_with(
         params,
         serialize_with,

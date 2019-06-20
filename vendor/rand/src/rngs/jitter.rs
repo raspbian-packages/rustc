@@ -1,6 +1,4 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -70,7 +68,7 @@ const MEMORY_SIZE: usize = MEMORY_BLOCKS * MEMORY_BLOCKSIZE;
 /// Use the following code using [`timer_stats`] to collect the data:
 ///
 /// ```no_run
-/// use rand::jitter::JitterRng;
+/// use rand::rngs::JitterRng;
 /// #
 /// # use std::error::Error;
 /// # use std::fs::File;
@@ -317,7 +315,7 @@ impl JitterRng {
     ///
     /// ```
     /// # use rand::{Rng, Error};
-    /// use rand::jitter::JitterRng;
+    /// use rand::rngs::JitterRng;
     ///
     /// # fn try_inner() -> Result<(), Error> {
     /// fn get_nstime() -> u64 {
@@ -858,7 +856,7 @@ impl CryptoRng for JitterRng {}
 
 #[cfg(test)]
 mod test_jitter_init {
-    use jitter::JitterRng;
+    use super::JitterRng;
 
     #[cfg(all(feature="std", not(target_arch = "wasm32")))]
     #[test]

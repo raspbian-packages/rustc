@@ -1,13 +1,3 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! The Rust compiler.
 //!
 //! # Note
@@ -53,7 +43,6 @@ extern crate rustc_target;
 extern crate rustc_demangle;
 extern crate rustc_incremental;
 extern crate rustc_llvm;
-extern crate rustc_platform_intrinsics as intrinsics;
 extern crate rustc_codegen_utils;
 extern crate rustc_codegen_ssa;
 extern crate rustc_fs_util;
@@ -176,13 +165,20 @@ impl WriteBackendMethods for LlvmCodegenBackend {
     fn print_pass_timings(&self) {
             unsafe { llvm::LLVMRustPrintPassTimings(); }
     }
-    fn run_lto(
+    fn run_fat_lto(
         cgcx: &CodegenContext<Self>,
         modules: Vec<ModuleCodegen<Self::Module>>,
+        timeline: &mut Timeline
+    ) -> Result<LtoModuleCodegen<Self>, FatalError> {
+        back::lto::run_fat(cgcx, modules, timeline)
+    }
+    fn run_thin_lto(
+        cgcx: &CodegenContext<Self>,
+        modules: Vec<(String, Self::ThinBuffer)>,
         cached_modules: Vec<(SerializedModule<Self::ModuleBuffer>, WorkProduct)>,
         timeline: &mut Timeline
     ) -> Result<(Vec<LtoModuleCodegen<Self>>, Vec<WorkProduct>), FatalError> {
-        back::lto::run(cgcx, modules, cached_modules, timeline)
+        back::lto::run_thin(cgcx, modules, cached_modules, timeline)
     }
     unsafe fn optimize(
         cgcx: &CodegenContext<Self>,
@@ -208,6 +204,12 @@ impl WriteBackendMethods for LlvmCodegenBackend {
         timeline: &mut Timeline
     ) -> Result<CompiledModule, FatalError> {
         back::write::codegen(cgcx, diag_handler, module, config, timeline)
+    }
+    fn prepare_thin(
+        cgcx: &CodegenContext<Self>,
+        module: ModuleCodegen<Self::Module>
+    ) -> (String, Self::ThinBuffer) {
+        back::lto::prepare_thin(cgcx, module)
     }
     fn run_lto_pass_manager(
         cgcx: &CodegenContext<Self>,

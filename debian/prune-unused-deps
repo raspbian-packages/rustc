@@ -9,7 +9,9 @@ had_config_toml=$(if test -e "$scriptdir/debian/config.toml"; then echo true; el
 ( cd "$scriptdir" && debian/rules debian/config.toml )
 
 cp "$scriptdir/debian/config.toml" config.toml
-"$scriptdir/debian/ensure-patch" -N "$scriptdir/debian/patches/d-ignore-removed-submodules.patch"
+for i in "$scriptdir/debian/patches"/d-00*.patch; do
+	"$scriptdir/debian/ensure-patch" -N "$i"
+done
 test -f Cargo.lock.orig || cp Cargo.lock Cargo.lock.orig
 ./x.py build nonexistent/path/to/trigger/cargo/metadata src/bootstrap
 

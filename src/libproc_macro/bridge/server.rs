@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Server-side traits.
 
 use super::*;
@@ -16,7 +6,7 @@ use super::*;
 use super::client::HandleStore;
 
 /// Declare an associated item of one of the traits below, optionally
-/// adjusting it (i.e. adding bounds to types and default bodies to methods).
+/// adjusting it (i.e., adding bounds to types and default bodies to methods).
 macro_rules! associated_item {
     (type TokenStream) =>
         (type TokenStream: 'static + Clone;);

@@ -179,138 +179,128 @@ pub unsafe fn _mm256_alignr_epi8(a: __m256i, b: __m256i, n: i32) -> __m256i {
             b,
             a,
             [
-                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
-                18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31,
+                0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
+                23, 24, 25, 26, 27, 28, 29, 30, 31,
             ],
         ),
         1 => simd_shuffle32(
             b,
             a,
             [
-                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 17, 18,
-                19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48,
+                1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 17, 18, 19, 20, 21, 22, 23,
+                24, 25, 26, 27, 28, 29, 30, 31, 48,
             ],
         ),
         2 => simd_shuffle32(
             b,
             a,
             [
-                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 18,
-                19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49,
+                2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 18, 19, 20, 21, 22, 23, 24,
+                25, 26, 27, 28, 29, 30, 31, 48, 49,
             ],
         ),
         3 => simd_shuffle32(
             b,
             a,
             [
-                3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 19,
-                20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50,
+                3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 19, 20, 21, 22, 23, 24,
+                25, 26, 27, 28, 29, 30, 31, 48, 49, 50,
             ],
         ),
         4 => simd_shuffle32(
             b,
             a,
             [
-                4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 20,
-                21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51,
+                4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 20, 21, 22, 23, 24, 25,
+                26, 27, 28, 29, 30, 31, 48, 49, 50, 51,
             ],
         ),
         5 => simd_shuffle32(
             b,
             a,
             [
-                5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 21,
-                22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52,
+                5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 21, 22, 23, 24, 25, 26,
+                27, 28, 29, 30, 31, 48, 49, 50, 51, 52,
             ],
         ),
         6 => simd_shuffle32(
             b,
             a,
             [
-                6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37,
-                22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52,
-                53,
+                6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 22, 23, 24, 25, 26, 27,
+                28, 29, 30, 31, 48, 49, 50, 51, 52, 53,
             ],
         ),
         7 => simd_shuffle32(
             b,
             a,
             [
-                7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38,
-                23, 24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53,
-                54,
+                7, 8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 23, 24, 25, 26, 27,
+                28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54,
             ],
         ),
         8 => simd_shuffle32(
             b,
             a,
             [
-                8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39,
-                24, 25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54,
-                55,
+                8, 9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 24, 25, 26, 27, 28,
+                29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55,
             ],
         ),
         9 => simd_shuffle32(
             b,
             a,
             [
-                9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-                25, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55,
-                56,
+                9, 10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 25, 26, 27, 28, 29,
+                30, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56,
             ],
         ),
         10 => simd_shuffle32(
             b,
             a,
             [
-                10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40,
-                41, 26, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55,
-                56, 57,
+                10, 11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 26, 27, 28, 29, 30,
+                31, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
             ],
         ),
         11 => simd_shuffle32(
             b,
             a,
             [
-                11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41,
-                42, 27, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56,
-                57, 58,
+                11, 12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 27, 28, 29, 30, 31,
+                48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
             ],
         ),
         12 => simd_shuffle32(
             b,
             a,
             [
-                12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42,
-                43, 28, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57,
-                58, 59,
+                12, 13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 28, 29, 30, 31, 48,
+                49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
             ],
         ),
         13 => simd_shuffle32(
             b,
             a,
             [
-                13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43,
-                44, 29, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58,
-                59, 60,
+                13, 14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 29, 30, 31, 48, 49,
+                50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
             ],
         ),
         14 => simd_shuffle32(
             b,
             a,
             [
-                14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44,
-                45, 30, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59,
-                60, 61,
+                14, 15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 30, 31, 48, 49, 50,
+                51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61,
             ],
         ),
         15 => simd_shuffle32(
             b,
             a,
             [
-                15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45,
-                46, 31, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60,
-                61, 62,
+                15, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 31, 48, 49, 50, 51,
+                52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62,
             ],
         ),
         _ => b,
@@ -412,9 +402,7 @@ pub unsafe fn _mm_blend_epi32(a: __m128i, b: __m128i, imm8: i32) -> __m128i {
 #[cfg_attr(test, assert_instr(vblendps, imm8 = 9))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_blend_epi32(
-    a: __m256i, b: __m256i, imm8: i32,
-) -> __m256i {
+pub unsafe fn _mm256_blend_epi32(a: __m256i, b: __m256i, imm8: i32) -> __m256i {
     let imm8 = (imm8 & 0xFF) as u8;
     let a = a.as_i32x8();
     let b = b.as_i32x8();
@@ -479,9 +467,7 @@ pub unsafe fn _mm256_blend_epi32(
 #[cfg_attr(test, assert_instr(vpblendw, imm8 = 9))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_blend_epi16(
-    a: __m256i, b: __m256i, imm8: i32,
-) -> __m256i {
+pub unsafe fn _mm256_blend_epi16(a: __m256i, b: __m256i, imm8: i32) -> __m256i {
     let imm8 = (imm8 & 0xFF) as u8;
     let a = a.as_i16x16();
     let b = b.as_i16x16();
@@ -508,8 +494,7 @@ pub unsafe fn _mm256_blend_epi16(
                 a,
                 b,
                 [
-                    $a, $b, $c, $d, $e, $f, $g, $h, $i, $j, $k, $l, $m,
-                    $n, $o, $p,
+                    $a, $b, $c, $d, $e, $f, $g, $h, $i, $j, $k, $l, $m, $n, $o, $p,
                 ],
             )
         };
@@ -530,22 +515,14 @@ pub unsafe fn _mm256_blend_epi16(
             $f2:expr
         ) => {
             match (imm8 >> 6) & 0b11 {
-                0b00 => blend4!(
-                    $a, $b, $c, $d, $e, $f, 6, 7, $a2, $b2, $c2, $d2, $e2,
-                    $f2, 14, 15
-                ),
-                0b01 => blend4!(
-                    $a, $b, $c, $d, $e, $f, 22, 7, $a2, $b2, $c2, $d2,
-                    $e2, $f2, 30, 15
-                ),
-                0b10 => blend4!(
-                    $a, $b, $c, $d, $e, $f, 6, 23, $a2, $b2, $c2, $d2,
-                    $e2, $f2, 14, 31
-                ),
-                _ => blend4!(
-                    $a, $b, $c, $d, $e, $f, 22, 23, $a2, $b2, $c2, $d2,
-                    $e2, $f2, 30, 31
-                ),
+                0b00 => blend4!($a, $b, $c, $d, $e, $f, 6, 7, $a2, $b2, $c2, $d2, $e2, $f2, 14, 15),
+                0b01 => {
+                    blend4!($a, $b, $c, $d, $e, $f, 22, 7, $a2, $b2, $c2, $d2, $e2, $f2, 30, 15)
+                }
+                0b10 => {
+                    blend4!($a, $b, $c, $d, $e, $f, 6, 23, $a2, $b2, $c2, $d2, $e2, $f2, 14, 31)
+                }
+                _ => blend4!($a, $b, $c, $d, $e, $f, 22, 23, $a2, $b2, $c2, $d2, $e2, $f2, 30, 31),
             }
         };
     }
@@ -561,18 +538,10 @@ pub unsafe fn _mm256_blend_epi16(
             $d2:expr
         ) => {
             match (imm8 >> 4) & 0b11 {
-                0b00 => blend3!(
-                    $a, $b, $c, $d, 4, 5, $a2, $b2, $c2, $d2, 12, 13
-                ),
-                0b01 => blend3!(
-                    $a, $b, $c, $d, 20, 5, $a2, $b2, $c2, $d2, 28, 13
-                ),
-                0b10 => blend3!(
-                    $a, $b, $c, $d, 4, 21, $a2, $b2, $c2, $d2, 12, 29
-                ),
-                _ => blend3!(
-                    $a, $b, $c, $d, 20, 21, $a2, $b2, $c2, $d2, 28, 29
-                ),
+                0b00 => blend3!($a, $b, $c, $d, 4, 5, $a2, $b2, $c2, $d2, 12, 13),
+                0b01 => blend3!($a, $b, $c, $d, 20, 5, $a2, $b2, $c2, $d2, 28, 13),
+                0b10 => blend3!($a, $b, $c, $d, 4, 21, $a2, $b2, $c2, $d2, 12, 29),
+                _ => blend3!($a, $b, $c, $d, 20, 21, $a2, $b2, $c2, $d2, 28, 29),
             }
         };
     }
@@ -602,9 +571,7 @@ pub unsafe fn _mm256_blend_epi16(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpblendvb))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_blendv_epi8(
-    a: __m256i, b: __m256i, mask: __m256i,
-) -> __m256i {
+pub unsafe fn _mm256_blendv_epi8(a: __m256i, b: __m256i, mask: __m256i) -> __m256i {
     mem::transmute(pblendvb(a.as_i8x32(), b.as_i8x32(), mask.as_i8x32()))
 }
 
@@ -1030,7 +997,10 @@ pub unsafe fn _mm256_cvtepu8_epi64(a: __m128i) -> __m256i {
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm256_extracti128_si256)
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg_attr(test, assert_instr(vextractf128, imm8 = 1))]
+#[cfg_attr(
+    all(test, not(target_os = "windows")),
+    assert_instr(vextractf128, imm8 = 1)
+)]
 #[rustc_args_required_const(1)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_extracti128_si256(a: __m256i, imm8: i32) -> __m128i {
@@ -1121,9 +1091,7 @@ pub unsafe fn _mm256_hsubs_epi16(a: __m256i, b: __m256i) -> __m256i {
 #[cfg_attr(test, assert_instr(vpgatherdd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i32gather_epi32(
-    slice: *const i32, offsets: __m128i, scale: i32,
-) -> __m128i {
+pub unsafe fn _mm_i32gather_epi32(slice: *const i32, offsets: __m128i, scale: i32) -> __m128i {
     let zero = _mm_setzero_si128().as_i32x4();
     let neg_one = _mm_set1_epi32(-1).as_i32x4();
     let offsets = offsets.as_i32x4();
@@ -1149,7 +1117,10 @@ pub unsafe fn _mm_i32gather_epi32(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i32gather_epi32(
-    src: __m128i, slice: *const i32, offsets: __m128i, mask: __m128i,
+    src: __m128i,
+    slice: *const i32,
+    offsets: __m128i,
+    mask: __m128i,
     scale: i32,
 ) -> __m128i {
     let src = src.as_i32x4();
@@ -1175,9 +1146,7 @@ pub unsafe fn _mm_mask_i32gather_epi32(
 #[cfg_attr(test, assert_instr(vpgatherdd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i32gather_epi32(
-    slice: *const i32, offsets: __m256i, scale: i32,
-) -> __m256i {
+pub unsafe fn _mm256_i32gather_epi32(slice: *const i32, offsets: __m256i, scale: i32) -> __m256i {
     let zero = _mm256_setzero_si256().as_i32x8();
     let neg_one = _mm256_set1_epi32(-1).as_i32x8();
     let offsets = offsets.as_i32x8();
@@ -1203,7 +1172,10 @@ pub unsafe fn _mm256_i32gather_epi32(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i32gather_epi32(
-    src: __m256i, slice: *const i32, offsets: __m256i, mask: __m256i,
+    src: __m256i,
+    slice: *const i32,
+    offsets: __m256i,
+    mask: __m256i,
     scale: i32,
 ) -> __m256i {
     let src = src.as_i32x8();
@@ -1229,9 +1201,7 @@ pub unsafe fn _mm256_mask_i32gather_epi32(
 #[cfg_attr(test, assert_instr(vgatherdps, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i32gather_ps(
-    slice: *const f32, offsets: __m128i, scale: i32,
-) -> __m128 {
+pub unsafe fn _mm_i32gather_ps(slice: *const f32, offsets: __m128i, scale: i32) -> __m128 {
     let zero = _mm_setzero_ps();
     let neg_one = _mm_set1_ps(-1.0);
     let offsets = offsets.as_i32x4();
@@ -1256,7 +1226,11 @@ pub unsafe fn _mm_i32gather_ps(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i32gather_ps(
-    src: __m128, slice: *const f32, offsets: __m128i, mask: __m128, scale: i32,
+    src: __m128,
+    slice: *const f32,
+    offsets: __m128i,
+    mask: __m128,
+    scale: i32,
 ) -> __m128 {
     let offsets = offsets.as_i32x4();
     let slice = slice as *const i8;
@@ -1278,9 +1252,7 @@ pub unsafe fn _mm_mask_i32gather_ps(
 #[cfg_attr(test, assert_instr(vgatherdps, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i32gather_ps(
-    slice: *const f32, offsets: __m256i, scale: i32,
-) -> __m256 {
+pub unsafe fn _mm256_i32gather_ps(slice: *const f32, offsets: __m256i, scale: i32) -> __m256 {
     let zero = _mm256_setzero_ps();
     let neg_one = _mm256_set1_ps(-1.0);
     let offsets = offsets.as_i32x8();
@@ -1305,7 +1277,11 @@ pub unsafe fn _mm256_i32gather_ps(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i32gather_ps(
-    src: __m256, slice: *const f32, offsets: __m256i, mask: __m256, scale: i32,
+    src: __m256,
+    slice: *const f32,
+    offsets: __m256i,
+    mask: __m256,
+    scale: i32,
 ) -> __m256 {
     let offsets = offsets.as_i32x8();
     let slice = slice as *const i8;
@@ -1327,9 +1303,7 @@ pub unsafe fn _mm256_mask_i32gather_ps(
 #[cfg_attr(test, assert_instr(vpgatherdq, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i32gather_epi64(
-    slice: *const i64, offsets: __m128i, scale: i32,
-) -> __m128i {
+pub unsafe fn _mm_i32gather_epi64(slice: *const i64, offsets: __m128i, scale: i32) -> __m128i {
     let zero = _mm_setzero_si128().as_i64x2();
     let neg_one = _mm_set1_epi64x(-1).as_i64x2();
     let offsets = offsets.as_i32x4();
@@ -1355,7 +1329,10 @@ pub unsafe fn _mm_i32gather_epi64(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i32gather_epi64(
-    src: __m128i, slice: *const i64, offsets: __m128i, mask: __m128i,
+    src: __m128i,
+    slice: *const i64,
+    offsets: __m128i,
+    mask: __m128i,
     scale: i32,
 ) -> __m128i {
     let src = src.as_i64x2();
@@ -1381,9 +1358,7 @@ pub unsafe fn _mm_mask_i32gather_epi64(
 #[cfg_attr(test, assert_instr(vpgatherdq, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i32gather_epi64(
-    slice: *const i64, offsets: __m128i, scale: i32,
-) -> __m256i {
+pub unsafe fn _mm256_i32gather_epi64(slice: *const i64, offsets: __m128i, scale: i32) -> __m256i {
     let zero = _mm256_setzero_si256().as_i64x4();
     let neg_one = _mm256_set1_epi64x(-1).as_i64x4();
     let offsets = offsets.as_i32x4();
@@ -1409,7 +1384,10 @@ pub unsafe fn _mm256_i32gather_epi64(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i32gather_epi64(
-    src: __m256i, slice: *const i64, offsets: __m128i, mask: __m256i,
+    src: __m256i,
+    slice: *const i64,
+    offsets: __m128i,
+    mask: __m256i,
     scale: i32,
 ) -> __m256i {
     let src = src.as_i64x4();
@@ -1435,9 +1413,7 @@ pub unsafe fn _mm256_mask_i32gather_epi64(
 #[cfg_attr(test, assert_instr(vgatherdpd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i32gather_pd(
-    slice: *const f64, offsets: __m128i, scale: i32,
-) -> __m128d {
+pub unsafe fn _mm_i32gather_pd(slice: *const f64, offsets: __m128i, scale: i32) -> __m128d {
     let zero = _mm_setzero_pd();
     let neg_one = _mm_set1_pd(-1.0);
     let offsets = offsets.as_i32x4();
@@ -1462,7 +1438,10 @@ pub unsafe fn _mm_i32gather_pd(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i32gather_pd(
-    src: __m128d, slice: *const f64, offsets: __m128i, mask: __m128d,
+    src: __m128d,
+    slice: *const f64,
+    offsets: __m128i,
+    mask: __m128d,
     scale: i32,
 ) -> __m128d {
     let offsets = offsets.as_i32x4();
@@ -1485,9 +1464,7 @@ pub unsafe fn _mm_mask_i32gather_pd(
 #[cfg_attr(test, assert_instr(vgatherdpd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i32gather_pd(
-    slice: *const f64, offsets: __m128i, scale: i32,
-) -> __m256d {
+pub unsafe fn _mm256_i32gather_pd(slice: *const f64, offsets: __m128i, scale: i32) -> __m256d {
     let zero = _mm256_setzero_pd();
     let neg_one = _mm256_set1_pd(-1.0);
     let offsets = offsets.as_i32x4();
@@ -1512,7 +1489,10 @@ pub unsafe fn _mm256_i32gather_pd(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i32gather_pd(
-    src: __m256d, slice: *const f64, offsets: __m128i, mask: __m256d,
+    src: __m256d,
+    slice: *const f64,
+    offsets: __m128i,
+    mask: __m256d,
     scale: i32,
 ) -> __m256d {
     let offsets = offsets.as_i32x4();
@@ -1535,9 +1515,7 @@ pub unsafe fn _mm256_mask_i32gather_pd(
 #[cfg_attr(test, assert_instr(vpgatherqd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i64gather_epi32(
-    slice: *const i32, offsets: __m128i, scale: i32,
-) -> __m128i {
+pub unsafe fn _mm_i64gather_epi32(slice: *const i32, offsets: __m128i, scale: i32) -> __m128i {
     let zero = _mm_setzero_si128().as_i32x4();
     let neg_one = _mm_set1_epi64x(-1).as_i32x4();
     let offsets = offsets.as_i64x2();
@@ -1563,7 +1541,10 @@ pub unsafe fn _mm_i64gather_epi32(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i64gather_epi32(
-    src: __m128i, slice: *const i32, offsets: __m128i, mask: __m128i,
+    src: __m128i,
+    slice: *const i32,
+    offsets: __m128i,
+    mask: __m128i,
     scale: i32,
 ) -> __m128i {
     let src = src.as_i32x4();
@@ -1589,9 +1570,7 @@ pub unsafe fn _mm_mask_i64gather_epi32(
 #[cfg_attr(test, assert_instr(vpgatherqd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i64gather_epi32(
-    slice: *const i32, offsets: __m256i, scale: i32,
-) -> __m128i {
+pub unsafe fn _mm256_i64gather_epi32(slice: *const i32, offsets: __m256i, scale: i32) -> __m128i {
     let zero = _mm_setzero_si128().as_i32x4();
     let neg_one = _mm_set1_epi64x(-1).as_i32x4();
     let offsets = offsets.as_i64x4();
@@ -1617,7 +1596,10 @@ pub unsafe fn _mm256_i64gather_epi32(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i64gather_epi32(
-    src: __m128i, slice: *const i32, offsets: __m256i, mask: __m128i,
+    src: __m128i,
+    slice: *const i32,
+    offsets: __m256i,
+    mask: __m128i,
     scale: i32,
 ) -> __m128i {
     let src = src.as_i32x4();
@@ -1643,9 +1625,7 @@ pub unsafe fn _mm256_mask_i64gather_epi32(
 #[cfg_attr(test, assert_instr(vgatherqps, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i64gather_ps(
-    slice: *const f32, offsets: __m128i, scale: i32,
-) -> __m128 {
+pub unsafe fn _mm_i64gather_ps(slice: *const f32, offsets: __m128i, scale: i32) -> __m128 {
     let zero = _mm_setzero_ps();
     let neg_one = _mm_set1_ps(-1.0);
     let offsets = offsets.as_i64x2();
@@ -1670,7 +1650,11 @@ pub unsafe fn _mm_i64gather_ps(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i64gather_ps(
-    src: __m128, slice: *const f32, offsets: __m128i, mask: __m128, scale: i32,
+    src: __m128,
+    slice: *const f32,
+    offsets: __m128i,
+    mask: __m128,
+    scale: i32,
 ) -> __m128 {
     let offsets = offsets.as_i64x2();
     let slice = slice as *const i8;
@@ -1692,9 +1676,7 @@ pub unsafe fn _mm_mask_i64gather_ps(
 #[cfg_attr(test, assert_instr(vgatherqps, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i64gather_ps(
-    slice: *const f32, offsets: __m256i, scale: i32,
-) -> __m128 {
+pub unsafe fn _mm256_i64gather_ps(slice: *const f32, offsets: __m256i, scale: i32) -> __m128 {
     let zero = _mm_setzero_ps();
     let neg_one = _mm_set1_ps(-1.0);
     let offsets = offsets.as_i64x4();
@@ -1719,7 +1701,11 @@ pub unsafe fn _mm256_i64gather_ps(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i64gather_ps(
-    src: __m128, slice: *const f32, offsets: __m256i, mask: __m128, scale: i32,
+    src: __m128,
+    slice: *const f32,
+    offsets: __m256i,
+    mask: __m128,
+    scale: i32,
 ) -> __m128 {
     let offsets = offsets.as_i64x4();
     let slice = slice as *const i8;
@@ -1741,9 +1727,7 @@ pub unsafe fn _mm256_mask_i64gather_ps(
 #[cfg_attr(test, assert_instr(vpgatherqq, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i64gather_epi64(
-    slice: *const i64, offsets: __m128i, scale: i32,
-) -> __m128i {
+pub unsafe fn _mm_i64gather_epi64(slice: *const i64, offsets: __m128i, scale: i32) -> __m128i {
     let zero = _mm_setzero_si128().as_i64x2();
     let neg_one = _mm_set1_epi64x(-1).as_i64x2();
     let slice = slice as *const i8;
@@ -1769,7 +1753,10 @@ pub unsafe fn _mm_i64gather_epi64(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i64gather_epi64(
-    src: __m128i, slice: *const i64, offsets: __m128i, mask: __m128i,
+    src: __m128i,
+    slice: *const i64,
+    offsets: __m128i,
+    mask: __m128i,
     scale: i32,
 ) -> __m128i {
     let src = src.as_i64x2();
@@ -1795,9 +1782,7 @@ pub unsafe fn _mm_mask_i64gather_epi64(
 #[cfg_attr(test, assert_instr(vpgatherqq, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i64gather_epi64(
-    slice: *const i64, offsets: __m256i, scale: i32,
-) -> __m256i {
+pub unsafe fn _mm256_i64gather_epi64(slice: *const i64, offsets: __m256i, scale: i32) -> __m256i {
     let zero = _mm256_setzero_si256().as_i64x4();
     let neg_one = _mm256_set1_epi64x(-1).as_i64x4();
     let slice = slice as *const i8;
@@ -1823,7 +1808,10 @@ pub unsafe fn _mm256_i64gather_epi64(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i64gather_epi64(
-    src: __m256i, slice: *const i64, offsets: __m256i, mask: __m256i,
+    src: __m256i,
+    slice: *const i64,
+    offsets: __m256i,
+    mask: __m256i,
     scale: i32,
 ) -> __m256i {
     let src = src.as_i64x4();
@@ -1849,9 +1837,7 @@ pub unsafe fn _mm256_mask_i64gather_epi64(
 #[cfg_attr(test, assert_instr(vgatherqpd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_i64gather_pd(
-    slice: *const f64, offsets: __m128i, scale: i32,
-) -> __m128d {
+pub unsafe fn _mm_i64gather_pd(slice: *const f64, offsets: __m128i, scale: i32) -> __m128d {
     let zero = _mm_setzero_pd();
     let neg_one = _mm_set1_pd(-1.0);
     let slice = slice as *const i8;
@@ -1876,7 +1862,10 @@ pub unsafe fn _mm_i64gather_pd(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_mask_i64gather_pd(
-    src: __m128d, slice: *const f64, offsets: __m128i, mask: __m128d,
+    src: __m128d,
+    slice: *const f64,
+    offsets: __m128i,
+    mask: __m128d,
     scale: i32,
 ) -> __m128d {
     let slice = slice as *const i8;
@@ -1899,9 +1888,7 @@ pub unsafe fn _mm_mask_i64gather_pd(
 #[cfg_attr(test, assert_instr(vgatherqpd, scale = 1))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_i64gather_pd(
-    slice: *const f64, offsets: __m256i, scale: i32,
-) -> __m256d {
+pub unsafe fn _mm256_i64gather_pd(slice: *const f64, offsets: __m256i, scale: i32) -> __m256d {
     let zero = _mm256_setzero_pd();
     let neg_one = _mm256_set1_pd(-1.0);
     let slice = slice as *const i8;
@@ -1926,7 +1913,10 @@ pub unsafe fn _mm256_i64gather_pd(
 #[rustc_args_required_const(4)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_mask_i64gather_pd(
-    src: __m256d, slice: *const f64, offsets: __m256i, mask: __m256d,
+    src: __m256d,
+    slice: *const f64,
+    offsets: __m256i,
+    mask: __m256d,
     scale: i32,
 ) -> __m256d {
     let slice = slice as *const i8;
@@ -1945,12 +1935,13 @@ pub unsafe fn _mm256_mask_i64gather_pd(
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm256_inserti128_si256)
 #[inline]
 #[target_feature(enable = "avx2")]
-#[cfg_attr(test, assert_instr(vinsertf128, imm8 = 1))]
+#[cfg_attr(
+    all(test, not(target_os = "windows")),
+    assert_instr(vinsertf128, imm8 = 1)
+)]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_inserti128_si256(
-    a: __m256i, b: __m128i, imm8: i32,
-) -> __m256i {
+pub unsafe fn _mm256_inserti128_si256(a: __m256i, b: __m128i, imm8: i32) -> __m256i {
     let a = a.as_i64x4();
     let b = _mm256_castsi128_si256(b).as_i64x4();
     let dst: i64x4 = match imm8 & 0b01 {
@@ -1996,9 +1987,7 @@ pub unsafe fn _mm256_maddubs_epi16(a: __m256i, b: __m256i) -> __m256i {
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovd))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_maskload_epi32(
-    mem_addr: *const i32, mask: __m128i,
-) -> __m128i {
+pub unsafe fn _mm_maskload_epi32(mem_addr: *const i32, mask: __m128i) -> __m128i {
     mem::transmute(maskloadd(mem_addr as *const i8, mask.as_i32x4()))
 }
 
@@ -2011,9 +2000,7 @@ pub unsafe fn _mm_maskload_epi32(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovd))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_maskload_epi32(
-    mem_addr: *const i32, mask: __m256i,
-) -> __m256i {
+pub unsafe fn _mm256_maskload_epi32(mem_addr: *const i32, mask: __m256i) -> __m256i {
     mem::transmute(maskloadd256(mem_addr as *const i8, mask.as_i32x8()))
 }
 
@@ -2026,9 +2013,7 @@ pub unsafe fn _mm256_maskload_epi32(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovq))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_maskload_epi64(
-    mem_addr: *const i64, mask: __m128i,
-) -> __m128i {
+pub unsafe fn _mm_maskload_epi64(mem_addr: *const i64, mask: __m128i) -> __m128i {
     mem::transmute(maskloadq(mem_addr as *const i8, mask.as_i64x2()))
 }
 
@@ -2041,9 +2026,7 @@ pub unsafe fn _mm_maskload_epi64(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovq))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_maskload_epi64(
-    mem_addr: *const i64, mask: __m256i,
-) -> __m256i {
+pub unsafe fn _mm256_maskload_epi64(mem_addr: *const i64, mask: __m256i) -> __m256i {
     mem::transmute(maskloadq256(mem_addr as *const i8, mask.as_i64x4()))
 }
 
@@ -2056,9 +2039,7 @@ pub unsafe fn _mm256_maskload_epi64(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovd))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_maskstore_epi32(
-    mem_addr: *mut i32, mask: __m128i, a: __m128i,
-) {
+pub unsafe fn _mm_maskstore_epi32(mem_addr: *mut i32, mask: __m128i, a: __m128i) {
     maskstored(mem_addr as *mut i8, mask.as_i32x4(), a.as_i32x4())
 }
 
@@ -2071,9 +2052,7 @@ pub unsafe fn _mm_maskstore_epi32(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovd))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_maskstore_epi32(
-    mem_addr: *mut i32, mask: __m256i, a: __m256i,
-) {
+pub unsafe fn _mm256_maskstore_epi32(mem_addr: *mut i32, mask: __m256i, a: __m256i) {
     maskstored256(mem_addr as *mut i8, mask.as_i32x8(), a.as_i32x8())
 }
 
@@ -2086,9 +2065,7 @@ pub unsafe fn _mm256_maskstore_epi32(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovq))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm_maskstore_epi64(
-    mem_addr: *mut i64, mask: __m128i, a: __m128i,
-) {
+pub unsafe fn _mm_maskstore_epi64(mem_addr: *mut i64, mask: __m128i, a: __m128i) {
     maskstoreq(mem_addr as *mut i8, mask.as_i64x2(), a.as_i64x2())
 }
 
@@ -2101,9 +2078,7 @@ pub unsafe fn _mm_maskstore_epi64(
 #[target_feature(enable = "avx2")]
 #[cfg_attr(test, assert_instr(vpmaskmovq))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_maskstore_epi64(
-    mem_addr: *mut i64, mask: __m256i, a: __m256i,
-) {
+pub unsafe fn _mm256_maskstore_epi64(mem_addr: *mut i64, mask: __m256i, a: __m256i) {
     maskstoreq256(mem_addr as *mut i8, mask.as_i64x4(), a.as_i64x4())
 }
 
@@ -2277,9 +2252,7 @@ pub unsafe fn _mm256_movemask_epi8(a: __m256i) -> i32 {
 #[cfg_attr(test, assert_instr(vmpsadbw, imm8 = 0))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_mpsadbw_epu8(
-    a: __m256i, b: __m256i, imm8: i32,
-) -> __m256i {
+pub unsafe fn _mm256_mpsadbw_epu8(a: __m256i, b: __m256i, imm8: i32) -> __m256i {
     let a = a.as_u8x32();
     let b = b.as_u8x32();
     macro_rules! call {
@@ -2523,9 +2496,7 @@ pub unsafe fn _mm256_permute4x64_epi64(a: __m256i, imm8: i32) -> __m256i {
 #[cfg_attr(test, assert_instr(vperm2f128, imm8 = 9))]
 #[rustc_args_required_const(2)]
 #[stable(feature = "simd_x86", since = "1.27.0")]
-pub unsafe fn _mm256_permute2x128_si256(
-    a: __m256i, b: __m256i, imm8: i32,
-) -> __m256i {
+pub unsafe fn _mm256_permute2x128_si256(a: __m256i, b: __m256i, imm8: i32) -> __m256i {
     let a = a.as_i64x4();
     let b = b.as_i64x4();
     macro_rules! call {
@@ -2780,12 +2751,12 @@ pub unsafe fn _mm256_shufflehi_epi16(a: __m256i, imm8: i32) -> __m256i {
     let a = a.as_i16x16();
     macro_rules! shuffle_done {
         ($x01:expr, $x23:expr, $x45:expr, $x67:expr) => {
-            #[cfg_attr(rustfmt, rustfmt_skip)]
-            simd_shuffle16(a, a, [
-                0, 1, 2, 3, 4+$x01, 4+$x23, 4+$x45, 4+$x67,
-                8, 9, 10, 11, 12+$x01, 12+$x23, 12+$x45, 12+$x67
-            ]);
-        }
+            #[rustfmt::skip]
+                        simd_shuffle16(a, a, [
+                            0, 1, 2, 3, 4+$x01, 4+$x23, 4+$x45, 4+$x67,
+                            8, 9, 10, 11, 12+$x01, 12+$x23, 12+$x45, 12+$x67
+                        ]);
+        };
     }
     macro_rules! shuffle_x67 {
         ($x01:expr, $x23:expr, $x45:expr) => {
@@ -2841,7 +2812,7 @@ pub unsafe fn _mm256_shufflelo_epi16(a: __m256i, imm8: i32) -> __m256i {
     let a = a.as_i16x16();
     macro_rules! shuffle_done {
         ($x01: expr, $x23: expr, $x45: expr, $x67: expr) => {
-            #[cfg_attr(rustfmt, rustfmt_skip)]
+            #[rustfmt::skip]
                         simd_shuffle16(a, a, [
                             0+$x01, 0+$x23, 0+$x45, 0+$x67, 4, 5, 6, 7,
                             8+$x01, 8+$x23, 8+$x45, 8+$x67, 12, 13, 14, 15,
@@ -3458,7 +3429,7 @@ pub unsafe fn _mm256_subs_epu8(a: __m256i, b: __m256i) -> __m256i {
 #[cfg_attr(test, assert_instr(vpunpckhbw))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_unpackhi_epi8(a: __m256i, b: __m256i) -> __m256i {
-    #[cfg_attr(rustfmt, rustfmt_skip)]
+    #[rustfmt::skip]
     let r: i8x32 = simd_shuffle32(a.as_i8x32(), b.as_i8x32(), [
             8, 40, 9, 41, 10, 42, 11, 43,
             12, 44, 13, 45, 14, 46, 15, 47,
@@ -3517,7 +3488,7 @@ pub unsafe fn _mm256_unpackhi_epi8(a: __m256i, b: __m256i) -> __m256i {
 #[cfg_attr(test, assert_instr(vpunpcklbw))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_unpacklo_epi8(a: __m256i, b: __m256i) -> __m256i {
-    #[cfg_attr(rustfmt, rustfmt_skip)]
+    #[rustfmt::skip]
     let r: i8x32 = simd_shuffle32(a.as_i8x32(), b.as_i8x32(), [
         0, 32, 1, 33, 2, 34, 3, 35,
         4, 36, 5, 37, 6, 38, 7, 39,
@@ -3673,11 +3644,7 @@ pub unsafe fn _mm256_unpacklo_epi16(a: __m256i, b: __m256i) -> __m256i {
 #[cfg_attr(test, assert_instr(vunpckhps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_unpackhi_epi32(a: __m256i, b: __m256i) -> __m256i {
-    let r: i32x8 = simd_shuffle8(
-        a.as_i32x8(),
-        b.as_i32x8(),
-        [2, 10, 3, 11, 6, 14, 7, 15],
-    );
+    let r: i32x8 = simd_shuffle8(a.as_i32x8(), b.as_i32x8(), [2, 10, 3, 11, 6, 14, 7, 15]);
     mem::transmute(r)
 }
 
@@ -3720,8 +3687,7 @@ pub unsafe fn _mm256_unpackhi_epi32(a: __m256i, b: __m256i) -> __m256i {
 #[cfg_attr(test, assert_instr(vunpcklps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm256_unpacklo_epi32(a: __m256i, b: __m256i) -> __m256i {
-    let r: i32x8 =
-        simd_shuffle8(a.as_i32x8(), b.as_i32x8(), [0, 8, 1, 9, 4, 12, 5, 13]);
+    let r: i32x8 = simd_shuffle8(a.as_i32x8(), b.as_i32x8(), [0, 8, 1, 9, 4, 12, 5, 13]);
     mem::transmute(r)
 }
 
@@ -4067,72 +4033,74 @@ extern "C" {
     #[link_name = "llvm.x86.avx2.vperm2i128"]
     fn vperm2i128(a: i64x4, b: i64x4, imm8: i8) -> i64x4;
     #[link_name = "llvm.x86.avx2.gather.d.d"]
-    fn pgatherdd(
-        src: i32x4, slice: *const i8, offsets: i32x4, mask: i32x4, scale: i8,
-    ) -> i32x4;
+    fn pgatherdd(src: i32x4, slice: *const i8, offsets: i32x4, mask: i32x4, scale: i8) -> i32x4;
     #[link_name = "llvm.x86.avx2.gather.d.d.256"]
-    fn vpgatherdd(
-        src: i32x8, slice: *const i8, offsets: i32x8, mask: i32x8, scale: i8,
-    ) -> i32x8;
+    fn vpgatherdd(src: i32x8, slice: *const i8, offsets: i32x8, mask: i32x8, scale: i8) -> i32x8;
     #[link_name = "llvm.x86.avx2.gather.d.q"]
-    fn pgatherdq(
-        src: i64x2, slice: *const i8, offsets: i32x4, mask: i64x2, scale: i8,
-    ) -> i64x2;
+    fn pgatherdq(src: i64x2, slice: *const i8, offsets: i32x4, mask: i64x2, scale: i8) -> i64x2;
     #[link_name = "llvm.x86.avx2.gather.d.q.256"]
-    fn vpgatherdq(
-        src: i64x4, slice: *const i8, offsets: i32x4, mask: i64x4, scale: i8,
-    ) -> i64x4;
+    fn vpgatherdq(src: i64x4, slice: *const i8, offsets: i32x4, mask: i64x4, scale: i8) -> i64x4;
     #[link_name = "llvm.x86.avx2.gather.q.d"]
-    fn pgatherqd(
-        src: i32x4, slice: *const i8, offsets: i64x2, mask: i32x4, scale: i8,
-    ) -> i32x4;
+    fn pgatherqd(src: i32x4, slice: *const i8, offsets: i64x2, mask: i32x4, scale: i8) -> i32x4;
     #[link_name = "llvm.x86.avx2.gather.q.d.256"]
-    fn vpgatherqd(
-        src: i32x4, slice: *const i8, offsets: i64x4, mask: i32x4, scale: i8,
-    ) -> i32x4;
+    fn vpgatherqd(src: i32x4, slice: *const i8, offsets: i64x4, mask: i32x4, scale: i8) -> i32x4;
     #[link_name = "llvm.x86.avx2.gather.q.q"]
-    fn pgatherqq(
-        src: i64x2, slice: *const i8, offsets: i64x2, mask: i64x2, scale: i8,
-    ) -> i64x2;
+    fn pgatherqq(src: i64x2, slice: *const i8, offsets: i64x2, mask: i64x2, scale: i8) -> i64x2;
     #[link_name = "llvm.x86.avx2.gather.q.q.256"]
-    fn vpgatherqq(
-        src: i64x4, slice: *const i8, offsets: i64x4, mask: i64x4, scale: i8,
-    ) -> i64x4;
+    fn vpgatherqq(src: i64x4, slice: *const i8, offsets: i64x4, mask: i64x4, scale: i8) -> i64x4;
     #[link_name = "llvm.x86.avx2.gather.d.pd"]
     fn pgatherdpd(
-        src: __m128d, slice: *const i8, offsets: i32x4, mask: __m128d,
+        src: __m128d,
+        slice: *const i8,
+        offsets: i32x4,
+        mask: __m128d,
         scale: i8,
     ) -> __m128d;
     #[link_name = "llvm.x86.avx2.gather.d.pd.256"]
     fn vpgatherdpd(
-        src: __m256d, slice: *const i8, offsets: i32x4, mask: __m256d,
+        src: __m256d,
+        slice: *const i8,
+        offsets: i32x4,
+        mask: __m256d,
         scale: i8,
     ) -> __m256d;
     #[link_name = "llvm.x86.avx2.gather.q.pd"]
     fn pgatherqpd(
-        src: __m128d, slice: *const i8, offsets: i64x2, mask: __m128d,
+        src: __m128d,
+        slice: *const i8,
+        offsets: i64x2,
+        mask: __m128d,
         scale: i8,
     ) -> __m128d;
     #[link_name = "llvm.x86.avx2.gather.q.pd.256"]
     fn vpgatherqpd(
-        src: __m256d, slice: *const i8, offsets: i64x4, mask: __m256d,
+        src: __m256d,
+        slice: *const i8,
+        offsets: i64x4,
+        mask: __m256d,
         scale: i8,
     ) -> __m256d;
     #[link_name = "llvm.x86.avx2.gather.d.ps"]
-    fn pgatherdps(
-        src: __m128, slice: *const i8, offsets: i32x4, mask: __m128, scale: i8,
-    ) -> __m128;
+    fn pgatherdps(src: __m128, slice: *const i8, offsets: i32x4, mask: __m128, scale: i8)
+        -> __m128;
     #[link_name = "llvm.x86.avx2.gather.d.ps.256"]
     fn vpgatherdps(
-        src: __m256, slice: *const i8, offsets: i32x8, mask: __m256, scale: i8,
+        src: __m256,
+        slice: *const i8,
+        offsets: i32x8,
+        mask: __m256,
+        scale: i8,
     ) -> __m256;
     #[link_name = "llvm.x86.avx2.gather.q.ps"]
-    fn pgatherqps(
-        src: __m128, slice: *const i8, offsets: i64x2, mask: __m128, scale: i8,
-    ) -> __m128;
+    fn pgatherqps(src: __m128, slice: *const i8, offsets: i64x2, mask: __m128, scale: i8)
+        -> __m128;
     #[link_name = "llvm.x86.avx2.gather.q.ps.256"]
     fn vpgatherqps(
-        src: __m128, slice: *const i8, offsets: i64x4, mask: __m128, scale: i8,
+        src: __m128,
+        slice: *const i8,
+        offsets: i64x4,
+        mask: __m128,
+        scale: i8,
     ) -> __m128;
     #[link_name = "llvm.x86.avx2.psll.dq"]
     fn vpslldq(a: i64x4, b: i32) -> i64x4;
@@ -4149,13 +4117,13 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_abs_epi32() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi32(
             0, 1, -1, std::i32::MAX,
             std::i32::MIN, 100, -100, -32,
         );
         let r = _mm256_abs_epi32(a);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi32(
             0, 1, 1, std::i32::MAX,
             std::i32::MAX.wrapping_add(1), 100, 100, 32,
@@ -4165,13 +4133,13 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_abs_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0,  1, -1, 2, -2, 3, -3, 4,
             -4, 5, -5, std::i16::MAX, std::i16::MIN, 100, -100, -32,
         );
         let r = _mm256_abs_epi16(a);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             0, 1, 1, 2, 2, 3, 3, 4,
             4, 5, 5, std::i16::MAX, std::i16::MAX.wrapping_add(1), 100, 100, 32,
@@ -4181,7 +4149,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_abs_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             0, 1, -1, 2, -2, 3, -3, 4,
             -4, 5, -5, std::i8::MAX, std::i8::MIN, 100, -100, -32,
@@ -4189,7 +4157,7 @@ mod tests {
             -4, 5, -5, std::i8::MAX, std::i8::MIN, 100, -100, -32,
         );
         let r = _mm256_abs_epi8(a);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             0, 1, 1, 2, 2, 3, 3, 4,
             4, 5, 5, std::i8::MAX, std::i8::MAX.wrapping_add(1), 100, 100, 32,
@@ -4219,18 +4187,18 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_add_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
         let r = _mm256_add_epi16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             0, 2, 4, 6, 8, 10, 12, 14,
             16, 18, 20, 22, 24, 26, 28, 30,
@@ -4240,14 +4208,14 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_add_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23,
             24, 25, 26, 27, 28, 29, 30, 31,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -4255,7 +4223,7 @@ mod tests {
             24, 25, 26, 27, 28, 29, 30, 31,
         );
         let r = _mm256_add_epi8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             0, 2, 4, 6, 8, 10, 12, 14,
             16, 18, 20, 22, 24, 26, 28, 30,
@@ -4267,14 +4235,14 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_adds_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23,
             24, 25, 26, 27, 28, 29, 30, 31,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             32, 33, 34, 35, 36, 37, 38, 39,
             40, 41, 42, 43, 44, 45, 46, 47,
@@ -4282,7 +4250,7 @@ mod tests {
             56, 57, 58, 59, 60, 61, 62, 63,
         );
         let r = _mm256_adds_epi8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             32, 34, 36, 38, 40, 42, 44, 46,
             48, 50, 52, 54, 56, 58, 60, 62,
@@ -4310,18 +4278,18 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_adds_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi16(
             32, 33, 34, 35, 36, 37, 38, 39,
             40, 41, 42, 43, 44, 45, 46, 47,
         );
         let r = _mm256_adds_epi16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             32, 34, 36, 38, 40, 42, 44, 46,
             48, 50, 52, 54, 56, 58, 60, 62,
@@ -4348,14 +4316,14 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_adds_epu8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23,
             24, 25, 26, 27, 28, 29, 30, 31,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             32, 33, 34, 35, 36, 37, 38, 39,
             40, 41, 42, 43, 44, 45, 46, 47,
@@ -4363,7 +4331,7 @@ mod tests {
             56, 57, 58, 59, 60, 61, 62, 63,
         );
         let r = _mm256_adds_epu8(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             32, 34, 36, 38, 40, 42, 44, 46,
             48, 50, 52, 54, 56, 58, 60, 62,
@@ -4383,18 +4351,18 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_adds_epu16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi16(
             32, 33, 34, 35, 36, 37, 38, 39,
             40, 41, 42, 43, 44, 45, 46, 47,
         );
         let r = _mm256_adds_epu16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             32, 34, 36, 38, 40, 42, 44, 46,
             48, 50, 52, 54, 56, 58, 60, 62,
@@ -4471,8 +4439,7 @@ mod tests {
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_blend_epi16() {
         let (a, b) = (_mm256_set1_epi16(3), _mm256_set1_epi16(9));
-        let e =
-            _mm256_setr_epi16(9, 3, 3, 3, 3, 3, 3, 3, 9, 3, 3, 3, 3, 3, 3, 3);
+        let e = _mm256_setr_epi16(9, 3, 3, 3, 3, 3, 3, 3, 9, 3, 3, 3, 3, 3, 3, 3);
         let r = _mm256_blend_epi16(a, b, 0x01 as i32);
         assert_eq_m256i(r, e);
 
@@ -4588,14 +4555,14 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cmpeq_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
             16, 17, 18, 19, 20, 21, 22, 23,
             24, 25, 26, 27, 28, 29, 30, 31,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             31, 30, 2, 28, 27, 26, 25, 24,
             23, 22, 21, 20, 19, 18, 17, 16,
@@ -4608,12 +4575,12 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cmpeq_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi16(
             15, 14, 2, 12, 11, 10, 9, 8,
             7, 6, 5, 4, 3, 2, 1, 0,
@@ -4674,12 +4641,12 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepi8_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 0, -1, 1, -2, 2, -3, 3,
             -4, 4, -5, 5, -6, 6, -7, 7,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let r = _mm256_setr_epi16(
             0, 0, -1, 1, -2, 2, -3, 3,
             -4, 4, -5, 5, -6, 6, -7, 7,
@@ -4689,7 +4656,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepi8_epi32() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 0, -1, 1, -2, 2, -3, 3,
             -4, 4, -5, 5, -6, 6, -7, 7,
@@ -4700,7 +4667,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepi8_epi64() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 0, -1, 1, -2, 2, -3, 3,
             -4, 4, -5, 5, -6, 6, -7, 7,
@@ -4753,12 +4720,12 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepu8_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let r = _mm256_setr_epi16(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -4768,7 +4735,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepu8_epi32() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -4779,7 +4746,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_cvtepu8_epi64() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_epi8(
             0, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -4801,8 +4768,7 @@ mod tests {
         let a = _mm256_set1_epi16(2);
         let b = _mm256_set1_epi16(4);
         let r = _mm256_hadd_epi16(a, b);
-        let e =
-            _mm256_setr_epi16(4, 4, 4, 4, 8, 8, 8, 8, 4, 4, 4, 4, 8, 8, 8, 8);
+        let e = _mm256_setr_epi16(4, 4, 4, 4, 8, 8, 8, 8, 4, 4, 4, 4, 8, 8, 8, 8);
         assert_eq_m256i(r, e);
     }
 
@@ -4822,7 +4788,7 @@ mod tests {
         let a = _mm256_insert_epi16(a, 1, 1);
         let b = _mm256_set1_epi16(4);
         let r = _mm256_hadds_epi16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             0x7FFF, 4, 4, 4, 8, 8, 8, 8,
             4, 4, 4, 4, 8, 8, 8, 8,
@@ -5155,7 +5121,7 @@ mod tests {
         let a = _mm256_set1_epi16(2);
         let b = _mm256_set1_epi16(4);
         let r = _mm256_packs_epi16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             2, 2, 2, 2, 2, 2, 2, 2,
             4, 4, 4, 4, 4, 4, 4, 4,
@@ -5171,8 +5137,7 @@ mod tests {
         let a = _mm256_set1_epi32(2);
         let b = _mm256_set1_epi32(4);
         let r = _mm256_packs_epi32(a, b);
-        let e =
-            _mm256_setr_epi16(2, 2, 2, 2, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4);
+        let e = _mm256_setr_epi16(2, 2, 2, 2, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4);
 
         assert_eq_m256i(r, e);
     }
@@ -5182,7 +5147,7 @@ mod tests {
         let a = _mm256_set1_epi16(2);
         let b = _mm256_set1_epi16(4);
         let r = _mm256_packus_epi16(a, b);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             2, 2, 2, 2, 2, 2, 2, 2,
             4, 4, 4, 4, 4, 4, 4, 4,
@@ -5198,8 +5163,7 @@ mod tests {
         let a = _mm256_set1_epi32(2);
         let b = _mm256_set1_epi32(4);
         let r = _mm256_packus_epi32(a, b);
-        let e =
-            _mm256_setr_epi16(2, 2, 2, 2, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4);
+        let e = _mm256_setr_epi16(2, 2, 2, 2, 4, 4, 4, 4, 2, 2, 2, 2, 4, 4, 4, 4);
 
         assert_eq_m256i(r, e);
     }
@@ -5215,12 +5179,12 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_shufflehi_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             0, 1, 2, 3, 11, 22, 33, 44,
             4, 5, 6, 7, 55, 66, 77, 88,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             0, 1, 2, 3, 44, 22, 22, 11,
             4, 5, 6, 7, 88, 66, 66, 55,
@@ -5231,12 +5195,12 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_shufflelo_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             11, 22, 33, 44, 0, 1, 2, 3,
             55, 66, 77, 88, 4, 5, 6, 7,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi16(
             44, 22, 22, 11, 0, 1, 2, 3,
             88, 66, 66, 55, 4, 5, 6, 7,
@@ -5415,7 +5379,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_srli_si256() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16,
@@ -5423,7 +5387,7 @@ mod tests {
             25, 26, 27, 28, 29, 30, 31, 32,
         );
         let r = _mm256_srli_si256(a, 3);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let e = _mm256_setr_epi8(
             4, 5, 6, 7, 8, 9, 10, 11,
             12, 13, 14, 15, 16, 0, 0, 0,
@@ -5591,14 +5555,14 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_alignr_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28, 29, 30, 31, 32,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             -1, -2, -3, -4, -5, -6, -7, -8,
             -9, -10, -11, -12, -13, -14, -15, -16,
@@ -5609,7 +5573,7 @@ mod tests {
         assert_eq_m256i(r, _mm256_set1_epi8(0));
 
         let r = _mm256_alignr_epi8(a, b, 17);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let expected = _mm256_setr_epi8(
             2, 3, 4, 5, 6, 7, 8, 9,
             10, 11, 12, 13, 14, 15, 16, 0,
@@ -5619,7 +5583,7 @@ mod tests {
         assert_eq_m256i(r, expected);
 
         let r = _mm256_alignr_epi8(a, b, 4);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let expected = _mm256_setr_epi8(
             -5, -6, -7, -8, -9, -10, -11, -12,
             -13, -14, -15, -16, 1, 2, 3, 4,
@@ -5628,7 +5592,7 @@ mod tests {
         );
         assert_eq_m256i(r, expected);
 
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let expected = _mm256_setr_epi8(
             -1, -2, -3, -4, -5, -6, -7, -8,
             -9, -10, -11, -12, -13, -14, -15, -16, -17,
@@ -5639,7 +5603,7 @@ mod tests {
         assert_eq_m256i(r, expected);
 
         let r = _mm256_alignr_epi8(a, b, 15);
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let expected = _mm256_setr_epi8(
             -16, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -5654,21 +5618,21 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_shuffle_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             1, 2, 3, 4, 5, 6, 7, 8,
             9, 10, 11, 12, 13, 14, 15, 16,
             17, 18, 19, 20, 21, 22, 23, 24,
             25, 26, 27, 28, 29, 30, 31, 32,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let b = _mm256_setr_epi8(
             4, 128u8 as i8, 4, 3, 24, 12, 6, 19,
             12, 5, 5, 10, 4, 1, 8, 0,
             4, 128u8 as i8, 4, 3, 24, 12, 6, 19,
             12, 5, 5, 10, 4, 1, 8, 0,
         );
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let expected = _mm256_setr_epi8(
             5, 0, 5, 4, 9, 13, 7, 4,
             13, 6, 6, 11, 5, 2, 9, 1,
@@ -5683,8 +5647,7 @@ mod tests {
     unsafe fn test_mm256_permutevar8x32_epi32() {
         let a = _mm256_setr_epi32(100, 200, 300, 400, 500, 600, 700, 800);
         let b = _mm256_setr_epi32(5, 0, 5, 1, 7, 6, 3, 4);
-        let expected =
-            _mm256_setr_epi32(600, 100, 600, 200, 800, 700, 400, 500);
+        let expected = _mm256_setr_epi32(600, 100, 600, 200, 800, 700, 400, 500);
         let r = _mm256_permutevar8x32_epi32(a, b);
         assert_eq_m256i(r, expected);
     }
@@ -5730,11 +5693,7 @@ mod tests {
             arr[i as usize] = i;
         }
         // A multiplier of 4 is word-addressing
-        let r = _mm_i32gather_epi32(
-            arr.as_ptr(),
-            _mm_setr_epi32(0, 16, 32, 48),
-            4,
-        );
+        let r = _mm_i32gather_epi32(arr.as_ptr(), _mm_setr_epi32(0, 16, 32, 48), 4);
         assert_eq_m128i(r, _mm_setr_epi32(0, 16, 32, 48));
     }
 
@@ -5784,10 +5743,7 @@ mod tests {
             _mm256_setr_epi32(-1, -1, -1, 0, 0, 0, 0, 0),
             4,
         );
-        assert_eq_m256i(
-            r,
-            _mm256_setr_epi32(0, 16, 64, 256, 256, 256, 256, 256),
-        );
+        assert_eq_m256i(r, _mm256_setr_epi32(0, 16, 64, 256, 256, 256, 256, 256));
     }
 
     #[simd_test(enable = "avx2")]
@@ -5799,8 +5755,7 @@ mod tests {
             j += 1.0;
         }
         // A multiplier of 4 is word-addressing for f32s
-        let r =
-            _mm_i32gather_ps(arr.as_ptr(), _mm_setr_epi32(0, 16, 32, 48), 4);
+        let r = _mm_i32gather_ps(arr.as_ptr(), _mm_setr_epi32(0, 16, 32, 48), 4);
         assert_eq_m128(r, _mm_setr_ps(0.0, 16.0, 32.0, 48.0));
     }
 
@@ -5837,10 +5792,7 @@ mod tests {
             _mm256_setr_epi32(0, 16, 32, 48, 1, 2, 3, 4),
             4,
         );
-        assert_eq_m256(
-            r,
-            _mm256_setr_ps(0.0, 16.0, 32.0, 48.0, 1.0, 2.0, 3.0, 4.0),
-        );
+        assert_eq_m256(r, _mm256_setr_ps(0.0, 16.0, 32.0, 48.0, 1.0, 2.0, 3.0, 4.0));
     }
 
     #[simd_test(enable = "avx2")]
@@ -5872,8 +5824,7 @@ mod tests {
             arr[i as usize] = i;
         }
         // A multiplier of 8 is word-addressing for i64s
-        let r =
-            _mm_i32gather_epi64(arr.as_ptr(), _mm_setr_epi32(0, 16, 0, 0), 8);
+        let r = _mm_i32gather_epi64(arr.as_ptr(), _mm_setr_epi32(0, 16, 0, 0), 8);
         assert_eq_m128i(r, _mm_setr_epi64x(0, 16));
     }
 
@@ -5901,11 +5852,7 @@ mod tests {
             arr[i as usize] = i;
         }
         // A multiplier of 8 is word-addressing for i64s
-        let r = _mm256_i32gather_epi64(
-            arr.as_ptr(),
-            _mm_setr_epi32(0, 16, 32, 48),
-            8,
-        );
+        let r = _mm256_i32gather_epi64(arr.as_ptr(), _mm_setr_epi32(0, 16, 32, 48), 8);
         assert_eq_m256i(r, _mm256_setr_epi64x(0, 16, 32, 48));
     }
 
@@ -5967,11 +5914,7 @@ mod tests {
             j += 1.0;
         }
         // A multiplier of 8 is word-addressing for f64s
-        let r = _mm256_i32gather_pd(
-            arr.as_ptr(),
-            _mm_setr_epi32(0, 16, 32, 48),
-            8,
-        );
+        let r = _mm256_i32gather_pd(arr.as_ptr(), _mm_setr_epi32(0, 16, 32, 48), 8);
         assert_eq_m256d(r, _mm256_setr_pd(0.0, 16.0, 32.0, 48.0));
     }
 
@@ -6029,11 +5972,7 @@ mod tests {
             arr[i as usize] = i;
         }
         // A multiplier of 4 is word-addressing
-        let r = _mm256_i64gather_epi32(
-            arr.as_ptr(),
-            _mm256_setr_epi64x(0, 16, 32, 48),
-            4,
-        );
+        let r = _mm256_i64gather_epi32(arr.as_ptr(), _mm256_setr_epi64x(0, 16, 32, 48), 4);
         assert_eq_m128i(r, _mm_setr_epi32(0, 16, 32, 48));
     }
 
@@ -6095,11 +6034,7 @@ mod tests {
             j += 1.0;
         }
         // A multiplier of 4 is word-addressing for f32s
-        let r = _mm256_i64gather_ps(
-            arr.as_ptr(),
-            _mm256_setr_epi64x(0, 16, 32, 48),
-            4,
-        );
+        let r = _mm256_i64gather_ps(arr.as_ptr(), _mm256_setr_epi64x(0, 16, 32, 48), 4);
         assert_eq_m128(r, _mm_setr_ps(0.0, 16.0, 32.0, 48.0));
     }
 
@@ -6157,11 +6092,7 @@ mod tests {
             arr[i as usize] = i;
         }
         // A multiplier of 8 is word-addressing for i64s
-        let r = _mm256_i64gather_epi64(
-            arr.as_ptr(),
-            _mm256_setr_epi64x(0, 16, 32, 48),
-            8,
-        );
+        let r = _mm256_i64gather_epi64(arr.as_ptr(), _mm256_setr_epi64x(0, 16, 32, 48), 8);
         assert_eq_m256i(r, _mm256_setr_epi64x(0, 16, 32, 48));
     }
 
@@ -6223,11 +6154,7 @@ mod tests {
             j += 1.0;
         }
         // A multiplier of 8 is word-addressing for f64s
-        let r = _mm256_i64gather_pd(
-            arr.as_ptr(),
-            _mm256_setr_epi64x(0, 16, 32, 48),
-            8,
-        );
+        let r = _mm256_i64gather_pd(arr.as_ptr(), _mm256_setr_epi64x(0, 16, 32, 48), 8);
         assert_eq_m256d(r, _mm256_setr_pd(0.0, 16.0, 32.0, 48.0));
     }
 
@@ -6252,7 +6179,7 @@ mod tests {
 
     #[simd_test(enable = "avx")]
     unsafe fn test_mm256_extract_epi8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi8(
             -1, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,
@@ -6267,7 +6194,7 @@ mod tests {
 
     #[simd_test(enable = "avx2")]
     unsafe fn test_mm256_extract_epi16() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm256_setr_epi16(
             -1, 1, 2, 3, 4, 5, 6, 7,
             8, 9, 10, 11, 12, 13, 14, 15,

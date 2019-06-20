@@ -1,11 +1,3 @@
-// Copyright 2017 Serde Developers
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! # Serde
 //!
 //! Serde is a framework for ***ser***ializing and ***de***serializing Rust data
@@ -50,17 +42,17 @@
 //! - [MessagePack], an efficient binary format that resembles a compact JSON.
 //! - [TOML], a minimal configuration format used by [Cargo].
 //! - [Pickle], a format common in the Python world.
-//! - [Hjson], a variant of JSON designed to be readable and writable by humans.
+//! - [RON], a Rusty Object Notation.
 //! - [BSON], the data storage and network transfer format used by MongoDB.
 //! - [Avro], a binary format used within Apache Hadoop, with support for schema
 //!   definition.
+//! - [Hjson], a variant of JSON designed to be readable and writable by humans.
+//! - [JSON5], A superset of JSON including some productions from ES5.
 //! - [URL], the x-www-form-urlencoded format.
-//! - [XML], the flexible machine-friendly W3C standard.
-//!   *(deserialization only)*
 //! - [Envy], a way to deserialize environment variables into Rust structs.
 //!   *(deserialization only)*
-//! - [Redis], deserialize values from Redis when using [redis-rs].
-//!   *(deserialization only)*
+//! - [Envy Store], a way to deserialize [AWS Parameter Store] parameters into
+//!   Rust structs. *(deserialization only)*
 //!
 //! [JSON]: https://github.com/serde-rs/json
 //! [Bincode]: https://github.com/TyOverby/bincode
@@ -69,20 +61,21 @@
 //! [MessagePack]: https://github.com/3Hren/msgpack-rust
 //! [TOML]: https://github.com/alexcrichton/toml-rs
 //! [Pickle]: https://github.com/birkenfeld/serde-pickle
-//! [Hjson]: https://github.com/laktak/hjson-rust
+//! [RON]: https://github.com/ron-rs/ron
 //! [BSON]: https://github.com/zonyitoo/bson-rs
 //! [Avro]: https://github.com/flavray/avro-rs
+//! [Hjson]: https://github.com/laktak/hjson-rust
+//! [JSON5]: https://github.com/callum-oakley/json5-rs
 //! [URL]: https://github.com/nox/serde_urlencoded
-//! [XML]: https://github.com/RReverser/serde-xml-rs
 //! [Envy]: https://github.com/softprops/envy
-//! [Redis]: https://github.com/OneSignal/serde-redis
+//! [Envy Store]: https://github.com/softprops/envy-store
 //! [Cargo]: http://doc.crates.io/manifest.html
-//! [redis-rs]: https://crates.io/crates/redis
+//! [AWS Parameter Store]: https://docs.aws.amazon.com/systems-manager/latest/userguide/systems-manager-paramstore.html
 
 ////////////////////////////////////////////////////////////////////////////////
 
 // Serde types in rustdoc of other crates get linked to here.
-#![doc(html_root_url = "https://docs.rs/serde/1.0.75")]
+#![doc(html_root_url = "https://docs.rs/serde/1.0.82")]
 // Support using Serde without the standard library!
 #![cfg_attr(not(feature = "std"), no_std)]
 // Unstable functionality only if the user asks for it. For tracking and
@@ -91,6 +84,7 @@
 //    https://github.com/serde-rs/serde/issues/812
 #![cfg_attr(feature = "unstable", feature(specialization, never_type))]
 #![cfg_attr(feature = "alloc", feature(alloc))]
+#![cfg_attr(feature = "cargo-clippy", allow(renamed_and_removed_lints))]
 #![cfg_attr(feature = "cargo-clippy", deny(clippy, clippy_pedantic))]
 // Whitelisted clippy lints
 #![cfg_attr(

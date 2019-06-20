@@ -1,6 +1,5 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
+// Copyright 2013 The Rust Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -11,7 +10,8 @@
 //! The normal and derived distributions.
 
 use Rng;
-use distributions::{ziggurat, ziggurat_tables, Distribution, Open01};
+use distributions::{ziggurat_tables, Distribution, Open01};
+use distributions::utils::ziggurat;
 
 /// Samples floating-point numbers according to the normal distribution
 /// `N(0, 1)` (a.k.a. a standard normal, or Gaussian). This is equivalent to
@@ -74,8 +74,11 @@ impl Distribution<f64> for StandardNormal {
 
 /// The normal distribution `N(mean, std_dev**2)`.
 ///
-/// This uses the ZIGNOR variant of the Ziggurat method, see `StandardNormal`
+/// This uses the ZIGNOR variant of the Ziggurat method, see [`StandardNormal`]
 /// for more details.
+/// 
+/// Note that [`StandardNormal`] is an optimised implementation for mean 0, and
+/// standard deviation 1.
 ///
 /// # Example
 ///
@@ -87,6 +90,8 @@ impl Distribution<f64> for StandardNormal {
 /// let v = normal.sample(&mut rand::thread_rng());
 /// println!("{} is from a N(2, 9) distribution", v)
 /// ```
+///
+/// [`StandardNormal`]: struct.StandardNormal.html
 #[derive(Clone, Copy, Debug)]
 pub struct Normal {
     mean: f64,

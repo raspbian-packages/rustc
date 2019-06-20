@@ -6,23 +6,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 A [separate changelog is kept for rand_core](rand_core/CHANGELOG.md).
 
-You may also find the [Update Guide](UPDATING.md) useful.
+You may also find the [Upgrade Guide](https://rust-random.github.io/book/update.html) useful.
+
+
+## [0.6.1] - 2018-11-22
+- Support sampling `Duration` also for `no_std` (only since Rust 1.25) (#649)
+- Disable default features of `libc` (#647)
+
+## [0.6.0] - 2018-11-14
+
+### Project organisation
+- Rand has moved from [rust-lang-nursery](https://github.com/rust-lang-nursery/rand)
+  to [rust-random](https://github.com/rust-random/rand)! (#578)
+- Created [The Rust Random Book](https://rust-random.github.io/book/)
+  ([source](https://github.com/rust-random/book))
+- Update copyright and licence notices (#591, #611)
+- Migrate policy documentation from the wiki (#544)
+
+### Platforms
+- Add fork protection on Unix (#466)
+- Added support for wasm-bindgen. (#541, #559, #562, #600)
+- Enable `OsRng` for powerpc64, sparc and sparc64 (#609)
+- Use `syscall` from `libc` on Linux instead of redefining it (#629)
+
+### RNGs
+- Switch `SmallRng` to use PCG (#623)
+- Implement `Pcg32` and `Pcg64Mcg` generators (#632)
+- Move ISAAC RNGs to a dedicated crate (#551)
+- Move Xorshift RNG to its own crate (#557)
+- Move ChaCha and HC128 RNGs to dedicated crates (#607, #636)
+- Remove usage of `Rc` from `ThreadRng` (#615)
+
+### Sampling and distributions
+- Implement `Rng.gen_ratio()` and `Bernoulli::new_ratio()` (#491)
+- Make `Uniform` strictly respect `f32` / `f64` high/low bounds (#477)
+- Allow `gen_range` and `Uniform` to work on non-`Copy` types (#506)
+- `Uniform` supports inclusive ranges: `Uniform::from(a..=b)`. This is
+  automatically enabled for Rust >= 1.27. (#566)
+- Implement `TrustedLen` and `FusedIterator` for `DistIter` (#620)
+
+#### New distributions
+- Add the `Dirichlet` distribution (#485)
+- Added sampling from the unit sphere and circle. (#567)
+- Implement the triangular distribution (#575)
+- Implement the Weibull distribution (#576)
+- Implement the Beta distribution (#574)
+
+#### Optimisations
+
+- Optimise `Bernoulli::new` (#500)
+- Optimise `char` sampling (#519)
+- Optimise sampling of `std::time::Duration` (#583)
+
+### Sequences
+- Redesign the `seq` module (#483, #515)
+- Add `WeightedIndex` and `choose_weighted` (#518, #547)
+- Optimised and changed return type of the `sample_indices` function. (#479)
+- Use `Iterator::size_hint()` to speed up `IteratorRandom::choose` (#593)
+
+### SIMD
+- Support for generating SIMD types (#523, #542, #561, #630)
+
+### Other
+- Revise CI scripts (#632, #635)
+- Remove functionality already deprecated in 0.5 (#499)
+- Support for `i128` and `u128` is automatically enabled for Rust >= 1.26. This
+  renders the `i128_support` feature obsolete. It still exists for backwards
+  compatibility but does not have any effect. This breaks programs using Rand
+  with `i128_support` on nightlies older than Rust 1.26. (#571)
+
 
 ## [0.5.5] - 2018-08-07
 ### Documentation
 - Fix links in documentation (#582)
 
+
 ## [0.5.4] - 2018-07-11
 ### Platform support
 - Make `OsRng` work via WASM/stdweb for WebWorkers
+
 
 ## [0.5.3] - 2018-06-26
 ### Platform support
 - OpenBSD, Bitrig: fix compilation (broken in 0.5.1) (#530)
 
+
 ## [0.5.2] - 2018-06-18
 ### Platform support
 - Hide `OsRng` and `JitterRng` on unsupported platforms (#512; fixes #503).
+
 
 ## [0.5.1] - 2018-06-08
 
@@ -40,6 +112,7 @@ You may also find the [Update Guide](UPDATING.md) useful.
 - Emscripten, Haiku: don't do an extra blocking read from `/dev/random`. (#484)
 - Linux, NetBSD, Solaris: read in blocking mode on first use in `fill_bytes`. (#484)
 - Fuchsia, CloudABI: fix compilation (broken in Rand 0.5). (#484)
+
 
 ## [0.5.0] - 2018-05-21
 
@@ -128,6 +201,11 @@ You may also find the [Update Guide](UPDATING.md) useful.
 - `Standard` distribution for `bool` uses sign test. (#274)
 - Implement `Standard` distribution for `Wrapping<T>`. (#436)
 - Implement `Uniform` distribution for `Duration`. (#427)
+
+
+## [0.4.3] - 2018-08-16
+### Fixed
+- Use correct syscall number for PowerPC (#589)
 
 
 ## [0.4.2] - 2018-01-06

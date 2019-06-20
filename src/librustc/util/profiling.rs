@@ -1,18 +1,8 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use session::config::Options;
 
 use std::fs;
-use std::io::{self, StdoutLock, Write};
-use std::time::{Duration, Instant};
+use std::io::{self, StderrLock, Write};
+use std::time::Instant;
 
 macro_rules! define_categories {
     ($($name:ident,)*) => {
@@ -61,14 +51,19 @@ macro_rules! define_categories {
                 }
             }
 
-            fn print(&self, lock: &mut StdoutLock<'_>) {
-                writeln!(lock, "| Phase            | Time (ms)      | Queries        | Hits (%) |")
+            fn print(&self, lock: &mut StderrLock<'_>) {
+                writeln!(lock, "| Phase            | Time (ms)      \
+                                | Time (%) | Queries        | Hits (%)")
                     .unwrap();
-                writeln!(lock, "| ---------------- | -------------- | -------------- | -------- |")
+                writeln!(lock, "| ---------------- | -------------- \
+                                | -------- | -------------- | --------")
                     .unwrap();
 
+                let total_time = ($(self.times.$name + )* 0) as f32;
+
                 $(
-                    let (hits, total) = self.query_counts.$name;
+                    let (hits, computed) = self.query_counts.$name;
+                    let total = hits + computed;
                     let (hits, total) = if total > 0 {
                         (format!("{:.2}",
                         (((hits as f32) / (total as f32)) * 100.0)), total.to_string())
@@ -78,11 +73,12 @@ macro_rules! define_categories {
 
                     writeln!(
                         lock,
-                        "| {0: <16} | {1: <14} | {2: <14} | {3: <8} |",
+                        "| {0: <16} | {1: <14} | {2: <8.2} | {3: <14} | {4: <8}",
                         stringify!($name),
                         self.times.$name / 1_000_000,
+                        ((self.times.$name as f32) / total_time) * 100.0,
                         total,
-                        hits
+                        hits,
                     ).unwrap();
                 )*
             }
@@ -91,7 +87,8 @@ macro_rules! define_categories {
                 let mut json = String::from("[");
 
                 $(
-                    let (hits, total) = self.query_counts.$name;
+                    let (hits, computed) = self.query_counts.$name;
+                    let total = hits + computed;
 
                     //normalize hits to 0%
                     let hit_percent =
@@ -173,14 +170,14 @@ impl SelfProfiler {
         self.timer_stack.push(category);
     }
 
-    pub fn record_query(&mut self, category: ProfileCategory) {
-        let (hits, total) = *self.data.query_counts.get(category);
-        self.data.query_counts.set(category, (hits, total + 1));
+    pub fn record_computed_queries(&mut self, category: ProfileCategory, count: usize) {
+        let (hits, computed) = *self.data.query_counts.get(category);
+        self.data.query_counts.set(category, (hits, computed + count as u64));
     }
 
     pub fn record_query_hit(&mut self, category: ProfileCategory) {
-        let (hits, total) = *self.data.query_counts.get(category);
-        self.data.query_counts.set(category, (hits + 1, total));
+        let (hits, computed) = *self.data.query_counts.get(category);
+        self.data.query_counts.set(category, (hits + 1, computed));
     }
 
     pub fn end_activity(&mut self, category: ProfileCategory) {
@@ -208,20 +205,7 @@ impl SelfProfiler {
     }
 
     fn stop_timer(&mut self) -> u64 {
-        let elapsed = if cfg!(windows) {
-            // On Windows, timers don't always appear to be monotonic (see #51648)
-            // which can lead to panics when calculating elapsed time.
-            // Work around this by testing to see if the current time is less than
-            // our recorded time, and if it is, just returning 0.
-            let now = Instant::now();
-            if self.current_timer >= now {
-                Duration::new(0, 0)
-            } else {
-                self.current_timer.elapsed()
-            }
-        } else {
-            self.current_timer.elapsed()
-        };
+        let elapsed = self.current_timer.elapsed();
 
         self.current_timer = Instant::now();
 
@@ -235,7 +219,7 @@ impl SelfProfiler {
             self.timer_stack.is_empty(),
             "there were timers running when print_results() was called");
 
-        let out = io::stdout();
+        let out = io::stderr();
         let mut lock = out.lock();
 
         let crate_name =

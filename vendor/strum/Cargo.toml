@@ -12,7 +12,7 @@
 
 [package]
 name = "strum"
-version = "0.9.0"
+version = "0.11.0"
 authors = ["Peter Glotfelty <peglotfe@microsoft.com>"]
 description = "Helpful macros for working with enums and strings"
 homepage = "https://github.com/Peternator7/strum"
@@ -22,6 +22,6 @@ keywords = ["enum", "string", "macros", "proc-macros"]
 categories = ["development-tools::procedural-macro-helpers", "parsing"]
 license = "MIT"
 [dev-dependencies.strum_macros]
-version = "0.9.0"
+version = "0.11.0"
 [badges.travis-ci]
 repository = "Peternator7/strum"

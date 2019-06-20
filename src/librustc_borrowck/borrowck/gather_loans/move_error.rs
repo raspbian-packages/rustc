@@ -1,13 +1,3 @@
-// Copyright 2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use borrowck::BorrowckCtxt;
 use rustc::middle::mem_categorization as mc;
 use rustc::middle::mem_categorization::Categorization;
@@ -97,8 +87,8 @@ fn report_move_errors<'a, 'tcx>(bccx: &BorrowckCtxt<'a, 'tcx>, errors: &[MoveErr
             }
         }
         if let NoteClosureEnv(upvar_id) = error.move_from.note {
-            let var_node_id = bccx.tcx.hir.hir_to_node_id(upvar_id.var_path.hir_id);
-            err.span_label(bccx.tcx.hir.span(var_node_id),
+            let var_node_id = bccx.tcx.hir().hir_to_node_id(upvar_id.var_path.hir_id);
+            err.span_label(bccx.tcx.hir().span(var_node_id),
                            "captured outer variable");
         }
         err.emit();

@@ -2,8 +2,11 @@
 //! on-chip hardware random number generator which has been seeded by an
 //! on-chip entropy source.
 
-extern "platform-intrinsic" {
+#[allow(improper_ctypes)]
+extern "unadjusted" {
+    #[link_name = "llvm.x86.rdrand.64"]
     fn x86_rdrand64_step() -> (u64, i32);
+    #[link_name = "llvm.x86.rdseed.64"]
     fn x86_rdseed64_step() -> (u64, i32);
 }
 
@@ -17,7 +20,7 @@ use stdsimd_test::assert_instr;
 #[inline]
 #[target_feature(enable = "rdrand")]
 #[cfg_attr(test, assert_instr(rdrand))]
-#[cfg_attr(feature = "cargo-clippy", allow(stutter))]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::stutter))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _rdrand64_step(val: &mut u64) -> i32 {
     let (v, flag) = x86_rdrand64_step();

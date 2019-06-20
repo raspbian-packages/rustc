@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 #![allow(non_snake_case)]
 
 use rustc::hir::Node;
@@ -139,8 +129,8 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for TypeLimits {
                             _ => bug!(),
                         };
                         if lit_val < min || lit_val > max {
-                            let parent_id = cx.tcx.hir.get_parent_node(e.id);
-                            if let Node::Expr(parent_expr) = cx.tcx.hir.get(parent_id) {
+                            let parent_id = cx.tcx.hir().get_parent_node(e.id);
+                            if let Node::Expr(parent_expr) = cx.tcx.hir().get(parent_id) {
                                 if let hir::ExprKind::Cast(..) = parent_expr.node {
                                     if let ty::Char = cx.tables.expr_ty(parent_expr).sty {
                                         let mut err = cx.struct_span_lint(
@@ -756,7 +746,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
                     diag.help(s);
                 }
                 if let ty::Adt(def, _) = unsafe_ty.sty {
-                    if let Some(sp) = self.cx.tcx.hir.span_if_local(def.did) {
+                    if let Some(sp) = self.cx.tcx.hir().span_if_local(def.did) {
                         diag.span_note(sp, "type defined here");
                     }
                 }
@@ -766,7 +756,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
     }
 
     fn check_foreign_fn(&mut self, id: ast::NodeId, decl: &hir::FnDecl) {
-        let def_id = self.cx.tcx.hir.local_def_id(id);
+        let def_id = self.cx.tcx.hir().local_def_id(id);
         let sig = self.cx.tcx.fn_sig(def_id);
         let sig = self.cx.tcx.erase_late_bound_regions(&sig);
 
@@ -783,7 +773,7 @@ impl<'a, 'tcx> ImproperCTypesVisitor<'a, 'tcx> {
     }
 
     fn check_foreign_static(&mut self, id: ast::NodeId, span: Span) {
-        let def_id = self.cx.tcx.hir.local_def_id(id);
+        let def_id = self.cx.tcx.hir().local_def_id(id);
         let ty = self.cx.tcx.type_of(def_id);
         self.check_type_for_ffi_and_report_errors(span, ty);
     }
@@ -801,7 +791,7 @@ impl LintPass for ImproperCTypes {
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for ImproperCTypes {
     fn check_foreign_item(&mut self, cx: &LateContext, it: &hir::ForeignItem) {
         let mut vis = ImproperCTypesVisitor { cx };
-        let abi = cx.tcx.hir.get_foreign_abi(it.id);
+        let abi = cx.tcx.hir().get_foreign_abi(it.id);
         if abi != Abi::RustIntrinsic && abi != Abi::PlatformIntrinsic {
             match it.node {
                 hir::ForeignItemKind::Fn(ref decl, _, _) => {
@@ -827,7 +817,7 @@ impl LintPass for VariantSizeDifferences {
 impl<'a, 'tcx> LateLintPass<'a, 'tcx> for VariantSizeDifferences {
     fn check_item(&mut self, cx: &LateContext, it: &hir::Item) {
         if let hir::ItemKind::Enum(ref enum_definition, _) = it.node {
-            let item_def_id = cx.tcx.hir.local_def_id(it.id);
+            let item_def_id = cx.tcx.hir().local_def_id(it.id);
             let t = cx.tcx.type_of(item_def_id);
             let ty = cx.tcx.erase_regions(&t);
             match cx.layout_of(ty) {
@@ -847,7 +837,7 @@ impl<'a, 'tcx> LateLintPass<'a, 'tcx> for VariantSizeDifferences {
                                 let bytes = variant_layout.size.bytes().saturating_sub(discr_size);
 
                                 debug!("- variant `{}` is {} bytes large",
-                                       variant.node.name,
+                                       variant.node.ident,
                                        bytes);
                                 bytes
                             })

@@ -143,10 +143,13 @@ debian/config.toml: debian/config.toml.in debian/rules
 	u="$(DEB_VERSION_UPSTREAM)"; \
 	if [ "$$u" != "$${u%~beta.*+dfsg*}" ]; then channel="beta"; \
 	else channel="stable"; fi; echo $$channel; \
-	m4  -DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
+	m4  -DRELEASE_CHANNEL="$$channel" \
+		-DDEB_BUILD_RUST_TYPE="$(DEB_BUILD_RUST_TYPE)" \
 		-DDEB_HOST_RUST_TYPE="$(DEB_HOST_RUST_TYPE)" \
 		-DDEB_TARGET_RUST_TYPE="$(DEB_TARGET_RUST_TYPE)" \
-		-DRELEASE_CHANNEL="$$channel" \
+		-DDEB_BUILD_GNU_TYPE="$(DEB_BUILD_GNU_TYPE)" \
+		-DDEB_HOST_GNU_TYPE="$(DEB_HOST_GNU_TYPE)" \
+		-DDEB_TARGET_GNU_TYPE="$(DEB_TARGET_GNU_TYPE)" \
 		-DMAKE_OPTIMISATIONS="$(MAKE_OPTIMISATIONS)" \
 		-DLLVM_DESTDIR="$(LLVM_DESTDIR)" \
 		-DLLVM_VERSION="$(LLVM_VERSION)" \
@@ -173,18 +176,8 @@ debian/dh_auto_configure.stamp: debian/config.toml
 	# work around #842634
 	if test $$(grep "127.0.0.1\s*localhost" /etc/hosts | wc -l) -gt 1; then \
 	  debian/ensure-patch -N debian/patches/d-host-duplicates.patch; fi
-	# work around https://github.com/rust-lang/rust/issues/59264
-	# TODO: remove this in 1.33 and later
-	if dpkg --compare-versions $(LOCAL_RUST_VERSION) '>=' 1.32.0; then \
-	  debian/ensure-patch -N debian/patches/u-compiletest.patch; \
-	else \
-	  debian/ensure-patch -R debian/patches/u-compiletest.patch; \
-	fi
 	# We patched some crates so have to rm the checksums
 	find vendor -name .cargo-checksum.json -execdir "$(CURDIR)/debian/prune-checksums" "{}" ";"
-	# Unfortunately upstream uses a duplicate copy of libbacktrace and wants to
-	# compile it again for rust-installer, see #43449
-	ln -rsf src/libbacktrace -t vendor/backtrace-sys/src/
 	# Link against system liblzma, see https://github.com/alexcrichton/xz2-rs/issues/16
 	echo 'fn main() { println!("cargo:rustc-link-lib=lzma"); }' > vendor/lzma-sys/build.rs
 	# We don't run ./configure because we use debian/config.toml directly
@@ -201,7 +194,7 @@ endif
 override_dh_auto_clean:
 	$(RM) -rf ./build ./tmp ./.cargo config.stamp config.mk Makefile
 	$(RM) -rf $(TEST_LOG) debian/config.toml debian/rust-src.install debian/rust-src.links debian/*.stamp
-	$(RM) -rf $(SRC_CLEAN) config.toml vendor/backtrace-sys/src/libbacktrace
+	$(RM) -rf $(SRC_CLEAN) config.toml
 
 override_dh_auto_build-arch:
 	$(RUSTBUILD) build $(RUSTBUILD_FLAGS)
@@ -218,7 +211,7 @@ TEST_LOG = debian/rustc-tests.log
 # This is advertised as "5 tests failed" in README.Debian because our counting
 # method is imprecise and in practise we count some failures twice.
 FAILURES_ALLOWED = 8
-ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips64el))
+ifneq (,$(filter $(DEB_BUILD_ARCH), ppc64 arm64 mips64el i386))
   FAILURES_ALLOWED = 12
 endif
 ifneq (,$(filter $(DEB_BUILD_ARCH), mips mipsel s390x))

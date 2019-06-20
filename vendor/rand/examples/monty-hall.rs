@@ -1,6 +1,5 @@
-// Copyright 2013-2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
+// Copyright 2013-2018 The Rust Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -63,8 +62,8 @@ fn simulate<R: Rng>(random_door: &Uniform<u32>, rng: &mut R)
 // Returns the door the game host opens given our choice and knowledge of
 // where the car is. The game host will never open the door with the car.
 fn game_host_open<R: Rng>(car: u32, choice: u32, rng: &mut R) -> u32 {
-    let choices = free_doors(&[car, choice]);
-    rand::seq::sample_slice(rng, &choices, 1)[0]
+    use rand::seq::SliceRandom;
+    *free_doors(&[car, choice]).choose(rng).unwrap()
 }
 
 // Returns the door we switch to, given our current choice and

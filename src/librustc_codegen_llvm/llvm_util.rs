@@ -1,13 +1,3 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use syntax_pos::symbol::Symbol;
 use back::write::create_target_machine;
 use llvm;
@@ -74,6 +64,10 @@ unsafe fn configure_llvm(sess: &Session) {
             add("-mergefunc-use-aliases");
         }
 
+        // HACK(eddyb) LLVM inserts `llvm.assume` calls to preserve align attributes
+        // during inlining. Unfortunately these may block other optimizations.
+        add("-preserve-alignment-assumptions-during-inlining=false");
+
     if sess.target.target.arch == "mips" ||
         sess.target.target.arch == "mips64" { add("-fast-isel=0"); }
 
@@ -127,6 +121,7 @@ const AARCH64_WHITELIST: &[(&str, Option<&str>)] = &[
 ];
 
 const X86_WHITELIST: &[(&str, Option<&str>)] = &[
+    ("adx", Some("adx_target_feature")),
     ("aes", None),
     ("avx", None),
     ("avx2", None),
@@ -142,6 +137,7 @@ const X86_WHITELIST: &[(&str, Option<&str>)] = &[
     ("avx512vpopcntdq", Some("avx512_target_feature")),
     ("bmi1", None),
     ("bmi2", None),
+    ("cmpxchg16b", Some("cmpxchg16b_target_feature")),
     ("fma", None),
     ("fxsr", None),
     ("lzcnt", None),
@@ -214,6 +210,7 @@ pub fn to_llvm_feature<'a>(sess: &Session, s: &'a str) -> &'a str {
         ("x86", "pclmulqdq") => "pclmul",
         ("x86", "rdrand") => "rdrnd",
         ("x86", "bmi1") => "bmi",
+        ("x86", "cmpxchg16b") => "cx16",
         ("aarch64", "fp") => "fp-armv8",
         ("aarch64", "fp16") => "fullfp16",
         (_, s) => s,

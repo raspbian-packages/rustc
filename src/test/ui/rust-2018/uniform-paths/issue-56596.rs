@@ -2,6 +2,8 @@
 // compile-flags: --extern issue_56596
 // aux-build:issue-56596.rs
 
+#![feature(uniform_paths)]
+
 mod m {
     pub mod issue_56596 {}
 }

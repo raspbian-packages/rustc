@@ -1,13 +1,3 @@
-// Copyright 2016 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use monomorphize::Instance;
 use rustc::hir;
 use rustc::hir::def_id::DefId;
@@ -68,7 +58,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
                 tcx.symbol_name(Instance::mono(tcx, def_id))
             }
             MonoItem::GlobalAsm(node_id) => {
-                let def_id = tcx.hir.local_def_id(node_id);
+                let def_id = tcx.hir().local_def_id(node_id);
                 ty::SymbolName {
                     name: Symbol::intern(&format!("global_asm_{:?}", def_id)).as_interned_str()
                 }
@@ -86,7 +76,7 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
         match *self.as_mono_item() {
             MonoItem::Fn(ref instance) => {
                 let entry_def_id =
-                    tcx.sess.entry_fn.borrow().map(|(id, _, _)| tcx.hir.local_def_id(id));
+                    tcx.sess.entry_fn.borrow().map(|(id, _, _)| tcx.hir().local_def_id(id));
                 // If this function isn't inlined or otherwise has explicit
                 // linkage, then we'll be creating a globally shared version.
                 if self.explicit_linkage(tcx).is_some() ||
@@ -199,15 +189,15 @@ pub trait MonoItemExt<'a, 'tcx>: fmt::Debug {
     fn local_span(&self, tcx: TyCtxt<'a, 'tcx, 'tcx>) -> Option<Span> {
         match *self.as_mono_item() {
             MonoItem::Fn(Instance { def, .. }) => {
-                tcx.hir.as_local_node_id(def.def_id())
+                tcx.hir().as_local_node_id(def.def_id())
             }
             MonoItem::Static(def_id) => {
-                tcx.hir.as_local_node_id(def_id)
+                tcx.hir().as_local_node_id(def_id)
             }
             MonoItem::GlobalAsm(node_id) => {
                 Some(node_id)
             }
-        }.map(|node_id| tcx.hir.span(node_id))
+        }.map(|node_id| tcx.hir().span(node_id))
     }
 }
 
@@ -314,13 +304,16 @@ impl<'a, 'tcx> DefPathBasedNames<'a, 'tcx> {
                 output.push(']');
             },
             ty::Dynamic(ref trait_data, ..) => {
-                let principal = trait_data.principal();
-                self.push_def_path(principal.def_id(), output);
-                self.push_type_params(
-                    principal.skip_binder().substs,
-                    trait_data.projection_bounds(),
-                    output,
-                );
+                if let Some(principal) = trait_data.principal() {
+                    self.push_def_path(principal.def_id(), output);
+                    self.push_type_params(
+                        principal.skip_binder().substs,
+                        trait_data.projection_bounds(),
+                        output,
+                    );
+                } else {
+                    output.push_str("dyn '_");
+                }
             },
             ty::Foreign(did) => self.push_def_path(did, output),
             ty::FnDef(..) |

@@ -10,12 +10,12 @@ pub enum HhGoal<C: Context> {
     Implies(C::ProgramClauses, C::Goal),
     And(C::Goal, C::Goal),
     Not(C::Goal),
-    Unify(C::Parameter, C::Parameter),
+    Unify(C::Variance, C::Parameter, C::Parameter),
     DomainGoal(C::DomainGoal),
 
     /// Indicates something that cannot be proven to be true or false
     /// definitively. This can occur with overflow but also with
-    /// unifications of skolemized variables like `forall<X,Y> { X = Y
+    /// unifications of placeholder variables like `forall<X,Y> { X = Y
     /// }`. Of course, that statement is false, as there exist types
     /// X, Y where `X = Y` is not true. But we treat it as "cannot
     /// prove" so that `forall<X,Y> { not { X = Y } }` also winds up

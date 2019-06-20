@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! For each definition, we track the following data.  A definition
 //! here is defined somewhat circularly as "something with a def-id",
 //! but it generally corresponds to things like structs, enums, etc.
@@ -150,10 +140,9 @@ impl Decodable for DefPathTable {
     }
 }
 
-
 /// The definition table containing node definitions.
-/// It holds the DefPathTable for local DefIds/DefPaths and it also stores a
-/// mapping from NodeIds to local DefIds.
+/// It holds the `DefPathTable` for local `DefId`s/`DefPath`s and it also stores a
+/// mapping from `NodeId`s to local `DefId`s.
 #[derive(Clone, Default)]
 pub struct Definitions {
     table: DefPathTable,

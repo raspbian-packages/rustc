@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! HIR walker for walking the contents of nodes.
 //!
 //! **For an overview of the visitor strategy, see the docs on the
@@ -52,13 +42,13 @@ use std::cmp;
 
 #[derive(Copy, Clone)]
 pub enum FnKind<'a> {
-    /// #[xxx] pub async/const/extern "Abi" fn foo()
-    ItemFn(Name, &'a Generics, FnHeader, &'a Visibility, &'a [Attribute]),
+    /// `#[xxx] pub async/const/extern "Abi" fn foo()`
+    ItemFn(Ident, &'a Generics, FnHeader, &'a Visibility, &'a [Attribute]),
 
-    /// fn foo(&self)
+    /// `fn foo(&self)`
     Method(Ident, &'a MethodSig, Option<&'a Visibility>, &'a [Attribute]),
 
-    /// |x, y| {}
+    /// `|x, y| {}`
     Closure(&'a [Attribute]),
 }
 
@@ -131,7 +121,7 @@ impl<'this, 'tcx> NestedVisitorMap<'this, 'tcx> {
 /// Each method of the Visitor trait is a hook to be potentially
 /// overridden.  Each method's default implementation recursively visits
 /// the substructure of the input via the corresponding `walk` method;
-/// e.g. the `visit_mod` method by default calls `intravisit::walk_mod`.
+/// e.g., the `visit_mod` method by default calls `intravisit::walk_mod`.
 ///
 /// Note that this visitor does NOT visit nested items by default
 /// (this is why the module is called `intravisit`, to distinguish it
@@ -464,7 +454,7 @@ pub fn walk_trait_ref<'v, V>(visitor: &mut V, trait_ref: &'v TraitRef)
 
 pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
     visitor.visit_vis(&item.vis);
-    visitor.visit_name(item.span, item.name);
+    visitor.visit_ident(item.ident);
     match item.node {
         ItemKind::ExternCrate(orig_name) => {
             visitor.visit_id(item.id);
@@ -482,7 +472,7 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
             visitor.visit_nested_body(body);
         }
         ItemKind::Fn(ref declaration, header, ref generics, body_id) => {
-            visitor.visit_fn(FnKind::ItemFn(item.name,
+            visitor.visit_fn(FnKind::ItemFn(item.ident,
                                             generics,
                                             header,
                                             &item.vis,
@@ -493,7 +483,7 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
                              item.id)
         }
         ItemKind::Mod(ref module) => {
-            // visit_mod() takes care of visiting the Item's NodeId
+            // `visit_mod()` takes care of visiting the `Item`'s `NodeId`.
             visitor.visit_mod(module, item.span, item.id)
         }
         ItemKind::ForeignMod(ref foreign_module) => {
@@ -518,7 +508,7 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
         }
         ItemKind::Enum(ref enum_definition, ref type_parameters) => {
             visitor.visit_generics(type_parameters);
-            // visit_enum_def() takes care of visiting the Item's NodeId
+            // `visit_enum_def()` takes care of visiting the `Item`'s `NodeId`.
             visitor.visit_enum_def(enum_definition, type_parameters, item.id, item.span)
         }
         ItemKind::Impl(
@@ -538,7 +528,8 @@ pub fn walk_item<'v, V: Visitor<'v>>(visitor: &mut V, item: &'v Item) {
         ItemKind::Union(ref struct_definition, ref generics) => {
             visitor.visit_generics(generics);
             visitor.visit_id(item.id);
-            visitor.visit_variant_data(struct_definition, item.name, generics, item.id, item.span);
+            visitor.visit_variant_data(struct_definition, item.ident.name, generics, item.id,
+                                       item.span);
         }
         ItemKind::Trait(.., ref generics, ref bounds, ref trait_item_refs) => {
             visitor.visit_id(item.id);
@@ -579,9 +570,9 @@ pub fn walk_variant<'v, V: Visitor<'v>>(visitor: &mut V,
                                         variant: &'v Variant,
                                         generics: &'v Generics,
                                         parent_item_id: NodeId) {
-    visitor.visit_name(variant.span, variant.node.name);
+    visitor.visit_ident(variant.node.ident);
     visitor.visit_variant_data(&variant.node.data,
-                               variant.node.name,
+                               variant.node.ident.name,
                                generics,
                                parent_item_id,
                                variant.span);
@@ -730,7 +721,7 @@ pub fn walk_pat<'v, V: Visitor<'v>>(visitor: &mut V, pattern: &'v Pat) {
 pub fn walk_foreign_item<'v, V: Visitor<'v>>(visitor: &mut V, foreign_item: &'v ForeignItem) {
     visitor.visit_id(foreign_item.id);
     visitor.visit_vis(&foreign_item.vis);
-    visitor.visit_name(foreign_item.span, foreign_item.name);
+    visitor.visit_ident(foreign_item.ident);
 
     match foreign_item.node {
         ForeignItemKind::Fn(ref function_declaration, ref param_names, ref generics) => {
@@ -877,7 +868,7 @@ pub fn walk_trait_item<'v, V: Visitor<'v>>(visitor: &mut V, trait_item: &'v Trai
 }
 
 pub fn walk_trait_item_ref<'v, V: Visitor<'v>>(visitor: &mut V, trait_item_ref: &'v TraitItemRef) {
-    // NB: Deliberately force a compilation error if/when new fields are added.
+    // N.B., deliberately force a compilation error if/when new fields are added.
     let TraitItemRef { id, ident, ref kind, span: _, ref defaultness } = *trait_item_ref;
     visitor.visit_nested_trait_item(id);
     visitor.visit_ident(ident);
@@ -886,7 +877,7 @@ pub fn walk_trait_item_ref<'v, V: Visitor<'v>>(visitor: &mut V, trait_item_ref: 
 }
 
 pub fn walk_impl_item<'v, V: Visitor<'v>>(visitor: &mut V, impl_item: &'v ImplItem) {
-    // NB: Deliberately force a compilation error if/when new fields are added.
+    // N.B., deliberately force a compilation error if/when new fields are added.
     let ImplItem {
         id: _,
         hir_id: _,
@@ -932,7 +923,7 @@ pub fn walk_impl_item<'v, V: Visitor<'v>>(visitor: &mut V, impl_item: &'v ImplIt
 }
 
 pub fn walk_impl_item_ref<'v, V: Visitor<'v>>(visitor: &mut V, impl_item_ref: &'v ImplItemRef) {
-    // NB: Deliberately force a compilation error if/when new fields are added.
+    // N.B., deliberately force a compilation error if/when new fields are added.
     let ImplItemRef { id, ident, ref kind, span: _, ref vis, ref defaultness } = *impl_item_ref;
     visitor.visit_nested_impl_item(id);
     visitor.visit_ident(ident);
@@ -1109,6 +1100,7 @@ pub fn walk_expr<'v, V: Visitor<'v>>(visitor: &mut V, expression: &'v Expr) {
         ExprKind::Yield(ref subexpression) => {
             visitor.visit_expr(subexpression);
         }
+        ExprKind::Err => {}
     }
 }
 

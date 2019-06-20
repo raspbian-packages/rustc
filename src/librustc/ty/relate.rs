@@ -1,20 +1,10 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
-//! Generalized type relating mechanism. A type relation R relates a
-//! pair of values (A, B). A and B are usually types or regions but
-//! can be other things. Examples of type relations are subtyping,
-//! type equality, etc.
+//! Generalized type relating mechanism.
+//!
+//! A type relation `R` relates a pair of values `(A, B)`. `A and B` are usually
+//! types or regions but can be other things. Examples of type relations are
+//! subtyping, type equality, etc.
 
 use hir::def_id::DefId;
-use mir::interpret::ConstValue;
 use ty::subst::{Kind, UnpackedKind, Substs};
 use ty::{self, Ty, TyCtxt, TypeFoldable};
 use ty::error::{ExpectedFound, TypeError};
@@ -478,14 +468,9 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
         (&ty::Array(a_t, sz_a), &ty::Array(b_t, sz_b)) =>
         {
             let t = relation.relate(&a_t, &b_t)?;
-            assert_eq!(sz_a.ty, tcx.types.usize);
-            assert_eq!(sz_b.ty, tcx.types.usize);
-            let to_u64 = |x: &'tcx ty::Const<'tcx>| -> Result<u64, ErrorReported> {
-                if let Some(s) = x.assert_usize(tcx) {
-                    return Ok(s);
-                }
-                match x.val {
-                    ConstValue::Unevaluated(def_id, substs) => {
+            let to_u64 = |x: ty::LazyConst<'tcx>| -> Result<u64, ErrorReported> {
+                match x {
+                    ty::LazyConst::Unevaluated(def_id, substs) => {
                         // FIXME(eddyb) get the right param_env.
                         let param_env = ty::ParamEnv::empty();
                         if let Some(substs) = tcx.lift_to_global(&substs) {
@@ -511,14 +496,14 @@ pub fn super_relate_tys<'a, 'gcx, 'tcx, R>(relation: &mut R,
                             "array length could not be evaluated");
                         Err(ErrorReported)
                     }
-                    _ => {
+                    ty::LazyConst::Evaluated(c) => c.assert_usize(tcx).ok_or_else(|| {
                         tcx.sess.delay_span_bug(DUMMY_SP,
-                            &format!("arrays should not have {:?} as length", x));
-                        Err(ErrorReported)
-                    }
+                            "array length could not be evaluated");
+                        ErrorReported
+                    })
                 }
             };
-            match (to_u64(sz_a), to_u64(sz_b)) {
+            match (to_u64(*sz_a), to_u64(*sz_b)) {
                 (Ok(sz_a_u64), Ok(sz_b_u64)) => {
                     if sz_a_u64 == sz_b_u64 {
                         Ok(tcx.mk_ty(ty::Array(t, sz_a)))

@@ -16,6 +16,11 @@ struct S {
         #[my_attr]
         struct U;
 
+        mod inner {
+            #[my_attr] //~ ERROR attribute `my_attr` is currently unknown
+            struct V;
+        }
+
         0
     }]
 }

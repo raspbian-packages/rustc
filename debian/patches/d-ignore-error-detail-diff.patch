@@ -1,9 +1,11 @@
 Description: Ignore error details with $SRC_DIR
  We build with --remap-path-prefix so it doesn't work, see bug below
 Bug: https://github.com/rust-lang/rust/issues/53081
---- a/src/test/ui/impl-trait/impl-generic-mismatch.stderr
-+++ b/src/test/ui/impl-trait/impl-generic-mismatch.stderr
-@@ -29,11 +29,6 @@
+Index: rustc/src/test/ui/impl-trait/impl-generic-mismatch.stderr
+===================================================================
+--- rustc.orig/src/test/ui/impl-trait/impl-generic-mismatch.stderr
++++ rustc/src/test/ui/impl-trait/impl-generic-mismatch.stderr
+@@ -29,11 +29,6 @@ error[E0643]: method `hash` has incompat
     |
  LL |     fn hash(&self, hasher: &mut impl Hasher) {}
     |                                 ^^^^^^^^^^^ expected generic parameter, found `impl Trait`
@@ -15,9 +17,11 @@ Bug: https://github.com/rust-lang/rust/issues/53081
  
  error: aborting due to 3 previous errors
  
---- a/src/test/ui/consts/const-size_of-cycle.stderr
-+++ b/src/test/ui/consts/const-size_of-cycle.stderr
-@@ -5,10 +5,6 @@
+Index: rustc/src/test/ui/consts/const-size_of-cycle.stderr
+===================================================================
+--- rustc.orig/src/test/ui/consts/const-size_of-cycle.stderr
++++ rustc/src/test/ui/consts/const-size_of-cycle.stderr
+@@ -5,10 +5,6 @@ LL |     bytes: [u8; std::mem::size_of::
     |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^
     |
  note: ...which requires const-evaluating `Foo::bytes::{{constant}}`...
@@ -26,5 +30,5 @@ Bug: https://github.com/rust-lang/rust/issues/53081
 -LL |     intrinsics::size_of::<T>()
 -   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
  note: ...which requires computing layout of `Foo`...
- note: ...which requires normalizing `ParamEnvAnd { param_env: ParamEnv { caller_bounds: [], reveal: All }, value: [u8; _] }`...
+ note: ...which requires normalizing `ParamEnvAnd { param_env: ParamEnv { caller_bounds: [], reveal: All, def_id: None }, value: [u8; _] }`...
  note: ...which requires const-evaluating + checking `Foo::bytes::{{constant}}`...

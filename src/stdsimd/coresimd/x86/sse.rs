@@ -981,8 +981,8 @@ pub unsafe fn _mm_setzero_ps() -> __m128 {
 #[inline]
 #[allow(non_snake_case)]
 #[unstable(feature = "stdsimd", issue = "27731")]
-pub const fn _MM_SHUFFLE(z: u32, y: u32, x: u32, w: u32) -> u32 {
-    (z << 6) | (y << 4) | (x << 2) | w
+pub const fn _MM_SHUFFLE(z: u32, y: u32, x: u32, w: u32) -> i32 {
+    ((z << 6) | (y << 4) | (x << 2) | w) as i32
 }
 
 /// Shuffle packed single-precision (32-bit) floating-point elements in `a` and
@@ -1073,7 +1073,7 @@ pub unsafe fn _mm_unpacklo_ps(a: __m128, b: __m128) -> __m128 {
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_movehl_ps)
 #[inline]
 #[target_feature(enable = "sse")]
-#[cfg_attr(test, assert_instr(movhlps))]
+#[cfg_attr(all(test, not(target_os = "windows")), assert_instr(movhlps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_movehl_ps(a: __m128, b: __m128) -> __m128 {
     // TODO; figure why this is a different instruction on Windows?
@@ -1086,7 +1086,7 @@ pub unsafe fn _mm_movehl_ps(a: __m128, b: __m128) -> __m128 {
 /// [Intel's documentation](https://software.intel.com/sites/landingpage/IntrinsicsGuide/#text=_mm_movelh_ps)
 #[inline]
 #[target_feature(enable = "sse")]
-#[cfg_attr(test, assert_instr(movlhps))]
+#[cfg_attr(all(test, not(target_os = "windows")), assert_instr(movlhps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_movelh_ps(a: __m128, b: __m128) -> __m128 {
     simd_shuffle4(a, b, [0, 1, 4, 5])
@@ -1144,18 +1144,20 @@ pub unsafe fn _mm_movemask_ps(a: __m128) -> i32 {
 /// ```
 #[inline]
 #[target_feature(enable = "sse")]
-// TODO: generates MOVHPD if the CPU supports SSE2.
-// #[cfg_attr(test, assert_instr(movhps))]
-#[cfg_attr(all(test, target_arch = "x86_64"), assert_instr(movhpd))]
-// 32-bit codegen does not generate `movhps` or `movhpd`, but instead
-// `movsd` followed by `unpcklpd` (or `movss'/`unpcklps` if there's no SSE2).
 #[cfg_attr(
-    all(test, target_arch = "x86", target_feature = "sse2"),
-    assert_instr(movlhps)
+    all(
+        test,
+        any(
+            target_arch = "x86_64",
+            all(target_arch = "x86", target_feature = "sse2")
+        )
+    ),
+    assert_instr(movhpd)
 )]
+// FIXME: 32-bit codegen without SSE2 generates two `shufps` instead of `movhps`
 #[cfg_attr(
     all(test, target_arch = "x86", not(target_feature = "sse2")),
-    assert_instr(unpcklps)
+    assert_instr(shufps)
 )]
 // TODO: This function is actually not limited to floats, but that's what
 // what matches the C type most closely: (__m128, *const __m64) -> __m128
@@ -1202,20 +1204,16 @@ pub unsafe fn _mm_loadh_pi(a: __m128, p: *const __m64) -> __m128 {
 /// ```
 #[inline]
 #[target_feature(enable = "sse")]
-// TODO: generates MOVLPD if the CPU supports SSE2.
-// #[cfg_attr(test, assert_instr(movlps))]
 #[cfg_attr(all(test, target_arch = "x86_64"), assert_instr(movlpd))]
-// On 32-bit targets with SSE2, it just generates two `movsd`.
 #[cfg_attr(
     all(test, target_arch = "x86", target_feature = "sse2"),
-    assert_instr(movsd)
+    assert_instr(movlpd)
 )]
-// It should really generate "movlps", but oh well...
+// FIXME: On 32-bit targets without SSE2, it just generates two `movss`...
 #[cfg_attr(
     all(test, target_arch = "x86", not(target_feature = "sse2")),
     assert_instr(movss)
 )]
-// TODO: Like _mm_loadh_pi, this also isn't limited to floats.
 pub unsafe fn _mm_loadl_pi(a: __m128, p: *const __m64) -> __m128 {
     let q = p as *const f32x2;
     let b: f32x2 = *q;
@@ -1278,6 +1276,7 @@ pub unsafe fn _mm_load_ps1(p: *const f32) -> __m128 {
 #[target_feature(enable = "sse")]
 #[cfg_attr(test, assert_instr(movaps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 pub unsafe fn _mm_load_ps(p: *const f32) -> __m128 {
     *(p as *const __m128)
 }
@@ -1347,7 +1346,8 @@ pub unsafe fn _mm_loadr_ps(p: *const f32) -> __m128 {
 // fine.
 // On i586 (no SSE2) it just generates plain MOV instructions.
 #[cfg_attr(
-    all(test, any(target_arch = "x86_64", target_feature = "sse2")),
+    all(test, any(target_arch = "x86_64", target_feature = "sse2"),
+        not(target_os = "windows")),
     // assert_instr(movhpd)
     assert_instr(movhps) // LLVM7 prefers single-precision instructions
 )]
@@ -1378,7 +1378,11 @@ pub unsafe fn _mm_storeh_pi(p: *mut __m64, a: __m128) {
 #[target_feature(enable = "sse")]
 // On i586 the codegen just generates plane MOVs. No need to test for that.
 #[cfg_attr(
-    all(test, any(target_arch = "x86_64", target_feature = "sse2")),
+    all(
+        test,
+        any(target_arch = "x86_64", target_feature = "sse2"),
+        not(target_os = "windows")
+    ),
     assert_instr(movlps)
 )]
 pub unsafe fn _mm_storel_pi(p: *mut __m64, a: __m128) {
@@ -1433,6 +1437,7 @@ pub unsafe fn _mm_store_ss(p: *mut f32, a: __m128) {
 #[target_feature(enable = "sse")]
 #[cfg_attr(test, assert_instr(movaps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 pub unsafe fn _mm_store1_ps(p: *mut f32, a: __m128) {
     let b: __m128 = simd_shuffle4(a, a, [0, 0, 0, 0]);
     *(p as *mut __m128) = b;
@@ -1464,6 +1469,7 @@ pub unsafe fn _mm_store_ps1(p: *mut f32, a: __m128) {
 #[target_feature(enable = "sse")]
 #[cfg_attr(test, assert_instr(movaps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 pub unsafe fn _mm_store_ps(p: *mut f32, a: __m128) {
     *(p as *mut __m128) = a;
 }
@@ -1507,6 +1513,7 @@ pub unsafe fn _mm_storeu_ps(p: *mut f32, a: __m128) {
 #[target_feature(enable = "sse")]
 #[cfg_attr(test, assert_instr(movaps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 pub unsafe fn _mm_storer_ps(p: *mut f32, a: __m128) {
     let b: __m128 = simd_shuffle4(a, a, [3, 2, 1, 0]);
     *(p as *mut __m128) = b;
@@ -1943,12 +1950,8 @@ pub unsafe fn _mm_prefetch(p: *const i8, strategy: i32) {
 #[target_feature(enable = "sse")]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _mm_undefined_ps() -> __m128 {
-    __m128(
-        mem::uninitialized(),
-        mem::uninitialized(),
-        mem::uninitialized(),
-        mem::uninitialized(),
-    )
+    // FIXME: this function should return MaybeUninit<__m128>
+    mem::MaybeUninit::<__m128>::uninitialized().into_inner()
 }
 
 /// Transpose the 4x4 matrix formed by 4 rows of __m128 in place.
@@ -1959,7 +1962,10 @@ pub unsafe fn _mm_undefined_ps() -> __m128 {
 #[target_feature(enable = "sse")]
 #[stable(feature = "simd_x86", since = "1.27.0")]
 pub unsafe fn _MM_TRANSPOSE4_PS(
-    row0: &mut __m128, row1: &mut __m128, row2: &mut __m128, row3: &mut __m128,
+    row0: &mut __m128,
+    row1: &mut __m128,
+    row2: &mut __m128,
+    row3: &mut __m128,
 ) {
     let tmp0 = _mm_unpacklo_ps(*row0, *row1);
     let tmp2 = _mm_unpacklo_ps(*row2, *row3);
@@ -2094,8 +2100,9 @@ extern "C" {
 #[target_feature(enable = "sse")]
 #[cfg_attr(test, assert_instr(movntps))]
 #[stable(feature = "simd_x86", since = "1.27.0")]
+#[cfg_attr(feature = "cargo-clippy", allow(clippy::cast_ptr_alignment))]
 pub unsafe fn _mm_stream_ps(mem_addr: *mut f32, a: __m128) {
-    intrinsics::nontemporal_store(mem::transmute(mem_addr), a);
+    intrinsics::nontemporal_store(mem_addr as *mut __m128, a);
 }
 
 /// Store 64-bits of integer data from a into memory using a non-temporal
@@ -2764,8 +2771,7 @@ mod tests {
 
         let b2 = _mm_setr_ps(1.0, 5.0, 6.0, 7.0);
         let r2: u32x4 = transmute(_mm_cmpeq_ss(a, b2));
-        let e2: u32x4 =
-            transmute(_mm_setr_ps(transmute(0xffffffffu32), 2.0, 3.0, 4.0));
+        let e2: u32x4 = transmute(_mm_setr_ps(transmute(0xffffffffu32), 2.0, 3.0, 4.0));
         assert_eq!(r2, e2);
     }
 
@@ -3480,8 +3486,7 @@ mod tests {
     #[simd_test(enable = "sse")]
     unsafe fn test_mm_cvtss_si32() {
         let inputs = &[42.0f32, -3.1, 4.0e10, 4.0e-20, NAN, 2147483500.1];
-        let result =
-            &[42i32, -3, i32::min_value(), 0, i32::min_value(), 2147483520];
+        let result = &[42i32, -3, i32::min_value(), 0, i32::min_value(), 2147483520];
         for i in 0..inputs.len() {
             let x = _mm_setr_ps(inputs[i], 1.0, 3.0, 4.0);
             let e = result[i];
@@ -3692,8 +3697,7 @@ mod tests {
         }
 
         let r = _mm_load_ps(p);
-        let e =
-            _mm_add_ps(_mm_setr_ps(1.0, 2.0, 3.0, 4.0), _mm_set1_ps(fixup));
+        let e = _mm_add_ps(_mm_setr_ps(1.0, 2.0, 3.0, 4.0), _mm_set1_ps(fixup));
         assert_eq_m128(r, e);
     }
 
@@ -3723,8 +3727,7 @@ mod tests {
         }
 
         let r = _mm_loadr_ps(p);
-        let e =
-            _mm_add_ps(_mm_setr_ps(4.0, 3.0, 2.0, 1.0), _mm_set1_ps(fixup));
+        let e = _mm_add_ps(_mm_setr_ps(4.0, 3.0, 2.0, 1.0), _mm_set1_ps(fixup));
         assert_eq_m128(r, e);
     }
 
@@ -3974,8 +3977,7 @@ mod tests {
     #[simd_test(enable = "sse,mmx")]
     unsafe fn test_mm_stream_pi() {
         let a = transmute(i8x8::new(0, 0, 0, 0, 0, 0, 0, 7));
-        let mut mem =
-            ::std::boxed::Box::<__m64>::new(transmute(i8x8::splat(1)));
+        let mut mem = ::std::boxed::Box::<__m64>::new(transmute(i8x8::splat(1)));
         _mm_stream_pi(&mut *mem as *mut _ as *mut _, a);
         assert_eq_m64(a, *mem);
     }
@@ -4063,7 +4065,7 @@ mod tests {
 
     #[simd_test(enable = "sse,mmx")]
     unsafe fn test_mm_sad_pu8() {
-        #[cfg_attr(rustfmt, rustfmt_skip)]
+        #[rustfmt::skip]
         let a = _mm_setr_pi8(
             255u8 as i8, 254u8 as i8, 253u8 as i8, 252u8 as i8,
             1, 2, 3, 4,
@@ -4171,8 +4173,7 @@ mod tests {
 
     #[simd_test(enable = "sse,mmx")]
     unsafe fn test_mm_movemask_pi8() {
-        let a =
-            _mm_setr_pi16(0b1000_0000, 0b0100_0000, 0b1000_0000, 0b0100_0000);
+        let a = _mm_setr_pi16(0b1000_0000, 0b0100_0000, 0b1000_0000, 0b0100_0000);
         let r = _mm_movemask_pi8(a);
         assert_eq!(r, 0b10001);
 

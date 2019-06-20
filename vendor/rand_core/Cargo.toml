@@ -12,7 +12,7 @@
 
 [package]
 name = "rand_core"
-version = "0.2.1"
+version = "0.3.0"
 authors = ["The Rust Project Developers"]
 description = "Core random number generator traits and tools for implementation.\n"
 homepage = "https://crates.io/crates/rand_core"
@@ -21,7 +21,7 @@ readme = "README.md"
 keywords = ["random", "rng"]
 categories = ["algorithms", "no-std"]
 license = "MIT/Apache-2.0"
-repository = "https://github.com/rust-lang-nursery/rand"
+repository = "https://github.com/rust-random/rand"
 [dependencies.serde]
 version = "1"
 optional = true
@@ -36,7 +36,7 @@ default = ["std"]
 serde1 = ["serde", "serde_derive"]
 std = ["alloc"]
 [badges.appveyor]
-repository = "alexcrichton/rand"
+repository = "dhardy/rand"
 
 [badges.travis-ci]
-repository = "rust-lang-nursery/rand"
+repository = "rust-random/rand"

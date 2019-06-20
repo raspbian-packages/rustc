@@ -1,13 +1,3 @@
-// Copyright 2012-2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use abi::{FnType, FnTypeExt};
 use common::*;
 use rustc::hir;
@@ -15,8 +5,8 @@ use rustc::ty::{self, Ty, TypeFoldable};
 use rustc::ty::layout::{self, Align, LayoutOf, Size, TyLayout};
 use rustc_target::abi::FloatTy;
 use rustc_mir::monomorphize::item::DefPathBasedNames;
-use type_::Type;
 use rustc_codegen_ssa::traits::*;
+use type_::Type;
 
 use std::fmt::Write;
 
@@ -70,7 +60,7 @@ fn uncached_llvm_type<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
                  = (&layout.ty.sty, &layout.variants)
             {
                 if def.is_enum() && !def.variants.is_empty() {
-                    write!(&mut name, "::{}", def.variants[index].name).unwrap();
+                    write!(&mut name, "::{}", def.variants[index].ident).unwrap();
                 }
             }
             Some(name)
@@ -84,10 +74,10 @@ fn uncached_llvm_type<'a, 'tcx>(cx: &CodegenCx<'a, 'tcx>,
             let packed = false;
             match name {
                 None => {
-                    cx.type_struct( &[fill], packed)
+                    cx.type_struct(&[fill], packed)
                 }
                 Some(ref name) => {
-                    let llty = cx.type_named_struct( name);
+                    let llty = cx.type_named_struct(name);
                     cx.set_struct_body(llty, &[fill], packed);
                     llty
                 }
@@ -236,7 +226,7 @@ impl<'tcx> LayoutLlvmExt<'tcx> for TyLayout<'tcx> {
         }
     }
 
-    /// Get the LLVM type corresponding to a Rust type, i.e. `rustc::ty::Ty`.
+    /// Get the LLVM type corresponding to a Rust type, i.e., `rustc::ty::Ty`.
     /// The pointee type of the pointer in `PlaceRef` is always this type.
     /// For sized types, it is also the right LLVM type for an `alloca`
     /// containing a value of that type, and most immediates (except `bool`).
@@ -470,9 +460,9 @@ impl<'tcx> LayoutLlvmExt<'tcx> for TyLayout<'tcx> {
                         // (according to its type), or null (which the
                         // niche field's scalar validity range encodes).
                         // This allows using `dereferenceable_or_null`
-                        // for e.g. `Option<&T>`, and this will continue
+                        // for e.g., `Option<&T>`, and this will continue
                         // to work as long as we don't start using more
-                        // niches than just null (e.g. the first page
+                        // niches than just null (e.g., the first page
                         // of the address space, or unaligned pointers).
                         if self.fields.offset(0) == offset {
                             Some(self.for_variant(cx, dataful_variant))

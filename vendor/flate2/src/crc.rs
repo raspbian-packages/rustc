@@ -2,17 +2,16 @@
 
 use std::io::prelude::*;
 use std::io;
-use libc;
 
-use ffi;
+use crc32fast::Hasher;
 
 /// The CRC calculated by a [`CrcReader`].
 ///
 /// [`CrcReader`]: struct.CrcReader.html
 #[derive(Debug)]
 pub struct Crc {
-    crc: libc::c_ulong,
     amt: u32,
+    hasher: Hasher,
 }
 
 /// A wrapper around a [`Read`] that calculates the CRC.
@@ -27,12 +26,12 @@ pub struct CrcReader<R> {
 impl Crc {
     /// Create a new CRC.
     pub fn new() -> Crc {
-        Crc { crc: 0, amt: 0 }
+        Crc { amt: 0, hasher: Hasher::new() }
     }
 
-    /// bla
+    /// Returns the current crc32 checksum.
     pub fn sum(&self) -> u32 {
-        self.crc as u32
+        self.hasher.clone().finalize()
     }
 
     /// The number of bytes that have been used to calculate the CRC.
@@ -44,25 +43,19 @@ impl Crc {
     /// Update the CRC with the bytes in `data`.
     pub fn update(&mut self, data: &[u8]) {
         self.amt = self.amt.wrapping_add(data.len() as u32);
-        self.crc = unsafe { ffi::mz_crc32(self.crc, data.as_ptr(), data.len() as libc::size_t) };
+        self.hasher.update(data);
     }
 
     /// Reset the CRC.
     pub fn reset(&mut self) {
-        self.crc = 0;
         self.amt = 0;
+        self.hasher.reset();
     }
 
     /// Combine the CRC with the CRC for the subsequent block of bytes.
     pub fn combine(&mut self, additional_crc: &Crc) {
-        self.crc = unsafe {
-            ffi::mz_crc32_combine(
-                self.crc as ::libc::c_ulong,
-                additional_crc.crc as ::libc::c_ulong,
-                additional_crc.amt as ::libc::off_t,
-            )
-        };
         self.amt += additional_crc.amt;
+        self.hasher.combine(&additional_crc.hasher);
     }
 }
 

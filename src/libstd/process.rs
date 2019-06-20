@@ -1,13 +1,3 @@
-// Copyright 2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! A module for working with processes.
 //!
 //! This module is mostly concerned with spawning and interacting with child
@@ -628,7 +618,7 @@ impl Command {
     ///
     /// # Platform-specific behavior
     ///
-    /// If the program path is relative (e.g. `"./script.sh"`), it's ambiguous
+    /// If the program path is relative (e.g., `"./script.sh"`), it's ambiguous
     /// whether it should be interpreted relative to the parent's working
     /// directory or relative to `current_dir`. The behavior in this case is
     /// platform specific and unstable, and it's recommended to use

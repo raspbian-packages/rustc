@@ -10,19 +10,17 @@
 
 #![allow(bad_style)]
 
-use std::ffi::{CStr, OsStr};
-use std::mem;
-use std::os::raw::{c_void, c_char, c_int};
-use std::os::unix::prelude::*;
-use std::path::Path;
-use std::ptr;
-use std::sync::atomic::ATOMIC_USIZE_INIT;
+use core::mem;
+use core::ptr;
+use core::slice;
+use core::sync::atomic::ATOMIC_USIZE_INIT;
 
-use libc::{self, Dl_info};
+use libc::{self, Dl_info, c_char, c_int};
 
 use SymbolName;
 use dylib::Dylib;
 use dylib::Symbol as DylibSymbol;
+use types::{BytesOrWideString, c_void};
 
 #[repr(C)]
 #[derive(Copy, Clone, PartialEq)]
@@ -57,7 +55,8 @@ impl Symbol {
             None
         } else {
             Some(SymbolName::new(unsafe {
-                CStr::from_ptr(name).to_bytes()
+                let len = libc::strlen(name);
+                slice::from_raw_parts(name as *const u8, len)
             }))
         }
     }
@@ -69,15 +68,16 @@ impl Symbol {
         }
     }
 
-    pub fn filename(&self) -> Option<&Path> {
+    pub fn filename_raw(&self) -> Option<BytesOrWideString> {
         match *self {
             Symbol::Core { path, .. } => {
                 if path.is_null() {
                     None
                 } else {
-                    Some(Path::new(OsStr::from_bytes(unsafe {
-                        CStr::from_ptr(path).to_bytes()
-                    })))
+                    Some(BytesOrWideString::Bytes(unsafe {
+                        let len = libc::strlen(path);
+                        slice::from_raw_parts(path as *const u8, len)
+                    }))
                 }
             }
             Symbol::Dladdr(_) => None,
@@ -102,8 +102,8 @@ macro_rules! dlsym {
         static $name: ::dylib::Symbol<unsafe extern fn($($t),*) -> $ret> =
             ::dylib::Symbol {
                 name: concat!(stringify!($name), "\0"),
-                addr: ::std::sync::atomic::ATOMIC_USIZE_INIT,
-                _marker: ::std::marker::PhantomData,
+                addr: ::core::sync::atomic::ATOMIC_USIZE_INIT,
+                _marker: ::core::marker::PhantomData,
             };
     )*)
 }
@@ -131,7 +131,7 @@ unsafe fn get<T>(sym: &DylibSymbol<T>) -> &T {
 
 unsafe fn try_resolve(addr: *mut c_void, cb: &mut FnMut(&super::Symbol)) -> bool {
     let path = "/System/Library/PrivateFrameworks/CoreSymbolication.framework\
-                /Versions/A/CoreSymbolication";
+                /Versions/A/CoreSymbolication\0";
     if !CORESYMBOLICATION.init(path) {
         return false;
     }
@@ -177,16 +177,14 @@ unsafe fn try_resolve(addr: *mut c_void, cb: &mut FnMut(&super::Symbol)) -> bool
     rv
 }
 
-pub fn resolve(addr: *mut c_void, cb: &mut FnMut(&super::Symbol)) {
-    unsafe {
-        if try_resolve(addr, cb) {
-            return
-        }
-        let mut info: Dl_info = mem::zeroed();
-        if libc::dladdr(addr as *mut _, &mut info) != 0 {
-            cb(&super::Symbol {
-                inner: Symbol::Dladdr(info),
-            });
-        }
+pub unsafe fn resolve(addr: *mut c_void, cb: &mut FnMut(&super::Symbol)) {
+    if try_resolve(addr, cb) {
+        return
+    }
+    let mut info: Dl_info = mem::zeroed();
+    if libc::dladdr(addr as *mut _, &mut info) != 0 {
+        cb(&super::Symbol {
+            inner: Symbol::Dladdr(info),
+        });
     }
 }

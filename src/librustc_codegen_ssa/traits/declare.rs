@@ -1,13 +1,3 @@
-// Copyright 2018 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use super::BackendTypes;
 use rustc::hir::def_id::DefId;
 use rustc::mir::mono::{Linkage, Visibility};
@@ -41,7 +31,7 @@ pub trait DeclareMethods<'tcx>: BackendTypes {
     /// Use this function when you intend to define a global. This function will
     /// return None if the name already has a definition associated with it. In that
     /// case an error should be reported to the user, because it usually happens due
-    /// to user’s fault (e.g. misuse of #[no_mangle] or #[export_name] attributes).
+    /// to user’s fault (e.g., misuse of #[no_mangle] or #[export_name] attributes).
     fn define_global(&self, name: &str, ty: Self::Type) -> Option<Self::Value>;
 
     /// Declare a private global

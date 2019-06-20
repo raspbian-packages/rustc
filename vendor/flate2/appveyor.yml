@@ -20,5 +20,9 @@ install:
 build: false
 
 test_script:
-  - cargo test --verbose --target %TARGET%
-  - cargo test --verbose --target %TARGET% --features tokio
+  - cargo test --target %TARGET%
+  - cargo test --target %TARGET% --features tokio
+
+branches:
+  only:
+    - master

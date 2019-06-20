@@ -12,12 +12,12 @@
 
 [package]
 name = "serde_derive"
-version = "1.0.75"
+version = "1.0.81"
 authors = ["Erick Tryzelaar <erick.tryzelaar@gmail.com>", "David Tolnay <dtolnay@gmail.com>"]
 include = ["Cargo.toml", "src/**/*.rs", "crates-io.md", "README.md", "LICENSE-APACHE", "LICENSE-MIT"]
 description = "Macros 1.1 implementation of #[derive(Serialize, Deserialize)]"
 homepage = "https://serde.rs"
-documentation = "https://serde.rs/codegen.html"
+documentation = "https://serde.rs/derive.html"
 readme = "crates-io.md"
 keywords = ["serde", "serialization", "no_std"]
 license = "MIT/Apache-2.0"
@@ -33,7 +33,7 @@ version = "0.4"
 version = "0.6.3"
 
 [dependencies.syn]
-version = "0.14"
+version = "0.15.22"
 features = ["visit"]
 [dev-dependencies.serde]
 version = "1.0"

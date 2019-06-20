@@ -12,7 +12,7 @@
 
 [package]
 name = "termcolor"
-version = "1.0.2"
+version = "1.0.4"
 authors = ["Andrew Gallant <jamslam@gmail.com>"]
 exclude = ["/.travis.yml", "/appveyor.yml", "/ci/**"]
 description = "A simple cross platform library for writing colored text to a terminal.\n"

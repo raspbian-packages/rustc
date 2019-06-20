@@ -18,7 +18,6 @@
     simd_ffi,
     asm,
     proc_macro_hygiene,
-    integer_atomics,
     stmt_expr_attributes,
     core_intrinsics,
     no_core,
@@ -26,37 +25,48 @@
     stdsimd,
     staged_api,
     align_offset,
+    maybe_uninit,
     doc_cfg,
     mmx_target_feature,
     tbm_target_feature,
     sse4a_target_feature,
     arm_target_feature,
     aarch64_target_feature,
+    cmpxchg16b_target_feature,
+    avx512_target_feature,
     mips_target_feature,
     powerpc_target_feature,
+    wasm_target_feature,
+    abi_unadjusted,
+    adx_target_feature
 )]
+// NB: When running nvptx/nvptx64 cross tests, enabling "integer_atomics" yields
+// a compile-time error: 'unknown feature `integer_atomics`'. This ought to be
+// investigated further, but for now just disable "integer_atomics" so we can
+// run _some_ test for the nvptx/nvptx64 targets.
 #![cfg_attr(
-    test,
-    feature(
-        test,
-        abi_vectorcall,
-        untagged_unions
-    )
+    not(any(target_arch = "nvptx", target_arch = "nvptx64")),
+    feature(integer_atomics)
+)]
+#![cfg_attr(test, feature(test, abi_vectorcall, untagged_unions))]
+#![cfg_attr(
+    feature = "cargo-clippy",
+    deny(clippy::missing_inline_in_public_items,)
 )]
 #![cfg_attr(
     feature = "cargo-clippy",
     allow(
-        inline_always,
-        too_many_arguments,
-        cast_sign_loss,
-        cast_lossless,
-        cast_possible_wrap,
-        cast_possible_truncation,
-        cast_precision_loss,
-        shadow_reuse,
-        cyclomatic_complexity,
-        similar_names,
-        many_single_char_names
+        clippy::inline_always,
+        clippy::too_many_arguments,
+        clippy::cast_sign_loss,
+        clippy::cast_lossless,
+        clippy::cast_possible_wrap,
+        clippy::cast_possible_truncation,
+        clippy::cast_precision_loss,
+        clippy::shadow_reuse,
+        clippy::cyclomatic_complexity,
+        clippy::similar_names,
+        clippy::many_single_char_names
     )
 )]
 #![cfg_attr(test, allow(unused_imports))]
@@ -67,6 +77,8 @@
     test(attr(allow(dead_code, deprecated, unused_variables, unused_mut)))
 )]
 
+#[macro_use]
+#[allow(unused_imports)]
 extern crate core as _core;
 #[cfg(test)]
 #[macro_use]
@@ -121,3 +133,9 @@ use _core::ptr;
 use _core::result;
 #[allow(unused_imports)]
 use _core::slice;
+#[allow(unused_imports)]
+use _core::sync;
+#[allow(unused_imports)]
+use _core::u128;
+#[allow(unused_imports)]
+use _core::u8;

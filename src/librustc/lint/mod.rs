@@ -1,13 +1,3 @@
-// Copyright 2012-2014 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! Lints, aka compiler warnings.
 //!
 //! A 'lint' check is a kind of miscellaneous constraint that a user _might_
@@ -67,7 +57,7 @@ pub struct Lint {
     /// `declare_lint!()` invocations to follow the convention of upper-case
     /// statics without repeating the name.
     ///
-    /// The name is written with underscores, e.g. "unused_imports".
+    /// The name is written with underscores, e.g., "unused_imports".
     /// On the command line, underscores become dashes.
     pub name: &'static str,
 
@@ -76,7 +66,7 @@ pub struct Lint {
 
     /// Description of the lint or the issue it detects.
     ///
-    /// e.g. "imports that are never used"
+    /// e.g., "imports that are never used"
     pub desc: &'static str,
 
     /// Starting at the given edition, default to the given lint level. If this is `None`, then use
@@ -173,7 +163,7 @@ pub type LintArray = Vec<&'static Lint>;
 pub trait LintPass {
     /// Get descriptions of the lints this `LintPass` object can emit.
     ///
-    /// NB: there is no enforcement that the object only emits lints it registered.
+    /// N.B., there is no enforcement that the object only emits lints it registered.
     /// And some `rustc` internal `LintPass`es register lints to be emitted by other
     /// parts of the compiler. If you want enforced access restrictions for your
     /// `Lint`, make it a private `static` item in its own module.
@@ -643,7 +633,7 @@ fn lint_levels<'a, 'tcx>(tcx: TyCtxt<'a, 'tcx, 'tcx>, cnum: CrateNum)
         levels: LintLevelSets::builder(tcx.sess),
         tcx: tcx,
     };
-    let krate = tcx.hir.krate();
+    let krate = tcx.hir().krate();
 
     builder.with_lint_attrs(ast::CRATE_NODE_ID, &krate.attrs, |builder| {
         intravisit::walk_crate(builder, krate);
@@ -665,7 +655,7 @@ impl<'a, 'tcx> LintLevelMapBuilder<'a, 'tcx> {
         where F: FnOnce(&mut Self)
     {
         let push = self.levels.push(attrs);
-        self.levels.register_id(self.tcx.hir.definitions().node_to_hir_id(id));
+        self.levels.register_id(self.tcx.hir().definitions().node_to_hir_id(id));
         f(self);
         self.levels.pop(push);
     }
@@ -673,7 +663,7 @@ impl<'a, 'tcx> LintLevelMapBuilder<'a, 'tcx> {
 
 impl<'a, 'tcx> intravisit::Visitor<'tcx> for LintLevelMapBuilder<'a, 'tcx> {
     fn nested_visit_map<'this>(&'this mut self) -> intravisit::NestedVisitorMap<'this, 'tcx> {
-        intravisit::NestedVisitorMap::All(&self.tcx.hir)
+        intravisit::NestedVisitorMap::All(&self.tcx.hir())
     }
 
     fn visit_item(&mut self, it: &'tcx hir::Item) {

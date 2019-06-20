@@ -49,7 +49,7 @@ pub(crate) fn disassemble_myself() -> HashMap<String, Vec<Function>> {
             .arg("--disassemble")
             .arg(&me)
             .output()
-            .expect(&format!(
+            .unwrap_or_else(|_| panic!(
                 "failed to execute objdump. OBJDUMP={}",
                 objdump
             ));
@@ -84,7 +84,7 @@ fn parse_objdump(output: &str) -> HashMap<String, Vec<Function>> {
             continue;
         }
         let start = header.find('<')
-            .expect(&format!("\"<\" not found in symbol pattern of the form \"$hex_addr <$name>\": {}", header));
+            .unwrap_or_else(|| panic!("\"<\" not found in symbol pattern of the form \"$hex_addr <$name>\": {}", header));
         let symbol = &header[start + 1..header.len() - 2];
 
         let mut instructions = Vec::new();
@@ -101,7 +101,9 @@ fn parse_objdump(output: &str) -> HashMap<String, Vec<Function>> {
                 .skip_while(|s| {
                     s.len() == expected_len
                         && usize::from_str_radix(s, 16).is_ok()
-                }).map(|s| s.to_string())
+                })
+                .skip_while(|s| *s == "lock") // skip x86-specific prefix
+                .map(|s| s.to_string())
                 .collect::<Vec<String>>();
             instructions.push(Instruction { parts });
         }
@@ -198,6 +200,7 @@ fn parse_dumpbin(output: &str) -> HashMap<String, Vec<Function>> {
                 .skip_while(|s| {
                     s.len() == 2 && usize::from_str_radix(s, 16).is_ok()
                 }).map(|s| s.to_string())
+                .skip_while(|s| *s == "lock") // skip x86-specific prefix
                 .collect::<Vec<String>>();
             instructions.push(Instruction { parts });
         }

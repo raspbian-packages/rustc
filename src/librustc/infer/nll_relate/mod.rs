@@ -1,13 +1,3 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 //! This code is kind of an alternate way of doing subtyping,
 //! supertyping, and type equating, distinct from the `combine.rs`
 //! code but very similar in its effect and design. Eventually the two
@@ -15,7 +5,7 @@
 //!
 //! Here are the key differences:
 //!
-//! - This code may choose to bypass some checks (e.g. the occurs check)
+//! - This code may choose to bypass some checks (e.g., the occurs check)
 //!   in the case where we know that there are no unbound type inference
 //!   variables. This is the case for NLL, because at NLL time types are fully
 //!   inferred up-to regions.
@@ -97,7 +87,7 @@ pub trait TypeRelatingDelegate<'tcx> {
     /// region that is instantiated existentially. This creates an
     /// inference variable, typically.
     ///
-    /// So e.g. if you have `for<'a> fn(..) <: for<'b> fn(..)`, then
+    /// So e.g., if you have `for<'a> fn(..) <: for<'b> fn(..)`, then
     /// we will invoke this method to instantiate `'a` with an
     /// inference variable (though `'b` would be instantiated first,
     /// as a placeholder).
@@ -107,7 +97,7 @@ pub trait TypeRelatingDelegate<'tcx> {
     /// higher-ranked region that is instantiated universally.
     /// This creates a new region placeholder, typically.
     ///
-    /// So e.g. if you have `for<'a> fn(..) <: for<'b> fn(..)`, then
+    /// So e.g., if you have `for<'a> fn(..) <: for<'b> fn(..)`, then
     /// we will invoke this method to instantiate `'b` with a
     /// placeholder region.
     fn next_placeholder_region(&mut self, placeholder: ty::PlaceholderRegion) -> ty::Region<'tcx>;

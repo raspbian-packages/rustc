@@ -1,6 +1,4 @@
-// Copyright 2017 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -44,15 +42,21 @@ pub struct Alphanumeric;
 impl Distribution<char> for Standard {
     #[inline]
     fn sample<R: Rng + ?Sized>(&self, rng: &mut R) -> char {
-        let range = Uniform::new(0u32, 0x11_0000);
-        loop {
-            match char::from_u32(range.sample(rng)) {
-                Some(c) => return c,
-                // About 0.2% of numbers in the range 0..0x110000 are invalid
-                // codepoints (surrogates).
-                None => {}
-            }
+        // A valid `char` is either in the interval `[0, 0xD800)` or
+        // `(0xDFFF, 0x11_0000)`. All `char`s must therefore be in
+        // `[0, 0x11_0000)` but not in the "gap" `[0xD800, 0xDFFF]` which is
+        // reserved for surrogates. This is the size of that gap.
+        const GAP_SIZE: u32 = 0xDFFF - 0xD800 + 1;
+
+        // Uniform::new(0, 0x11_0000 - GAP_SIZE) can also be used but it
+        // seemed slower.
+        let range = Uniform::new(GAP_SIZE, 0x11_0000);
+
+        let mut n = range.sample(rng);
+        if n <= 0xDFFF {
+            n -= GAP_SIZE;
         }
+        unsafe { char::from_u32_unchecked(n) }
     }
 }
 

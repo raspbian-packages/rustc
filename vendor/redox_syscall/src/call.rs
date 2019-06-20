@@ -72,12 +72,6 @@ pub fn dup2(fd: usize, newfd: usize, buf: &[u8]) -> Result<usize> {
     unsafe { syscall4(SYS_DUP2, fd, newfd, buf.as_ptr() as usize, buf.len()) }
 }
 
-/// Replace the current process with a new executable
-pub fn execve<T: AsRef<[u8]>>(path: T, args: &[[usize; 2]]) -> Result<usize> {
-    unsafe { syscall4(SYS_EXECVE, path.as_ref().as_ptr() as usize,
-                      path.as_ref().len(), args.as_ptr() as usize, args.len()) }
-}
-
 /// Exit the current process
 pub fn exit(status: usize) -> Result<usize> {
     unsafe { syscall1(SYS_EXIT, status) }
@@ -98,6 +92,11 @@ pub fn fchown(fd: usize, uid: u32, gid: u32) -> Result<usize> {
 /// Change file descriptor flags
 pub fn fcntl(fd: usize, cmd: usize, arg: usize) -> Result<usize> {
     unsafe { syscall3(SYS_FCNTL, fd, cmd, arg) }
+}
+
+/// Replace the current process with a new executable
+pub fn fexec(fd: usize, args: &[[usize; 2]], vars: &[[usize; 2]]) -> Result<usize> {
+    unsafe { syscall5(SYS_FEXEC, fd, args.as_ptr() as usize, args.len(), vars.as_ptr() as usize, vars.len()) }
 }
 
 /// Map a file into memory
@@ -202,6 +201,11 @@ pub fn getuid() -> Result<usize> {
 }
 
 /// Set the I/O privilege level
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
+/// * `EINVAL` - `level > 3`
 pub unsafe fn iopl(level: usize) -> Result<usize> {
     syscall1(SYS_IOPL, level)
 }
@@ -238,21 +242,39 @@ pub fn open<T: AsRef<[u8]>>(path: T, flags: usize) -> Result<usize> {
 }
 
 /// Allocate pages, linearly in physical memory
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
+/// * `ENOMEM` - the system has run out of available memory
 pub unsafe fn physalloc(size: usize) -> Result<usize> {
     syscall1(SYS_PHYSALLOC, size)
 }
 
 /// Free physically allocated pages
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
 pub unsafe fn physfree(physical_address: usize, size: usize) -> Result<usize> {
     syscall2(SYS_PHYSFREE, physical_address, size)
 }
 
 /// Map physical memory to virtual memory
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
 pub unsafe fn physmap(physical_address: usize, size: usize, flags: usize) -> Result<usize> {
     syscall3(SYS_PHYSMAP, physical_address, size, flags)
 }
 
 /// Unmap previously mapped physical memory
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
+/// * `EFAULT` - `virtual_address` has not been mapped
 pub unsafe fn physunmap(virtual_address: usize) -> Result<usize> {
     syscall1(SYS_PHYSUNMAP, virtual_address)
 }
@@ -305,12 +327,21 @@ pub fn sigreturn() -> Result<usize> {
     unsafe { syscall0(SYS_SIGRETURN) }
 }
 
+/// Set the file mode creation mask
+pub fn umask(mask: usize) -> Result<usize> {
+    unsafe { syscall1(SYS_UMASK, mask) }
+}
+
 /// Remove a file
 pub fn unlink<T: AsRef<[u8]>>(path: T) -> Result<usize> {
     unsafe { syscall2(SYS_UNLINK, path.as_ref().as_ptr() as usize, path.as_ref().len()) }
 }
 
 /// Convert a virtual address to a physical one
+///
+/// # Errors
+///
+/// * `EPERM` - `uid != 0`
 pub unsafe fn virttophys(virtual_address: usize) -> Result<usize> {
     syscall1(SYS_VIRTTOPHYS, virtual_address)
 }

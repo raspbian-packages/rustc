@@ -1,13 +1,3 @@
-// Copyright 2012-2015 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// http://rust-lang.org/COPYRIGHT.
-//
-// Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
-// http://www.apache.org/licenses/LICENSE-2.0> or the MIT license
-// <LICENSE-MIT or http://opensource.org/licenses/MIT>, at your
-// option. This file may not be copied, modified, or distributed
-// except according to those terms.
-
 use {CrateLint, PathResult, Segment};
 use macros::ParentScope;
 
@@ -17,7 +7,7 @@ use syntax_pos::Span;
 use resolve_imports::ImportResolver;
 use std::cmp::Reverse;
 
-impl<'a, 'b:'a, 'c: 'b> ImportResolver<'a, 'b, 'c> {
+impl<'a, 'b:'a> ImportResolver<'a, 'b> {
     /// Add suggestions for a path that cannot be resolved.
     pub(crate) fn make_path_suggestion(
         &mut self,
@@ -30,7 +20,7 @@ impl<'a, 'b:'a, 'c: 'b> ImportResolver<'a, 'b, 'c> {
         match (path.get(0), path.get(1)) {
             // `{{root}}::ident::...` on both editions.
             // On 2015 `{{root}}` is usually added implicitly.
-            (Some(fst), Some(snd)) if fst.ident.name == keywords::CrateRoot.name() &&
+            (Some(fst), Some(snd)) if fst.ident.name == keywords::PathRoot.name() &&
                                       !snd.ident.is_path_segment_keyword() => {}
             // `ident::...` on 2018
             (Some(fst), _) if fst.ident.span.rust_2018() &&
@@ -61,7 +51,7 @@ impl<'a, 'b:'a, 'c: 'b> ImportResolver<'a, 'b, 'c> {
         parent_scope: &ParentScope<'b>,
     ) -> Option<(Vec<Segment>, Option<String>)> {
         // Replace first ident with `self` and check if that is valid.
-        path[0].ident.name = keywords::SelfValue.name();
+        path[0].ident.name = keywords::SelfLower.name();
         let result = self.resolve_path(&path, None, parent_scope, false, span, CrateLint::No);
         debug!("make_missing_self_suggestion: path={:?} result={:?}", path, result);
         if let PathResult::Module(..) = result {

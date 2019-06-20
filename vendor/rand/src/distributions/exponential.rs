@@ -1,6 +1,5 @@
-// Copyright 2013 The Rust Project Developers. See the COPYRIGHT
-// file at the top-level directory of this distribution and at
-// https://rust-lang.org/COPYRIGHT.
+// Copyright 2018 Developers of the Rand project.
+// Copyright 2013 The Rust Project Developers.
 //
 // Licensed under the Apache License, Version 2.0 <LICENSE-APACHE or
 // https://www.apache.org/licenses/LICENSE-2.0> or the MIT license
@@ -11,7 +10,8 @@
 //! The exponential distribution.
 
 use {Rng};
-use distributions::{ziggurat, ziggurat_tables, Distribution};
+use distributions::{ziggurat_tables, Distribution};
+use distributions::utils::ziggurat;
 
 /// Samples floating-point numbers according to the exponential distribution,
 /// with rate parameter `λ = 1`. This is equivalent to `Exp::new(1.0)` or
@@ -63,6 +63,8 @@ impl Distribution<f64> for Exp1 {
 ///
 /// This distribution has density function: `f(x) = lambda * exp(-lambda * x)`
 /// for `x > 0`.
+/// 
+/// Note that [`Exp1`](struct.Exp1.html) is an optimised implementation for `lambda = 1`.
 ///
 /// # Example
 ///
